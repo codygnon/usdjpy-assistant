@@ -1,6 +1,7 @@
 pandas
 numpy
 pydantic
+requests
 streamlit
 fastapi
 uvicorn[standard]

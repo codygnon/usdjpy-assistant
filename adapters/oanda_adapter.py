@@ -1,0 +1,335 @@
+"""OANDA v20 REST API adapter. Same logical interface as mt5_adapter for run_loop and execution_engine."""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Literal
+
+import pandas as pd
+import requests
+
+from core.timeframes import Timeframe
+
+# Re-export types compatible with mt5_adapter
+@dataclass(frozen=True)
+class Tick:
+    time: int
+    bid: float
+    ask: float
+
+@dataclass(frozen=True)
+class OrderResult:
+    retcode: int
+    comment: str
+    request_id: int | None
+    order: int | None
+    deal: int | None
+
+_BASE_URLS = {
+    "practice": "https://api-fxpractice.oanda.com",
+    "live": "https://api-fxtrade.oanda.com",
+}
+
+
+def _symbol_to_instrument(symbol: str) -> str:
+    """USDJPY or USDJPY.PRO -> USD_JPY."""
+    base = re.sub(r"[^A-Za-z]", "", symbol.upper())
+    if len(base) == 6:
+        return f"{base[:3]}_{base[3:]}"
+    return base
+
+
+def _timeframe_to_granularity(tf: Timeframe) -> str:
+    m = {"M1": "M1", "M3": "M3", "M5": "M5", "M15": "M15", "M30": "M30", "H1": "H1", "H4": "H4"}
+    if tf in m:
+        return m[tf]
+    raise ValueError(f"Unsupported timeframe: {tf}")
+
+
+def _lots_to_units(volume_lots: float) -> int:
+    """Standard forex: 1 lot = 100,000 units."""
+    return int(round(volume_lots * 100_000))
+
+
+class OandaAdapter:
+    """Adapter for OANDA v3 REST API. Use get_oanda_adapter(profile) to build from profile."""
+
+    def __init__(self, token: str, account_id: str | None, environment: Literal["practice", "live"]) -> None:
+        self.token = token.strip()
+        self._account_id = account_id
+        self._base = _BASE_URLS.get(environment, _BASE_URLS["practice"])
+        self._session = requests.Session()
+        self._session.headers["Authorization"] = f"Bearer {self.token}"
+        self._session.headers["Content-Type"] = "application/json"
+
+    def _get_account_id(self) -> str:
+        if self._account_id:
+            return self._account_id
+        r = self._session.get(f"{self._base}/v3/accounts")
+        r.raise_for_status()
+        data = r.json()
+        accounts = data.get("accounts", [])
+        if not accounts:
+            raise RuntimeError("OANDA: no accounts found for token")
+        self._account_id = accounts[0]["id"]
+        return self._account_id
+
+    def _req(self, method: str, path: str, **kwargs) -> dict:
+        url = f"{self._base}{path}"
+        resp = self._session.request(method, url, **kwargs)
+        if resp.status_code >= 400:
+            try:
+                err = resp.json()
+                msg = err.get("errorMessage", resp.text)
+            except Exception:
+                msg = resp.text
+            raise RuntimeError(f"OANDA API {method} {path}: {resp.status_code} {msg}")
+        if resp.status_code == 204 or not resp.content:
+            return {}
+        return resp.json()
+
+    def initialize(self) -> None:
+        self._get_account_id()
+
+    def shutdown(self) -> None:
+        self._session.close()
+
+    def ensure_symbol(self, symbol: str) -> None:
+        pass  # OANDA does not require symbol selection
+
+    def get_account_info(self) -> dict:
+        aid = self._get_account_id()
+        data = self._req("GET", f"/v3/accounts/{aid}/summary")
+        acc = data.get("account", {})
+        return type("AccountInfo", (), {
+            "balance": float(acc.get("balance", 0)),
+            "equity": float(acc.get("NAV", acc.get("balance", 0))),
+            "margin": float(acc.get("marginUsed", 0)),
+            "margin_free": float(acc.get("marginAvailable", 0)),
+        })()
+
+    def get_tick(self, symbol: str) -> Tick:
+        aid = self._get_account_id()
+        inst = _symbol_to_instrument(symbol)
+        data = self._req("GET", f"/v3/accounts/{aid}/pricing?instruments={inst}")
+        prices = data.get("prices", [])
+        if not prices:
+            raise RuntimeError(f"OANDA: no price for {symbol} ({inst})")
+        p = prices[0]
+        # Use closeout for executable bid/ask
+        bid = float(p.get("closeoutBid", p.get("bids", [{}])[0].get("price", 0)))
+        ask = float(p.get("closeoutAsk", p.get("asks", [{}])[0].get("price", 0)))
+        ts = p.get("time", "")
+        from datetime import datetime, timezone
+        try:
+            # RFC3339
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            time_int = int(dt.timestamp())
+        except Exception:
+            time_int = 0
+        return Tick(time=time_int, bid=bid, ask=ask)
+
+    def get_bars(self, symbol: str, tf: Timeframe, count: int) -> pd.DataFrame:
+        inst = _symbol_to_instrument(symbol)
+        gran = _timeframe_to_granularity(tf)
+        data = self._req("GET", f"/v3/instruments/{inst}/candles?granularity={gran}&count={count}&price=M")
+        candles = data.get("candles", [])
+        if not candles:
+            raise RuntimeError(f"OANDA: no candles for {symbol} {tf}")
+        rows = []
+        for c in candles:
+            mid = c.get("mid", {})
+            t = c.get("time", "")
+            try:
+                dt = pd.Timestamp(t).tz_convert("UTC")
+            except Exception:
+                dt = pd.Timestamp.now(tz="UTC")
+            rows.append({
+                "time": dt,
+                "open": float(mid.get("o", 0)),
+                "high": float(mid.get("h", 0)),
+                "low": float(mid.get("l", 0)),
+                "close": float(mid.get("c", 0)),
+                "tick_volume": int(c.get("volume", 0)),
+            })
+        df = pd.DataFrame(rows)
+        if "time" not in df.columns and len(rows):
+            df["time"] = [r["time"] for r in rows]
+        return df
+
+    def is_demo_account(self) -> bool:
+        return self._base == _BASE_URLS["practice"]
+
+    def get_open_positions(self, symbol: str | None = None):
+        aid = self._get_account_id()
+        data = self._req("GET", f"/v3/accounts/{aid}/openTrades")
+        trades = data.get("trades", [])
+        if symbol:
+            inst = _symbol_to_instrument(symbol)
+            trades = [t for t in trades if t.get("instrument") == inst]
+        return trades
+
+    def order_send_market(
+        self,
+        *,
+        symbol: str,
+        side: Literal["buy", "sell"],
+        volume_lots: float,
+        sl: float | None,
+        tp: float | None,
+        deviation_points: int = 20,
+        magic: int = 20260128,
+        comment: str = "",
+    ) -> OrderResult:
+        aid = self._get_account_id()
+        inst = _symbol_to_instrument(symbol)
+        units = _lots_to_units(volume_lots)
+        if side == "sell":
+            units = -units
+        order: dict = {
+            "type": "MARKET",
+            "instrument": inst,
+            "units": str(units),
+            "timeInForce": "FOK",
+            "positionFill": "DEFAULT",
+        }
+        if sl is not None:
+            order["stopLossOnFill"] = {"price": str(round(sl, 5)), "timeInForce": "GTC"}
+        if tp is not None:
+            order["takeProfitOnFill"] = {"price": str(round(tp, 5)), "timeInForce": "GTC"}
+        body = {"order": order}
+        data = self._req("POST", f"/v3/accounts/{aid}/orders", json=body)
+        fill = data.get("orderFillTransaction")
+        create = data.get("orderCreateTransaction")
+        if fill:
+            trade_id = fill.get("tradeOpened", {}).get("tradeID") or fill.get("tradeOpened", {}).get("tradeID")
+            if trade_id:
+                trade_id = int(trade_id)
+            else:
+                trade_id = None
+            return OrderResult(
+                retcode=0,
+                comment=fill.get("reason", "FILLED"),
+                request_id=None,
+                order=int(create["id"]) if create else None,
+                deal=trade_id,
+            )
+        if data.get("orderRejectTransaction"):
+            rej = data["orderRejectTransaction"]
+            return OrderResult(
+                retcode=-1,
+                comment=rej.get("rejectReason", rej.get("reason", "REJECTED")),
+                request_id=None,
+                order=None,
+                deal=None,
+            )
+        return OrderResult(retcode=0, comment="PENDING", request_id=None, order=int(create["id"]) if create else None, deal=None)
+
+    def order_send_pending_limit(
+        self,
+        *,
+        symbol: str,
+        side: Literal["buy", "sell"],
+        price: float,
+        volume_lots: float,
+        sl: float | None = None,
+        tp: float | None = None,
+        magic: int = 20260128,
+        comment: str = "",
+    ) -> OrderResult:
+        aid = self._get_account_id()
+        inst = _symbol_to_instrument(symbol)
+        units = _lots_to_units(volume_lots)
+        if side == "sell":
+            units = -units
+        order: dict = {
+            "type": "LIMIT",
+            "instrument": inst,
+            "units": str(units),
+            "price": str(round(price, 5)),
+            "timeInForce": "GTC",
+            "positionFill": "DEFAULT",
+        }
+        if sl is not None:
+            order["stopLossOnFill"] = {"price": str(round(sl, 5)), "timeInForce": "GTC"}
+        if tp is not None:
+            order["takeProfitOnFill"] = {"price": str(round(tp, 5)), "timeInForce": "GTC"}
+        data = self._req("POST", f"/v3/accounts/{aid}/orders", json={"order": order})
+        create = data.get("orderCreateTransaction")
+        if data.get("orderRejectTransaction"):
+            rej = data["orderRejectTransaction"]
+            return OrderResult(retcode=-1, comment=rej.get("rejectReason", "REJECTED"), request_id=None, order=None, deal=None)
+        return OrderResult(
+            retcode=0,
+            comment="PENDING",
+            request_id=None,
+            order=int(create["id"]) if create else None,
+            deal=None,
+        )
+
+    def close_position(
+        self,
+        *,
+        ticket: int,
+        symbol: str,
+        volume: float,
+        position_type: int,
+        deviation_points: int = 20,
+        magic: int = 20260128,
+        comment: str = "",
+    ) -> OrderResult:
+        aid = self._get_account_id()
+        # OANDA: ticket is trade_id; close by units (all = close full)
+        units = str(int(round(volume * 100_000)))
+        if position_type == 1:  # SELL position
+            units = "-" + units
+        data = self._req("PUT", f"/v3/accounts/{aid}/trades/{ticket}/close", json={"units": units})
+        close = data.get("orderFillTransaction") or data.get("orderCreateTransaction")
+        if close:
+            return OrderResult(retcode=0, comment=close.get("reason", "CLOSED"), request_id=None, order=int(close.get("id", 0)) or None, deal=int(close.get("id", 0)) or None)
+        return OrderResult(retcode=0, comment="closed", request_id=None, order=None, deal=None)
+
+    def get_position_by_ticket(self, ticket: int):
+        aid = self._get_account_id()
+        data = self._req("GET", f"/v3/accounts/{aid}/openTrades")
+        for t in data.get("trades", []):
+            if str(t.get("id")) == str(ticket):
+                return t
+        return None
+
+    def get_position_id_from_deal(self, deal_id: int) -> int | None:
+        # For OANDA we use deal_id as trade_id in OrderResult, so it is the position id
+        return deal_id
+
+    def get_position_id_from_order(self, order_id: int) -> int | None:
+        aid = self._get_account_id()
+        data = self._req("GET", f"/v3/accounts/{aid}/transactions?orderID={order_id}")
+        for t in data.get("transactions", []):
+            if t.get("type") == "ORDER_FILL" and str(t.get("orderID")) == str(order_id):
+                opened = t.get("tradeOpened", {})
+                tid = opened.get("tradeID")
+                if tid:
+                    return int(tid)
+        return None
+
+    def get_deals_by_position(self, ticket: int) -> list:
+        return []  # OANDA transaction history differs; stub for compatibility
+
+    def get_deal_profit(self, deal_id: int) -> float | None:
+        return None
+
+    def get_position_close_info(self, ticket: int):
+        return None  # Stub; would need OANDA transaction history
+
+    def get_closed_positions_from_history(self, days_back: int = 30, symbol: str | None = None, pip_size: float | None = None) -> list:
+        return []  # Stub for OANDA; full impl would use /transactions
+
+    def get_mt5_report_stats(self, symbol: str | None = None, pip_size: float | None = None, days_back: int = 90):
+        return None
+
+    def get_mt5_full_report(self, symbol: str | None = None, pip_size: float | None = None, days_back: int = 90) -> dict | None:
+        return None
+
+
+def get_oanda_adapter(token: str, account_id: str | None, environment: Literal["practice", "live"]) -> OandaAdapter:
+    return OandaAdapter(token=token, account_id=account_id, environment=environment)

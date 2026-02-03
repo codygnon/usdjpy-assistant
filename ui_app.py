@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from adapters import mt5_adapter
+from adapters.broker import get_adapter
 from core.execution_engine import execute_signal_demo_only
 from core.execution_state import RuntimeState, load_state, save_state
 from core.models import MarketContext, TradeCandidate
@@ -469,13 +469,14 @@ def main() -> None:
         st.subheader("Technical analysis")
         st.caption("RSI, MACD, ATR per timeframe. Helps interpret trends beyond bull/bear.")
         try:
-            mt5_adapter.initialize()
+            adapter = get_adapter(profile)
+            adapter.initialize()
             try:
-                mt5_adapter.ensure_symbol(profile.symbol)
+                adapter.ensure_symbol(profile.symbol)
                 data_by_tf = {
-                    "H4": mt5_adapter.get_bars(profile.symbol, "H4", 800),
-                    "M15": mt5_adapter.get_bars(profile.symbol, "M15", 2000),
-                    "M1": mt5_adapter.get_bars(profile.symbol, "M1", 3000),
+                    "H4": adapter.get_bars(profile.symbol, "H4", 800),
+                    "M15": adapter.get_bars(profile.symbol, "M15", 2000),
+                    "M1": adapter.get_bars(profile.symbol, "M1", 3000),
                 }
                 ta = compute_ta_multi(profile, data_by_tf)
                 for tf in ["H4", "M15", "M1"]:
@@ -486,7 +487,7 @@ def main() -> None:
                     st.markdown(f"**{tf}**: {s.summary}")
                     st.caption(f"regime={s.regime} rsi={s.rsi_value} ({s.rsi_zone}) atr={s.atr_state}")
             finally:
-                mt5_adapter.shutdown()
+                adapter.shutdown()
         except Exception as e:
             st.caption(f"Could not compute technical analysis: {e}")
 
@@ -534,10 +535,12 @@ def main() -> None:
                 trades_df = store.read_trades_df(pname)
                 log_dir = LOGS_DIR / pname
 
-                mt5_adapter.initialize()
+                adapter = get_adapter(profile)
+                adapter.initialize()
                 try:
-                    mt5_adapter.ensure_symbol(profile.symbol)
+                    adapter.ensure_symbol(profile.symbol)
                     dec = execute_signal_demo_only(
+                        adapter=adapter,
                         profile=profile,
                         log_dir=log_dir,
                         signal=sig,
@@ -546,7 +549,7 @@ def main() -> None:
                         mode="ARMED_AUTO_DEMO",
                     )
                 finally:
-                    mt5_adapter.shutdown()
+                    adapter.shutdown()
 
                 st.write({"attempted": dec.attempted, "placed": dec.placed, "reason": dec.reason, "order_id": dec.order_id, "deal_id": dec.deal_id})
                 if dec.placed:

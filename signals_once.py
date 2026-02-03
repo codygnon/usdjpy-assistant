@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from adapters import mt5_adapter
+from adapters.broker import get_adapter
 from core.profile import load_profile_v1
 from core.signal_engine import (
     detect_latest_confirmed_cross_signal,
@@ -16,16 +16,16 @@ def main() -> None:
     args = ap.parse_args()
 
     profile = load_profile_v1(args.profile)
-
-    mt5_adapter.initialize()
+    adapter = get_adapter(profile)
+    adapter.initialize()
     try:
-        mt5_adapter.ensure_symbol(profile.symbol)
+        adapter.ensure_symbol(profile.symbol)
 
         # Fetch data for the timeframes we care about
         data_by_tf = {
-            "H4": mt5_adapter.get_bars(profile.symbol, "H4", 800),
-            "M15": mt5_adapter.get_bars(profile.symbol, "M15", 2000),
-            "M1": mt5_adapter.get_bars(profile.symbol, "M1", 3000),
+            "H4": adapter.get_bars(profile.symbol, "H4", 800),
+            "M15": adapter.get_bars(profile.symbol, "M15", 2000),
+            "M1": adapter.get_bars(profile.symbol, "M1", 3000),
         }
 
         print("profile:", profile.profile_name)
@@ -73,7 +73,7 @@ def main() -> None:
                 print("-", r)
 
     finally:
-        mt5_adapter.shutdown()
+        adapter.shutdown()
 
 
 if __name__ == "__main__":

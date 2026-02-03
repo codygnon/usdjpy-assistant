@@ -6,7 +6,7 @@ from typing import Optional
 
 import pandas as pd
 
-from adapters import mt5_adapter
+# Broker adapter (MT5 or OANDA) is passed into execute_* as adapter=
 from adapters.mt5_adapter import Tick
 from core.context_engine import compute_tf_context
 from core.indicators import bollinger_bands as bollinger_bands_fn
@@ -172,6 +172,7 @@ def _indicator_candidate(
 
 def execute_indicator_policy_demo_only(
     *,
+    adapter,
     profile: ProfileV1,
     log_dir: Path,
     policy: ExecutionPolicyIndicator,
@@ -186,7 +187,7 @@ def execute_indicator_policy_demo_only(
     if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
         return ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed")
 
-    if not mt5_adapter.is_demo_account():
+    if not adapter.is_demo_account():
         return ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)")
 
     store = _store(log_dir)
@@ -259,7 +260,7 @@ def execute_indicator_policy_demo_only(
         )
         return ExecutionDecision(attempted=True, placed=False, reason="manual confirm required")
 
-    res = mt5_adapter.order_send_market(
+    res = adapter.order_send_market(
         symbol=profile.symbol,
         side=policy.side,
         volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
@@ -267,7 +268,7 @@ def execute_indicator_policy_demo_only(
         tp=candidate.target_price,
         comment=f"ind:{policy.id}",
     )
-    placed = res.retcode in (10009, 10008)
+    placed = res.retcode in (0, 10008, 10009)  # 0=OANDA success; 10008/10009=MT5
     reason = "order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
     sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
     store.insert_execution(
@@ -356,6 +357,7 @@ def _price_level_candidate(
 
 def execute_price_level_policy_demo_only(
     *,
+    adapter,
     profile: ProfileV1,
     log_dir: Path,
     policy: ExecutionPolicyPriceLevelTrend,
@@ -369,7 +371,7 @@ def execute_price_level_policy_demo_only(
     if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
         return ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed")
 
-    if not mt5_adapter.is_demo_account():
+    if not adapter.is_demo_account():
         return ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)")
 
     store = _store(log_dir)
@@ -459,7 +461,7 @@ def execute_price_level_policy_demo_only(
             return ExecutionDecision(attempted=False, placed=False, reason="price_level: buy limit X already at or below bid")
         if policy.side == "sell" and tick.ask >= policy.price_level:
             return ExecutionDecision(attempted=False, placed=False, reason="price_level: sell limit X already at or above ask")
-        res = mt5_adapter.order_send_pending_limit(
+        res = adapter.order_send_pending_limit(
             symbol=profile.symbol,
             side=policy.side,
             price=policy.price_level,
@@ -471,7 +473,7 @@ def execute_price_level_policy_demo_only(
     else:
         if not price_level_reached(tick, policy):
             return ExecutionDecision(attempted=False, placed=False, reason="price_level: level not reached (poll)")
-        res = mt5_adapter.order_send_market(
+        res = adapter.order_send_market(
             symbol=profile.symbol,
             side=policy.side,
             volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
@@ -480,7 +482,7 @@ def execute_price_level_policy_demo_only(
             comment=f"pl:{policy.id}",
         )
 
-    placed = res.retcode in (10009, 10008)
+    placed = res.retcode in (0, 10008, 10009)  # 0=OANDA success; 10008/10009=MT5
     reason = "order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
     sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
     store.insert_execution(
@@ -597,6 +599,7 @@ def _breakout_candidate(
 
 def execute_breakout_policy_demo_only(
     *,
+    adapter,
     profile: ProfileV1,
     log_dir: Path,
     policy: ExecutionPolicyBreakout,
@@ -611,7 +614,7 @@ def execute_breakout_policy_demo_only(
     if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
         return ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed")
 
-    if not mt5_adapter.is_demo_account():
+    if not adapter.is_demo_account():
         return ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)")
 
     store = _store(log_dir)
@@ -684,7 +687,7 @@ def execute_breakout_policy_demo_only(
         )
         return ExecutionDecision(attempted=True, placed=False, reason="manual confirm required")
 
-    res = mt5_adapter.order_send_market(
+    res = adapter.order_send_market(
         symbol=profile.symbol,
         side=side,
         volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
@@ -692,7 +695,7 @@ def execute_breakout_policy_demo_only(
         tp=candidate.target_price,
         comment=f"brk:{policy.id}",
     )
-    placed = res.retcode in (10009, 10008)
+    placed = res.retcode in (0, 10008, 10009)  # 0=OANDA success; 10008/10009=MT5
     reason = "order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
     sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
     store.insert_execution(
@@ -807,7 +810,7 @@ def execute_bollinger_policy_demo_only(
     """Evaluate Bollinger Bands policy and optionally place a market order."""
     if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
         return ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed")
-    if not mt5_adapter.is_demo_account():
+    if not adapter.is_demo_account():
         return ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)")
     store = _store(log_dir)
     rule_id = f"bollinger:{policy.id}:{policy.timeframe}:{bar_time_utc}"
@@ -875,7 +878,7 @@ def execute_bollinger_policy_demo_only(
             }
         )
         return ExecutionDecision(attempted=True, placed=False, reason="manual confirm required")
-    res = mt5_adapter.order_send_market(
+    res = adapter.order_send_market(
         symbol=profile.symbol,
         side=side,
         volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
@@ -883,7 +886,7 @@ def execute_bollinger_policy_demo_only(
         tp=candidate.target_price,
         comment=f"bb:{policy.id}",
     )
-    placed = res.retcode in (10009, 10008)
+    placed = res.retcode in (0, 10008, 10009)  # 0=OANDA success; 10008/10009=MT5
     reason = "order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
     sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
     store.insert_execution(
@@ -986,6 +989,7 @@ def _vwap_candidate(
 
 def execute_vwap_policy_demo_only(
     *,
+    adapter,
     profile: ProfileV1,
     log_dir: Path,
     policy: ExecutionPolicyVWAP,
@@ -999,7 +1003,7 @@ def execute_vwap_policy_demo_only(
     """Evaluate VWAP policy and optionally place a market order."""
     if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
         return ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed")
-    if not mt5_adapter.is_demo_account():
+    if not adapter.is_demo_account():
         return ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)")
     store = _store(log_dir)
     rule_id = f"vwap:{policy.id}:{policy.timeframe}:{bar_time_utc}"
@@ -1067,7 +1071,7 @@ def execute_vwap_policy_demo_only(
             }
         )
         return ExecutionDecision(attempted=True, placed=False, reason="manual confirm required")
-    res = mt5_adapter.order_send_market(
+    res = adapter.order_send_market(
         symbol=profile.symbol,
         side=side,
         volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
@@ -1075,7 +1079,7 @@ def execute_vwap_policy_demo_only(
         tp=candidate.target_price,
         comment=f"vwap:{policy.id}",
     )
-    placed = res.retcode in (10009, 10008)
+    placed = res.retcode in (0, 10008, 10009)  # 0=OANDA success; 10008/10009=MT5
     reason = "order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
     sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
     store.insert_execution(
@@ -1206,6 +1210,7 @@ def _session_momentum_candidate(
 
 def execute_session_momentum_policy_demo_only(
     *,
+    adapter,
     profile: ProfileV1,
     log_dir: Path,
     policy: ExecutionPolicySessionMomentum,
@@ -1221,7 +1226,7 @@ def execute_session_momentum_policy_demo_only(
     if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
         return ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed")
 
-    if not mt5_adapter.is_demo_account():
+    if not adapter.is_demo_account():
         return ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)")
 
     store = _store(log_dir)
@@ -1296,7 +1301,7 @@ def execute_session_momentum_policy_demo_only(
         )
         return ExecutionDecision(attempted=True, placed=False, reason="manual confirm required")
 
-    res = mt5_adapter.order_send_market(
+    res = adapter.order_send_market(
         symbol=profile.symbol,
         side=side,
         volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
@@ -1304,7 +1309,7 @@ def execute_session_momentum_policy_demo_only(
         tp=candidate.target_price,
         comment=f"ses:{policy.id}",
     )
-    placed = res.retcode in (10009, 10008)
+    placed = res.retcode in (0, 10008, 10009)  # 0=OANDA success; 10008/10009=MT5
     reason = "order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
     sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
     store.insert_execution(
@@ -1336,6 +1341,7 @@ def execute_session_momentum_policy_demo_only(
 
 def execute_signal_demo_only(
     *,
+    adapter,
     profile: ProfileV1,
     log_dir: Path,
     signal: Signal,
@@ -1352,7 +1358,7 @@ def execute_signal_demo_only(
     if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
         return ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed")
 
-    if not mt5_adapter.is_demo_account():
+    if not adapter.is_demo_account():
         return ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)")
 
     store = _store(log_dir)
@@ -1401,7 +1407,7 @@ def execute_signal_demo_only(
         return ExecutionDecision(attempted=True, placed=False, reason="manual confirm required")
 
     # Auto demo mode: place order
-    res = mt5_adapter.order_send_market(
+    res = adapter.order_send_market(
         symbol=profile.symbol,
         side=signal.side,
         volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
@@ -1410,12 +1416,12 @@ def execute_signal_demo_only(
         comment=f"sig:{signal.signal_id}",
     )
 
-    placed = res.retcode == 10009 or res.retcode == 10008  # TRADE_RETCODE_DONE / DONE_PARTIAL commonly
+    placed = res.retcode in (0, 10008, 10009)  # 0=OANDA; 10008/10009=MT5 TRADE_RETCODE_DONE
     reason = "order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
 
     # Lightweight reconciliation: verify a position exists after a 'done' retcode.
     if placed:
-        pos = mt5_adapter.get_open_positions(profile.symbol)
+        pos = adapter.get_open_positions(profile.symbol)
         if pos is None or len(pos) == 0:
             placed = False
             reason = "reconcile_failed:no_position_after_order"

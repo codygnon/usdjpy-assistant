@@ -13,7 +13,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 import pandas as pd
 
-from adapters import mt5_adapter
+from adapters.broker import get_adapter
 from core.context_engine import compute_tf_context
 from core.execution_engine import (
     build_default_candidate_from_signal,
@@ -66,6 +66,7 @@ def _compute_mkt(profile, tick, data_by_tf) -> MarketContext:
 def _insert_trade_for_policy(
     *,
     profile,
+    adapter,
     store,
     policy_type: str,
     policy_id: str,
@@ -78,11 +79,11 @@ def _insert_trade_for_policy(
 ) -> None:
     """Store a trade in DB when a policy places an order. Ensures preset and position_id for Performance by Preset."""
     try:
-        mt5_position_id = None
+        position_id = None
         if dec.deal_id:
-            mt5_position_id = mt5_adapter.get_position_id_from_deal(dec.deal_id)
-        if mt5_position_id is None and dec.order_id:
-            mt5_position_id = mt5_adapter.get_position_id_from_order(dec.order_id)
+            position_id = adapter.get_position_id_from_deal(dec.deal_id)
+        if position_id is None and dec.order_id:
+            position_id = adapter.get_position_id_from_order(dec.order_id)
         trade_id = f"{policy_type}:{policy_id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}"
         store.insert_trade({
             "trade_id": trade_id,
@@ -100,7 +101,7 @@ def _insert_trade_for_policy(
             "mt5_order_id": dec.order_id,
             "mt5_deal_id": dec.deal_id,
             "mt5_retcode": dec.order_retcode,
-            "mt5_position_id": mt5_position_id,
+            "mt5_position_id": position_id,
             "opened_by": "program",
             "preset_name": profile.active_preset_name or "Unknown",
         })
@@ -125,9 +126,10 @@ def main() -> None:
     store = SqliteStore(log_dir / "assistant.db")
     store.init_db()
 
-    mt5_adapter.initialize()
+    adapter = get_adapter(profile)
+    adapter.initialize()
     try:
-        mt5_adapter.ensure_symbol(profile.symbol)
+        adapter.ensure_symbol(profile.symbol)
 
         last_seen_m1_time: str | None = None
         poll_sec = _poll_seconds(profile, args.poll_seconds)
@@ -182,11 +184,11 @@ def main() -> None:
                 mode = state.mode
 
             data_by_tf = {
-                "H4": mt5_adapter.get_bars(profile.symbol, "H4", 800),
-                "M15": mt5_adapter.get_bars(profile.symbol, "M15", 2000),
-                "M1": mt5_adapter.get_bars(profile.symbol, "M1", 3000),
+                "H4": adapter.get_bars(profile.symbol, "H4", 800),
+                "M15": adapter.get_bars(profile.symbol, "M15", 2000),
+                "M1": adapter.get_bars(profile.symbol, "M1", 3000),
             }
-            tick = mt5_adapter.get_tick(profile.symbol)
+            tick = adapter.get_tick(profile.symbol)
 
             m1_df = data_by_tf["M1"]
             m1_last_time = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
@@ -333,6 +335,7 @@ def main() -> None:
                         continue
 
                     exec_dec = execute_signal_demo_only(
+                        adapter=adapter,
                         profile=profile,
                         log_dir=log_dir,
                         signal=sig,
@@ -351,11 +354,11 @@ def main() -> None:
                         try:
                             cand = build_default_candidate_from_signal(profile, sig)
                             # Get position_id from deal for reliable sync later
-                            mt5_position_id = None
+                            position_id = None
                             if exec_dec.deal_id:
-                                mt5_position_id = mt5_adapter.get_position_id_from_deal(exec_dec.deal_id)
-                            if mt5_position_id is None and exec_dec.order_id:
-                                mt5_position_id = mt5_adapter.get_position_id_from_order(exec_dec.order_id)
+                                position_id = adapter.get_position_id_from_deal(exec_dec.deal_id)
+                            if position_id is None and exec_dec.order_id:
+                                position_id = adapter.get_position_id_from_order(exec_dec.order_id)
                             store.insert_trade(
                                 {
                                     "trade_id": sig.signal_id,
@@ -373,7 +376,7 @@ def main() -> None:
                                     "mt5_order_id": exec_dec.order_id,
                                     "mt5_deal_id": exec_dec.deal_id,
                                     "mt5_retcode": exec_dec.order_retcode,
-                                    "mt5_position_id": mt5_position_id,
+                                    "mt5_position_id": position_id,
                                     "opened_by": "program",
                                     "preset_name": profile.active_preset_name or "Unknown",
                                 }
@@ -403,6 +406,7 @@ def main() -> None:
                     if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "price_level_trend":
                         continue
                     dec = execute_price_level_policy_demo_only(
+                        adapter=adapter,
                         profile=profile,
                         log_dir=log_dir,
                         policy=pol,
@@ -420,6 +424,7 @@ def main() -> None:
                             sl = (pol.price_level - pol.sl_pips * pip) if getattr(pol, "sl_pips", None) is not None and pol.side == "buy" else (pol.price_level + pol.sl_pips * pip) if getattr(pol, "sl_pips", None) is not None and pol.side == "sell" else None
                             _insert_trade_for_policy(
                                 profile=profile,
+                                adapter=adapter,
                                 store=store,
                                 policy_type=pol.type,
                                 policy_id=pol.id,
@@ -445,6 +450,7 @@ def main() -> None:
                         continue
                     bar_time_utc = pd.to_datetime(tf_df["time"].iloc[-1], utc=True).isoformat()
                     dec = execute_indicator_policy_demo_only(
+                        adapter=adapter,
                         profile=profile,
                         log_dir=log_dir,
                         policy=pol,
@@ -461,6 +467,7 @@ def main() -> None:
                             print(f"[{profile.profile_name}] TRADE PLACED: {pol.type}:{pol.id} | side={pol.side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
                                 profile=profile,
+                                adapter=adapter,
                                 store=store,
                                 policy_type=pol.type,
                                 policy_id=pol.id,
@@ -484,6 +491,7 @@ def main() -> None:
                         continue
                     bar_time_utc = pd.to_datetime(tf_df["time"].iloc[-1], utc=True).isoformat()
                     dec = execute_breakout_policy_demo_only(
+                        adapter=adapter,
                         profile=profile,
                         log_dir=log_dir,
                         policy=pol,
@@ -501,6 +509,7 @@ def main() -> None:
                             print(f"[{profile.profile_name}] TRADE PLACED: breakout_range:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
                                 profile=profile,
+                                adapter=adapter,
                                 store=store,
                                 policy_type="breakout_range",
                                 policy_id=pol.id,
@@ -520,6 +529,7 @@ def main() -> None:
                     if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "session_momentum":
                         continue
                     dec = execute_session_momentum_policy_demo_only(
+                        adapter=adapter,
                         profile=profile,
                         log_dir=log_dir,
                         policy=pol,
@@ -536,6 +546,7 @@ def main() -> None:
                             print(f"[{profile.profile_name}] TRADE PLACED: session_momentum:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
                                 profile=profile,
+                                adapter=adapter,
                                 store=store,
                                 policy_type="session_momentum",
                                 policy_id=pol.id,
@@ -557,6 +568,7 @@ def main() -> None:
                         continue
                     bar_time_utc = pd.to_datetime(tf_df["time"].iloc[-1], utc=True).isoformat()
                     dec = execute_bollinger_policy_demo_only(
+                        adapter=adapter,
                         profile=profile,
                         log_dir=log_dir,
                         policy=pol,
@@ -574,6 +586,7 @@ def main() -> None:
                             print(f"[{profile.profile_name}] TRADE PLACED: bollinger_bands:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
                                 profile=profile,
+                                adapter=adapter,
                                 store=store,
                                 policy_type="bollinger_bands",
                                 policy_id=pol.id,
@@ -595,6 +608,7 @@ def main() -> None:
                         continue
                     bar_time_utc = pd.to_datetime(tf_df["time"].iloc[-1], utc=True).isoformat()
                     dec = execute_vwap_policy_demo_only(
+                        adapter=adapter,
                         profile=profile,
                         log_dir=log_dir,
                         policy=pol,
@@ -612,6 +626,7 @@ def main() -> None:
                             print(f"[{profile.profile_name}] TRADE PLACED: vwap:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
                                 profile=profile,
+                                adapter=adapter,
                                 store=store,
                                 policy_type="vwap",
                                 policy_id=pol.id,
@@ -628,7 +643,7 @@ def main() -> None:
             time.sleep(poll_sec)
 
     finally:
-        mt5_adapter.shutdown()
+        adapter.shutdown()
 
 
 if __name__ == "__main__":

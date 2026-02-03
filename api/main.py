@@ -32,7 +32,7 @@ sys.path.insert(0, str(BASE_DIR))
 
 from core.execution_state import RuntimeState, load_state, save_state
 from core.presets import PresetId, apply_preset, get_preset_patch, list_presets
-from core.profile import ProfileV1, default_profile_for_name, load_profile_v1, save_profile_v1
+from core.profile import ProfileV1, ProfileV1AllowExtra, default_profile_for_name, load_profile_v1, save_profile_v1
 from storage.sqlite_store import SqliteStore
 
 # ---------------------------------------------------------------------------
@@ -82,10 +82,11 @@ def _get_display_currency(profile: ProfileV1) -> tuple[str, float]:
     if curr != "JPY":
         return "USD", 1.0
     try:
-        from adapters import mt5_adapter
-        mt5_adapter.initialize()
-        tick = mt5_adapter.get_tick(profile.symbol)
-        mt5_adapter.shutdown()
+        from adapters.broker import get_adapter
+        adapter = get_adapter(profile)
+        adapter.initialize()
+        tick = adapter.get_tick(profile.symbol)
+        adapter.shutdown()
         if tick and tick.bid > 0:
             return "JPY", float(tick.bid)
     except Exception:
@@ -201,11 +202,21 @@ def get_profile(profile_path: str) -> dict[str, Any]:
 @app.put("/api/profiles/{profile_path:path}")
 def save_profile(profile_path: str, req: ProfileUpdateRequest) -> dict[str, str]:
     """Save updated profile data to disk."""
+    from pydantic import ValidationError
     path = Path(profile_path)
     try:
         profile = ProfileV1.model_validate(req.profile_data)
         save_profile_v1(profile, path)
         return {"status": "saved", "path": str(path)}
+    except ValidationError as e:
+        if "extra_forbidden" in str(e) or "Extra inputs" in str(e):
+            try:
+                profile = ProfileV1AllowExtra.model_validate(req.profile_data)
+                save_profile_v1(profile, path)
+                return {"status": "saved", "path": str(path)}
+            except Exception as fallback_e:
+                raise HTTPException(status_code=400, detail=str(fallback_e))
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -565,12 +576,12 @@ def get_rejection_breakdown(profile_name: str, limit: int = 200) -> dict[str, in
 def get_quick_stats(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
     """Get quick stats (win rate, avg pips, total profit).
     
-    Prefers MT5 deal history as source of truth (same as View -> Reports).
-    Falls back to local database when MT5 is not running.
+    Prefers broker (MT5/OANDA) deal history as source of truth when available.
+    Falls back to local database when broker is not running or OANDA (no report stats).
     """
-    from adapters.mt5_adapter import get_mt5_report_stats
+    from adapters.broker import get_adapter
 
-    # Resolve profile for symbol/pip_size (for MT5 lookup)
+    # Resolve profile for symbol/pip_size
     profile = None
     if profile_path and Path(profile_path).exists():
         try:
@@ -586,13 +597,21 @@ def get_quick_stats(profile_name: str, profile_path: Optional[str] = None) -> di
                 except Exception:
                     pass
 
-    # Try MT5 first (source of truth - same as View -> Reports)
+    # Try broker report stats first (MT5 has them; OANDA returns None)
     if profile:
-        mt5_stats = get_mt5_report_stats(
-            symbol=profile.symbol,
-            pip_size=profile.pip_size,
-            days_back=90,
-        )
+        try:
+            adapter = get_adapter(profile)
+            adapter.initialize()
+            try:
+                mt5_stats = adapter.get_mt5_report_stats(
+                    symbol=profile.symbol,
+                    pip_size=profile.pip_size,
+                    days_back=90,
+                )
+            finally:
+                adapter.shutdown()
+        except Exception:
+            mt5_stats = None
         if mt5_stats is not None:
             curr, rate = _get_display_currency(profile)
             return {
@@ -708,8 +727,16 @@ def get_mt5_report(profile_name: str, profile_path: Optional[str] = None) -> dic
                     pass
     if not profile:
         return {"source": None}
-    from adapters.mt5_adapter import get_mt5_full_report
-    result = get_mt5_full_report(symbol=profile.symbol, pip_size=profile.pip_size, days_back=90)
+    try:
+        from adapters.broker import get_adapter
+        adapter = get_adapter(profile)
+        adapter.initialize()
+        try:
+            result = adapter.get_mt5_full_report(symbol=profile.symbol, pip_size=profile.pip_size, days_back=90)
+        finally:
+            adapter.shutdown()
+    except Exception:
+        result = None
     if result is None:
         return {"source": None}
     curr, rate = _get_display_currency(profile)
@@ -738,7 +765,7 @@ def get_stats_by_preset(profile_name: str, profile_path: Optional[str] = None) -
     not found in MT5 (e.g. old or different symbol) fall back to DB profit or pips.
     Run "Sync from MT5" so DB trades have mt5_position_id for best matching.
     """
-    from adapters.mt5_adapter import initialize, shutdown, get_closed_positions_from_history
+    from adapters.broker import get_adapter
 
     store = _store_for(profile_name)
     df = store.read_trades_df(profile_name)
@@ -777,25 +804,24 @@ def get_stats_by_preset(profile_name: str, profile_path: Optional[str] = None) -
 
     if profile:
         try:
-            initialize()
-            closed_positions = get_closed_positions_from_history(
-                days_back=90,
-                symbol=profile.symbol,
-                pip_size=profile.pip_size,
-            )
-            for pos in closed_positions:
-                mt5_financials[pos.position_id] = {
-                    "profit": pos.profit,
-                    "commission": pos.commission,
-                    "swap": pos.swap,
-                }
+            adapter = get_adapter(profile)
+            adapter.initialize()
+            try:
+                closed_positions = adapter.get_closed_positions_from_history(
+                    days_back=90,
+                    symbol=profile.symbol,
+                    pip_size=profile.pip_size,
+                )
+                for pos in closed_positions:
+                    mt5_financials[pos.position_id] = {
+                        "profit": pos.profit,
+                        "commission": pos.commission,
+                        "swap": pos.swap,
+                    }
+            finally:
+                adapter.shutdown()
         except Exception:
             pass
-        finally:
-            try:
-                shutdown()
-            except Exception:
-                pass
 
     def _get_profit(row: pd.Series) -> float | None:
         pos_id = row.get("mt5_position_id")
@@ -920,7 +946,6 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
     Returns per-timeframe: regime, RSI value/zone, MACD line/signal/histogram, 
     ATR value/state, price info, and a plain-English summary.
     """
-    from adapters import mt5_adapter
     from core.indicators import ema, sma
     from core.ta_analysis import compute_ta_for_tf
     from core.context_engine import _get_tf_config
@@ -932,23 +957,116 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
     
     try:
         profile = load_profile_v1(path)
-        
-        # Initialize MT5 and fetch data
-        mt5_adapter.initialize()
-        mt5_adapter.ensure_symbol(profile.symbol)
-        
-        # Timeframe is a Literal type, not an Enum - use string values directly
-        timeframes: list[Timeframe] = ["H4", "H1", "M30", "M15", "M5", "M3", "M1"]
-        result: dict[str, Any] = {"timeframes": {}}
-        
-        for tf in timeframes:
-            try:
-                # Fetch OHLC data from MT5
-                df = mt5_adapter.get_bars(profile.symbol, tf, count=200)
-                
-                if df is None or df.empty:
+        from adapters.broker import get_adapter
+        adapter = get_adapter(profile)
+        try:
+            adapter.initialize()
+        except RuntimeError as init_err:
+            msg = str(init_err)
+            if "MetaTrader5 is not installed" in msg or "MT5" in msg:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Broker data unavailable: MT5 is not installed on this server. Set Broker to OANDA in Profile Editor and add your API key to view technical analysis here."
+                ) from init_err
+            raise
+        try:
+            adapter.ensure_symbol(profile.symbol)
+            # Timeframe is a Literal type, not an Enum - use string values directly
+            timeframes: list[Timeframe] = ["H4", "H1", "M30", "M15", "M5", "M3", "M1"]
+            result: dict[str, Any] = {"timeframes": {}}
+            
+            for tf in timeframes:
+                try:
+                    # Fetch OHLC data from broker (MT5 or OANDA)
+                    df = adapter.get_bars(profile.symbol, tf, count=200)
+                    if df is None or df.empty:
+                        result["timeframes"][tf] = {
+                            "error": f"No data available for {tf}",
+                            "regime": "unknown",
+                            "rsi": {"value": None, "zone": "unknown", "period": 14},
+                            "macd": {"line": None, "signal": None, "histogram": None, "direction": "neutral"},
+                            "atr": {"value": None, "value_pips": None, "state": "unknown"},
+                            "price": {"current": None, "recent_high": None, "recent_low": None},
+                            "bollinger": {"upper": None, "middle": None, "lower": None},
+                            "vwap": None,
+                            "summary": f"{tf}: No data available.",
+                            "ohlc": [],
+                            "ema_fast": [],
+                            "ema_slow": [],
+                            "ema_stack": {},
+                        }
+                        continue
+                    # Compute TA for this timeframe
+                    ta = compute_ta_for_tf(profile, tf, df)
+                    # Format MACD direction
+                    macd_direction = "neutral"
+                    if ta.macd_hist is not None:
+                        if ta.macd_hist > 0:
+                            macd_direction = "positive"
+                        elif ta.macd_hist < 0:
+                            macd_direction = "negative"
+                    # Build OHLC array for chart (last 100 bars)
+                    df_tail = df.tail(100)
+                    ohlc_data = []
+                    for _, row in df_tail.iterrows():
+                        ohlc_data.append({
+                            "time": int(row["time"].timestamp()),
+                            "open": round(float(row["open"]), 3),
+                            "high": round(float(row["high"]), 3),
+                            "low": round(float(row["low"]), 3),
+                            "close": round(float(row["close"]), 3),
+                        })
+                    # Build EMA/SMA series for chart (timeframe-appropriate)
+                    tf_cfg = _get_tf_config(profile, tf)
+                    close = df["close"]
+                    ema_fast_s = ema(close, tf_cfg.ema_fast)
+                    ema_slow_s = sma(close, tf_cfg.sma_slow)
+                    ema_fast_arr = [{"time": int(row["time"].timestamp()), "value": round(float(ema_fast_s.loc[row.name]), 3)} for _, row in df_tail.iterrows() if row.name in ema_fast_s.index and not pd.isna(ema_fast_s.loc[row.name])]
+                    ema_slow_arr = [{"time": int(row["time"].timestamp()), "value": round(float(ema_slow_s.loc[row.name]), 3)} for _, row in df_tail.iterrows() if row.name in ema_slow_s.index and not pd.isna(ema_slow_s.loc[row.name])]
+                    ema_stack_arrs: dict[str, list[dict[str, Any]]] = {}
+                    if tf_cfg.ema_stack:
+                        for p in tf_cfg.ema_stack:
+                            s = ema(close, p)
+                            ema_stack_arrs[f"ema{p}"] = [{"time": int(row["time"].timestamp()), "value": round(float(s.loc[row.name]), 3)} for _, row in df_tail.iterrows() if row.name in s.index and not pd.isna(s.loc[row.name])]
                     result["timeframes"][tf] = {
-                        "error": f"No data available for {tf}",
+                        "regime": ta.regime,
+                        "rsi": {
+                            "value": round(ta.rsi_value, 2) if ta.rsi_value is not None else None,
+                            "zone": ta.rsi_zone,
+                            "period": 14,
+                        },
+                        "macd": {
+                            "line": round(ta.macd_value, 5) if ta.macd_value is not None else None,
+                            "signal": round(ta.macd_signal, 5) if ta.macd_signal is not None else None,
+                            "histogram": round(ta.macd_hist, 5) if ta.macd_hist is not None else None,
+                            "direction": macd_direction,
+                        },
+                        "atr": {
+                            "value": round(ta.atr_value, 5) if ta.atr_value is not None else None,
+                            "value_pips": round(ta.atr_value / profile.pip_size, 1) if ta.atr_value is not None else None,
+                            "state": ta.atr_state,
+                        },
+                        "price": {
+                            "current": round(ta.price, 3) if ta.price is not None else None,
+                            "recent_high": round(ta.recent_high, 3) if ta.recent_high is not None else None,
+                            "recent_low": round(ta.recent_low, 3) if ta.recent_low is not None else None,
+                        },
+                        "bollinger": {
+                            "upper": round(ta.bollinger_upper, 5) if ta.bollinger_upper is not None else None,
+                            "middle": round(ta.bollinger_middle, 5) if ta.bollinger_middle is not None else None,
+                            "lower": round(ta.bollinger_lower, 5) if ta.bollinger_lower is not None else None,
+                        },
+                        "vwap": round(ta.vwap_value, 5) if ta.vwap_value is not None else None,
+                        "summary": ta.summary,
+                        "ohlc": ohlc_data,
+                        "ema_fast": ema_fast_arr,
+                        "ema_slow": ema_slow_arr,
+                        "ema_stack": ema_stack_arrs,
+                    }
+                except Exception as tf_error:
+                    # Handle errors for individual timeframes gracefully
+                    result["timeframes"][tf] = {
+                        "error": str(tf_error),
                         "regime": "unknown",
                         "rsi": {"value": None, "zone": "unknown", "period": 14},
                         "macd": {"line": None, "signal": None, "histogram": None, "direction": "neutral"},
@@ -956,115 +1074,26 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
                         "price": {"current": None, "recent_high": None, "recent_low": None},
                         "bollinger": {"upper": None, "middle": None, "lower": None},
                         "vwap": None,
-                        "summary": f"{tf}: No data available.",
+                        "summary": f"{tf}: Error fetching data.",
                         "ohlc": [],
                         "ema_fast": [],
                         "ema_slow": [],
                         "ema_stack": {},
                     }
-                    continue
-                
-                # Compute TA for this timeframe
-                ta = compute_ta_for_tf(profile, tf, df)
-                
-                # Format MACD direction
-                macd_direction = "neutral"
-                if ta.macd_hist is not None:
-                    if ta.macd_hist > 0:
-                        macd_direction = "positive"
-                    elif ta.macd_hist < 0:
-                        macd_direction = "negative"
-                
-                # Build OHLC array for chart (last 100 bars)
-                df_tail = df.tail(100)
-                ohlc_data = []
-                for _, row in df_tail.iterrows():
-                    ohlc_data.append({
-                        "time": int(row["time"].timestamp()),
-                        "open": round(float(row["open"]), 3),
-                        "high": round(float(row["high"]), 3),
-                        "low": round(float(row["low"]), 3),
-                        "close": round(float(row["close"]), 3),
-                    })
-                
-                # Build EMA/SMA series for chart (timeframe-appropriate)
-                tf_cfg = _get_tf_config(profile, tf)
-                close = df["close"]
-                ema_fast_s = ema(close, tf_cfg.ema_fast)
-                ema_slow_s = sma(close, tf_cfg.sma_slow)
-                ema_fast_arr = [{"time": int(row["time"].timestamp()), "value": round(float(ema_fast_s.loc[row.name]), 3)} for _, row in df_tail.iterrows() if row.name in ema_fast_s.index and not pd.isna(ema_fast_s.loc[row.name])]
-                ema_slow_arr = [{"time": int(row["time"].timestamp()), "value": round(float(ema_slow_s.loc[row.name]), 3)} for _, row in df_tail.iterrows() if row.name in ema_slow_s.index and not pd.isna(ema_slow_s.loc[row.name])]
-                ema_stack_arrs: dict[str, list[dict[str, Any]]] = {}
-                if tf_cfg.ema_stack:
-                    for p in tf_cfg.ema_stack:
-                        s = ema(close, p)
-                        ema_stack_arrs[f"ema{p}"] = [{"time": int(row["time"].timestamp()), "value": round(float(s.loc[row.name]), 3)} for _, row in df_tail.iterrows() if row.name in s.index and not pd.isna(s.loc[row.name])]
-                
-                result["timeframes"][tf] = {
-                    "regime": ta.regime,
-                    "rsi": {
-                        "value": round(ta.rsi_value, 2) if ta.rsi_value is not None else None,
-                        "zone": ta.rsi_zone,
-                        "period": 14,
-                    },
-                    "macd": {
-                        "line": round(ta.macd_value, 5) if ta.macd_value is not None else None,
-                        "signal": round(ta.macd_signal, 5) if ta.macd_signal is not None else None,
-                        "histogram": round(ta.macd_hist, 5) if ta.macd_hist is not None else None,
-                        "direction": macd_direction,
-                    },
-                    "atr": {
-                        "value": round(ta.atr_value, 5) if ta.atr_value is not None else None,
-                        "value_pips": round(ta.atr_value / profile.pip_size, 1) if ta.atr_value is not None else None,
-                        "state": ta.atr_state,
-                    },
-                    "price": {
-                        "current": round(ta.price, 3) if ta.price is not None else None,
-                        "recent_high": round(ta.recent_high, 3) if ta.recent_high is not None else None,
-                        "recent_low": round(ta.recent_low, 3) if ta.recent_low is not None else None,
-                    },
-                    "bollinger": {
-                        "upper": round(ta.bollinger_upper, 5) if ta.bollinger_upper is not None else None,
-                        "middle": round(ta.bollinger_middle, 5) if ta.bollinger_middle is not None else None,
-                        "lower": round(ta.bollinger_lower, 5) if ta.bollinger_lower is not None else None,
-                    },
-                    "vwap": round(ta.vwap_value, 5) if ta.vwap_value is not None else None,
-                    "summary": ta.summary,
-                    "ohlc": ohlc_data,
-                    "ema_fast": ema_fast_arr,
-                    "ema_slow": ema_slow_arr,
-                    "ema_stack": ema_stack_arrs,
+
+            # Get current tick for spread info
+            tick = adapter.get_tick(profile.symbol)
+            if tick:
+                spread_pips = (tick.ask - tick.bid) / profile.pip_size
+                result["current_tick"] = {
+                    "bid": round(tick.bid, 3),
+                    "ask": round(tick.ask, 3),
+                    "spread_pips": round(spread_pips, 1),
                 }
-            except Exception as tf_error:
-                # Handle errors for individual timeframes gracefully
-                result["timeframes"][tf] = {
-                    "error": str(tf_error),
-                    "regime": "unknown",
-                    "rsi": {"value": None, "zone": "unknown", "period": 14},
-                    "macd": {"line": None, "signal": None, "histogram": None, "direction": "neutral"},
-                    "atr": {"value": None, "value_pips": None, "state": "unknown"},
-                    "price": {"current": None, "recent_high": None, "recent_low": None},
-                    "bollinger": {"upper": None, "middle": None, "lower": None},
-                    "vwap": None,
-                    "summary": f"{tf}: Error fetching data.",
-                    "ohlc": [],
-                    "ema_fast": [],
-                    "ema_slow": [],
-                    "ema_stack": {},
-                }
-        
-        # Get current tick for spread info
-        tick = mt5_adapter.get_tick(profile.symbol)
-        if tick:
-            spread_pips = (tick.ask - tick.bid) / profile.pip_size
-            result["current_tick"] = {
-                "bid": round(tick.bid, 3),
-                "ask": round(tick.ask, 3),
-                "spread_pips": round(spread_pips, 1),
-            }
-        
-        return result
-        
+            
+            return result
+        finally:
+            adapter.shutdown()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"TA error: {str(e)}")
 
@@ -1084,11 +1113,11 @@ def get_open_trades(profile_name: str) -> list[dict[str, Any]]:
 
 @app.post("/api/trades/{profile_name}/{trade_id}/close")
 def close_trade_endpoint(profile_name: str, trade_id: str, profile_path: str) -> dict[str, Any]:
-    """Close an open trade in MT5 and update the database.
+    """Close an open trade via broker (MT5/OANDA) and update the database.
     
     This endpoint:
-    1. Looks up the trade in the database to get MT5 ticket, symbol, side, volume
-    2. Calls MT5 to close the position
+    1. Looks up the trade in the database to get position ticket, symbol, side, volume
+    2. Calls broker to close the position
     3. Updates the database with exit details
     """
     from datetime import datetime, timezone
@@ -1128,11 +1157,10 @@ def close_trade_endpoint(profile_name: str, trade_id: str, profile_path: str) ->
     pip_size = profile.pip_size
     
     try:
-        from adapters import mt5_adapter
-        
-        # Initialize MT5
-        mt5_adapter.initialize()
-        mt5_adapter.ensure_symbol(symbol)
+        from adapters.broker import get_adapter
+        adapter = get_adapter(profile)
+        adapter.initialize()
+        adapter.ensure_symbol(symbol)
         
         # Resolve position ticket - prefer position_id, fallback to lookup
         position_ticket = None
@@ -1140,36 +1168,36 @@ def close_trade_endpoint(profile_name: str, trade_id: str, profile_path: str) ->
         if mt5_position_id and pd.notna(mt5_position_id):
             position_ticket = int(mt5_position_id)
         elif mt5_deal_id and pd.notna(mt5_deal_id):
-            position_ticket = mt5_adapter.get_position_id_from_deal(int(mt5_deal_id))
+            position_ticket = adapter.get_position_id_from_deal(int(mt5_deal_id))
         elif mt5_order_id and pd.notna(mt5_order_id):
-            position_ticket = mt5_adapter.get_position_id_from_order(int(mt5_order_id))
+            position_ticket = adapter.get_position_id_from_order(int(mt5_order_id))
         
         if not position_ticket:
-            raise HTTPException(status_code=400, detail="Trade has no valid MT5 position ID - cannot close via MT5")
+            raise HTTPException(status_code=400, detail="Trade has no valid position ID - cannot close via broker")
         
         # Update position_id in DB if we just resolved it
         if not mt5_position_id or pd.isna(mt5_position_id):
             store.update_trade(trade_id, {"mt5_position_id": position_ticket})
         
         # Get current position info
-        position = mt5_adapter.get_position_by_ticket(position_ticket)
+        position = adapter.get_position_by_ticket(position_ticket)
         profit_value = None
         if position is None:
             # Position might already be closed - try to get exit info from history
-            close_info = mt5_adapter.get_position_close_info(position_ticket)
+            close_info = adapter.get_position_close_info(position_ticket)
             if close_info:
                 # Update database with historical close info
                 exit_price = close_info.exit_price
                 exit_ts = close_info.exit_time_utc
                 profit_value = close_info.profit
             else:
-                raise HTTPException(status_code=400, detail="Position not found in MT5 - may already be closed")
+                raise HTTPException(status_code=400, detail="Position not found - may already be closed")
         else:
             # Close the position
             position_type = int(getattr(position, "type", 0))
             volume = float(getattr(position, "volume", size_lots or 0.1))
             
-            result = mt5_adapter.close_position(
+            result = adapter.close_position(
                 ticket=position_ticket,
                 symbol=symbol,
                 volume=volume,
@@ -1177,18 +1205,19 @@ def close_trade_endpoint(profile_name: str, trade_id: str, profile_path: str) ->
                 comment=f"UI_close_{trade_id}",
             )
             
-            if result.retcode != 10009:  # 10009 = TRADE_RETCODE_DONE
+            # MT5: 10009 = TRADE_RETCODE_DONE; OANDA: 0 = success
+            if result.retcode not in (10009, 0):
                 raise HTTPException(
                     status_code=500,
-                    detail=f"MT5 close failed: {result.retcode} - {result.comment}"
+                    detail=f"Close failed: {result.retcode} - {result.comment}"
                 )
             
-            # Get exit price and profit from MT5
-            tick = mt5_adapter.get_tick(symbol)
+            # Get exit price and profit from broker
+            tick = adapter.get_tick(symbol)
             exit_price = tick.bid if side == "buy" else tick.ask
             exit_ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
             if result.deal:
-                profit_value = mt5_adapter.get_deal_profit(result.deal)
+                profit_value = adapter.get_deal_profit(result.deal)
         
         # Calculate pips and R-multiple
         if side == "buy":

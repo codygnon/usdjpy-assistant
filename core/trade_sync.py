@@ -56,12 +56,12 @@ def _determine_exit_reason(
 
 
 def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore") -> int:
-    """Check open trades in DB against MT5; update any that were closed externally.
+    """Check open trades in DB against broker (MT5/OANDA); update any that were closed externally.
     
     Uses mt5_position_id (preferred) or falls back to mt5_order_id for lookups.
     Returns count of trades synced.
     """
-    from adapters import mt5_adapter
+    from adapters.broker import get_adapter
     
     # Get open trades from our database
     open_trades = store.list_open_trades(profile.profile_name)
@@ -69,12 +69,12 @@ def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore") -> int:
     if not open_trades:
         return 0
     
-    # Initialize MT5
     try:
-        mt5_adapter.initialize()
-        mt5_adapter.ensure_symbol(profile.symbol)
+        adapter = get_adapter(profile)
+        adapter.initialize()
+        adapter.ensure_symbol(profile.symbol)
     except Exception as e:
-        print(f"[trade_sync] MT5 init failed: {e}")
+        print(f"[trade_sync] Broker init failed: {e}")
         return 0
     
     synced_count = 0
@@ -94,10 +94,10 @@ def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore") -> int:
             position_ticket = int(mt5_position_id)
         elif mt5_deal_id and not pd.isna(mt5_deal_id):
             # Try to get position_id from deal
-            position_ticket = mt5_adapter.get_position_id_from_deal(int(mt5_deal_id))
+            position_ticket = adapter.get_position_id_from_deal(int(mt5_deal_id))
         elif mt5_order_id and not pd.isna(mt5_order_id):
             # Try to get position_id from order
-            position_ticket = mt5_adapter.get_position_id_from_order(int(mt5_order_id))
+            position_ticket = adapter.get_position_id_from_order(int(mt5_order_id))
         
         if position_ticket is None:
             # No valid identifier - can't sync
@@ -107,15 +107,15 @@ def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore") -> int:
         if (not mt5_position_id or pd.isna(mt5_position_id)) and position_ticket:
             store.update_trade(trade_id, {"mt5_position_id": position_ticket})
         
-        # Check if position is still open in MT5
-        position = mt5_adapter.get_position_by_ticket(position_ticket)
+        # Check if position is still open
+        position = adapter.get_position_by_ticket(position_ticket)
         
         if position is not None:
             # Position is still open - nothing to sync
             continue
         
         # Position is not open - check if it was closed
-        close_info = mt5_adapter.get_position_close_info(position_ticket)
+        close_info = adapter.get_position_close_info(position_ticket)
         
         if close_info is None:
             # No close info found - might be a different issue
@@ -183,6 +183,10 @@ def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore") -> int:
         print(f"[trade_sync] Synced closed trade {trade_id}: exit={exit_price}, pips={pips:.2f}, reason={exit_reason}")
         synced_count += 1
     
+    try:
+        adapter.shutdown()
+    except Exception:
+        pass
     return synced_count
 
 
@@ -191,29 +195,36 @@ def import_mt5_history(
     store: "SqliteStore",
     days_back: int = 30,
 ) -> int:
-    """Import closed positions from MT5 deal history that aren't already in our database.
+    """Import closed positions from broker history that aren't already in our database.
     
-    This imports manually-opened trades (trades opened via MT5 app, not by our program).
+    This imports manually-opened trades (trades opened via broker app, not by our program).
+    OANDA adapter returns empty list (stub); MT5 provides full history.
     
     Returns count of trades imported.
     """
-    from adapters import mt5_adapter
+    from adapters.broker import get_adapter
     
     try:
-        mt5_adapter.initialize()
-        mt5_adapter.ensure_symbol(profile.symbol)
+        adapter = get_adapter(profile)
+        adapter.initialize()
+        adapter.ensure_symbol(profile.symbol)
     except Exception as e:
-        print(f"[trade_sync] MT5 init failed: {e}")
+        print(f"[trade_sync] Broker init failed: {e}")
         return 0
     
     pip_size = profile.pip_size
     
-    # Fetch closed positions from MT5 history
-    closed_positions = mt5_adapter.get_closed_positions_from_history(
-        days_back=days_back,
-        symbol=profile.symbol,
-        pip_size=pip_size,
-    )
+    try:
+        closed_positions = adapter.get_closed_positions_from_history(
+            days_back=days_back,
+            symbol=profile.symbol,
+            pip_size=pip_size,
+        )
+    finally:
+        try:
+            adapter.shutdown()
+        except Exception:
+            pass
     
     imported_count = 0
     
@@ -263,7 +274,7 @@ def import_mt5_history(
             "profit": float(pos.profit),
         })
         
-        print(f"[trade_sync] Imported MT5 history: {trade_id}, {pos.side} {pos.symbol}, pips={pos.pips:.2f if pos.pips else 0}")
+        print(f"[trade_sync] Imported broker history: {trade_id}, {pos.side} {pos.symbol}, pips={pos.pips:.2f if pos.pips else 0}")
         imported_count += 1
     
     return imported_count
@@ -274,7 +285,7 @@ def backfill_position_ids(profile: "ProfileV1", store: "SqliteStore") -> int:
     
     Tries get_position_id_from_deal first, then get_position_id_from_order. Returns count updated.
     """
-    from adapters import mt5_adapter
+    from adapters.broker import get_adapter
     
     trades = store.get_trades_missing_position_id(profile.profile_name)
     
@@ -282,41 +293,47 @@ def backfill_position_ids(profile: "ProfileV1", store: "SqliteStore") -> int:
         return 0
     
     try:
-        mt5_adapter.initialize()
+        adapter = get_adapter(profile)
+        adapter.initialize()
     except Exception as e:
-        print(f"[trade_sync] MT5 init failed: {e}")
+        print(f"[trade_sync] Broker init failed: {e}")
         return 0
     
     updated_count = 0
-    
-    for trade_row in trades:
-        trade_id = trade_row["trade_id"]
-        mt5_deal_id = _safe_get(trade_row, "mt5_deal_id")
-        mt5_order_id = _safe_get(trade_row, "mt5_order_id")
-        
-        position_id = None
-        
-        if mt5_deal_id and not pd.isna(mt5_deal_id):
-            position_id = mt5_adapter.get_position_id_from_deal(int(mt5_deal_id))
-        
-        if position_id is None and mt5_order_id and not pd.isna(mt5_order_id):
-            position_id = mt5_adapter.get_position_id_from_order(int(mt5_order_id))
-        
-        if position_id:
-            store.update_trade(trade_id, {"mt5_position_id": position_id})
-            print(f"[trade_sync] Backfilled position_id={position_id} for trade {trade_id}")
-            updated_count += 1
-    
+    try:
+        for trade_row in trades:
+            trade_id = trade_row["trade_id"]
+            mt5_deal_id = _safe_get(trade_row, "mt5_deal_id")
+            mt5_order_id = _safe_get(trade_row, "mt5_order_id")
+            
+            position_id = None
+            
+            if mt5_deal_id and not pd.isna(mt5_deal_id):
+                position_id = adapter.get_position_id_from_deal(int(mt5_deal_id))
+            
+            if position_id is None and mt5_order_id and not pd.isna(mt5_order_id):
+                position_id = adapter.get_position_id_from_order(int(mt5_order_id))
+            
+            if position_id:
+                store.update_trade(trade_id, {"mt5_position_id": position_id})
+                print(f"[trade_sync] Backfilled position_id={position_id} for trade {trade_id}")
+                updated_count += 1
+    finally:
+        try:
+            adapter.shutdown()
+        except Exception:
+            pass
     return updated_count
 
 
 def backfill_profit(profile: "ProfileV1", store: "SqliteStore", force_refresh: bool = False) -> int:
     """Backfill profit for closed trades that have mt5_position_id.
     
-    Fetches profit from MT5 (summed across partial closes). Returns count updated.
+    Fetches profit from broker (summed across partial closes). Returns count updated.
     If force_refresh=True, overwrites existing profit to fix incorrect data.
+    OANDA adapter returns None for get_position_close_info (stub).
     """
-    from adapters import mt5_adapter
+    from adapters.broker import get_adapter
     
     trades = store.get_trades_missing_profit(profile.profile_name, force_refresh=force_refresh)
     
@@ -324,24 +341,29 @@ def backfill_profit(profile: "ProfileV1", store: "SqliteStore", force_refresh: b
         return 0
     
     try:
-        mt5_adapter.initialize()
+        adapter = get_adapter(profile)
+        adapter.initialize()
     except Exception as e:
-        print(f"[trade_sync] MT5 init failed for profit backfill: {e}")
+        print(f"[trade_sync] Broker init failed for profit backfill: {e}")
         return 0
     
     updated_count = 0
-    
-    for trade_row in trades:
-        trade_id = trade_row["trade_id"]
-        mt5_position_id = _safe_get(trade_row, "mt5_position_id")
-        
-        if not mt5_position_id or pd.isna(mt5_position_id):
-            continue
-        
-        close_info = mt5_adapter.get_position_close_info(int(mt5_position_id))
-        if close_info:
-            store.update_trade(trade_id, {"profit": float(close_info.profit)})
-            print(f"[trade_sync] Backfilled profit={close_info.profit:.2f} for trade {trade_id}")
-            updated_count += 1
-    
+    try:
+        for trade_row in trades:
+            trade_id = trade_row["trade_id"]
+            mt5_position_id = _safe_get(trade_row, "mt5_position_id")
+            
+            if not mt5_position_id or pd.isna(mt5_position_id):
+                continue
+            
+            close_info = adapter.get_position_close_info(int(mt5_position_id))
+            if close_info:
+                store.update_trade(trade_id, {"profit": float(close_info.profit)})
+                print(f"[trade_sync] Backfilled profit={close_info.profit:.2f} for trade {trade_id}")
+                updated_count += 1
+    finally:
+        try:
+            adapter.shutdown()
+        except Exception:
+            pass
     return updated_count

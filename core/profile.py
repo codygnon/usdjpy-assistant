@@ -274,6 +274,12 @@ class ProfileV1(BaseModel):
     symbol: str
     pip_size: float = 0.01
 
+    # Broker: MT5 (Windows) or OANDA (Japan/Canada, works on PaaS)
+    broker_type: Literal["mt5", "oanda"] = "mt5"
+    oanda_token: Optional[str] = None
+    oanda_account_id: Optional[str] = None
+    oanda_environment: Literal["practice", "live"] = "practice"
+
     # Display currency for stats and logs (USD or JPY)
     display_currency: Optional[Literal["USD", "JPY"]] = "USD"
 
@@ -293,6 +299,16 @@ class ProfileV1(BaseModel):
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
     trade_management: TradeManagementConfig = Field(default_factory=TradeManagementConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+
+
+class ProfileV1AllowExtra(ProfileV1):
+    """Same as ProfileV1 but allows extra keys (e.g. broker fields on old deploys). Used for save/load when strict validation fails."""
+    model_config = ConfigDict(extra="ignore")
+    # Redeclare broker fields so they are always accepted and persisted even if an old deploy's ProfileV1 lacks them
+    broker_type: Literal["mt5", "oanda"] = "mt5"
+    oanda_token: Optional[str] = None
+    oanda_account_id: Optional[str] = None
+    oanda_environment: Literal["practice", "live"] = "practice"
 
 
 def _looks_like_v1(d: dict[str, Any]) -> bool:
@@ -344,6 +360,15 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
             d = {**d, "execution": _default_execution()}
         if "display_currency" not in d:
             d = {**d, "display_currency": "USD"}
+        # Ensure broker fields exist (OANDA support)
+        if "broker_type" not in d:
+            d = {**d, "broker_type": "mt5"}
+        if "oanda_token" not in d:
+            d = {**d, "oanda_token": None}
+        if "oanda_account_id" not in d:
+            d = {**d, "oanda_account_id": None}
+        if "oanda_environment" not in d:
+            d = {**d, "oanda_environment": "practice"}
         # Migrate legacy preset names to single RSI preset
         ap = d.get("active_preset_name")
         if ap in ("mean_reversion_dip_buy", "mean_reversion_dip_sell"):
@@ -367,6 +392,10 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
         "profile_name": profile_name,
         "symbol": symbol,
         "pip_size": pip_size,
+        "broker_type": d.get("broker_type", "mt5"),
+        "oanda_token": d.get("oanda_token"),
+        "oanda_account_id": d.get("oanda_account_id"),
+        "oanda_environment": d.get("oanda_environment", "practice"),
         "risk": {
             "max_lots": max_lots,
             "require_stop": require_stop,
@@ -413,7 +442,7 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
     return migrated
 
 
-def load_profile_v1(profile_path: str | Path) -> ProfileV1:
+def load_profile_v1(profile_path: str | Path) -> ProfileV1 | ProfileV1AllowExtra:
     path = Path(profile_path)
     raw = path.read_text(encoding="utf-8")
     data = json_loads(raw)
@@ -421,6 +450,11 @@ def load_profile_v1(profile_path: str | Path) -> ProfileV1:
     try:
         return ProfileV1.model_validate(migrated)
     except ValidationError as e:
+        if "extra_forbidden" in str(e) or "Extra inputs" in str(e):
+            try:
+                return ProfileV1AllowExtra.model_validate(migrated)
+            except ValidationError:
+                pass
         raise ValueError(f"Invalid profile after migration: {path}\n{e}") from e
 
 
@@ -433,7 +467,7 @@ def json_loads(s: str) -> dict[str, Any]:
     return v
 
 
-def save_profile_v1(profile: ProfileV1, out_path: str | Path) -> None:
+def save_profile_v1(profile: ProfileV1 | ProfileV1AllowExtra, out_path: str | Path) -> None:
     import json
 
     path = Path(out_path)
