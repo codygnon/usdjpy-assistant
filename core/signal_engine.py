@@ -221,7 +221,12 @@ def passes_alignment_filter(profile: ProfileV1, diffs: dict[Timeframe, float], s
 def compute_latest_diffs(profile: ProfileV1, data_by_tf: dict[Timeframe, pd.DataFrame]) -> dict[Timeframe, float]:
     diffs: dict[Timeframe, float] = {}
     for tf, df in data_by_tf.items():
-        cfg = profile.strategy.timeframes[tf]
+        # Not all loops/policies fetch only the profile's configured timeframes.
+        # If a TF (e.g. M5) is present in data_by_tf but not defined in the profile,
+        # skip it instead of crashing with KeyError.
+        cfg = profile.strategy.timeframes.get(tf)
+        if cfg is None:
+            continue
         df2 = df.copy()
         df2["time"] = pd.to_datetime(df2["time"], utc=True)
         df2 = drop_incomplete_last_bar(df2, tf)
