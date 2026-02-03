@@ -25,3 +25,7 @@ Leave as repo root (where `requirements.txt` and `frontend/` live).
 - **PORT** is set by the PaaS; the app binds to `0.0.0.0` and that port.
 - **Profiles and logs** are stored on the server filesystem; they may be reset on redeploy unless you add a persistent volume (Railway) or move to a database later.
 - **Run loop / MT5:** The web app runs in the cloud; actual trading (run_loop) still needs to run on a machine with MT5 or a broker connection.
+
+## V2: FXCM / OANDA
+
+Planned for a future version: broker adapters for FXCM and OANDA so the app can run and trade without MetaTrader 5. Until then, MT5 remains optional (install via `requirements-mt5.txt` on Windows) for legacy trading; the UI and API work without it for deployment to Linux PaaS.

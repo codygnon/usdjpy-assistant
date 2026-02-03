@@ -1,0 +1,3 @@
+# Optional: install on Windows when using MetaTrader 5 for trading.
+# Not required for UI-only deployment (e.g. Railway/Render).
+MetaTrader5

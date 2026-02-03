@@ -1,6 +1,5 @@
 pandas
 numpy
-MetaTrader5
 pydantic
 streamlit
 fastapi

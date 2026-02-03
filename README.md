@@ -51,6 +51,7 @@ A semi-automated trading assistant for USD/JPY on MetaTrader 5 (demo accounts).
 2. **Run SETUP_ENV.bat** (double-click)
    - Creates Python virtual environment
    - Installs all dependencies
+   - For MT5 trading on Windows, also run: `pip install -r requirements-mt5.txt`
 
 3. **Run START_APP.bat** (double-click)
    - Starts the web application

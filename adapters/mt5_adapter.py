@@ -3,10 +3,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:
+    mt5 = None  # Optional: install with pip install -r requirements-mt5.txt (Windows only)
+
 import pandas as pd
 
 from core.timeframes import Timeframe
+
+
+def _ensure_mt5() -> None:
+    """Raise a clear error if MetaTrader5 is not installed (e.g. on Linux/macOS or PaaS)."""
+    if mt5 is None:
+        raise RuntimeError(
+            "MetaTrader5 is not installed. For MT5 trading on Windows, install it with: pip install -r requirements-mt5.txt"
+        )
 
 
 @dataclass(frozen=True)
@@ -25,24 +37,29 @@ class OrderResult:
 
 
 def initialize() -> None:
+    _ensure_mt5()
     if not mt5.initialize():
         raise RuntimeError(f"MT5 initialize failed: {mt5.last_error()}")
 
 
 def shutdown() -> None:
+    _ensure_mt5()
     mt5.shutdown()
 
 
 def ensure_symbol(symbol: str) -> None:
+    _ensure_mt5()
     if not mt5.symbol_select(symbol, True):
         raise RuntimeError(f"symbol_select failed for {symbol}: {mt5.last_error()}")
 
 
 def get_account_info():
+    _ensure_mt5()
     return mt5.account_info()
 
 
 def get_tick(symbol: str) -> Tick:
+    _ensure_mt5()
     t = mt5.symbol_info_tick(symbol)
     if t is None:
         raise RuntimeError(f"symbol_info_tick returned None for {symbol}: {mt5.last_error()}")
@@ -50,6 +67,7 @@ def get_tick(symbol: str) -> Tick:
 
 
 def timeframe_to_mt5(tf: Timeframe):
+    _ensure_mt5()
     if tf == "M1":
         return mt5.TIMEFRAME_M1
     if tf == "M3":
@@ -68,6 +86,7 @@ def timeframe_to_mt5(tf: Timeframe):
 
 
 def get_bars(symbol: str, tf: Timeframe, count: int) -> pd.DataFrame:
+    _ensure_mt5()
     rates = mt5.copy_rates_from_pos(symbol, timeframe_to_mt5(tf), 0, count)
     if rates is None or len(rates) == 0:
         raise RuntimeError(f"copy_rates_from_pos returned no data for {symbol} {tf}: {mt5.last_error()}")
@@ -77,6 +96,7 @@ def get_bars(symbol: str, tf: Timeframe, count: int) -> pd.DataFrame:
 
 
 def is_demo_account() -> bool:
+    _ensure_mt5()
     acct = mt5.account_info()
     if acct is None:
         raise RuntimeError("account_info is None (not logged in?)")
@@ -85,6 +105,7 @@ def is_demo_account() -> bool:
 
 
 def get_open_positions(symbol: str | None = None):
+    _ensure_mt5()
     if symbol:
         return mt5.positions_get(symbol=symbol)
     return mt5.positions_get()
@@ -98,6 +119,7 @@ def _allowed_filling(symbol: str) -> int:
     ORDER_FILLING_* constants are 0, 1, 2, so we map the first allowed bit.
     Fallback to IOC if info is unavailable.
     """
+    _ensure_mt5()
     info = mt5.symbol_info(symbol)
     mode = int(getattr(info, "filling_mode", 0) or 0) if info is not None else 0
     # Prefer FOK, then IOC, then RETURN
@@ -122,6 +144,7 @@ def order_send_market(
     magic: int = 20260128,
     comment: str = "",
 ) -> OrderResult:
+    _ensure_mt5()
     tick = mt5.symbol_info_tick(symbol)
     if tick is None:
         raise RuntimeError(f"symbol_info_tick returned None for {symbol}: {mt5.last_error()}")
@@ -185,6 +208,7 @@ def order_send_pending_limit(
     - Buy limit: price < bid (we want price to fall to X).
     - Sell limit: price > ask (we want price to rise to X).
     """
+    _ensure_mt5()
     order_type = mt5.ORDER_TYPE_BUY_LIMIT if side == "buy" else mt5.ORDER_TYPE_SELL_LIMIT
     filling = _allowed_filling(symbol)
     
@@ -244,6 +268,7 @@ def close_position(
         magic: Magic number
         comment: Order comment
     """
+    _ensure_mt5()
     tick = mt5.symbol_info_tick(symbol)
     if tick is None:
         raise RuntimeError(f"symbol_info_tick returned None for {symbol}: {mt5.last_error()}")
@@ -289,6 +314,7 @@ def close_position(
 
 def get_position_by_ticket(ticket: int):
     """Get a specific position by ticket number (position_id). Returns None if not found."""
+    _ensure_mt5()
     positions = mt5.positions_get(ticket=ticket)
     if positions is None or len(positions) == 0:
         return None
@@ -301,6 +327,7 @@ def get_position_id_from_deal(deal_id: int) -> int | None:
     After order_send returns a deal_id, use this to get the position_id
     that we need for later sync operations.
     """
+    _ensure_mt5()
     from datetime import datetime, timedelta, timezone
     
     # Search recent history for this deal
@@ -327,6 +354,7 @@ def get_position_id_from_order(order_id: int) -> int | None:
     
     Alternative to get_position_id_from_deal when we have order_id instead of deal_id.
     """
+    _ensure_mt5()
     from datetime import datetime, timedelta, timezone
     
     date_from = datetime.now(timezone.utc) - timedelta(days=7)
@@ -369,6 +397,7 @@ def get_deals_by_position(ticket: int) -> list:
     
     Returns list of deal objects, or empty list if none found.
     """
+    _ensure_mt5()
     from datetime import datetime, timedelta, timezone
     
     # Search deals from 90 days ago to now (extended for older closed positions)
@@ -386,6 +415,7 @@ def get_deal_profit(deal_id: int) -> float | None:
     
     Returns None if deal not found.
     """
+    _ensure_mt5()
     from datetime import datetime, timedelta, timezone
     
     date_from = datetime.now(timezone.utc) - timedelta(days=1)
@@ -490,6 +520,7 @@ def get_closed_positions_from_history(
     Returns:
         List of ClosedPositionInfo for each closed position found.
     """
+    _ensure_mt5()
     from datetime import datetime, timedelta, timezone
     from collections import defaultdict
     
@@ -621,6 +652,8 @@ def get_mt5_report_stats(
     Uses the same underlying data as MT5's Summary / Profit & Loss report.
     Returns None if MT5 is not available or fails.
     """
+    if mt5 is None:
+        return None
     try:
         mt5.initialize()
     except Exception:
@@ -706,6 +739,8 @@ def get_mt5_full_report(
     
     Returns dict with summary, closed_pl, long_short; or None if MT5 unavailable.
     """
+    if mt5 is None:
+        return None
     try:
         mt5.initialize()
     except Exception:
