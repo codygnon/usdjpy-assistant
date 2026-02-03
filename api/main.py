@@ -1313,8 +1313,8 @@ def sync_trades_endpoint(
         # Sync closed trades (detect externally closed)
         synced_count = sync_closed_trades(profile, store)
         
-        # Import manual trades from MT5 history
-        imported_count = import_mt5_history(profile, store, days_back=30)
+        # Import manual trades from broker history (MT5 or OANDA activity/transactions)
+        imported_count = import_mt5_history(profile, store, days_back=90)
         
         # Backfill profit (force_refresh=True recomputes all to fix partial-close bug)
         profit_backfilled = backfill_profit(profile, store, force_refresh=force_profit_refresh)

@@ -63,6 +63,28 @@ def _lots_to_units(volume_lots: float) -> int:
     return int(round(volume_lots * 100_000))
 
 
+def _instrument_to_symbol(instrument: str) -> str:
+    """USD_JPY -> USDJPY."""
+    return (instrument or "").replace("_", "").upper()
+
+
+@dataclass(frozen=True)
+class OandaClosedPositionInfo:
+    """Closed position from OANDA history; same shape as mt5_adapter.ClosedPositionInfo for import."""
+    position_id: int
+    symbol: str
+    side: str
+    entry_price: float
+    exit_price: float
+    entry_time_utc: str
+    exit_time_utc: str
+    volume: float
+    profit: float
+    commission: float
+    swap: float
+    pips: float | None
+
+
 class OandaAdapter:
     """Adapter for OANDA v3 REST API. Use get_oanda_adapter(profile) to build from profile."""
 
@@ -384,7 +406,131 @@ class OandaAdapter:
         return None
 
     def get_closed_positions_from_history(self, days_back: int = 30, symbol: str | None = None, pip_size: float | None = None) -> list:
-        return []  # Stub for OANDA; full impl would use /transactions
+        """Fetch closed positions from OANDA transaction history (activity).
+        Pairs ORDER_FILL open/close by tradeID and returns list compatible with import_mt5_history.
+        """
+        aid = self._get_account_id()
+        to_ts = datetime.now(timezone.utc)
+        from_ts = to_ts - timedelta(days=min(days_back, 90))
+        from_param = from_ts.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+        to_param = to_ts.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+        try:
+            data = self._req(
+                "GET",
+                f"/v3/accounts/{aid}/transactions",
+                params={"from": from_param, "to": to_param, "pageSize": 500},
+            )
+        except Exception as e:
+            print(f"[oanda] get_closed_positions_from_history: API request failed: {e}")
+            return []
+        pages = data.get("pages") or []
+        count = data.get("count", 0)
+        opens: dict[str, dict] = {}   # tradeID -> { instrument, price, time, units }
+        closes: dict[str, dict] = {}  # tradeID -> { price, time, pl, units }
+
+        def process_transactions(transactions: list) -> None:
+            for t in transactions or []:
+                if t.get("type") != "ORDER_FILL":
+                    continue
+                # Open: tradeOpened
+                opened = t.get("tradeOpened") or {}
+                tid = opened.get("tradeID")
+                if tid:
+                    tid_str = str(tid)
+                    units = int(float(t.get("units") or 0))
+                    opens[tid_str] = {
+                        "instrument": t.get("instrument") or "",
+                        "price": float(t.get("price") or 0),
+                        "time": str(t.get("time") or ""),
+                        "units": units,
+                    }
+                # Close: tradeClosed or tradesClosed
+                closed = t.get("tradeClosed") or {}
+                if closed.get("tradeID"):
+                    tid_str = str(closed.get("tradeID"))
+                    pl = float(t.get("pl") or closed.get("realizedPL") or 0)
+                    closes[tid_str] = {
+                        "price": float(t.get("price") or 0),
+                        "time": str(t.get("time") or ""),
+                        "pl": pl,
+                        "units": int(float(closed.get("units") or 0)),
+                    }
+                for tc in t.get("tradesClosed") or []:
+                    tid_str = str(tc.get("tradeID") or "")
+                    if not tid_str:
+                        continue
+                    pl = float(t.get("pl") or tc.get("realizedPL") or 0)
+                    closes[tid_str] = {
+                        "price": float(t.get("price") or 0),
+                        "time": str(t.get("time") or ""),
+                        "pl": pl,
+                        "units": int(float(tc.get("units") or 0)),
+                    }
+
+        # Process initial response transactions if present (some APIs return first page in body)
+        process_transactions(data.get("transactions") or [])
+        for page_path in pages:
+            if not page_path:
+                continue
+            if page_path.startswith("http"):
+                page_url = page_path
+            elif page_path.startswith("/"):
+                page_url = self._base + page_path
+            else:
+                page_url = self._base + "/" + page_path
+            try:
+                page_resp = self._session.get(page_url)
+                if page_resp.status_code != 200:
+                    print(f"[oanda] get_closed_positions_from_history: page returned {page_resp.status_code}")
+                    continue
+                page_data = page_resp.json()
+                process_transactions(page_data.get("transactions") or [])
+            except Exception as e:
+                print(f"[oanda] get_closed_positions_from_history: page fetch failed: {e}")
+                continue
+        if not pages and count == 0 and not data.get("transactions"):
+            print(f"[oanda] get_closed_positions_from_history: no transactions in range {from_param} to {to_param}")
+        results: list[OandaClosedPositionInfo] = []
+        want_symbol = (_instrument_to_symbol(symbol) if symbol else "").upper()
+        for tid_str, close_info in closes.items():
+            open_info = opens.get(tid_str)
+            if not open_info:
+                continue
+            inst = open_info.get("instrument") or ""
+            sym = _instrument_to_symbol(inst)
+            if want_symbol and sym != want_symbol:
+                continue
+            entry_price = open_info["price"]
+            exit_price = close_info["price"]
+            entry_time_utc = open_info["time"]
+            exit_time_utc = close_info["time"]
+            units = abs(open_info["units"])
+            volume = units / 100_000.0
+            profit = close_info["pl"]
+            side = "buy" if open_info["units"] and int(open_info["units"]) > 0 else "sell"
+            pips_val = None
+            if pip_size and pip_size > 0:
+                if side == "buy":
+                    pips_val = (exit_price - entry_price) / pip_size
+                else:
+                    pips_val = (entry_price - exit_price) / pip_size
+            results.append(OandaClosedPositionInfo(
+                position_id=int(tid_str),
+                symbol=sym,
+                side=side,
+                entry_price=entry_price,
+                exit_price=exit_price,
+                entry_time_utc=entry_time_utc,
+                exit_time_utc=exit_time_utc,
+                volume=volume,
+                profit=profit,
+                commission=0.0,
+                swap=0.0,
+                pips=pips_val,
+            ))
+        # Sort by exit time descending (most recent first)
+        results.sort(key=lambda p: p.exit_time_utc or "", reverse=True)
+        return results
 
     def get_mt5_report_stats(self, symbol: str | None = None, pip_size: float | None = None, days_back: int = 90):
         return None

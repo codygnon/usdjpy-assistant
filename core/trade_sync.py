@@ -228,6 +228,11 @@ def import_mt5_history(
     
     imported_count = 0
     
+    is_oanda = getattr(profile, "broker_type", None) == "oanda"
+    prefix = "oanda_" if is_oanda else "mt5_"
+    notes_tag = "imported_from_oanda_history" if is_oanda else "imported_from_mt5_history"
+    exit_reason_tag = "oanda_history_import" if is_oanda else "mt5_history_import"
+
     for pos in closed_positions:
         # Check if we already have this position
         if store.trade_exists_by_position_id(profile.profile_name, pos.position_id):
@@ -242,8 +247,8 @@ def import_mt5_history(
         except Exception:
             pass
         
-        # Create trade record
-        trade_id = f"mt5_{pos.position_id}"
+        # Create trade record (prefix by broker so OANDA and MT5 IDs don't collide)
+        trade_id = f"{prefix}{pos.position_id}"
         
         store.insert_trade({
             "trade_id": trade_id,
@@ -256,11 +261,11 @@ def import_mt5_history(
             "stop_price": None,  # Unknown for imported trades
             "target_price": None,  # Unknown for imported trades
             "size_lots": pos.volume,
-            "notes": "imported_from_mt5_history",
+            "notes": notes_tag,
             "snapshot_id": None,
             "exit_price": pos.exit_price,
             "exit_timestamp_utc": pos.exit_time_utc,
-            "exit_reason": "mt5_history_import",
+            "exit_reason": exit_reason_tag,
             "pips": pos.pips,
             "risk_pips": None,
             "r_multiple": None,
@@ -274,7 +279,8 @@ def import_mt5_history(
             "profit": float(pos.profit),
         })
         
-        print(f"[trade_sync] Imported broker history: {trade_id}, {pos.side} {pos.symbol}, pips={pos.pips:.2f if pos.pips else 0}")
+        pips_disp = f"{pos.pips:.2f}" if pos.pips is not None else "n/a"
+        print(f"[trade_sync] Imported broker history: {trade_id}, {pos.side} {pos.symbol}, pips={pips_disp}")
         imported_count += 1
     
     return imported_count

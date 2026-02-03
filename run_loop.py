@@ -36,7 +36,7 @@ from core.signal_engine import (
     detect_latest_confirmed_cross_signal,
     evaluate_filters,
 )
-from core.trade_sync import sync_closed_trades
+from core.trade_sync import sync_closed_trades, import_mt5_history
 from storage.sqlite_store import SqliteStore
 
 
@@ -170,12 +170,16 @@ def main() -> None:
             if loop_count % 20 == 0:
                 print(f"[{profile.profile_name}] heartbeat loop={loop_count}")
             
-            # Periodic trade sync (detect externally closed trades)
+            # Periodic trade sync (detect externally closed trades; import from broker history)
             if loop_count - last_sync_loop >= SYNC_INTERVAL_LOOPS:
                 try:
                     synced = sync_closed_trades(profile, store)
                     if synced > 0:
                         print(f"[{profile.profile_name}] synced {synced} externally closed trade(s)")
+                    # Import closed trades from broker history (OANDA activity / MT5 history) every sync
+                    imported = import_mt5_history(profile, store, days_back=90)
+                    if imported > 0:
+                        print(f"[{profile.profile_name}] imported {imported} trade(s) from broker history")
                 except Exception as e:
                     print(f"[{profile.profile_name}] sync error: {e}")
                 last_sync_loop = loop_count
