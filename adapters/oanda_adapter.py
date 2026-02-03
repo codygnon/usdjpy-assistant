@@ -491,14 +491,17 @@ class OandaAdapter:
         if not pages and count == 0 and not data.get("transactions"):
             print(f"[oanda] get_closed_positions_from_history: no transactions in range {from_param} to {to_param}")
         results: list[OandaClosedPositionInfo] = []
+        # Compare base symbol so "USDJPY.PRO" profile matches OANDA instrument "USD_JPY" -> USDJPY
         want_symbol = (_instrument_to_symbol(symbol) if symbol else "").upper()
+        want_base = (want_symbol.split(".")[0] if want_symbol else "")
         for tid_str, close_info in closes.items():
             open_info = opens.get(tid_str)
             if not open_info:
                 continue
             inst = open_info.get("instrument") or ""
             sym = _instrument_to_symbol(inst)
-            if want_symbol and sym != want_symbol:
+            sym_base = (sym.split(".")[0] if sym else "")
+            if want_base and sym_base != want_base:
                 continue
             entry_price = open_info["price"]
             exit_price = close_info["price"]
@@ -530,6 +533,10 @@ class OandaAdapter:
             ))
         # Sort by exit time descending (most recent first)
         results.sort(key=lambda p: p.exit_time_utc or "", reverse=True)
+        if count > 0 and len(results) == 0 and (opens or closes):
+            print(f"[oanda] get_closed_positions_from_history: {len(opens)} opens, {len(closes)} closes -> 0 matched (check symbol filter or open/close pairing)")
+        elif len(results) > 0:
+            print(f"[oanda] get_closed_positions_from_history: returning {len(results)} closed position(s)")
         return results
 
     def get_mt5_report_stats(self, symbol: str | None = None, pip_size: float | None = None, days_back: int = 90):

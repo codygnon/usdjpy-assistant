@@ -226,6 +226,8 @@ def import_mt5_history(
         except Exception:
             pass
     
+    if getattr(profile, "broker_type", None) == "oanda" and closed_positions:
+        print(f"[trade_sync] OANDA returned {len(closed_positions)} closed position(s) for import")
     imported_count = 0
     
     is_oanda = getattr(profile, "broker_type", None) == "oanda"
