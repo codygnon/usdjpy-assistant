@@ -583,6 +583,14 @@ def apply_preset(profile: ProfileV1, preset_id: PresetId | str) -> ProfileV1:
     merged = _deep_merge(base_dict, patch)
     # Keep profile editor risk limits unchanged (only editable in Profile Editor)
     merged["risk"] = deepcopy(limits)
+    # Broker connection: never overwrite with preset (only editable in Profile Editor)
+    for key in ("broker_type", "oanda_token", "oanda_account_id", "oanda_environment"):
+        if key in base_dict:
+            merged[key] = deepcopy(base_dict[key])
+    # Display/account fields: keep from profile
+    for key in ("display_currency", "deposit_amount", "leverage_ratio", "created_utc"):
+        if key in base_dict:
+            merged[key] = deepcopy(base_dict[key])
     # Set effective_risk from preset, capped by profile limits
     if "risk" in patch and patch["risk"]:
         merged["effective_risk"] = _effective_risk_capped_by_limits(patch["risk"], limits)

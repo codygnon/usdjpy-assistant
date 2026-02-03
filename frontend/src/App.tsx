@@ -1497,12 +1497,21 @@ function CustomWizard({ profile, currentProfile, onComplete }: { profile: Profil
 
   // Build profile from wizard choices
   const buildProfileFromWizard = (): Record<string, unknown> => {
-    // Base configuration
+    const cur = currentProfile as Record<string, unknown> | null | undefined;
+    // Base configuration; preserve broker and profile-editor-only fields from current profile
     const baseProfile: Record<string, unknown> = {
       schema_version: 1,
       profile_name: profile.name,
-      symbol: (currentProfile as Record<string, unknown> | null)?.symbol ?? 'USDJPY',
+      symbol: cur?.symbol ?? 'USDJPY',
       pip_size: 0.01,
+      broker_type: cur?.broker_type ?? 'mt5',
+      oanda_token: cur?.oanda_token ?? null,
+      oanda_account_id: cur?.oanda_account_id ?? null,
+      oanda_environment: cur?.oanda_environment ?? 'practice',
+      display_currency: cur?.display_currency ?? 'USD',
+      deposit_amount: cur?.deposit_amount ?? null,
+      leverage_ratio: cur?.leverage_ratio ?? null,
+      created_utc: cur?.created_utc ?? new Date().toISOString().slice(0, 19).replace('T', ' ') + 'Z',
       risk: {},
       strategy: {
         timeframes: {},
@@ -1881,6 +1890,15 @@ function CustomWizard({ profile, currentProfile, onComplete }: { profile: Profil
         max_trades_per_day: cap((wizardRisk.max_trades_per_day as number) ?? 10, (limits.max_trades_per_day as number) ?? 100),
         max_open_trades: cap((wizardRisk.max_open_trades as number) ?? 2, (limits.max_open_trades as number) ?? 10),
       };
+      // Broker and profile-editor-only fields: never overwrite with wizard; keep current profile values
+      profileData.broker_type = currentProfile?.broker_type ?? 'mt5';
+      profileData.oanda_token = currentProfile?.oanda_token ?? null;
+      profileData.oanda_account_id = currentProfile?.oanda_account_id ?? null;
+      profileData.oanda_environment = currentProfile?.oanda_environment ?? 'practice';
+      profileData.display_currency = currentProfile?.display_currency ?? 'USD';
+      profileData.deposit_amount = currentProfile?.deposit_amount ?? null;
+      profileData.leverage_ratio = currentProfile?.leverage_ratio ?? null;
+      if (currentProfile?.created_utc) profileData.created_utc = currentProfile.created_utc;
       await api.saveProfile(profile.path, profileData);
       onComplete();
     } catch (e: unknown) {
