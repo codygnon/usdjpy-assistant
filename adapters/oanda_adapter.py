@@ -64,8 +64,9 @@ def _lots_to_units(volume_lots: float) -> int:
 
 
 def _instrument_to_symbol(instrument: str) -> str:
-    """USD_JPY -> USDJPY."""
-    return (instrument or "").replace("_", "").upper()
+    """USD_JPY or USD/JPY -> USDJPY (OANDA may use either format)."""
+    s = (instrument or "").replace("_", "").replace("/", "").upper()
+    return s
 
 
 @dataclass(frozen=True)

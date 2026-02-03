@@ -102,7 +102,9 @@ def evaluate_trade(
         hard.append("stop is required")
     if candidate.stop_price is not None:
         stop_pips = _pip_distance(candidate.entry_price, candidate.stop_price, pip_size)
-        if stop_pips < r.min_stop_pips:
+        # Use small tolerance so 10.0 vs min_stop_pips 10.0 does not reject due to float rounding
+        min_required = float(r.min_stop_pips) - 1e-6
+        if stop_pips < min_required:
             hard.append(f"stop too tight: {stop_pips:.1f} < min_stop_pips {r.min_stop_pips:.1f}")
 
         # sanity: stop must be on correct side
