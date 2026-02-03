@@ -3272,6 +3272,59 @@ function ProfilePage({ profile, authStatus, onAuthChange }: { profile: Profile; 
         </div>
 
         <div className="card">
+          <h3 className="card-title">Broker Connection</h3>
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
+            Choose MetaTrader 5 (Windows) or OANDA (works on Mac/Linux and PaaS like Railway). OANDA is available in Japan and Canada.
+          </p>
+          <div className="form-group">
+            <label>Broker Type</label>
+            <select
+              value={(data.broker_type as string) || 'mt5'}
+              onChange={(e) => updateTopLevel('broker_type', e.target.value as 'mt5' | 'oanda')}
+            >
+              <option value="mt5">MetaTrader 5 (MT5)</option>
+              <option value="oanda">OANDA</option>
+            </select>
+          </div>
+          {(data.broker_type as string) === 'oanda' && (
+            <>
+              <div className="form-group">
+                <label>OANDA API Key</label>
+                <input
+                  type="password"
+                  autoComplete="off"
+                  placeholder="Paste your OANDA API token"
+                  value={(data.oanda_token as string) || ''}
+                  onChange={(e) => updateTopLevel('oanda_token', e.target.value || null)}
+                />
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                  Create a token in OANDA Practice or Live account: Account → Manage API Access.
+                </p>
+              </div>
+              <div className="form-group">
+                <label>OANDA Account ID (optional)</label>
+                <input
+                  type="text"
+                  placeholder="Leave blank to use first account"
+                  value={(data.oanda_account_id as string) || ''}
+                  onChange={(e) => updateTopLevel('oanda_account_id', e.target.value || null)}
+                />
+              </div>
+              <div className="form-group">
+                <label>OANDA Environment</label>
+                <select
+                  value={(data.oanda_environment as string) || 'practice'}
+                  onChange={(e) => updateTopLevel('oanda_environment', e.target.value as 'practice' | 'live')}
+                >
+                  <option value="practice">Practice (demo)</option>
+                  <option value="live">Live</option>
+                </select>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="card">
           <h3 className="card-title">Risk Settings</h3>
           <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 16, marginTop: -8 }}>
             These limits are final and cannot be overridden by presets or the custom wizard.
