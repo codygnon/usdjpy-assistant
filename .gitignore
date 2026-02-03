@@ -9,7 +9,7 @@ __pycache__/
 .Python
 *.egg-info/
 .eggs/
-dist/
+/dist/
 build/
 *.egg
 
