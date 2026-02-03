@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal
@@ -120,22 +121,52 @@ class OandaAdapter:
 
     def _req(self, method: str, path: str, **kwargs) -> dict:
         url = f"{self._base}{path}"
-        resp = self._session.request(method, url, **kwargs)
-        if resp.status_code >= 400:
+        # Default timeout so we don't hang on stuck connections
+        if "timeout" not in kwargs:
+            kwargs["timeout"] = 30
+        last_err = None
+        max_attempts = 4  # 1 initial + 3 retries
+        for attempt in range(max_attempts):
             try:
-                err = resp.json()
-                msg = err.get("errorMessage", resp.text)
-            except Exception:
-                msg = resp.text
-            # Avoid dumping HTML (e.g. 502 Bad Gateway) into logs
-            if msg and ("<" in msg and ">" in msg):
-                msg = f"{resp.status_code} non-JSON response (e.g. Bad Gateway)"
-            elif msg and len(msg) > 300:
-                msg = msg[:300] + "..."
-            raise RuntimeError(f"OANDA API {method} {path}: {resp.status_code} {msg}")
-        if resp.status_code == 204 or not resp.content:
-            return {}
-        return resp.json()
+                resp = self._session.request(method, url, **kwargs)
+            except requests.RequestException as e:
+                last_err = e
+                if attempt < max_attempts - 1:
+                    delay = min(2 ** (attempt + 1), 60)
+                    time.sleep(delay)
+                    continue
+                raise RuntimeError(f"OANDA API {method} {path}: connection error after {max_attempts} attempts: {e}") from e
+            if resp.status_code in (502, 503, 429):
+                last_err = RuntimeError(f"OANDA API {method} {path}: {resp.status_code}")
+                if attempt < max_attempts - 1:
+                    delay = min(2 ** (attempt + 1), 60)
+                    time.sleep(delay)
+                    continue
+                try:
+                    err = resp.json()
+                    msg = err.get("errorMessage", resp.text)
+                except Exception:
+                    msg = resp.text
+                if msg and ("<" in msg and ">" in msg):
+                    msg = f"{resp.status_code} non-JSON response (e.g. Bad Gateway)"
+                elif msg and len(msg) > 300:
+                    msg = msg[:300] + "..."
+                raise RuntimeError(f"OANDA API {method} {path}: {resp.status_code} {msg}")
+            if resp.status_code >= 400:
+                try:
+                    err = resp.json()
+                    msg = err.get("errorMessage", resp.text)
+                except Exception:
+                    msg = resp.text
+                if msg and ("<" in msg and ">" in msg):
+                    msg = f"{resp.status_code} non-JSON response (e.g. Bad Gateway)"
+                elif msg and len(msg) > 300:
+                    msg = msg[:300] + "..."
+                raise RuntimeError(f"OANDA API {method} {path}: {resp.status_code} {msg}")
+            if resp.status_code == 204 or not resp.content:
+                return {}
+            return resp.json()
+        raise RuntimeError(f"OANDA API {method} {path}: unexpected retry exhaustion") from last_err
 
     def initialize(self) -> None:
         self._get_account_id()

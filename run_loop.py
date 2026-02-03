@@ -169,7 +169,8 @@ def main() -> None:
         loop_count = 0
         last_sync_loop = 0
         SYNC_INTERVAL_LOOPS = 12  # Sync every ~60 seconds (assuming 5s poll)
-        
+        _MAX_FETCH_RETRIES = 3  # Retry broker fetch this many times before sleeping and continuing
+
         while True:
             loop_count += 1
             if loop_count % 20 == 0:
@@ -195,14 +196,30 @@ def main() -> None:
             else:
                 mode = state.mode
 
-            data_by_tf = {
-                "H4": adapter.get_bars(profile.symbol, "H4", 800),
-                "M15": adapter.get_bars(profile.symbol, "M15", 2000),
-                "M1": adapter.get_bars(profile.symbol, "M1", 3000),
-            }
-            if has_ema_pullback:
-                data_by_tf["M5"] = adapter.get_bars(profile.symbol, "M5", 2000)
-            tick = adapter.get_tick(profile.symbol)
+            # Fetch market data with retries (502/503/timeouts); avoid exiting on transient broker errors
+            data_by_tf = None
+            tick = None
+            for _fetch_attempt in range(_MAX_FETCH_RETRIES):
+                try:
+                    data_by_tf = {
+                        "H4": adapter.get_bars(profile.symbol, "H4", 800),
+                        "M15": adapter.get_bars(profile.symbol, "M15", 2000),
+                        "M1": adapter.get_bars(profile.symbol, "M1", 3000),
+                    }
+                    if has_ema_pullback:
+                        data_by_tf["M5"] = adapter.get_bars(profile.symbol, "M5", 2000)
+                    tick = adapter.get_tick(profile.symbol)
+                    break
+                except Exception as _fetch_err:
+                    if _fetch_attempt < _MAX_FETCH_RETRIES - 1:
+                        _delay = min(10 * (2 **_fetch_attempt), 60)
+                        print(f"[{profile.profile_name}] broker fetch error (retry in {_delay}s): {_fetch_err}")
+                        time.sleep(_delay)
+                    else:
+                        print(f"[{profile.profile_name}] broker temporarily unavailable after {_MAX_FETCH_RETRIES} attempts, sleeping 60s then continuing: {_fetch_err}")
+                        time.sleep(60)
+            if data_by_tf is None or tick is None:
+                continue
 
             m1_df = data_by_tf["M1"]
             m1_last_time = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
