@@ -2993,10 +2993,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               {selected === 'vwap_trend' && (
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.9rem' }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>Session Filter (London + NY):</span>
+                  <span style={{ color: 'var(--text-secondary)' }}>Optional: Session Filter (London + NY)</span>
                   <select
                     value={vwapSessionFilterOn ? 'on' : 'off'}
                     onChange={(e) => setVwapSessionFilterOn(e.target.value === 'on')}
+                    title="Turn On to only allow trades during London (8–16 UTC) or NY (13–21 UTC) sessions; Off to trade any time."
                     style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
                   >
                     <option value="on">On</option>
