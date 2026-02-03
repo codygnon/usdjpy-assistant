@@ -536,8 +536,6 @@ class OandaAdapter:
         results.sort(key=lambda p: p.exit_time_utc or "", reverse=True)
         if count > 0 and len(results) == 0 and (opens or closes):
             print(f"[oanda] get_closed_positions_from_history: {len(opens)} opens, {len(closes)} closes -> 0 matched (check symbol filter or open/close pairing)")
-        elif len(results) > 0:
-            print(f"[oanda] get_closed_positions_from_history: returning {len(results)} closed position(s)")
         return results
 
     def get_mt5_report_stats(self, symbol: str | None = None, pip_size: float | None = None, days_back: int = 90):
