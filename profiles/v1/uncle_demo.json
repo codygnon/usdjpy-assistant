@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-01-28T00:00:00+00:00",
+  "profile_name": "uncle_demo",
+  "symbol": "USDJPY",
+  "pip_size": 0.01,
+  "risk": {
+    "max_lots": 2.0,
+    "require_stop": true,
+    "min_stop_pips": 10.0,
+    "max_spread_pips": 1.0,
+    "max_trades_per_day": 50,
+    "cooldown_minutes_after_loss": 5,
+    "max_open_trades": 1,
+    "risk_per_trade_pct": null,
+    "max_daily_loss_pct": null
+  },
+  "strategy": {
+    "timeframes": {
+      "M1": { "ema_fast": 13, "sma_slow": 30, "ema_stack": [8, 13, 21] },
+      "M15": { "ema_fast": 13, "sma_slow": 30, "ema_stack": null },
+      "H4": { "ema_fast": 13, "sma_slow": 30, "ema_stack": null }
+    },
+    "setups": {
+      "m1_cross_entry": {
+        "enabled": true,
+        "timeframe": "M1",
+        "ema": 13,
+        "sma": 30,
+        "confirmation": {
+          "confirm_bars": 1,
+          "require_close_on_correct_side": true,
+          "min_distance_pips": 0.0,
+          "max_wait_bars": 5
+        }
+      }
+    },
+    "filters": {
+      "alignment": {
+        "enabled": true,
+        "method": "score",
+        "weights": { "H4": 2, "M15": 1, "M1": 1 },
+        "min_score_to_trade": 2
+      },
+      "ema_stack_filter": {
+        "enabled": true,
+        "timeframe": "M1",
+        "periods": [8, 13, 21],
+        "min_separation_pips": 0.1
+      },
+      "atr_filter": {
+        "enabled": true,
+        "timeframe": "M1",
+        "atr_period": 14,
+        "min_atr_pips": 1.0,
+        "max_atr_pips": 30.0
+      }
+    }
+  },
+  "trade_management": {
+    "target": {
+      "mode": "fixed_pips",
+      "pips_default": 10.0,
+      "rr_default": 1.0
+    }
+  }
+}
+

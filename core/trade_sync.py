@@ -1,0 +1,347 @@
+"""Trade synchronization with MT5.
+
+Detects trades that were closed externally (via MT5 app) and updates the local database.
+Also supports importing closed positions from MT5 history.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
+
+import pandas as pd
+
+if TYPE_CHECKING:
+    from core.profile import ProfileV1
+    from storage.sqlite_store import SqliteStore
+
+
+def _safe_get(row: Any, key: str, default: Any = None) -> Any:
+    """Safely get a value from a sqlite3.Row or dict-like object."""
+    try:
+        val = row[key]
+        return val if val is not None else default
+    except (KeyError, IndexError, TypeError):
+        return default
+
+
+def _determine_exit_reason(
+    exit_price: float,
+    target_price: float | None,
+    stop_price: float | None,
+    side: str,
+    pip_size: float,
+) -> str:
+    """Determine if trade was closed at TP, SL, or manually by user.
+    
+    Tolerance: within 1 pip of target/stop counts as hitting it.
+    """
+    tolerance = pip_size * 1.5  # 1.5 pips tolerance
+    
+    if target_price and not pd.isna(target_price):
+        if abs(exit_price - target_price) <= tolerance:
+            return "hit_take_profit"
+    
+    if stop_price and not pd.isna(stop_price):
+        if abs(exit_price - stop_price) <= tolerance:
+            return "hit_stop_loss"
+    
+    # If we have a target and exit is before it (for profit), user closed early
+    if target_price and not pd.isna(target_price):
+        if side == "buy" and exit_price < target_price:
+            return "user_closed_early"
+        if side == "sell" and exit_price > target_price:
+            return "user_closed_early"
+    
+    return "user_closed_early"
+
+
+def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore") -> int:
+    """Check open trades in DB against MT5; update any that were closed externally.
+    
+    Uses mt5_position_id (preferred) or falls back to mt5_order_id for lookups.
+    Returns count of trades synced.
+    """
+    from adapters import mt5_adapter
+    
+    # Get open trades from our database
+    open_trades = store.list_open_trades(profile.profile_name)
+    
+    if not open_trades:
+        return 0
+    
+    # Initialize MT5
+    try:
+        mt5_adapter.initialize()
+        mt5_adapter.ensure_symbol(profile.symbol)
+    except Exception as e:
+        print(f"[trade_sync] MT5 init failed: {e}")
+        return 0
+    
+    synced_count = 0
+    pip_size = profile.pip_size
+    
+    for trade_row in open_trades:
+        trade_id = trade_row["trade_id"]
+        
+        # Get position_id - prefer mt5_position_id, fallback to looking up from order/deal
+        mt5_position_id = _safe_get(trade_row, "mt5_position_id")
+        mt5_order_id = _safe_get(trade_row, "mt5_order_id")
+        mt5_deal_id = _safe_get(trade_row, "mt5_deal_id")
+        
+        position_ticket = None
+        
+        if mt5_position_id and not pd.isna(mt5_position_id):
+            position_ticket = int(mt5_position_id)
+        elif mt5_deal_id and not pd.isna(mt5_deal_id):
+            # Try to get position_id from deal
+            position_ticket = mt5_adapter.get_position_id_from_deal(int(mt5_deal_id))
+        elif mt5_order_id and not pd.isna(mt5_order_id):
+            # Try to get position_id from order
+            position_ticket = mt5_adapter.get_position_id_from_order(int(mt5_order_id))
+        
+        if position_ticket is None:
+            # No valid identifier - can't sync
+            continue
+        
+        # If we found a position_id but didn't have it stored, update it now
+        if (not mt5_position_id or pd.isna(mt5_position_id)) and position_ticket:
+            store.update_trade(trade_id, {"mt5_position_id": position_ticket})
+        
+        # Check if position is still open in MT5
+        position = mt5_adapter.get_position_by_ticket(position_ticket)
+        
+        if position is not None:
+            # Position is still open - nothing to sync
+            continue
+        
+        # Position is not open - check if it was closed
+        close_info = mt5_adapter.get_position_close_info(position_ticket)
+        
+        if close_info is None:
+            # No close info found - might be a different issue
+            print(f"[trade_sync] No close info for position {position_ticket}, trade_id={trade_id}")
+            continue
+        
+        # Position was closed - update our database
+        entry_price = trade_row["entry_price"]
+        side = str(trade_row["side"]).lower()
+        stop_price = _safe_get(trade_row, "stop_price")
+        target_price = _safe_get(trade_row, "target_price")
+        entry_ts = trade_row["timestamp_utc"]
+        
+        exit_price = close_info.exit_price
+        exit_ts = close_info.exit_time_utc
+        
+        # Calculate pips
+        if side == "buy":
+            pips = (exit_price - entry_price) / pip_size
+        else:
+            pips = (entry_price - exit_price) / pip_size
+        
+        # Calculate R-multiple
+        risk_pips = None
+        r_multiple = None
+        if stop_price and not pd.isna(stop_price):
+            risk_pips = abs(entry_price - stop_price) / pip_size
+            if risk_pips > 0:
+                r_multiple = pips / risk_pips
+        
+        # Calculate duration
+        duration_minutes = None
+        if entry_ts:
+            try:
+                t0 = pd.to_datetime(entry_ts, utc=True)
+                t1 = pd.to_datetime(exit_ts, utc=True)
+                duration_minutes = float((t1 - t0).total_seconds() / 60.0)
+            except Exception:
+                pass
+        
+        # Determine exit reason
+        exit_reason = _determine_exit_reason(
+            exit_price=exit_price,
+            target_price=target_price,
+            stop_price=stop_price,
+            side=side,
+            pip_size=pip_size,
+        )
+        
+        # Update database
+        store.close_trade(
+            trade_id=trade_id,
+            updates={
+                "exit_price": float(exit_price),
+                "exit_timestamp_utc": exit_ts,
+                "exit_reason": exit_reason,
+                "pips": float(pips),
+                "risk_pips": float(risk_pips) if risk_pips else None,
+                "r_multiple": float(r_multiple) if r_multiple else None,
+                "duration_minutes": float(duration_minutes) if duration_minutes else None,
+                "profit": float(close_info.profit),
+            },
+        )
+        
+        print(f"[trade_sync] Synced closed trade {trade_id}: exit={exit_price}, pips={pips:.2f}, reason={exit_reason}")
+        synced_count += 1
+    
+    return synced_count
+
+
+def import_mt5_history(
+    profile: "ProfileV1",
+    store: "SqliteStore",
+    days_back: int = 30,
+) -> int:
+    """Import closed positions from MT5 deal history that aren't already in our database.
+    
+    This imports manually-opened trades (trades opened via MT5 app, not by our program).
+    
+    Returns count of trades imported.
+    """
+    from adapters import mt5_adapter
+    
+    try:
+        mt5_adapter.initialize()
+        mt5_adapter.ensure_symbol(profile.symbol)
+    except Exception as e:
+        print(f"[trade_sync] MT5 init failed: {e}")
+        return 0
+    
+    pip_size = profile.pip_size
+    
+    # Fetch closed positions from MT5 history
+    closed_positions = mt5_adapter.get_closed_positions_from_history(
+        days_back=days_back,
+        symbol=profile.symbol,
+        pip_size=pip_size,
+    )
+    
+    imported_count = 0
+    
+    for pos in closed_positions:
+        # Check if we already have this position
+        if store.trade_exists_by_position_id(profile.profile_name, pos.position_id):
+            continue
+        
+        # Calculate duration
+        duration_minutes = None
+        try:
+            t0 = pd.to_datetime(pos.entry_time_utc, utc=True)
+            t1 = pd.to_datetime(pos.exit_time_utc, utc=True)
+            duration_minutes = float((t1 - t0).total_seconds() / 60.0)
+        except Exception:
+            pass
+        
+        # Create trade record
+        trade_id = f"mt5_{pos.position_id}"
+        
+        store.insert_trade({
+            "trade_id": trade_id,
+            "timestamp_utc": pos.entry_time_utc,
+            "profile": profile.profile_name,
+            "symbol": pos.symbol,
+            "side": pos.side,
+            "config_json": None,
+            "entry_price": pos.entry_price,
+            "stop_price": None,  # Unknown for imported trades
+            "target_price": None,  # Unknown for imported trades
+            "size_lots": pos.volume,
+            "notes": "imported_from_mt5_history",
+            "snapshot_id": None,
+            "exit_price": pos.exit_price,
+            "exit_timestamp_utc": pos.exit_time_utc,
+            "exit_reason": "mt5_history_import",
+            "pips": pos.pips,
+            "risk_pips": None,
+            "r_multiple": None,
+            "duration_minutes": duration_minutes,
+            "mt5_order_id": None,
+            "preset_name": profile.active_preset_name or "Unknown (imported)",
+            "mt5_deal_id": None,
+            "mt5_retcode": None,
+            "mt5_position_id": pos.position_id,
+            "opened_by": "manual",
+            "profit": float(pos.profit),
+        })
+        
+        print(f"[trade_sync] Imported MT5 history: {trade_id}, {pos.side} {pos.symbol}, pips={pos.pips:.2f if pos.pips else 0}")
+        imported_count += 1
+    
+    return imported_count
+
+
+def backfill_position_ids(profile: "ProfileV1", store: "SqliteStore") -> int:
+    """Backfill mt5_position_id for existing trades that have deal_id or order_id but no position_id.
+    
+    Tries get_position_id_from_deal first, then get_position_id_from_order. Returns count updated.
+    """
+    from adapters import mt5_adapter
+    
+    trades = store.get_trades_missing_position_id(profile.profile_name)
+    
+    if not trades:
+        return 0
+    
+    try:
+        mt5_adapter.initialize()
+    except Exception as e:
+        print(f"[trade_sync] MT5 init failed: {e}")
+        return 0
+    
+    updated_count = 0
+    
+    for trade_row in trades:
+        trade_id = trade_row["trade_id"]
+        mt5_deal_id = _safe_get(trade_row, "mt5_deal_id")
+        mt5_order_id = _safe_get(trade_row, "mt5_order_id")
+        
+        position_id = None
+        
+        if mt5_deal_id and not pd.isna(mt5_deal_id):
+            position_id = mt5_adapter.get_position_id_from_deal(int(mt5_deal_id))
+        
+        if position_id is None and mt5_order_id and not pd.isna(mt5_order_id):
+            position_id = mt5_adapter.get_position_id_from_order(int(mt5_order_id))
+        
+        if position_id:
+            store.update_trade(trade_id, {"mt5_position_id": position_id})
+            print(f"[trade_sync] Backfilled position_id={position_id} for trade {trade_id}")
+            updated_count += 1
+    
+    return updated_count
+
+
+def backfill_profit(profile: "ProfileV1", store: "SqliteStore", force_refresh: bool = False) -> int:
+    """Backfill profit for closed trades that have mt5_position_id.
+    
+    Fetches profit from MT5 (summed across partial closes). Returns count updated.
+    If force_refresh=True, overwrites existing profit to fix incorrect data.
+    """
+    from adapters import mt5_adapter
+    
+    trades = store.get_trades_missing_profit(profile.profile_name, force_refresh=force_refresh)
+    
+    if not trades:
+        return 0
+    
+    try:
+        mt5_adapter.initialize()
+    except Exception as e:
+        print(f"[trade_sync] MT5 init failed for profit backfill: {e}")
+        return 0
+    
+    updated_count = 0
+    
+    for trade_row in trades:
+        trade_id = trade_row["trade_id"]
+        mt5_position_id = _safe_get(trade_row, "mt5_position_id")
+        
+        if not mt5_position_id or pd.isna(mt5_position_id):
+            continue
+        
+        close_info = mt5_adapter.get_position_close_info(int(mt5_position_id))
+        if close_info:
+            store.update_trade(trade_id, {"profit": float(close_info.profit)})
+            print(f"[trade_sync] Backfilled profit={close_info.profit:.2f} for trade {trade_id}")
+            updated_count += 1
+    
+    return updated_count

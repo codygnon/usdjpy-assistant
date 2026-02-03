@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-02-02T23:52:03+00:00",
+  "profile_name": "cody_demo",
+  "symbol": "USDJPY.PRO",
+  "pip_size": 0.01,
+  "display_currency": "USD",
+  "deposit_amount": null,
+  "leverage_ratio": null,
+  "active_preset_name": "Custom: Scalp/Agg/MS",
+  "risk": {
+    "max_lots": 7.1,
+    "require_stop": true,
+    "min_stop_pips": 5.0,
+    "max_spread_pips": 2.9,
+    "max_trades_per_day": 25,
+    "cooldown_minutes_after_loss": 0,
+    "max_open_trades": 3,
+    "risk_per_trade_pct": 2.0,
+    "max_daily_loss_pct": 6.0
+  },
+  "effective_risk": {
+    "max_lots": 7.1,
+    "require_stop": true,
+    "min_stop_pips": 10.0,
+    "max_spread_pips": 1.7,
+    "max_trades_per_day": 25,
+    "cooldown_minutes_after_loss": 0,
+    "max_open_trades": 3,
+    "risk_per_trade_pct": 2.0,
+    "max_daily_loss_pct": 6.0
+  },
+  "strategy": {
+    "timeframes": {
+      "M1": {
+        "ema_fast": 9,
+        "sma_slow": 21,
+        "ema_stack": [
+          5,
+          9,
+          13
+        ]
+      },
+      "M15": {
+        "ema_fast": 9,
+        "sma_slow": 21,
+        "ema_stack": [
+          5,
+          9,
+          13
+        ]
+      },
+      "H4": {
+        "ema_fast": 13,
+        "sma_slow": 30,
+        "ema_stack": [
+          5,
+          9,
+          13
+        ]
+      }
+    },
+    "setups": {
+      "m1_cross_entry": {
+        "enabled": true,
+        "timeframe": "M1",
+        "ema": 5,
+        "sma": 13,
+        "confirmation": {
+          "confirm_bars": 1,
+          "require_close_on_correct_side": true,
+          "min_distance_pips": 0.0,
+          "max_wait_bars": 3
+        }
+      }
+    },
+    "filters": {
+      "alignment": {
+        "enabled": false,
+        "method": "score",
+        "weights": {
+          "H4": 1,
+          "M15": 1,
+          "M1": 1
+        },
+        "min_score_to_trade": -3
+      },
+      "ema_stack_filter": {
+        "enabled": false,
+        "timeframe": "M1",
+        "periods": [
+          8,
+          13,
+          21
+        ],
+        "min_separation_pips": 0.0
+      },
+      "atr_filter": {
+        "enabled": false,
+        "timeframe": "M1",
+        "atr_period": 14,
+        "min_atr_pips": 0.0,
+        "max_atr_pips": null
+      }
+    }
+  },
+  "trade_management": {
+    "target": {
+      "mode": "fixed_pips",
+      "pips_default": 8.0,
+      "rr_default": 1.0
+    }
+  },
+  "execution": {
+    "policies": [
+      {
+        "type": "bollinger_bands",
+        "id": "custom_ms_a_bb_buy",
+        "enabled": true,
+        "timeframe": "M1",
+        "period": 20,
+        "std_dev": 2.0,
+        "trigger": "lower_band_buy",
+        "regime": "bull",
+        "side": "buy",
+        "tp_pips": 8.0,
+        "sl_pips": 5.0
+      },
+      {
+        "type": "bollinger_bands",
+        "id": "custom_ms_a_bb_sell",
+        "enabled": true,
+        "timeframe": "M1",
+        "period": 20,
+        "std_dev": 2.0,
+        "trigger": "upper_band_sell",
+        "regime": "bear",
+        "side": "sell",
+        "tp_pips": 8.0,
+        "sl_pips": 5.0
+      },
+      {
+        "type": "vwap",
+        "id": "custom_ms_b_vwap_buy",
+        "enabled": true,
+        "timeframe": "M1",
+        "trigger": "cross_above",
+        "side": "buy",
+        "tp_pips": 8.0,
+        "sl_pips": 5.0
+      },
+      {
+        "type": "vwap",
+        "id": "custom_ms_b_vwap_sell",
+        "enabled": true,
+        "timeframe": "M1",
+        "trigger": "cross_below",
+        "side": "sell",
+        "tp_pips": 8.0,
+        "sl_pips": 5.0
+      }
+    ],
+    "loop_poll_seconds": 3.0,
+    "loop_poll_seconds_fast": 1.0
+  }
+}

@@ -1,0 +1,50 @@
+# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+
+# Secrets and local runtime (do not commit auth or live DBs)
+logs/
+*.db
+*.db-shm
+*.db-wal
+auth.json
+storage/*.db
+
+# Keep example profiles for setup; ignore if you add real keys later
+# profiles/*.json
+# Uncomment above and add profiles/v1/*.json to ignore if needed
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env and logs
+.env
+.env.local
+*.log
+.streamlit/secrets.toml
+
+# Cursor / plan files (optional)
+.cursor/

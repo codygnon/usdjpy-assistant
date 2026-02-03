@@ -1,0 +1,7 @@
+pandas
+numpy
+MetaTrader5
+pydantic
+streamlit
+fastapi
+uvicorn[standard]

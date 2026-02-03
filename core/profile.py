@@ -1,0 +1,447 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Annotated, Any, Literal, Optional, Union
+
+from pydantic import BaseModel, Field, ValidationError
+from pydantic.config import ConfigDict
+
+
+SchemaVersion = Literal[1]
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+class RiskConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    max_lots: float = 0.2
+    require_stop: bool = True
+    min_stop_pips: float = 10.0
+    max_spread_pips: float = 0.8
+    max_trades_per_day: int = 10
+
+    # Optional advanced controls (v1)
+    cooldown_minutes_after_loss: int = 0
+    max_open_trades: int = 1
+    risk_per_trade_pct: Optional[float] = None  # if set, sizing can use stop distance + equity
+    max_daily_loss_pct: Optional[float] = None  # if set, can stop trading after reaching limit
+
+
+class TimeframeIndicators(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ema_fast: int = 13
+    sma_slow: int = 30
+    ema_stack: Optional[list[int]] = None  # e.g. [8, 13, 21]
+
+
+class ConfirmationConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirm_bars: int = 1
+    require_close_on_correct_side: bool = True
+    min_distance_pips: float = 0.0
+    max_wait_bars: int = 5
+
+
+class CrossSetup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    timeframe: Literal["M1", "M15", "H4"] = "M1"
+    ema: int = 13
+    sma: int = 30
+    confirmation: ConfirmationConfig = Field(default_factory=ConfirmationConfig)
+
+
+class AlignmentFilter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    method: Literal["score", "strict"] = "score"
+    weights: dict[Literal["H4", "M15", "M1"], int] = Field(default_factory=lambda: {"H4": 1, "M15": 1, "M1": 1})
+    min_score_to_trade: int = -3
+
+
+class EmaStackFilter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    timeframe: Literal["M1", "M15"] = "M1"
+    periods: list[int] = Field(default_factory=lambda: [8, 13, 21])
+    min_separation_pips: float = 0.0
+
+
+class AtrFilter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    timeframe: Literal["M1", "M15"] = "M1"
+    atr_period: int = 14
+    min_atr_pips: float = 0.0
+    max_atr_pips: Optional[float] = None
+
+
+class StrategyFilters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    alignment: AlignmentFilter = Field(default_factory=AlignmentFilter)
+    ema_stack_filter: EmaStackFilter = Field(default_factory=EmaStackFilter)
+    atr_filter: AtrFilter = Field(default_factory=AtrFilter)
+
+
+class StrategyConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    timeframes: dict[Literal["M1", "M15", "H4"], TimeframeIndicators] = Field(
+        default_factory=lambda: {
+            "M1": TimeframeIndicators(ema_fast=13, sma_slow=30, ema_stack=[8, 13, 21]),
+            "M15": TimeframeIndicators(ema_fast=13, sma_slow=30),
+            "H4": TimeframeIndicators(ema_fast=13, sma_slow=30),
+        }
+    )
+
+    setups: dict[str, CrossSetup] = Field(default_factory=lambda: {"m1_cross_entry": CrossSetup()})
+    filters: StrategyFilters = Field(default_factory=StrategyFilters)
+
+
+class TargetConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["fixed_pips", "rr"] = "fixed_pips"
+    pips_default: float = 10.0
+    rr_default: float = 1.0
+
+
+class TradeManagementConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target: TargetConfig = Field(default_factory=TargetConfig)
+
+
+# --- V1.1 Execution policies ---
+
+
+class ExecutionPolicyConfirmedCross(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["confirmed_cross"] = "confirmed_cross"
+    id: str = "confirmed_cross_default"
+    enabled: bool = True
+    setup_id: str = "m1_cross_entry"
+
+
+class ExecutionPolicyPriceLevelTrend(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["price_level_trend"] = "price_level_trend"
+    id: str = "price_level_trend_default"
+    enabled: bool = False
+    price_level: float = 0.0
+    side: Literal["buy", "sell"] = "buy"
+    tp_pips: float = 10.0
+    sl_pips: Optional[float] = None
+    trend_timeframes: list[Literal["M1", "M15", "H4"]] = Field(default_factory=lambda: ["M15", "M1"])
+    trend_direction: Literal["bearish", "bullish"] = "bearish"
+    max_wait_minutes: Optional[int] = None
+    use_pending_order: bool = True
+
+
+class ExecutionPolicyIndicator(BaseModel):
+    """Indicator-based policy: RSI zone + regime (and optional MACD cross). Emits candidate when conditions match."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["indicator_based"] = "indicator_based"
+    id: str = "indicator_based_default"
+    enabled: bool = False
+    timeframe: Literal["M1", "M15", "H4"] = "M15"
+    regime: Literal["bull", "bear"] = "bull"
+    side: Literal["buy", "sell"] = "buy"
+    rsi_period: int = 14
+    rsi_oversold: float = 30.0
+    rsi_overbought: float = 70.0
+    rsi_zone: Literal["oversold", "overbought", "neutral"] = "oversold"
+    use_macd_cross: bool = False
+    macd_fast: int = 12
+    macd_slow: int = 26
+    macd_signal: int = 9
+    tp_pips: float = 10.0
+    sl_pips: Optional[float] = None
+
+
+class ExecutionPolicyBreakout(BaseModel):
+    """Breakout policy: Detects consolidation via ATR and enters on range breakout."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["breakout_range"] = "breakout_range"
+    id: str = "breakout_range_default"
+    enabled: bool = False
+    timeframe: Literal["M1", "M15", "H4"] = "M15"
+    lookback_bars: int = 20  # Number of bars to calculate range
+    atr_period: int = 14
+    atr_threshold_ratio: float = 0.7  # ATR below mean * ratio = consolidation
+    breakout_buffer_pips: float = 2.0  # Buffer above/below range for breakout confirmation
+    tp_pips: float = 15.0
+    sl_pips: Optional[float] = 10.0
+    require_volume_increase: bool = False  # If true, also check for volume spike
+
+
+class ExecutionPolicySessionMomentum(BaseModel):
+    """Session momentum policy: Trades in direction of first N-minute move after session open."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["session_momentum"] = "session_momentum"
+    id: str = "session_momentum_default"
+    enabled: bool = False
+    session: Literal["tokyo", "london", "newyork"] = "london"
+    setup_minutes: int = 30  # How long after session open to measure initial move
+    momentum_threshold_pips: float = 10.0  # Minimum move to consider momentum established
+    tp_pips: float = 15.0
+    sl_pips: Optional[float] = 10.0
+    max_trades_per_session: int = 1  # Only one trade per session
+    use_session_high_low_stops: bool = False  # Use session high/low as SL instead of fixed pips
+
+
+class ExecutionPolicyBollingerBands(BaseModel):
+    """Bollinger Bands policy: Mean reversion at lower/upper band with optional regime filter."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["bollinger_bands"] = "bollinger_bands"
+    id: str = "bollinger_bands_default"
+    enabled: bool = False
+    timeframe: Literal["M1", "M15", "H4"] = "M15"
+    period: int = 20
+    std_dev: float = 2.0
+    trigger: Literal["lower_band_buy", "upper_band_sell"] = "lower_band_buy"
+    regime: Literal["bull", "bear"] = "bull"
+    side: Literal["buy", "sell"] = "buy"
+    tp_pips: float = 15.0
+    sl_pips: Optional[float] = 10.0
+
+
+class ExecutionPolicyVWAP(BaseModel):
+    """VWAP policy: Enter on price vs VWAP (cross or trend filter)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["vwap"] = "vwap"
+    id: str = "vwap_default"
+    enabled: bool = False
+    timeframe: Literal["M1", "M15", "H4"] = "M15"
+    trigger: Literal["cross_above", "cross_below", "above_buy", "below_sell"] = "cross_above"
+    side: Literal["buy", "sell"] = "buy"
+    tp_pips: float = 15.0
+    sl_pips: Optional[float] = 10.0
+
+
+ExecutionPolicy = Annotated[
+    Union[
+        ExecutionPolicyConfirmedCross,
+        ExecutionPolicyPriceLevelTrend,
+        ExecutionPolicyIndicator,
+        ExecutionPolicyBreakout,
+        ExecutionPolicySessionMomentum,
+        ExecutionPolicyBollingerBands,
+        ExecutionPolicyVWAP,
+    ],
+    Field(discriminator="type"),
+]
+
+
+class ExecutionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    policies: list[ExecutionPolicy] = Field(default_factory=list)
+    loop_poll_seconds: float = 5.0
+    loop_poll_seconds_fast: float = 2.0
+
+
+class ProfileV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: SchemaVersion = 1
+    created_utc: str = Field(default_factory=utc_now_iso)
+
+    profile_name: str
+    symbol: str
+    pip_size: float = 0.01
+
+    # Display currency for stats and logs (USD or JPY)
+    display_currency: Optional[Literal["USD", "JPY"]] = "USD"
+
+    # Account settings for risk calculation
+    deposit_amount: Optional[float] = None  # e.g., 100000.0
+    leverage_ratio: Optional[int] = None  # e.g., 100 for 1:100
+    
+    # Active preset tracking
+    active_preset_name: Optional[str] = None  # e.g., "aggressive_scalping" or "Custom: Scalp/Agg/MS"
+
+    # Profile Editor limits (final; only editable in Profile Editor). Never overwritten by presets or wizard.
+    risk: RiskConfig = Field(default_factory=RiskConfig)
+    # Effective risk for the active preset (capped by risk). Set when applying a preset or saving from wizard.
+    # Run loop and execution use this when set; otherwise use risk.
+    effective_risk: Optional[RiskConfig] = None
+
+    strategy: StrategyConfig = Field(default_factory=StrategyConfig)
+    trade_management: TradeManagementConfig = Field(default_factory=TradeManagementConfig)
+    execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+
+
+def _looks_like_v1(d: dict[str, Any]) -> bool:
+    return d.get("schema_version") == 1 and "risk" in d and "strategy" in d
+
+
+def get_effective_risk(profile: ProfileV1) -> RiskConfig:
+    """Return the risk config to use at runtime (effective preset risk capped by profile limits).
+
+    When effective_risk is set, use it but cap max_lots, max_spread_pips, max_trades_per_day,
+    max_open_trades by profile.risk so the preset never exceeds Profile Editor limits.
+    When effective_risk is None, use profile.risk (legacy behavior).
+    """
+    limits = profile.risk
+    if profile.effective_risk is None:
+        return limits
+    eff = profile.effective_risk
+    return RiskConfig(
+        max_lots=min(eff.max_lots, limits.max_lots),
+        require_stop=eff.require_stop,
+        min_stop_pips=eff.min_stop_pips,
+        max_spread_pips=min(eff.max_spread_pips, limits.max_spread_pips),
+        max_trades_per_day=min(eff.max_trades_per_day, limits.max_trades_per_day),
+        cooldown_minutes_after_loss=eff.cooldown_minutes_after_loss,
+        max_open_trades=min(eff.max_open_trades, limits.max_open_trades),
+        risk_per_trade_pct=eff.risk_per_trade_pct,
+        max_daily_loss_pct=eff.max_daily_loss_pct,
+    )
+
+
+def _default_execution() -> dict[str, Any]:
+    return {
+        "policies": [
+            {"type": "confirmed_cross", "id": "confirmed_cross_default", "enabled": True, "setup_id": "m1_cross_entry"}
+        ],
+        "loop_poll_seconds": 5.0,
+        "loop_poll_seconds_fast": 2.0,
+    }
+
+
+def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
+    """Migrate older flat profiles to ProfileV1-compatible dict.
+
+    This is intentionally conservative: it only maps known fields and fills defaults.
+    Unknown fields are ignored to avoid accidental schema bloat.
+    """
+    if _looks_like_v1(d):
+        if "execution" not in d:
+            d = {**d, "execution": _default_execution()}
+        if "display_currency" not in d:
+            d = {**d, "display_currency": "USD"}
+        # Migrate legacy preset names to single RSI preset
+        ap = d.get("active_preset_name")
+        if ap in ("mean_reversion_dip_buy", "mean_reversion_dip_sell"):
+            d = {**d, "active_preset_name": "mean_reversion_dip"}
+        return d
+
+    profile_name = d.get("profile_name") or d.get("name") or "default"
+    symbol = d.get("symbol") or "USDJPY"
+    pip_size = float(d.get("pip_size", 0.01))
+
+    max_lots = d.get("max_lots", 0.2)
+    require_stop = d.get("require_stop", True)
+    min_stop_pips = d.get("min_stop_pips", 10)
+    max_spread_pips = d.get("max_spread_pips", 2.0)
+    max_trades_per_day = d.get("max_trades_per_day", 10)
+    target_profit_pips_default = d.get("target_profit_pips_default", 10)
+
+    migrated: dict[str, Any] = {
+        "schema_version": 1,
+        "created_utc": d.get("created_utc", utc_now_iso()),
+        "profile_name": profile_name,
+        "symbol": symbol,
+        "pip_size": pip_size,
+        "risk": {
+            "max_lots": max_lots,
+            "require_stop": require_stop,
+            "min_stop_pips": min_stop_pips,
+            "max_spread_pips": max_spread_pips,
+            "max_trades_per_day": max_trades_per_day,
+        },
+        "strategy": {
+            "timeframes": {
+                "M1": {"ema_fast": 13, "sma_slow": 30, "ema_stack": [8, 13, 21]},
+                "M15": {"ema_fast": 13, "sma_slow": 30},
+                "H4": {"ema_fast": 13, "sma_slow": 30},
+            },
+            "setups": {
+                "m1_cross_entry": {
+                    "enabled": True,
+                    "timeframe": "M1",
+                    "ema": 13,
+                    "sma": 30,
+                    "confirmation": {
+                        "confirm_bars": 1,
+                        "require_close_on_correct_side": True,
+                        "min_distance_pips": 0.0,
+                        "max_wait_bars": 5,
+                    },
+                }
+            },
+            "filters": {
+                "alignment": {"enabled": False, "method": "score", "weights": {"H4": 1, "M15": 1, "M1": 1}, "min_score_to_trade": -3},
+                "ema_stack_filter": {"enabled": False, "timeframe": "M1", "periods": [8, 13, 21], "min_separation_pips": 0.0},
+                "atr_filter": {"enabled": False, "timeframe": "M1", "atr_period": 14, "min_atr_pips": 0.0, "max_atr_pips": None},
+            },
+        },
+        "trade_management": {
+            "target": {
+                "mode": "fixed_pips",
+                "pips_default": float(target_profit_pips_default),
+                "rr_default": 1.0,
+            }
+        },
+        "execution": _default_execution(),
+    }
+
+    return migrated
+
+
+def load_profile_v1(profile_path: str | Path) -> ProfileV1:
+    path = Path(profile_path)
+    raw = path.read_text(encoding="utf-8")
+    data = json_loads(raw)
+    migrated = migrate_profile_dict(data)
+    try:
+        return ProfileV1.model_validate(migrated)
+    except ValidationError as e:
+        raise ValueError(f"Invalid profile after migration: {path}\n{e}") from e
+
+
+def json_loads(s: str) -> dict[str, Any]:
+    import json
+
+    v = json.loads(s)
+    if not isinstance(v, dict):
+        raise ValueError("Profile JSON must be an object")
+    return v
+
+
+def save_profile_v1(profile: ProfileV1, out_path: str | Path) -> None:
+    import json
+
+    path = Path(out_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(profile.model_dump(), indent=2, sort_keys=False) + "\n", encoding="utf-8")
+
+
+def default_profile_for_name(profile_name: str) -> ProfileV1:
+    """Build a ProfileV1 with default settings for a new account."""
+    return ProfileV1(profile_name=profile_name, symbol="USDJPY.PRO")
+
