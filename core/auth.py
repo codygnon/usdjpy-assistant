@@ -14,10 +14,12 @@ from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# Path configuration - matches api/main.py LOGS_DIR
+# Path configuration - matches api/main.py (use same volume when set)
 # ---------------------------------------------------------------------------
+import os as _os
 BASE_DIR = Path(__file__).resolve().parent.parent
-LOGS_DIR = BASE_DIR / "logs"
+_data_base_env = _os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") or _os.environ.get("USDJPY_DATA_DIR")
+LOGS_DIR = Path(_data_base_env) / "logs" if _data_base_env else BASE_DIR / "logs"
 
 
 def _auth_path(profile_name: str) -> Path:

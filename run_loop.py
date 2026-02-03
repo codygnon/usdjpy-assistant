@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -116,10 +117,12 @@ def main() -> None:
     ap.add_argument("--once", action="store_true", help="Run a single iteration then exit")
     args = ap.parse_args()
 
-    base_dir = Path(__file__).resolve().parent
+    # Use same persistent data dir as API when set (Railway volume)
+    _data_base_env = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") or os.environ.get("USDJPY_DATA_DIR")
+    _base_dir = Path(_data_base_env) if _data_base_env else Path(__file__).resolve().parent
     profile = load_profile_v1(args.profile)
 
-    log_dir = base_dir / "logs" / profile.profile_name
+    log_dir = _base_dir / "logs" / profile.profile_name
     log_dir.mkdir(parents=True, exist_ok=True)
     state_path = log_dir / "runtime_state.json"
 

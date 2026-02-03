@@ -5,6 +5,7 @@ Run with: uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -18,12 +19,19 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
-# Paths
+# Paths (use persistent volume on Railway when RAILWAY_VOLUME_MOUNT_PATH is set)
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
-PROFILES_DIR = BASE_DIR / "profiles"
-LOGS_DIR = BASE_DIR / "logs"
+_data_base_env = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") or os.environ.get("USDJPY_DATA_DIR")
+DATA_BASE = Path(_data_base_env) if _data_base_env else BASE_DIR
+PROFILES_DIR = DATA_BASE / "profiles"
+LOGS_DIR = DATA_BASE / "logs"
 FRONTEND_DIR = BASE_DIR / "frontend" / "dist"
+
+# Ensure persistent data dirs exist when using a volume
+if DATA_BASE != BASE_DIR:
+    (DATA_BASE / "profiles").mkdir(parents=True, exist_ok=True)
+    (DATA_BASE / "logs").mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # Imports from existing modules
@@ -160,6 +168,12 @@ def _sanitize_profile_name(name: str) -> str:
     return "".join(c for c in s if c.isalnum() or c == "_") or "default"
 
 
+def _resolve_profile_path(profile_path: str) -> Path:
+    """Resolve profile_path to absolute Path; relative paths are under PROFILES_DIR."""
+    p = Path(profile_path)
+    return p.resolve() if p.is_absolute() else (PROFILES_DIR / p).resolve()
+
+
 def _profile_path_safe(path: Path) -> bool:
     """True if path is under PROFILES_DIR (resolve both) and not the dir itself."""
     try:
@@ -189,7 +203,7 @@ def list_profiles() -> list[ProfileInfo]:
 @app.get("/api/profiles/{profile_path:path}")
 def get_profile(profile_path: str) -> dict[str, Any]:
     """Load and return a profile as JSON."""
-    path = Path(profile_path)
+    path = _resolve_profile_path(profile_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Profile not found")
     try:
@@ -203,7 +217,7 @@ def get_profile(profile_path: str) -> dict[str, Any]:
 def save_profile(profile_path: str, req: ProfileUpdateRequest) -> dict[str, str]:
     """Save updated profile data to disk."""
     from pydantic import ValidationError
-    path = Path(profile_path)
+    path = _resolve_profile_path(profile_path)
     try:
         profile = ProfileV1.model_validate(req.profile_data)
         save_profile_v1(profile, path)
@@ -336,7 +350,7 @@ def preview_preset(preset_id: str, profile_path: str) -> dict[str, Any]:
 @app.post("/api/presets/{preset_id}/apply")
 def apply_preset_to_profile(preset_id: str, req: ApplyPresetRequest, profile_path: str) -> dict[str, Any]:
     """Apply a preset to a profile and save it."""
-    path = Path(profile_path)
+    path = _resolve_profile_path(profile_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Profile not found")
     try:
@@ -395,7 +409,7 @@ def start_loop(profile_name: str, profile_path: str) -> dict[str, Any]:
     if _is_loop_running(profile_name):
         return {"status": "already_running"}
     
-    path = Path(profile_path)
+    path = _resolve_profile_path(profile_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Profile not found")
     
@@ -406,7 +420,7 @@ def start_loop(profile_name: str, profile_path: str) -> dict[str, Any]:
     try:
         log_file = open(log_path, "w", encoding="utf-8")
         proc = subprocess.Popen(
-            [sys.executable, "-u", str(BASE_DIR / "run_loop.py"), "--profile", str(path.resolve())],
+            [sys.executable, "-u", str(BASE_DIR / "run_loop.py"), "--profile", str(path)],
             cwd=str(BASE_DIR),
             stdout=log_file,
             stderr=subprocess.STDOUT,
@@ -478,11 +492,11 @@ def get_trades(
     df = df.where(pd.notna(df), None)
     records = df.to_dict(orient="records")
 
-    if not profile_path or not Path(profile_path).exists():
+    if not profile_path or not _resolve_profile_path(profile_path).exists():
         return records
 
     try:
-        profile = load_profile_v1(Path(profile_path))
+        profile = load_profile_v1(_resolve_profile_path(profile_path))
     except Exception:
         return records
 
@@ -583,9 +597,9 @@ def get_quick_stats(profile_name: str, profile_path: Optional[str] = None) -> di
 
     # Resolve profile for symbol/pip_size
     profile = None
-    if profile_path and Path(profile_path).exists():
+    if profile_path and _resolve_profile_path(profile_path).exists():
         try:
-            profile = load_profile_v1(Path(profile_path))
+            profile = load_profile_v1(_resolve_profile_path(profile_path))
         except Exception:
             pass
     if profile is None:
@@ -712,9 +726,9 @@ def get_mt5_report(profile_name: str, profile_path: Optional[str] = None) -> dic
     """Get full MT5 report (Summary, Closed P/L, Long/Short). Same data as View -> Reports.
     Returns {source: null} when MT5 is unavailable."""
     profile = None
-    if profile_path and Path(profile_path).exists():
+    if profile_path and _resolve_profile_path(profile_path).exists():
         try:
-            profile = load_profile_v1(Path(profile_path))
+            profile = load_profile_v1(_resolve_profile_path(profile_path))
         except Exception:
             pass
     if profile is None:
@@ -788,9 +802,9 @@ def get_stats_by_preset(profile_name: str, profile_path: Optional[str] = None) -
 
     mt5_financials: dict[int, dict] = {}
     profile = None
-    if profile_path and Path(profile_path).exists():
+    if profile_path and _resolve_profile_path(profile_path).exists():
         try:
-            profile = load_profile_v1(Path(profile_path))
+            profile = load_profile_v1(_resolve_profile_path(profile_path))
         except Exception:
             pass
     if profile is None:
@@ -951,7 +965,7 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
     from core.context_engine import _get_tf_config
     from core.timeframes import Timeframe
     
-    path = Path(profile_path)
+    path = _resolve_profile_path(profile_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Profile not found")
     
@@ -1150,7 +1164,7 @@ def close_trade_endpoint(profile_name: str, trade_id: str, profile_path: str) ->
     stop_price = trade.get("stop_price")
     
     # Load profile for pip_size
-    path = Path(profile_path)
+    path = _resolve_profile_path(profile_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Profile not found")
     profile = load_profile_v1(path)
@@ -1285,7 +1299,7 @@ def sync_trades_endpoint(
     """
     from core.trade_sync import sync_closed_trades, import_mt5_history, backfill_position_ids, backfill_profit
     
-    path = Path(profile_path)
+    path = _resolve_profile_path(profile_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Profile not found")
     
