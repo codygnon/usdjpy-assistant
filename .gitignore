@@ -15,7 +15,7 @@ build/
 
 # Node / frontend
 frontend/node_modules/
-frontend/dist/
+# frontend/dist/ — unignored so pre-built assets can be committed for PaaS (no npm in build)
 
 # Secrets and local runtime (do not commit auth or live DBs)
 logs/

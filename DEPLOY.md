@@ -4,9 +4,13 @@ After connecting this repo to Railway or Render, set these so the app builds and
 
 ## Build command (run once per deploy)
 
+The frontend is pre-built and committed under `frontend/dist/`, so the PaaS does not need Node.js:
+
 ```bash
-pip install -r requirements.txt && cd frontend && npm ci && npm run build
+pip install -r requirements.txt
 ```
+
+If you change the frontend, run `cd frontend && npm ci && npm run build` locally and commit the updated `frontend/dist/` before deploying.
 
 ## Start command
 
