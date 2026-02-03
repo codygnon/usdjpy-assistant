@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 import pandas as pd
@@ -24,6 +25,17 @@ class OrderResult:
     request_id: int | None
     order: int | None
     deal: int | None
+
+
+@dataclass(frozen=True)
+class PositionCloseInfo:
+    """Close info for a position; same shape as mt5_adapter.PositionCloseInfo for sync_closed_trades."""
+    ticket: int
+    exit_price: float
+    exit_time_utc: str
+    profit: float
+    volume: float
+
 
 _BASE_URLS = {
     "practice": "https://api-fxpractice.oanda.com",
@@ -83,6 +95,11 @@ class OandaAdapter:
                 msg = err.get("errorMessage", resp.text)
             except Exception:
                 msg = resp.text
+            # Avoid dumping HTML (e.g. 502 Bad Gateway) into logs
+            if msg and ("<" in msg and ">" in msg):
+                msg = f"{resp.status_code} non-JSON response (e.g. Bad Gateway)"
+            elif msg and len(msg) > 300:
+                msg = msg[:300] + "..."
             raise RuntimeError(f"OANDA API {method} {path}: {resp.status_code} {msg}")
         if resp.status_code == 204 or not resp.content:
             return {}
@@ -318,8 +335,53 @@ class OandaAdapter:
     def get_deal_profit(self, deal_id: int) -> float | None:
         return None
 
-    def get_position_close_info(self, ticket: int):
-        return None  # Stub; would need OANDA transaction history
+    def get_position_close_info(self, ticket: int) -> PositionCloseInfo | None:
+        """Fetch close details for a trade from OANDA transaction history.
+        Returns None if no close transaction found (e.g. trade still open or too old).
+        """
+        aid = self._get_account_id()
+        ticket_str = str(ticket)
+        # Request last 30 days of transactions
+        to_ts = datetime.now(timezone.utc)
+        from_ts = to_ts - timedelta(days=30)
+        from_param = from_ts.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+        to_param = to_ts.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+        try:
+            data = self._req(
+                "GET",
+                f"/v3/accounts/{aid}/transactions",
+                params={"from": from_param, "to": to_param, "pageSize": 500},
+            )
+        except Exception:
+            return None
+        pages = data.get("pages") or []
+        for page_path in pages:
+            if not page_path:
+                continue
+            if page_path.startswith("http"):
+                page_url = page_path
+            elif page_path.startswith("/"):
+                page_url = self._base + page_path
+            else:
+                page_url = self._base + "/" + page_path
+            try:
+                page_resp = self._session.get(page_url)
+                if page_resp.status_code != 200:
+                    continue
+                page_data = page_resp.json()
+            except Exception:
+                continue
+            for t in page_data.get("transactions") or []:
+                if t.get("type") != "ORDER_FILL":
+                    continue
+                # ORDER_FILL that closed a trade has tradeClosed (single) or tradesClosed (array)
+                closed = t.get("tradeClosed") or {}
+                if closed.get("tradeID") == ticket_str:
+                    return _close_info_from_fill(ticket, t, closed)
+                for tc in t.get("tradesClosed") or []:
+                    if tc.get("tradeID") == ticket_str:
+                        return _close_info_from_fill(ticket, t, tc)
+        return None
 
     def get_closed_positions_from_history(self, days_back: int = 30, symbol: str | None = None, pip_size: float | None = None) -> list:
         return []  # Stub for OANDA; full impl would use /transactions
@@ -329,6 +391,22 @@ class OandaAdapter:
 
     def get_mt5_full_report(self, symbol: str | None = None, pip_size: float | None = None, days_back: int = 90) -> dict | None:
         return None
+
+
+def _close_info_from_fill(ticket: int, fill: dict, closed: dict) -> PositionCloseInfo:
+    """Build PositionCloseInfo from OANDA ORDER_FILL and tradeClosed/tradesClosed entry."""
+    price = float(fill.get("price") or 0)
+    time_str = str(fill.get("time") or "")
+    pl = float(fill.get("pl") or closed.get("realizedPL") or 0)
+    units = abs(int(float(closed.get("units") or 0)))
+    volume = units / 100_000.0
+    return PositionCloseInfo(
+        ticket=ticket,
+        exit_price=price,
+        exit_time_utc=time_str,
+        profit=pl,
+        volume=volume,
+    )
 
 
 def get_oanda_adapter(token: str, account_id: str | None, environment: Literal["practice", "live"]) -> OandaAdapter:
