@@ -1598,12 +1598,17 @@ function CustomWizard({ profile, currentProfile, onComplete }: { profile: Profil
     const profileMaxLots = (profileRisk.max_lots as number) ?? 0.1;
     const profileMaxSpread = (profileRisk.max_spread_pips as number) ?? 2;
     const profileMaxTrades = (profileRisk.max_trades_per_day as number) ?? 10;
+    // Min stop pips: always use profile editor value (1–100); user can set >10 for scalping if desired
+    const profileMinStop = (profileRisk.min_stop_pips as number);
+    const minStopPips = typeof profileMinStop === 'number' && profileMinStop >= 0
+      ? Math.max(1, Math.min(100, profileMinStop))
+      : 10;
 
     switch (config.riskTolerance) {
       case 'conservative':
         riskConfig['max_lots'] = Math.round(profileMaxLots * 0.35 * 100) / 100 || 0.05;
         riskConfig['max_spread_pips'] = Math.round(profileMaxSpread * 0.25 * 10) / 10 || 0.5;
-        riskConfig['min_stop_pips'] = 8;
+        riskConfig['min_stop_pips'] = minStopPips;
         riskConfig['max_trades_per_day'] = Math.max(1, Math.round(profileMaxTrades * 0.5));
         riskConfig['max_open_trades'] = 1;
         riskConfig['cooldown_minutes_after_loss'] = 15;
@@ -1615,7 +1620,7 @@ function CustomWizard({ profile, currentProfile, onComplete }: { profile: Profil
       case 'moderate':
         riskConfig['max_lots'] = Math.round(profileMaxLots * 0.67 * 100) / 100 || 0.1;
         riskConfig['max_spread_pips'] = Math.round(profileMaxSpread * 0.5 * 10) / 10 || 0.8;
-        riskConfig['min_stop_pips'] = 6;
+        riskConfig['min_stop_pips'] = minStopPips;
         riskConfig['max_trades_per_day'] = Math.max(1, Math.round(profileMaxTrades * 1.0));
         riskConfig['max_open_trades'] = 2;
         riskConfig['cooldown_minutes_after_loss'] = 5;
@@ -1627,7 +1632,7 @@ function CustomWizard({ profile, currentProfile, onComplete }: { profile: Profil
       case 'aggressive':
         riskConfig['max_lots'] = Math.round(profileMaxLots * 1.0 * 100) / 100 || 0.15;
         riskConfig['max_spread_pips'] = Math.round(profileMaxSpread * 0.6 * 10) / 10 || 1.2;
-        riskConfig['min_stop_pips'] = 5;
+        riskConfig['min_stop_pips'] = minStopPips;
         riskConfig['max_trades_per_day'] = Math.max(1, Math.round(profileMaxTrades * 1.0));
         riskConfig['max_open_trades'] = 3;
         riskConfig['cooldown_minutes_after_loss'] = 0;
@@ -2720,6 +2725,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
   const [message, setMessage] = useState<string | null>(null);
   const [currentProfile, setCurrentProfile] = useState<Record<string, unknown> | null>(null);
   const [showActiveSettings, setShowActiveSettings] = useState(false);
+  const [vwapSessionFilterOn, setVwapSessionFilterOn] = useState(true);
 
   // Fetch current profile to get active preset
   const fetchProfile = () => {
@@ -2747,7 +2753,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
     if (!selected || selected === 'custom') return;
     setApplying(true);
     try {
-      await api.applyPreset(selected, profile.path);
+      const options = selected === 'vwap_trend'
+        ? { vwap_session_filter_enabled: vwapSessionFilterOn }
+        : undefined;
+      await api.applyPreset(selected, profile.path, options);
       setMessage(`Preset "${selected}" applied successfully!`);
       fetchProfile(); // Refresh to show new active preset
       setTimeout(() => setMessage(null), 3000);
@@ -2981,13 +2990,28 @@ function PresetsPage({ profile }: { profile: Profile }) {
             <h3 className="card-title" style={{ margin: 0 }}>
               Preview: {selectedPreset?.name || selected}
             </h3>
-            <button
-              className="btn btn-primary"
-              onClick={handleApply}
-              disabled={applying}
-            >
-              {applying ? 'Applying...' : 'Apply Preset'}
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              {selected === 'vwap_trend' && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.9rem' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>Session Filter (London + NY):</span>
+                  <select
+                    value={vwapSessionFilterOn ? 'on' : 'off'}
+                    onChange={(e) => setVwapSessionFilterOn(e.target.value === 'on')}
+                    style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
+                  >
+                    <option value="on">On</option>
+                    <option value="off">Off</option>
+                  </select>
+                </label>
+              )}
+              <button
+                className="btn btn-primary"
+                onClick={handleApply}
+                disabled={applying}
+              >
+                {applying ? 'Applying...' : 'Apply Preset'}
+              </button>
+            </div>
           </div>
           
           {/* Pros & Cons Summary */}

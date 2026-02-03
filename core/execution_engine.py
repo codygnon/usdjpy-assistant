@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -928,7 +929,7 @@ def evaluate_vwap_conditions(
     policy: ExecutionPolicyVWAP,
     data_by_tf: dict[Timeframe, pd.DataFrame],
 ) -> tuple[bool, str | None, list[str]]:
-    """Check if price vs VWAP matches policy trigger. Returns: (passed, side, reasons)."""
+    """Check if price vs VWAP matches policy trigger; then apply no-trade zone, session filter, slope filter. Returns: (passed, side, reasons)."""
     reasons: list[str] = []
     df = data_by_tf.get(policy.timeframe)
     if df is None or df.empty:
@@ -943,27 +944,69 @@ def evaluate_vwap_conditions(
     vwap_prev = float(vwap_series.iloc[-2]) if len(vwap_series) >= 2 else vwap_now
     close_now = float(df["close"].iloc[-1])
     close_prev = float(df["close"].iloc[-2])
+    # --- Trigger logic: determine if signal is valid and side ---
+    passed, side = False, None
     if policy.trigger == "cross_above":
         if close_prev <= vwap_prev and close_now > vwap_now:
-            return True, "buy", [f"vwap: price crossed above VWAP ({close_prev:.3f} -> {close_now:.3f}, VWAP {vwap_now:.3f})"]
-        reasons.append(f"no cross above: close_prev={close_prev:.3f} close_now={close_now:.3f} vwap={vwap_now:.3f}")
-        return False, None, ["vwap: " + "; ".join(reasons)]
-    if policy.trigger == "cross_below":
+            passed, side = True, "buy"
+            reasons.append(f"vwap: price crossed above VWAP ({close_prev:.3f} -> {close_now:.3f}, VWAP {vwap_now:.3f})")
+        else:
+            reasons.append(f"no cross above: close_prev={close_prev:.3f} close_now={close_now:.3f} vwap={vwap_now:.3f}")
+            return False, None, ["vwap: " + "; ".join(reasons)]
+    elif policy.trigger == "cross_below":
         if close_prev >= vwap_prev and close_now < vwap_now:
-            return True, "sell", [f"vwap: price crossed below VWAP ({close_prev:.3f} -> {close_now:.3f}, VWAP {vwap_now:.3f})"]
-        reasons.append(f"no cross below: close_prev={close_prev:.3f} close_now={close_now:.3f} vwap={vwap_now:.3f}")
-        return False, None, ["vwap: " + "; ".join(reasons)]
-    if policy.trigger == "above_buy":
+            passed, side = True, "sell"
+            reasons.append(f"vwap: price crossed below VWAP ({close_prev:.3f} -> {close_now:.3f}, VWAP {vwap_now:.3f})")
+        else:
+            reasons.append(f"no cross below: close_prev={close_prev:.3f} close_now={close_now:.3f} vwap={vwap_now:.3f}")
+            return False, None, ["vwap: " + "; ".join(reasons)]
+    elif policy.trigger == "above_buy":
         if close_now > vwap_now:
-            return True, "buy", [f"vwap: price above VWAP ({close_now:.3f} > {vwap_now:.3f})"]
-        reasons.append(f"price not above VWAP: close={close_now:.3f} vwap={vwap_now:.3f}")
-        return False, None, ["vwap: " + "; ".join(reasons)]
-    if policy.trigger == "below_sell":
+            passed, side = True, "buy"
+            reasons.append(f"vwap: price above VWAP ({close_now:.3f} > {vwap_now:.3f})")
+        else:
+            reasons.append(f"price not above VWAP: close={close_now:.3f} vwap={vwap_now:.3f}")
+            return False, None, ["vwap: " + "; ".join(reasons)]
+    elif policy.trigger == "below_sell":
         if close_now < vwap_now:
-            return True, "sell", [f"vwap: price below VWAP ({close_now:.3f} < {vwap_now:.3f})"]
-        reasons.append(f"price not below VWAP: close={close_now:.3f} vwap={vwap_now:.3f}")
+            passed, side = True, "sell"
+            reasons.append(f"vwap: price below VWAP ({close_now:.3f} < {vwap_now:.3f})")
+        else:
+            reasons.append(f"price not below VWAP: close={close_now:.3f} vwap={vwap_now:.3f}")
+            return False, None, ["vwap: " + "; ".join(reasons)]
+    else:
+        return False, None, ["vwap: unknown trigger"]
+    if not passed or side is None:
         return False, None, ["vwap: " + "; ".join(reasons)]
-    return False, None, ["vwap: unknown trigger"]
+    # --- Post-trigger filters: no-trade zone, session, slope ---
+    pip_size = float(profile.pip_size)
+    if policy.no_trade_zone_pips > 0:
+        zone_dist = abs(close_now - vwap_now)
+        required = policy.no_trade_zone_pips * pip_size
+        if zone_dist < required:
+            reasons.append(f"inside no-trade zone: |close-vwap|={zone_dist:.5f} < {required:.5f}")
+            return False, None, ["vwap: " + "; ".join(reasons)]
+    if policy.session_filter_enabled:
+        hour_utc = datetime.now(timezone.utc).hour
+        in_london = 8 <= hour_utc < 16
+        in_ny = 13 <= hour_utc < 21
+        if not (in_london or in_ny):
+            reasons.append(f"outside session: UTC hour={hour_utc} (London 8-16, NY 13-21)")
+            return False, None, ["vwap: " + "; ".join(reasons)]
+    if policy.use_slope_filter:
+        lb = policy.vwap_slope_lookback_bars
+        if len(vwap_series) <= lb:
+            reasons.append(f"slope filter: not enough bars ({len(vwap_series)} <= {lb})")
+            return False, None, ["vwap: " + "; ".join(reasons)]
+        vwap_old = float(vwap_series.iloc[-1 - lb])
+        slope = (vwap_now - vwap_old) / lb
+        if side == "buy" and slope <= 0:
+            reasons.append(f"VWAP slope not positive: slope={slope:.6f}")
+            return False, None, ["vwap: " + "; ".join(reasons)]
+        if side == "sell" and slope >= 0:
+            reasons.append(f"VWAP slope not negative: slope={slope:.6f}")
+            return False, None, ["vwap: " + "; ".join(reasons)]
+    return True, side, reasons
 
 
 def _vwap_candidate(

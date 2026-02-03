@@ -136,6 +136,7 @@ class RuntimeStateUpdate(BaseModel):
 
 class ApplyPresetRequest(BaseModel):
     preset_id: str
+    options: Optional[dict[str, Any]] = None  # e.g. vwap_session_filter_enabled for vwap_trend
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -359,7 +360,14 @@ def apply_preset_to_profile(preset_id: str, req: ApplyPresetRequest, profile_pat
         raise HTTPException(status_code=400, detail=f"Unknown preset: {preset_id}")
     try:
         profile = load_profile_v1(path)
-        new_profile = apply_preset(profile, preset)
+        patch_overrides = None
+        if preset_id == "vwap_trend" and req.options and "vwap_session_filter_enabled" in req.options:
+            patch_overrides = {
+                "execution": {
+                    "policies_overlay_for_vwap": {"session_filter_enabled": bool(req.options["vwap_session_filter_enabled"])},
+                },
+            }
+        new_profile = apply_preset(profile, preset, patch_overrides)
         save_profile_v1(new_profile, path)
         return {"status": "applied", "preset_id": preset_id, "profile": new_profile.model_dump()}
     except Exception as e:

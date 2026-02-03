@@ -240,6 +240,10 @@ class ExecutionPolicyVWAP(BaseModel):
     side: Literal["buy", "sell"] = "buy"
     tp_pips: float = 15.0
     sl_pips: Optional[float] = 10.0
+    use_slope_filter: bool = False
+    vwap_slope_lookback_bars: int = 20
+    session_filter_enabled: bool = False
+    no_trade_zone_pips: float = 0.0
 
 
 class ExecutionPolicyEmaPullback(BaseModel):

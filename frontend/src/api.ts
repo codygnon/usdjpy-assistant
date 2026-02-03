@@ -129,13 +129,25 @@ export async function previewPreset(presetId: string, profilePath: string): Prom
   );
 }
 
-export async function applyPreset(presetId: string, profilePath: string): Promise<Record<string, unknown>> {
+export interface ApplyPresetOptions {
+  vwap_session_filter_enabled?: boolean;
+}
+
+export async function applyPreset(
+  presetId: string,
+  profilePath: string,
+  options?: ApplyPresetOptions
+): Promise<Record<string, unknown>> {
+  const body: { preset_id: string; options?: ApplyPresetOptions } = { preset_id: presetId };
+  if (options && Object.keys(options).length > 0) {
+    body.options = options;
+  }
   return fetchJson<Record<string, unknown>>(
     `${API_BASE}/presets/${presetId}/apply?profile_path=${encodeURIComponent(profilePath)}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ preset_id: presetId }),
+      body: JSON.stringify(body),
     }
   );
 }

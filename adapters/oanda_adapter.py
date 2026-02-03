@@ -69,6 +69,15 @@ def _instrument_to_symbol(instrument: str) -> str:
     return s
 
 
+def _order_price_precision(instrument: str) -> int:
+    """Return decimal places allowed for order prices (SL/TP/limit) for this instrument.
+    OANDA rejects orders with excess precision; JPY pairs use 3, most others 5."""
+    u = (instrument or "").upper().replace("/", "_")
+    if "JPY" in u:
+        return 3
+    return 5
+
+
 @dataclass(frozen=True)
 class OandaClosedPositionInfo:
     """Closed position from OANDA history; same shape as mt5_adapter.ClosedPositionInfo for import."""
@@ -226,6 +235,7 @@ class OandaAdapter:
         units = _lots_to_units(volume_lots)
         if side == "sell":
             units = -units
+        prec = _order_price_precision(inst)
         order: dict = {
             "type": "MARKET",
             "instrument": inst,
@@ -234,9 +244,9 @@ class OandaAdapter:
             "positionFill": "DEFAULT",
         }
         if sl is not None:
-            order["stopLossOnFill"] = {"price": str(round(sl, 5)), "timeInForce": "GTC"}
+            order["stopLossOnFill"] = {"price": str(round(sl, prec)), "timeInForce": "GTC"}
         if tp is not None:
-            order["takeProfitOnFill"] = {"price": str(round(tp, 5)), "timeInForce": "GTC"}
+            order["takeProfitOnFill"] = {"price": str(round(tp, prec)), "timeInForce": "GTC"}
         body = {"order": order}
         data = self._req("POST", f"/v3/accounts/{aid}/orders", json=body)
         fill = data.get("orderFillTransaction")
@@ -282,18 +292,19 @@ class OandaAdapter:
         units = _lots_to_units(volume_lots)
         if side == "sell":
             units = -units
+        prec = _order_price_precision(inst)
         order: dict = {
             "type": "LIMIT",
             "instrument": inst,
             "units": str(units),
-            "price": str(round(price, 5)),
+            "price": str(round(price, prec)),
             "timeInForce": "GTC",
             "positionFill": "DEFAULT",
         }
         if sl is not None:
-            order["stopLossOnFill"] = {"price": str(round(sl, 5)), "timeInForce": "GTC"}
+            order["stopLossOnFill"] = {"price": str(round(sl, prec)), "timeInForce": "GTC"}
         if tp is not None:
-            order["takeProfitOnFill"] = {"price": str(round(tp, 5)), "timeInForce": "GTC"}
+            order["takeProfitOnFill"] = {"price": str(round(tp, prec)), "timeInForce": "GTC"}
         data = self._req("POST", f"/v3/accounts/{aid}/orders", json={"order": order})
         create = data.get("orderCreateTransaction")
         if data.get("orderRejectTransaction"):

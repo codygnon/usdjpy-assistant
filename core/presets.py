@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from enum import Enum
-from typing import Any
+from typing import Any, Optional
 
 from .profile import (
     ExecutionPolicyConfirmedCross,
@@ -385,22 +385,22 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         },
     },
     # -----------------------------------------------------------------------
-    # VWAP TREND
-    # Entries based on price vs VWAP (cross above = buy, cross below = sell)
+    # VWAP TREND (Slope + Session + Zone)
+    # Entries based on price vs VWAP with slope filter, optional session filter, no-trade zone
     # -----------------------------------------------------------------------
     PresetId.VWAP_TREND: {
-        "description": "VWAP-based entries: buys when price crosses above VWAP, sells when price crosses below VWAP. Uses volume-weighted average price as a trend/reference level.",
+        "name": "VWAP Trend (Slope + Session + Zone)",
+        "description": "VWAP-based entries with slope filter (buy only when VWAP slope positive, sell when negative), optional London+NY session filter, and a small no-trade zone around VWAP so entries are outside the band.",
         "pros": [
-            "VWAP is a common institutional reference; trades with price vs VWAP",
-            "Cross triggers give clear entry signals",
-            "Good for intraday trend following",
-            "Single policy can generate both buy and sell signals (via cross_above / cross_below)",
+            "VWAP slope filter aligns trades with VWAP direction; fewer counter-trend entries",
+            "Optional session filter (London + NY) limits trading to liquid hours",
+            "No-trade zone avoids entries right at VWAP, reducing chop",
+            "Cross triggers give clear entry signals; good for intraday trend following",
         ],
         "cons": [
             "VWAP is cumulative per session - best used within session context",
-            "In choppy markets crosses can be frequent and whipsaw",
+            "Session filter reduces opportunity count outside London/NY",
             "Requires volume data (tick volume used when available)",
-            "No higher-timeframe filter in this preset",
         ],
         "risk": {
             "max_lots": 0.1,
@@ -439,6 +439,10 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "side": "buy",
                     "tp_pips": 12.0,
                     "sl_pips": 10.0,
+                    "use_slope_filter": True,
+                    "vwap_slope_lookback_bars": 20,
+                    "session_filter_enabled": True,
+                    "no_trade_zone_pips": 1.5,
                 },
                 {
                     "type": "vwap",
@@ -449,6 +453,10 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "side": "sell",
                     "tp_pips": 12.0,
                     "sl_pips": 10.0,
+                    "use_slope_filter": True,
+                    "vwap_slope_lookback_bars": 20,
+                    "session_filter_enabled": True,
+                    "no_trade_zone_pips": 1.5,
                 },
             ],
         },
@@ -580,12 +588,12 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
 
 
 def list_presets() -> list[dict[str, Any]]:
-    """Return a list of preset metadata (id, description, pros, cons)."""
+    """Return a list of preset metadata (id, name, description, pros, cons)."""
     result = []
     for preset_id, patch in PRESETS.items():
         result.append({
             "id": preset_id.value,
-            "name": preset_id.name.replace("_", " ").title(),
+            "name": patch.get("name") or preset_id.name.replace("_", " ").title(),
             "description": patch.get("description", ""),
             "pros": patch.get("pros", []),
             "cons": patch.get("cons", []),
@@ -594,11 +602,12 @@ def list_presets() -> list[dict[str, Any]]:
 
 
 def get_preset_patch(preset_id: PresetId | str) -> dict[str, Any]:
-    """Return the raw patch dict for a preset (excluding metadata like description, pros, cons)."""
+    """Return the raw patch dict for a preset (excluding metadata like name, description, pros, cons)."""
     if isinstance(preset_id, str):
         preset_id = PresetId(preset_id)
     patch = deepcopy(PRESETS[preset_id])
     # Remove metadata fields that aren't part of profile config
+    patch.pop("name", None)
     patch.pop("description", None)
     patch.pop("pros", None)
     patch.pop("cons", None)
@@ -640,15 +649,40 @@ def _effective_risk_capped_by_limits(patch_risk: dict[str, Any], limits: dict[st
     return eff
 
 
-def apply_preset(profile: ProfileV1, preset_id: PresetId | str) -> ProfileV1:
+def apply_preset(profile: ProfileV1, preset_id: PresetId | str, patch_overrides: Optional[dict[str, Any]] = None) -> ProfileV1:
     """Apply a preset patch on top of an existing profile (returns new ProfileV1).
 
     Profile Editor risk (profile.risk) is never overwritten. Preset risk is stored as
     effective_risk (capped by profile.risk) and used at runtime.
+
+    If patch_overrides is provided, it is merged into the preset patch before applying.
+    For vwap_trend, options may include execution.policies_overlay_for_vwap: dict of
+    fields to apply to each policy with type "vwap" (e.g. session_filter_enabled).
     """
     if isinstance(preset_id, str):
         preset_id = PresetId(preset_id)
     patch = get_preset_patch(preset_id)
+    # Apply patch_overrides: merge into patch; handle policies_overlay_for_vwap for vwap policies
+    if patch_overrides:
+        exec_opts = patch_overrides.get("execution")
+        if isinstance(exec_opts, dict):
+            overlay = exec_opts.get("policies_overlay_for_vwap")
+            if overlay and isinstance(overlay, dict):
+                for p in patch.get("execution", {}).get("policies", []):
+                    if isinstance(p, dict) and p.get("type") == "vwap":
+                        for k, v in overlay.items():
+                            p[k] = v
+        for key, value in patch_overrides.items():
+            if key == "execution":
+                if not isinstance(value, dict):
+                    continue
+                rest = {k: deepcopy(v) for k, v in value.items() if k != "policies_overlay_for_vwap"}
+                if rest:
+                    _deep_merge(patch.setdefault("execution", {}), rest)
+            elif key in patch and isinstance(patch.get(key), dict) and isinstance(value, dict):
+                patch[key] = _deep_merge(patch[key], value)
+            else:
+                patch[key] = deepcopy(value)
     base_dict = profile.model_dump()
     limits = base_dict.get("risk", {})
     merged = _deep_merge(base_dict, patch)
