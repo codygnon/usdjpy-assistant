@@ -3609,13 +3609,13 @@ function LogsPage({ profile }: { profile: Profile }) {
         parts.push(`${result.trades_updated} trade(s) synced`);
       }
       if (result.trades_imported && result.trades_imported > 0) {
-        parts.push(`${result.trades_imported} trade(s) imported from MT5 history`);
+        parts.push(`${result.trades_imported} trade(s) imported from broker history`);
       }
       if (result.position_ids_backfilled && result.position_ids_backfilled > 0) {
         parts.push(`${result.position_ids_backfilled} position ID(s) backfilled`);
       }
       if (result.profit_backfilled && result.profit_backfilled > 0) {
-        parts.push(`${result.profit_backfilled} profit(s) updated from MT5`);
+        parts.push(`${result.profit_backfilled} profit(s) updated from broker`);
       }
       if (parts.length > 0) {
         setSyncMessage(parts.join(', '));
@@ -3665,7 +3665,7 @@ function LogsPage({ profile }: { profile: Profile }) {
           onClick={handleSync}
           disabled={syncing}
         >
-          {syncing ? 'Syncing...' : 'Sync from MT5'}
+          {syncing ? 'Syncing...' : 'Sync from broker'}
         </button>
       </div>
 
@@ -3702,7 +3702,7 @@ function LogsPage({ profile }: { profile: Profile }) {
               </p>
             </div>
             <p style={{ color: 'var(--warning)', fontSize: '0.85rem', marginBottom: 16 }}>
-              This will send a close order to MT5 immediately.
+              This will send a close order to your broker immediately.
             </p>
             <div className="flex gap-2">
               <button
@@ -3737,14 +3737,14 @@ function LogsPage({ profile }: { profile: Profile }) {
               borderRadius: 4,
               fontWeight: 600,
             }}>
-              FROM MT5
+              FROM BROKER
             </span>
           )}
         </div>
         <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: 4, marginBottom: 16 }}>
           {stats && (stats as api.QuickStats).source === 'mt5'
-            ? 'Stats from MT5 deal history (same as View → Reports)'
-            : 'Stats from local records. Start MT5 to see live report data.'}
+            ? 'Stats from broker deal history (same as View → Reports in MT5)'
+            : 'Stats from local records. Use a broker connection (MT5 or OANDA) to see live report data.'}
         </p>
         <div className="grid-3">
           <div className="stat-box">
@@ -3773,7 +3773,7 @@ function LogsPage({ profile }: { profile: Profile }) {
           <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: 24 }}>
             {stats && (stats as api.QuickStats).total_profit != null && (
               <div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Total Profit (MT5)</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Total Profit</div>
                 <div style={{ fontSize: '1.5rem', fontWeight: 700, color: (stats as api.QuickStats).total_profit! >= 0 ? 'var(--success)' : 'var(--danger)' }}>
                   {(stats as api.QuickStats).total_profit! >= 0 ? '+' : ''}{(stats as api.QuickStats).total_profit!.toFixed(2)} {(stats as api.QuickStats).display_currency || 'USD'}
                 </div>
@@ -3799,7 +3799,7 @@ function LogsPage({ profile }: { profile: Profile }) {
         ) : null}
         {stats && (stats as api.QuickStats).source === 'database' && (stats as api.QuickStats).trades_without_profit != null && (stats as api.QuickStats).trades_without_profit! > 0 && (
           <p style={{ marginTop: 12, marginBottom: 0, fontSize: '0.85rem', color: 'var(--warning)' }}>
-            Some trades lack profit data. Start MT5 and refresh to see stats from MT5 Report.
+            Some trades lack profit data. Sync from broker and refresh to see stats from broker report.
           </p>
         )}
       </div>
@@ -3808,13 +3808,13 @@ function LogsPage({ profile }: { profile: Profile }) {
       {mt5Report && (
         <div className="card mb-4">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <h3 className="card-title" style={{ margin: 0 }}>MT5 Report</h3>
+            <h3 className="card-title" style={{ margin: 0 }}>Account Report</h3>
             <span style={{ fontSize: '0.65rem', background: 'var(--success)', color: 'white', padding: '3px 6px', borderRadius: 4, fontWeight: 600 }}>
-              FROM MT5
+              FROM BROKER
             </span>
           </div>
           <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
-            Same data as View → Reports in MetaTrader 5
+            Balance, equity, and closed P/L from your broker (MT5 or OANDA)
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div
@@ -3882,12 +3882,12 @@ function LogsPage({ profile }: { profile: Profile }) {
             <h3 className="card-title" style={{ margin: 0 }}>Performance by Preset</h3>
             {presetStats.source === 'mt5' && (
               <span style={{ fontSize: '0.65rem', background: 'var(--success)', color: 'white', padding: '3px 6px', borderRadius: 4, fontWeight: 600 }}>
-                FROM MT5
+                FROM BROKER
               </span>
             )}
           </div>
           <p style={{ color: 'var(--text-secondary)', marginBottom: 16, marginTop: 8, fontSize: '0.85rem' }}>
-            Preset names come from your local DB; win/loss and profit use the same MT5 history as Quick Stats (one fetch, then matched by position ID). For best accuracy, run <strong>Sync from MT5</strong> so closed trades have position IDs, then refresh with MT5 running.
+            Preset names come from your local DB; win/loss and profit use broker history when available. For best accuracy, run <strong>Sync from broker</strong> so closed trades have position IDs, then refresh.
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {Object.entries(presetStats.presets)
@@ -4161,7 +4161,7 @@ function LogsPage({ profile }: { profile: Profile }) {
                             Close
                           </button>
                         ) : isOpenTrade(t) ? (
-                          <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>No MT5 ID</span>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>No position ID</span>
                         ) : (
                           <span style={{ color: 'var(--success)', fontSize: '0.75rem' }}>Closed</span>
                         )}
@@ -4277,7 +4277,7 @@ function GuidePage() {
           </ol>
         </div>
         <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-          <strong>Tip:</strong> The bot only trades on demo accounts for safety. Make sure your MT5 terminal is running and connected to your broker.
+          <strong>Tip:</strong> The bot only trades on demo accounts for safety. For MT5, have the terminal running and connected; for OANDA, set your API key in Profile Editor.
         </p>
       </SectionCard>
 
@@ -4360,7 +4360,7 @@ function GuidePage() {
               <li><strong>Quick Stats:</strong> Closed trades, win rate, average pips</li>
               <li><strong>Rejection Breakdown:</strong> Why trades weren't taken (spread, filters, etc.)</li>
               <li><strong>Recent Trades:</strong> Your trade history with P/L</li>
-              <li><strong>Sync from MT5:</strong> Updates trade data from your broker</li>
+              <li><strong>Sync from broker:</strong> Updates trade data from your broker (MT5 or OANDA)</li>
             </ul>
           </div>
         </div>
@@ -4414,8 +4414,8 @@ function GuidePage() {
           <div style={{ padding: 16, background: 'var(--bg-tertiary)', borderRadius: 8 }}>
             <h4 style={{ margin: '0 0 8px 0', color: 'var(--warning)' }}>My trade history is missing?</h4>
             <p style={{ margin: 0, lineHeight: 1.6 }}>
-              Click <strong>Sync from MT5</strong> on the Logs & Stats page. This will import any trades 
-              that were opened or closed directly in MT5, including trades closed by hitting TP/SL.
+Click <strong>Sync from broker</strong> on the Logs & Stats page. This will import any trades
+              that were opened or closed in your broker platform, including trades closed by hitting TP/SL.
             </p>
           </div>
         </div>
