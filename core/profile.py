@@ -242,6 +242,24 @@ class ExecutionPolicyVWAP(BaseModel):
     sl_pips: Optional[float] = 10.0
 
 
+class ExecutionPolicyEmaPullback(BaseModel):
+    """Momentum pullback: trend from EMA 50/200, entry when price is in EMA 20-50 zone."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["ema_pullback"] = "ema_pullback"
+    id: str = "ema_pullback_default"
+    enabled: bool = False
+    trend_timeframe: Literal["M5", "M15"] = "M15"
+    entry_timeframe: Literal["M5", "M15"] = "M5"
+    ema_trend_fast: int = 50
+    ema_trend_slow: int = 200
+    ema_zone_low: int = 20
+    ema_zone_high: int = 50
+    tp_pips: float = 30.0
+    sl_pips: Optional[float] = 16.0
+
+
 ExecutionPolicy = Annotated[
     Union[
         ExecutionPolicyConfirmedCross,
@@ -251,6 +269,7 @@ ExecutionPolicy = Annotated[
         ExecutionPolicySessionMomentum,
         ExecutionPolicyBollingerBands,
         ExecutionPolicyVWAP,
+        ExecutionPolicyEmaPullback,
     ],
     Field(discriminator="type"),
 ]

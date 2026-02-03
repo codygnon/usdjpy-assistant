@@ -20,6 +20,7 @@ from core.execution_engine import (
     build_default_candidate_from_signal,
     execute_bollinger_policy_demo_only,
     execute_breakout_policy_demo_only,
+    execute_ema_pullback_policy_demo_only,
     execute_indicator_policy_demo_only,
     execute_price_level_policy_demo_only,
     execute_session_momentum_policy_demo_only,
@@ -160,6 +161,10 @@ def main() -> None:
             getattr(p, "type", None) == "vwap" and getattr(p, "enabled", True)
             for p in profile.execution.policies
         )
+        has_ema_pullback = any(
+            getattr(p, "type", None) == "ema_pullback" and getattr(p, "enabled", True)
+            for p in profile.execution.policies
+        )
 
         loop_count = 0
         last_sync_loop = 0
@@ -195,6 +200,8 @@ def main() -> None:
                 "M15": adapter.get_bars(profile.symbol, "M15", 2000),
                 "M1": adapter.get_bars(profile.symbol, "M1", 3000),
             }
+            if has_ema_pullback:
+                data_by_tf["M5"] = adapter.get_bars(profile.symbol, "M5", 2000)
             tick = adapter.get_tick(profile.symbol)
 
             m1_df = data_by_tf["M1"]
@@ -445,7 +452,7 @@ def main() -> None:
                         else:
                             print(f"[{profile.profile_name}] {dec.reason}")
 
-            if (has_indicator or has_bollinger or has_vwap) and mkt is None:
+            if (has_indicator or has_bollinger or has_vwap or has_ema_pullback) and mkt is None:
                 mkt = _compute_mkt(profile, tick, data_by_tf)
             if has_indicator and mkt is not None:
                 trades_df = store.read_trades_df(profile.profile_name)
@@ -643,6 +650,58 @@ def main() -> None:
                             )
                         else:
                             print(f"[{profile.profile_name}] vwap {pol.id} mode={mode} -> {dec.reason}")
+
+            # EMA pullback policies (M5-M15 momentum pullback)
+            if has_ema_pullback and mkt is not None:
+                trades_df = store.read_trades_df(profile.profile_name)
+                for pol in profile.execution.policies:
+                    if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "ema_pullback":
+                        continue
+                    tf_df = data_by_tf.get(getattr(pol, "entry_timeframe", "M5"))
+                    if tf_df is None or tf_df.empty:
+                        continue
+                    bar_time_utc = pd.to_datetime(tf_df["time"].iloc[-1], utc=True).isoformat()
+                    dec = execute_ema_pullback_policy_demo_only(
+                        adapter=adapter,
+                        profile=profile,
+                        log_dir=log_dir,
+                        policy=pol,
+                        context=mkt,
+                        data_by_tf=data_by_tf,
+                        tick=tick,
+                        trades_df=trades_df,
+                        mode=mode,
+                        bar_time_utc=bar_time_utc,
+                    )
+                    if dec.attempted:
+                        if dec.placed:
+                            entry_price = (tick.bid + tick.ask) / 2.0
+                            side = dec.side or "buy"
+                            pip = float(profile.pip_size)
+                            sl_pips = getattr(pol, "sl_pips", None)
+                            if sl_pips is None:
+                                sl_pips = float(get_effective_risk(profile).min_stop_pips)
+                            if side == "buy":
+                                tp_price = entry_price + pol.tp_pips * pip
+                                sl_price = entry_price - sl_pips * pip
+                            else:
+                                tp_price = entry_price - pol.tp_pips * pip
+                                sl_price = entry_price + sl_pips * pip
+                            print(f"[{profile.profile_name}] TRADE PLACED: ema_pullback:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
+                            _insert_trade_for_policy(
+                                profile=profile,
+                                adapter=adapter,
+                                store=store,
+                                policy_type="ema_pullback",
+                                policy_id=pol.id,
+                                side=side,
+                                entry_price=entry_price,
+                                dec=dec,
+                                stop_price=sl_price,
+                                target_price=tp_price,
+                            )
+                        else:
+                            print(f"[{profile.profile_name}] ema_pullback {pol.id} mode={mode} -> {dec.reason}")
 
             if args.once:
                 break

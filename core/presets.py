@@ -27,6 +27,7 @@ class PresetId(str, Enum):
     MEAN_REVERSION_DIP = "mean_reversion_dip"
     VWAP_TREND = "vwap_trend"
     TREND_CONTINUATION = "trend_continuation"
+    M5_M15_MOMENTUM_PULLBACK = "m5_m15_momentum_pullback"
 
 
 # ---------------------------------------------------------------------------
@@ -511,6 +512,65 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             ],
         },
     },
+    # -----------------------------------------------------------------------
+    # M5 to M15 Momentum Pullback (~4 pip spread)
+    # Trend from EMA 50/200, entry on pullback to EMA 20-50 zone
+    # -----------------------------------------------------------------------
+    PresetId.M5_M15_MOMENTUM_PULLBACK: {
+        "description": "M5–M15 momentum pullback for ~4 pip spread: trend from EMA 50/200, entry on pullback to EMA 20–50 zone.",
+        "pros": [
+            "Suited to wider spread (up to 4 pips); TP 20–40, SL 12–20",
+            "Trend from M15 EMA 50/200; entries on M5 pullback to EMA 20–50 zone",
+            "Up to 20 trades/day; good for momentum pullback style",
+        ],
+        "cons": [
+            "Requires clear trend; chop can produce false zone touches",
+            "M5/M15 only – no M1; fewer signals than scalping presets",
+        ],
+        "risk": {
+            "max_lots": 0.1,
+            "require_stop": True,
+            "min_stop_pips": 12.0,
+            "max_spread_pips": 4.0,
+            "max_trades_per_day": 20,
+            "max_open_trades": 2,
+        },
+        "strategy": {
+            "filters": {
+                "alignment": {"enabled": False},
+                "ema_stack_filter": {"enabled": False},
+                "atr_filter": {"enabled": False},
+            },
+            "setups": {
+                "m1_cross_entry": {"enabled": False},
+            },
+        },
+        "trade_management": {
+            "target": {
+                "mode": "fixed_pips",
+                "pips_default": 30.0,
+            },
+        },
+        "execution": {
+            "loop_poll_seconds": 5.0,
+            "loop_poll_seconds_fast": 2.0,
+            "policies": [
+                {
+                    "type": "ema_pullback",
+                    "id": "m5_m15_pullback",
+                    "enabled": True,
+                    "trend_timeframe": "M15",
+                    "entry_timeframe": "M5",
+                    "ema_trend_fast": 50,
+                    "ema_trend_slow": 200,
+                    "ema_zone_low": 20,
+                    "ema_zone_high": 50,
+                    "tp_pips": 30.0,
+                    "sl_pips": 16.0,
+                },
+            ],
+        },
+    },
 }
 
 
@@ -557,7 +617,10 @@ def _deep_merge(base: dict, patch: dict) -> dict:
 
 
 def _effective_risk_capped_by_limits(patch_risk: dict[str, Any], limits: dict[str, Any]) -> dict[str, Any]:
-    """Build effective_risk from preset risk, capped by profile limits (Profile Editor)."""
+    """Build effective_risk from preset risk, capped by profile limits (Profile Editor).
+    Max-style fields are capped by profile; min_stop_pips uses at least the profile value
+    so the user can set a higher min stop (e.g. >10 for scalping) in the Profile Editor.
+    """
     eff = deepcopy(patch_risk)
     cap_fields = ["max_lots", "max_spread_pips", "max_trades_per_day", "max_open_trades"]
     for k in cap_fields:
@@ -566,6 +629,14 @@ def _effective_risk_capped_by_limits(patch_risk: dict[str, Any], limits: dict[st
                 eff[k] = min(float(eff[k]), float(limits[k]))
             except (TypeError, ValueError):
                 pass
+    # Profile Editor min_stop_pips is the floor: use at least that so user can set >10 for scalping
+    if "min_stop_pips" in limits and "min_stop_pips" in eff:
+        try:
+            profile_min = float(limits["min_stop_pips"])
+            preset_min = float(eff["min_stop_pips"])
+            eff["min_stop_pips"] = max(preset_min, profile_min)
+        except (TypeError, ValueError):
+            pass
     return eff
 
 

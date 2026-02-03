@@ -10,6 +10,7 @@ import pandas as pd
 from adapters.mt5_adapter import Tick
 from core.context_engine import compute_tf_context
 from core.indicators import bollinger_bands as bollinger_bands_fn
+from core.indicators import ema as ema_fn
 from core.indicators import macd as macd_fn
 from core.indicators import rsi as rsi_fn
 from core.indicators import vwap as vwap_fn
@@ -17,6 +18,7 @@ from core.models import MarketContext, TradeCandidate
 from core.profile import (
     ExecutionPolicyBollingerBands,
     ExecutionPolicyBreakout,
+    ExecutionPolicyEmaPullback,
     ExecutionPolicyIndicator,
     ExecutionPolicyPriceLevelTrend,
     ExecutionPolicySessionMomentum,
@@ -25,7 +27,7 @@ from core.profile import (
     get_effective_risk,
 )
 from core.risk_engine import evaluate_trade
-from core.signal_engine import Signal
+from core.signal_engine import Signal, drop_incomplete_last_bar
 from core.timeframes import Timeframe
 from storage.sqlite_store import SqliteStore
 
@@ -1080,6 +1082,198 @@ def execute_vwap_policy_demo_only(
         comment=f"vwap:{policy.id}",
     )
     placed = res.retcode in (0, 10008, 10009)  # 0=OANDA success; 10008/10009=MT5
+    reason = "order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
+    sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+    store.insert_execution(
+        {
+            "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+            "profile": profile.profile_name,
+            "symbol": profile.symbol,
+            "signal_id": sig_id,
+            "rule_id": rule_id,
+            "mode": mode,
+            "attempted": 1,
+            "placed": 1 if placed else 0,
+            "reason": reason,
+            "mt5_retcode": res.retcode,
+            "mt5_order_id": res.order,
+            "mt5_deal_id": res.deal,
+        }
+    )
+    return ExecutionDecision(
+        attempted=True,
+        placed=placed,
+        reason=reason,
+        order_retcode=res.retcode,
+        order_id=res.order,
+        deal_id=res.deal,
+        side=side,
+    )
+
+
+# ---------------------------------------------------------------------------
+# EMA Pullback Policy (M5-M15 momentum pullback)
+# ---------------------------------------------------------------------------
+
+
+def evaluate_ema_pullback_conditions(
+    profile: ProfileV1,
+    policy: ExecutionPolicyEmaPullback,
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+) -> tuple[bool, Optional[str], list[str]]:
+    """Trend from EMA 50/200 on trend_timeframe; entry when price in EMA 20-50 zone on entry_timeframe.
+    Returns (passed, side, reasons)."""
+    reasons: list[str] = []
+    trend_df = data_by_tf.get(policy.trend_timeframe)
+    entry_df = data_by_tf.get(policy.entry_timeframe)
+    if trend_df is None or trend_df.empty:
+        return False, None, [f"ema_pullback: no {policy.trend_timeframe} data"]
+    if entry_df is None or entry_df.empty:
+        return False, None, [f"ema_pullback: no {policy.entry_timeframe} data"]
+    trend_df = drop_incomplete_last_bar(trend_df.copy(), policy.trend_timeframe)
+    entry_df = drop_incomplete_last_bar(entry_df.copy(), policy.entry_timeframe)
+    if len(trend_df) < policy.ema_trend_slow:
+        return False, None, [f"ema_pullback: trend TF needs at least {policy.ema_trend_slow} bars"]
+    if len(entry_df) < policy.ema_zone_high:
+        return False, None, [f"ema_pullback: entry TF needs at least {policy.ema_zone_high} bars"]
+    close_trend = trend_df["close"]
+    ema50_t = ema_fn(close_trend, policy.ema_trend_fast)
+    ema200_t = ema_fn(close_trend, policy.ema_trend_slow)
+    bull = float(ema50_t.iloc[-1]) > float(ema200_t.iloc[-1])
+    close_entry = entry_df["close"]
+    ema_zone_low = ema_fn(close_entry, policy.ema_zone_low)
+    ema_zone_high = ema_fn(close_entry, policy.ema_zone_high)
+    zone_lo = min(float(ema_zone_low.iloc[-1]), float(ema_zone_high.iloc[-1]))
+    zone_hi = max(float(ema_zone_low.iloc[-1]), float(ema_zone_high.iloc[-1]))
+    price = float(close_entry.iloc[-1])
+    pip = float(profile.pip_size)
+    tolerance = pip * 2.0
+    in_zone = (zone_lo - tolerance) <= price <= (zone_hi + tolerance)
+    if not in_zone:
+        return False, None, [f"ema_pullback: price {price:.5f} not in zone [{zone_lo:.5f}, {zone_hi:.5f}]"]
+    if bull:
+        return True, "buy", [f"ema_pullback: bull trend (EMA50>EMA200), price in EMA{policy.ema_zone_low}-{policy.ema_zone_high} zone"]
+    else:
+        return True, "sell", [f"ema_pullback: bear trend (EMA50<EMA200), price in EMA{policy.ema_zone_low}-{policy.ema_zone_high} zone"]
+
+
+def _ema_pullback_candidate(
+    profile: ProfileV1,
+    policy: ExecutionPolicyEmaPullback,
+    entry_price: float,
+    side: str,
+) -> TradeCandidate:
+    pip = float(profile.pip_size)
+    sl_pips = policy.sl_pips if policy.sl_pips is not None else float(get_effective_risk(profile).min_stop_pips)
+    if side == "buy":
+        target = entry_price + policy.tp_pips * pip if policy.tp_pips else None
+        stop = entry_price - sl_pips * pip
+    else:
+        target = entry_price - policy.tp_pips * pip if policy.tp_pips else None
+        stop = entry_price + sl_pips * pip
+    return TradeCandidate(
+        symbol=profile.symbol,
+        side=side,
+        entry_price=entry_price,
+        stop_price=stop,
+        target_price=target,
+        size_lots=float(get_effective_risk(profile).max_lots),
+    )
+
+
+def execute_ema_pullback_policy_demo_only(
+    *,
+    adapter,
+    profile: ProfileV1,
+    log_dir: Path,
+    policy: ExecutionPolicyEmaPullback,
+    context: MarketContext,
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+    tick: Tick,
+    trades_df: Optional[pd.DataFrame],
+    mode: str,
+    bar_time_utc: str,
+) -> ExecutionDecision:
+    """Evaluate EMA pullback policy and optionally place a market order."""
+    if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
+        return ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed")
+    if not adapter.is_demo_account():
+        return ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)")
+    store = _store(log_dir)
+    rule_id = f"ema_pullback:{policy.id}:{policy.entry_timeframe}:{bar_time_utc}"
+    bar_minutes = {"M5": 6, "M15": 16}
+    within = bar_minutes.get(policy.entry_timeframe, 10)
+    if store.has_recent_price_level_placement(profile.profile_name, rule_id, within):
+        return ExecutionDecision(attempted=False, placed=False, reason="ema_pullback: recent placement (idempotent)")
+    passed, side, eval_reasons = evaluate_ema_pullback_conditions(profile, policy, data_by_tf)
+    if not passed or side is None:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": "; ".join(eval_reasons),
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason="; ".join(eval_reasons))
+    entry_price = (tick.bid + tick.ask) / 2.0
+    candidate = _ema_pullback_candidate(profile, policy, entry_price, side)
+    decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
+    if not decision.allow:
+        sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": sig_id,
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": "risk_reject: " + "; ".join(decision.hard_reasons),
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons))
+    if mode == "ARMED_MANUAL_CONFIRM":
+        sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": sig_id,
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": "manual_confirm_required",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason="manual confirm required")
+    res = adapter.order_send_market(
+        symbol=profile.symbol,
+        side=side,
+        volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
+        sl=candidate.stop_price,
+        tp=candidate.target_price,
+        comment=f"ep:{policy.id}",
+    )
+    placed = res.retcode in (0, 10008, 10009)
     reason = "order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
     sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
     store.insert_execution(
