@@ -1,0 +1,15 @@
+[Unit]
+Description=USDJPY Assistant trading loop
+After=network.target usdjpy-api.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=__APP_ROOT__
+Environment=USDJPY_DATA_DIR=__APP_ROOT__/data
+ExecStart=__APP_ROOT__/.venv/bin/python run_loop.py --profile __APP_ROOT__/data/profiles/v1/cody_demo.json
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
