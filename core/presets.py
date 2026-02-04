@@ -73,7 +73,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "filters": {
                 "alignment": {"enabled": False},
                 "ema_stack_filter": {"enabled": False},
-                "atr_filter": {"enabled": False},
+                "atr_filter": {"enabled": True, "timeframe": "M1", "min_atr_pips": 5.0},
+                "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
             },
             "setups": {
                 "m1_cross_entry": {
@@ -130,8 +131,9 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         "strategy": {
             "filters": {
                 "alignment": {"enabled": True, "method": "score", "min_score_to_trade": 1},
-                "ema_stack_filter": {"enabled": True, "timeframe": "M1", "min_separation_pips": 0.5},
-                "atr_filter": {"enabled": False},
+                "ema_stack_filter": {"enabled": True, "timeframe": "M1", "min_separation_pips": 1.0},
+                "atr_filter": {"enabled": True, "timeframe": "M1", "min_atr_pips": 5.0},
+                "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
             },
             "setups": {
                 "m1_cross_entry": {
@@ -191,7 +193,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "filters": {
                 "alignment": {"enabled": False},
                 "ema_stack_filter": {"enabled": False},
-                "atr_filter": {"enabled": False},
+                "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 8.0},
             },
             "setups": {
                 "m1_cross_entry": {"enabled": False},
@@ -260,7 +262,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "require_stop": True,
             "min_stop_pips": 12.0,
             "max_spread_pips": 5.0,
-            "max_trades_per_day": 3,
+            "max_trades_per_day": 5,
             "max_open_trades": 1,
             "cooldown_minutes_after_loss": 5,
         },
@@ -268,7 +270,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "filters": {
                 "alignment": {"enabled": False},
                 "ema_stack_filter": {"enabled": False},
-                "atr_filter": {"enabled": False},
+                "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 8.0},
             },
             "setups": {
                 "m1_cross_entry": {"enabled": False},
@@ -344,7 +346,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "filters": {
                 "alignment": {"enabled": False},
                 "ema_stack_filter": {"enabled": False},
-                "atr_filter": {"enabled": False},
+                "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 8.0},
+                "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
             },
             "setups": {
                 "m1_cross_entry": {"enabled": False},
@@ -502,7 +505,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "filters": {
                 "alignment": {"enabled": True, "method": "score", "min_score_to_trade": 1},
                 "ema_stack_filter": {"enabled": False},
-                "atr_filter": {"enabled": False},
+                "atr_filter": {"enabled": True, "timeframe": "M1", "min_atr_pips": 5.0},
+                "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
             },
             "setups": {
                 "m1_cross_entry": {
@@ -512,7 +516,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                         "confirm_bars": 2,
                         "max_wait_bars": 6,
                         "require_close_on_correct_side": True,
-                        "min_distance_pips": 0.5,
+                        "min_distance_pips": 1.5,
                     },
                 },
             },
@@ -559,7 +563,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "filters": {
                 "alignment": {"enabled": False},
                 "ema_stack_filter": {"enabled": False},
-                "atr_filter": {"enabled": False},
+                "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 10.0},
+                "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
             },
             "setups": {
                 "m1_cross_entry": {"enabled": False},
@@ -619,7 +624,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "filters": {
                 "alignment": {"enabled": False},
                 "ema_stack_filter": {"enabled": False},
-                "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 8.0},
+                "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 10.0},
                 "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
             },
             "setups": {
@@ -746,14 +751,14 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "require_stop": True,
             "min_stop_pips": 12.0,
             "max_spread_pips": 5.0,
-            "max_trades_per_day": 60,
-            "max_open_trades": 4,
+            "max_trades_per_day": 30,
+            "max_open_trades": 2,
         },
         "strategy": {
             "filters": {
                 "alignment": {"enabled": False},
                 "ema_stack_filter": {"enabled": True, "timeframe": "M1", "periods": [9, 21]},
-                "atr_filter": {"enabled": True, "timeframe": "M1", "min_atr_pips": 3.0},
+                "atr_filter": {"enabled": True, "timeframe": "M1", "min_atr_pips": 5.0},
                 "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
             },
         },
@@ -803,14 +808,14 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "require_stop": True,
             "min_stop_pips": 12.0,
             "max_spread_pips": 5.0,
-            "max_trades_per_day": 6,
+            "max_trades_per_day": 10,
             "max_open_trades": 1,
             "risk_per_trade_pct": 0.4,
         },
         "strategy": {
             "filters": {
                 "alignment": {"enabled": True, "trend_timeframe": "M15"},
-                "ema_stack_filter": {"enabled": True, "timeframe": "M15", "periods": [20, 50, 200]},
+                "ema_stack_filter": {"enabled": True, "timeframe": "M15", "periods": [20, 50]},
                 "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 10.0},
                 "session_filter": {"enabled": True, "sessions": ["Tokyo", "London", "NewYork"]},
             },
@@ -843,8 +848,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "ema_zone_low": 20,
                     "ema_zone_high": 50,
                     "require_rejection_candle": True,
-                    "require_engulfing_confirmation": True,
-                    "min_rr": 2.3,
+                    "require_engulfing_confirmation": False,
+                    "min_rr": 1.5,
                     "avoid_round_numbers": True,
                     "round_number_buffer_pips": 5.0,
                     "tp_pips": 18.0,
@@ -873,14 +878,14 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "require_stop": True,
             "min_stop_pips": 12.0,
             "max_spread_pips": 5.0,
-            "max_trades_per_day": 8,
+            "max_trades_per_day": 12,
             "max_open_trades": 1,
             "risk_per_trade_pct": 0.4,
         },
         "strategy": {
             "filters": {
                 "alignment": {"enabled": True, "trend_timeframe": "M15"},
-                "ema_stack_filter": {"enabled": True, "timeframe": "M15", "periods": [20, 50, 200]},
+                "ema_stack_filter": {"enabled": True, "timeframe": "M15", "periods": [20, 50]},
                 "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 10.0},
                 "session_filter": {"enabled": True, "sessions": ["Tokyo", "London", "NewYork"]},
             },
