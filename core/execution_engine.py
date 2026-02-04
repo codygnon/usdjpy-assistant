@@ -20,6 +20,7 @@ from core.models import MarketContext, TradeCandidate
 from core.profile import (
     ExecutionPolicyBollingerBands,
     ExecutionPolicyBreakout,
+    ExecutionPolicyEmaBbScalp,
     ExecutionPolicyEmaPullback,
     ExecutionPolicyIndicator,
     ExecutionPolicyPriceLevelTrend,
@@ -1517,6 +1518,294 @@ def execute_ema_pullback_policy_demo_only(
         sl=candidate.stop_price,
         tp=candidate.target_price,
         comment=f"ep:{policy.id}",
+    )
+    placed = res.retcode in (0, 10008, 10009)
+    reason = "order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
+    sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+    store.insert_execution(
+        {
+            "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+            "profile": profile.profile_name,
+            "symbol": profile.symbol,
+            "signal_id": sig_id,
+            "rule_id": rule_id,
+            "mode": mode,
+            "attempted": 1,
+            "placed": 1 if placed else 0,
+            "reason": reason,
+            "mt5_retcode": res.retcode,
+            "mt5_order_id": res.order,
+            "mt5_deal_id": res.deal,
+        }
+    )
+    return ExecutionDecision(
+        attempted=True,
+        placed=placed,
+        reason=reason,
+        order_retcode=res.retcode,
+        order_id=res.order,
+        deal_id=res.deal,
+        side=side,
+    )
+
+
+# ---------------------------------------------------------------------------
+# EMA 9/21 + Bollinger Band Expansion Scalper (KumaTora-style)
+# ---------------------------------------------------------------------------
+
+
+def evaluate_ema_bb_scalp_conditions(
+    profile: ProfileV1,
+    policy: ExecutionPolicyEmaBbScalp,
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+) -> tuple[bool, Optional[str], list[str]]:
+    """Check EMA 9/21 trend + recent cross + pullback to EMA fast + Bollinger expansion on a single TF."""
+    reasons: list[str] = []
+    tf = policy.timeframe
+    df = data_by_tf.get(tf)
+    if df is None or df.empty:
+        return False, None, [f"ema_bb_scalp: no {tf} data"]
+    df = drop_incomplete_last_bar(df.copy(), tf)
+    if df.empty:
+        return False, None, [f"ema_bb_scalp: no complete {tf} bars"]
+
+    close = df["close"]
+    if len(close) < max(policy.ema_slow, policy.bollinger_period) + 2:
+        return False, None, [f"ema_bb_scalp: need at least {max(policy.ema_slow, policy.bollinger_period)+2} bars"]
+
+    # EMA 9/21 trend and recent cross
+    ema_fast = ema_fn(close, policy.ema_fast)
+    ema_slow = ema_fn(close, policy.ema_slow)
+    diff = ema_fast - ema_slow
+    now = diff.iloc[-1]
+    if pd.isna(now):
+        return False, None, ["ema_bb_scalp: EMA warmup not complete"]
+    bull = now > 0
+
+    cb = max(int(getattr(policy, "confirm_bars", 2)), 1)
+    if len(diff) < cb + 1:
+        return False, None, [f"ema_bb_scalp: insufficient bars for confirm_bars={cb}"]
+    prev = diff.iloc[-cb - 1]
+    crossed_up = prev <= 0 < now
+    crossed_down = prev >= 0 > now
+    if bull and not crossed_up:
+        return False, None, ["ema_bb_scalp: no recent EMA fast>slow cross up"]
+    if not bull and not crossed_down:
+        return False, None, ["ema_bb_scalp: no recent EMA fast<slow cross down"]
+
+    # Pullback: price near EMA fast
+    price = float(close.iloc[-1])
+    ema_fast_last = float(ema_fast.iloc[-1])
+    pip = float(profile.pip_size)
+    tol = max(float(getattr(policy, "min_distance_pips", 1.0)), 0.5)
+    dist_pips = abs(price - ema_fast_last) / pip
+    if dist_pips > tol:
+        return False, None, [f"ema_bb_scalp: price not near EMA{policy.ema_fast} (dist={dist_pips:.2f} > tol={tol:.2f})"]
+
+    # Bollinger expansion: current band width > rolling SMA of width * 1.1
+    mid, upper, lower = bollinger_bands_fn(close, policy.bollinger_period, policy.bollinger_deviation)
+    width = upper - lower
+    if len(width) < policy.bollinger_period + 5:
+        return False, None, ["ema_bb_scalp: insufficient bars for Bollinger expansion"]
+    bw_now = float(width.iloc[-1])
+    bw_ma = float(width.rolling(policy.bollinger_period).mean().iloc[-1])
+    if pd.isna(bw_ma) or bw_ma <= 0:
+        return False, None, ["ema_bb_scalp: Bollinger bandwidth warmup not complete"]
+    if bw_now <= bw_ma * 1.1:
+        return False, None, [f"ema_bb_scalp: band not in expansion (bw_now={bw_now:.6f} <= 1.1*bw_ma={bw_ma:.6f})"]
+
+    side = "buy" if bull else "sell"
+    reasons.append(f"ema_bb_scalp: trend={side}, bw_now>{bw_ma:.6f}, dist_pips={dist_pips:.2f}")
+    return True, side, reasons
+
+
+def _ema_bb_scalp_candidate(
+    profile: ProfileV1,
+    policy: ExecutionPolicyEmaBbScalp,
+    entry_price: float,
+    side: str,
+) -> TradeCandidate:
+    pip = float(profile.pip_size)
+    sl_pips = float(policy.sl_pips or get_effective_risk(profile).min_stop_pips)
+    tp_pips = float(policy.tp_pips)
+    if side == "buy":
+        stop = entry_price - sl_pips * pip
+        target = entry_price + tp_pips * pip
+    else:
+        stop = entry_price + sl_pips * pip
+        target = entry_price - tp_pips * pip
+    return TradeCandidate(
+        symbol=profile.symbol,
+        side=side,
+        entry_price=entry_price,
+        stop_price=stop,
+        target_price=target,
+        size_lots=float(get_effective_risk(profile).max_lots),
+    )
+
+
+def execute_ema_bb_scalp_policy_demo_only(
+    *,
+    adapter,
+    profile: ProfileV1,
+    log_dir: Path,
+    policy: ExecutionPolicyEmaBbScalp,
+    context: MarketContext,
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+    tick: Tick,
+    trades_df: Optional[pd.DataFrame],
+    mode: str,
+    bar_time_utc: str,
+) -> ExecutionDecision:
+    """Evaluate EMA 9/21 + Bollinger expansion scalper and optionally place a market order."""
+    if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
+        return ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed")
+    if not adapter.is_demo_account():
+        return ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)")
+    store = _store(log_dir)
+    tf = policy.timeframe
+    rule_id = f"ema_bb_scalp:{policy.id}:{tf}:{bar_time_utc}"
+    bar_minutes = {"M1": 2, "M5": 6}
+    within = bar_minutes.get(tf, 5)
+    if store.has_recent_price_level_placement(profile.profile_name, rule_id, within):
+        return ExecutionDecision(attempted=False, placed=False, reason="ema_bb_scalp: recent placement (idempotent)")
+
+    passed, side, eval_reasons = evaluate_ema_bb_scalp_conditions(profile, policy, data_by_tf)
+    if not passed or side is None:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": "; ".join(eval_reasons),
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason="; ".join(eval_reasons))
+
+    # Strategy filters: EMA stack, ATR, session
+    df_tf = data_by_tf.get(tf)
+    if df_tf is None or df_tf.empty:
+        return ExecutionDecision(attempted=True, placed=False, reason=f"ema_bb_scalp: no {tf} data")
+
+    ok, reason = passes_ema_stack_filter(profile, df_tf, tf)
+    if not ok:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": reason or "ema_stack_filter",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason=reason or "ema_stack_filter")
+
+    ok, reason = passes_atr_filter(profile, df_tf, tf)
+    if not ok:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": reason or "atr_filter",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason=reason or "atr_filter")
+
+    now_utc = datetime.now(timezone.utc)
+    ok, reason = passes_session_filter(profile, now_utc)
+    if not ok:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": reason or "session_filter",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter")
+
+    entry_price = (tick.bid + tick.ask) / 2.0
+    candidate = _ema_bb_scalp_candidate(profile, policy, entry_price, side)
+    decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
+    if not decision.allow:
+        sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": sig_id,
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": "risk_reject: " + "; ".join(decision.hard_reasons),
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons))
+
+    if mode == "ARMED_MANUAL_CONFIRM":
+        sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": sig_id,
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": "manual_confirm_required",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason="manual confirm required")
+
+    res = adapter.order_send_market(
+        symbol=profile.symbol,
+        side=side,
+        volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
+        sl=candidate.stop_price,
+        tp=candidate.target_price,
+        comment=f"ema_bb_scalp:{policy.id}",
     )
     placed = res.retcode in (0, 10008, 10009)
     reason = "order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"

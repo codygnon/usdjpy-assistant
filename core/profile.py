@@ -302,6 +302,25 @@ class ExecutionPolicyEmaPullback(BaseModel):
     round_number_buffer_pips: float = 5.0
 
 
+class ExecutionPolicyEmaBbScalp(BaseModel):
+    """EMA 9/21 + Bollinger Band expansion scalper on a single timeframe (typically M1)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["ema_bb_scalp"] = "ema_bb_scalp"
+    id: str = "ema_bb_scalp_default"
+    enabled: bool = False
+    timeframe: Literal["M1", "M5"] = "M1"
+    ema_fast: int = 9
+    ema_slow: int = 21
+    bollinger_period: int = 20
+    bollinger_deviation: float = 2.0
+    tp_pips: float = 15.0
+    sl_pips: Optional[float] = 10.0
+    confirm_bars: int = 2
+    min_distance_pips: float = 1.0
+
+
 ExecutionPolicy = Annotated[
     Union[
         ExecutionPolicyConfirmedCross,
@@ -312,6 +331,7 @@ ExecutionPolicy = Annotated[
         ExecutionPolicyBollingerBands,
         ExecutionPolicyVWAP,
         ExecutionPolicyEmaPullback,
+        ExecutionPolicyEmaBbScalp,
     ],
     Field(discriminator="type"),
 ]

@@ -32,6 +32,7 @@ class PresetId(str, Enum):
     DAY_TRADING_USD_JPY_9_21 = "day_trading_usd_jpy_9_21"
     M5_M15_MOMENTUM_PULLBACK_9_21 = "m5_m15_momentum_pullback_9_21"
     CODY_WIZARD_AGGR_OANDA_M5_CROSS = "cody_wizard_aggressive_oanda_m5_cross"
+    KUMA_TORA_BB_EMA_9_21_SCALPER = "kuma_tora_bb_ema_9_21_scalper"
 
 
 # ---------------------------------------------------------------------------
@@ -710,6 +711,63 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "id": "wizard_m5_cross_oanda",
                     "enabled": True,
                     "setup_id": "m5_cross_entry",
+                },
+            ],
+        },
+    },
+    # -----------------------------------------------------------------------
+    # KumaTora Bollinger Expansion Scalper (EMA 9/21)
+    # OANDA-tuned M1 scalper: EMA 9/21 + Bollinger expansion + ATR filter.
+    # -----------------------------------------------------------------------
+    PresetId.KUMA_TORA_BB_EMA_9_21_SCALPER: {
+        "name": "KumaTora Bollinger Expansion Scalper (EMA 9/21)",
+        "description": "M1 USD/JPY scalper for OANDA (~4 pip spread): EMA 9/21 trend with Bollinger Band expansion and ATR filters, 10 pip SL and 15 pip TP, tuned for London+NY sessions.",
+        "pros": [
+            "EMA 9/21 trend + pullback entries capture short-term momentum moves on M1",
+            "Bollinger expansion and ATR filters help avoid dead/choppy periods",
+            "Risk is simple and consistent: 10 pip SL, 15 pip TP",
+        ],
+        "cons": [
+            "Aggressive trade limits (many trades/day) can increase drawdown in difficult markets",
+            "Requires sufficient volatility; filters may skip trades during quiet hours",
+        ],
+        "risk": {
+            "max_lots": 0.1,
+            "require_stop": True,
+            "min_stop_pips": 10.0,
+            "max_spread_pips": 4.3,
+            "max_trades_per_day": 60,
+            "max_open_trades": 4,
+        },
+        "strategy": {
+            "filters": {
+                "alignment": {"enabled": False},
+                "ema_stack_filter": {"enabled": True, "timeframe": "M1", "periods": [9, 21]},
+                "atr_filter": {"enabled": True, "timeframe": "M1", "min_atr_pips": 3.0},
+                "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
+            },
+        },
+        "trade_management": {
+            "stop_loss": {"mode": "fixed_pips", "pips": 10.0},
+            "target": {"mode": "fixed_pips", "pips": 15.0},
+        },
+        "execution": {
+            "loop_poll_seconds": 1.0,
+            "loop_poll_seconds_fast": 0.5,
+            "policies": [
+                {
+                    "type": "ema_bb_scalp",
+                    "id": "usd_jpy_m1_kumatora",
+                    "enabled": True,
+                    "timeframe": "M1",
+                    "ema_fast": 9,
+                    "ema_slow": 21,
+                    "bollinger_period": 20,
+                    "bollinger_deviation": 2.0,
+                    "tp_pips": 15.0,
+                    "sl_pips": 10.0,
+                    "confirm_bars": 2,
+                    "min_distance_pips": 1.0,
                 },
             ],
         },
