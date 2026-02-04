@@ -11,8 +11,8 @@
   "risk": {
     "max_lots": 7.1,
     "require_stop": true,
-    "min_stop_pips": 5.0,
-    "max_spread_pips": 2.9,
+    "min_stop_pips": 12.0,
+    "max_spread_pips": 5.0,
     "max_trades_per_day": 25,
     "cooldown_minutes_after_loss": 0,
     "max_open_trades": 3,
@@ -22,8 +22,8 @@
   "effective_risk": {
     "max_lots": 7.1,
     "require_stop": true,
-    "min_stop_pips": 10.0,
-    "max_spread_pips": 1.7,
+    "min_stop_pips": 12.0,
+    "max_spread_pips": 5.0,
     "max_trades_per_day": 25,
     "cooldown_minutes_after_loss": 0,
     "max_open_trades": 3,
@@ -107,8 +107,12 @@
   "trade_management": {
     "target": {
       "mode": "fixed_pips",
-      "pips_default": 8.0,
+      "pips_default": 18.0,
       "rr_default": 1.0
+    },
+    "breakeven": {
+      "enabled": true,
+      "after_pips": 8.0
     }
   },
   "execution": {
@@ -123,8 +127,8 @@
         "trigger": "lower_band_buy",
         "regime": "bull",
         "side": "buy",
-        "tp_pips": 8.0,
-        "sl_pips": 5.0
+        "tp_pips": 18.0,
+        "sl_pips": 12.0
       },
       {
         "type": "bollinger_bands",
@@ -136,8 +140,8 @@
         "trigger": "upper_band_sell",
         "regime": "bear",
         "side": "sell",
-        "tp_pips": 8.0,
-        "sl_pips": 5.0
+        "tp_pips": 18.0,
+        "sl_pips": 12.0
       },
       {
         "type": "vwap",
@@ -146,8 +150,8 @@
         "timeframe": "M1",
         "trigger": "cross_above",
         "side": "buy",
-        "tp_pips": 8.0,
-        "sl_pips": 5.0
+        "tp_pips": 18.0,
+        "sl_pips": 12.0
       },
       {
         "type": "vwap",
@@ -156,8 +160,8 @@
         "timeframe": "M1",
         "trigger": "cross_below",
         "side": "sell",
-        "tp_pips": 8.0,
-        "sl_pips": 5.0
+        "tp_pips": 18.0,
+        "sl_pips": 12.0
       }
     ],
     "loop_poll_seconds": 3.0,

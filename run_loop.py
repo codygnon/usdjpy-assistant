@@ -595,7 +595,7 @@ def main() -> None:
                     )
                     if dec.attempted:
                         if dec.placed:
-                            entry_price = (tick.bid + tick.ask) / 2.0
+                            entry_price = tick.ask if pol.side == "buy" else tick.bid
                             print(f"[{profile.profile_name}] TRADE PLACED: {pol.type}:{pol.id} | side={pol.side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
                                 profile=profile,
@@ -636,8 +636,8 @@ def main() -> None:
                     )
                     if dec.attempted:
                         if dec.placed:
-                            entry_price = (tick.bid + tick.ask) / 2.0
                             side = dec.side or "buy"
+                            entry_price = tick.ask if side == "buy" else tick.bid
                             print(f"[{profile.profile_name}] TRADE PLACED: breakout_range:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
                                 profile=profile,
@@ -673,8 +673,8 @@ def main() -> None:
                     )
                     if dec.attempted:
                         if dec.placed:
-                            entry_price = (tick.bid + tick.ask) / 2.0
                             side = dec.side or "buy"
+                            entry_price = tick.ask if side == "buy" else tick.bid
                             print(f"[{profile.profile_name}] TRADE PLACED: session_momentum:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
                                 profile=profile,
@@ -713,8 +713,8 @@ def main() -> None:
                     )
                     if dec.attempted:
                         if dec.placed:
-                            entry_price = (tick.bid + tick.ask) / 2.0
                             side = dec.side or "buy"
+                            entry_price = tick.ask if side == "buy" else tick.bid
                             print(f"[{profile.profile_name}] TRADE PLACED: bollinger_bands:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
                                 profile=profile,
@@ -753,8 +753,8 @@ def main() -> None:
                     )
                     if dec.attempted:
                         if dec.placed:
-                            entry_price = (tick.bid + tick.ask) / 2.0
                             side = dec.side or "buy"
+                            entry_price = tick.ask if side == "buy" else tick.bid
                             print(f"[{profile.profile_name}] TRADE PLACED: vwap:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
                                 profile=profile,
@@ -793,8 +793,8 @@ def main() -> None:
                     )
                     if dec.attempted:
                         if dec.placed:
-                            entry_price = (tick.bid + tick.ask) / 2.0
                             side = dec.side or "buy"
+                            entry_price = tick.ask if side == "buy" else tick.bid
                             pip = float(profile.pip_size)
                             sl_pips = getattr(pol, "sl_pips", None)
                             if sl_pips is None:

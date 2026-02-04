@@ -64,8 +64,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         "risk": {
             "max_lots": 0.1,
             "require_stop": True,
-            "min_stop_pips": 5.0,
-            "max_spread_pips": 3.0,
+            "min_stop_pips": 12.0,
+            "max_spread_pips": 5.0,
             "max_trades_per_day": 20,
             "max_open_trades": 2,
         },
@@ -89,8 +89,9 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         "trade_management": {
             "target": {
                 "mode": "fixed_pips",
-                "pips_default": 5.0,
+                "pips_default": 18.0,
             },
+            "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
             "loop_poll_seconds": 3.0,
@@ -121,8 +122,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         "risk": {
             "max_lots": 0.05,
             "require_stop": True,
-            "min_stop_pips": 8.0,
-            "max_spread_pips": 1.0,
+            "min_stop_pips": 12.0,
+            "max_spread_pips": 5.0,
             "max_trades_per_day": 5,
             "max_open_trades": 1,
         },
@@ -147,8 +148,9 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         "trade_management": {
             "target": {
                 "mode": "fixed_pips",
-                "pips_default": 8.0,
+                "pips_default": 18.0,
             },
+            "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
             "loop_poll_seconds": 5.0,
@@ -179,8 +181,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         "risk": {
             "max_lots": 0.1,
             "require_stop": True,
-            "min_stop_pips": 10.0,
-            "max_spread_pips": 3.0,
+            "min_stop_pips": 12.0,
+            "max_spread_pips": 5.0,
             "max_trades_per_day": 5,
             "max_open_trades": 2,
             "cooldown_minutes_after_loss": 0,
@@ -198,8 +200,9 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         "trade_management": {
             "target": {
                 "mode": "fixed_pips",
-                "pips_default": 15.0,
+                "pips_default": 18.0,
             },
+            "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
             "loop_poll_seconds": 10.0,
@@ -215,8 +218,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "trigger": "lower_band_buy",
                     "regime": "bull",
                     "side": "buy",
-                    "tp_pips": 15.0,
-                    "sl_pips": 10.0,
+                    "tp_pips": 18.0,
+                    "sl_pips": 12.0,
                 },
                 {
                     "type": "bollinger_bands",
@@ -228,8 +231,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "trigger": "upper_band_sell",
                     "regime": "bear",
                     "side": "sell",
-                    "tp_pips": 15.0,
-                    "sl_pips": 10.0,
+                    "tp_pips": 18.0,
+                    "sl_pips": 12.0,
                 },
             ],
         },
@@ -256,7 +259,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "max_lots": 0.05,
             "require_stop": True,
             "min_stop_pips": 12.0,
-            "max_spread_pips": 1.5,
+            "max_spread_pips": 5.0,
             "max_trades_per_day": 3,
             "max_open_trades": 1,
             "cooldown_minutes_after_loss": 5,
@@ -274,8 +277,9 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         "trade_management": {
             "target": {
                 "mode": "fixed_pips",
-                "pips_default": 12.0,
+                "pips_default": 18.0,
             },
+            "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
             "loop_poll_seconds": 15.0,
@@ -291,8 +295,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "trigger": "upper_band_sell",
                     "regime": "bear",
                     "side": "sell",
-                    "tp_pips": 12.0,
-                    "sl_pips": 10.0,
+                    "tp_pips": 18.0,
+                    "sl_pips": 12.0,
                 },
                 {
                     "type": "bollinger_bands",
@@ -304,8 +308,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "trigger": "lower_band_buy",
                     "regime": "bull",
                     "side": "buy",
-                    "tp_pips": 12.0,
-                    "sl_pips": 10.0,
+                    "tp_pips": 18.0,
+                    "sl_pips": 12.0,
                 },
             ],
         },
@@ -331,8 +335,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         "risk": {
             "max_lots": 0.1,
             "require_stop": True,
-            "min_stop_pips": 10.0,
-            "max_spread_pips": 2.0,
+            "min_stop_pips": 12.0,
+            "max_spread_pips": 5.0,
             "max_trades_per_day": 8,
             "max_open_trades": 2,
         },
@@ -349,8 +353,9 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         "trade_management": {
             "target": {
                 "mode": "fixed_pips",
-                "pips_default": 12.0,
+                "pips_default": 18.0,
             },
+            "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
             "loop_poll_seconds": 5.0,
@@ -368,8 +373,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "rsi_overbought": 70.0,
                     "rsi_zone": "oversold",
                     "use_macd_cross": False,
-                    "tp_pips": 12.0,
-                    "sl_pips": 10.0,
+                    "tp_pips": 18.0,
+                    "sl_pips": 12.0,
                 },
                 {
                     "type": "indicator_based",
@@ -383,8 +388,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "rsi_overbought": 70.0,
                     "rsi_zone": "overbought",
                     "use_macd_cross": False,
-                    "tp_pips": 12.0,
-                    "sl_pips": 10.0,
+                    "tp_pips": 18.0,
+                    "sl_pips": 12.0,
                 },
             ],
         },
@@ -410,8 +415,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         "risk": {
             "max_lots": 0.1,
             "require_stop": True,
-            "min_stop_pips": 10.0,
-            "max_spread_pips": 2.0,
+            "min_stop_pips": 12.0,
+            "max_spread_pips": 5.0,
             "max_trades_per_day": 8,
             "max_open_trades": 2,
         },
@@ -428,8 +433,9 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         "trade_management": {
             "target": {
                 "mode": "fixed_pips",
-                "pips_default": 12.0,
+                "pips_default": 18.0,
             },
+            "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
             "loop_poll_seconds": 5.0,
@@ -442,8 +448,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "timeframe": "M15",
                     "trigger": "cross_above",
                     "side": "buy",
-                    "tp_pips": 12.0,
-                    "sl_pips": 10.0,
+                    "tp_pips": 18.0,
+                    "sl_pips": 12.0,
                     "use_slope_filter": True,
                     "vwap_slope_lookback_bars": 20,
                     "session_filter_enabled": True,
@@ -456,8 +462,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "timeframe": "M15",
                     "trigger": "cross_below",
                     "side": "sell",
-                    "tp_pips": 12.0,
-                    "sl_pips": 10.0,
+                    "tp_pips": 18.0,
+                    "sl_pips": 12.0,
                     "use_slope_filter": True,
                     "vwap_slope_lookback_bars": 20,
                     "session_filter_enabled": True,
@@ -487,8 +493,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         "risk": {
             "max_lots": 0.1,
             "require_stop": True,
-            "min_stop_pips": 10.0,
-            "max_spread_pips": 2.0,
+            "min_stop_pips": 12.0,
+            "max_spread_pips": 5.0,
             "max_trades_per_day": 10,
             "max_open_trades": 2,
         },
@@ -514,8 +520,9 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         "trade_management": {
             "target": {
                 "mode": "fixed_pips",
-                "pips_default": 10.0,
+                "pips_default": 18.0,
             },
+            "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
             "loop_poll_seconds": 5.0,
@@ -544,7 +551,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "max_lots": 0.1,
             "require_stop": True,
             "min_stop_pips": 12.0,
-            "max_spread_pips": 4.0,
+            "max_spread_pips": 5.0,
             "max_trades_per_day": 20,
             "max_open_trades": 2,
         },
@@ -563,6 +570,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                 "mode": "fixed_pips",
                 "pips_default": 30.0,
             },
+            "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
             "loop_poll_seconds": 5.0,
@@ -603,7 +611,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "max_lots": 0.1,
             "require_stop": True,
             "min_stop_pips": 12.0,
-            "max_spread_pips": 4.5,
+            "max_spread_pips": 5.0,
             "max_trades_per_day": 20,
             "max_open_trades": 2,
         },
@@ -623,6 +631,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                 "mode": "fixed_pips",
                 "pips_default": 30.0,
             },
+            "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
             "loop_poll_seconds": 5.0,
@@ -666,7 +675,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "max_lots": 999.0,
             "require_stop": True,
             "min_stop_pips": 15.0,
-            "max_spread_pips": 4.3,
+            "max_spread_pips": 5.0,
             "max_trades_per_day": 30,
             "max_open_trades": 3,
             "cooldown_minutes_after_loss": 0,
@@ -699,8 +708,9 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         "trade_management": {
             "target": {
                 "mode": "fixed_pips",
-                "pips_default": 15.0,
+                "pips_default": 18.0,
             },
+            "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
             "loop_poll_seconds": 5.0,
@@ -734,8 +744,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         "risk": {
             "max_lots": 0.1,
             "require_stop": True,
-            "min_stop_pips": 10.0,
-            "max_spread_pips": 4.3,
+            "min_stop_pips": 12.0,
+            "max_spread_pips": 5.0,
             "max_trades_per_day": 60,
             "max_open_trades": 4,
         },
@@ -748,9 +758,10 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             },
         },
         "trade_management": {
-            # Use policy.sl_pips (10) and risk.min_stop_pips (10) for SL sizing.
+            # Use policy.sl_pips (12) and risk.min_stop_pips (12) for SL sizing.
             # Target uses fixed_pips with pips_default.
-            "target": {"mode": "fixed_pips", "pips_default": 15.0},
+            "target": {"mode": "fixed_pips", "pips_default": 18.0},
+            "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
             "loop_poll_seconds": 1.0,
@@ -765,8 +776,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "ema_slow": 21,
                     "bollinger_period": 20,
                     "bollinger_deviation": 2.0,
-                    "tp_pips": 15.0,
-                    "sl_pips": 10.0,
+                    "tp_pips": 18.0,
+                    "sl_pips": 12.0,
                     "confirm_bars": 2,
                     "min_distance_pips": 1.0,
                 },
@@ -791,7 +802,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "max_lots": 0.03,
             "require_stop": True,
             "min_stop_pips": 12.0,
-            "max_spread_pips": 4.5,
+            "max_spread_pips": 5.0,
             "max_trades_per_day": 6,
             "max_open_trades": 1,
             "risk_per_trade_pct": 0.4,
@@ -806,7 +817,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         },
         "trade_management": {
             "stop_loss": {"mode": "atr", "atr_multiplier": 1.3, "max_sl_pips": 20.0},
-            "breakeven": {"enabled": True, "after_pips": 14.0},
+            "breakeven": {"enabled": True, "after_pips": 8.0},
             "target": {
                 "mode": "scaled",
                 "tp1_pips": 18.0,
@@ -861,7 +872,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "max_lots": 0.03,
             "require_stop": True,
             "min_stop_pips": 12.0,
-            "max_spread_pips": 4.5,
+            "max_spread_pips": 5.0,
             "max_trades_per_day": 8,
             "max_open_trades": 1,
             "risk_per_trade_pct": 0.4,
@@ -876,7 +887,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         },
         "trade_management": {
             "stop_loss": {"mode": "atr", "atr_multiplier": 1.3, "max_sl_pips": 20.0},
-            "breakeven": {"enabled": True, "after_pips": 12.0},
+            "breakeven": {"enabled": True, "after_pips": 8.0},
             "target": {
                 "mode": "scaled",
                 "tp1_pips": 18.0,

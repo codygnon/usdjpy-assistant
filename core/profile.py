@@ -21,7 +21,7 @@ class RiskConfig(BaseModel):
     max_lots: float = 0.2
     require_stop: bool = True
     min_stop_pips: float = 10.0
-    max_spread_pips: float = 0.8
+    max_spread_pips: float = 5.0
     max_trades_per_day: int = 10
 
     # Optional advanced controls (v1)

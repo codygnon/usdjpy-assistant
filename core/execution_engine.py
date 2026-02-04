@@ -229,7 +229,7 @@ def execute_indicator_policy_demo_only(
         )
         return ExecutionDecision(attempted=True, placed=False, reason="; ".join(eval_reasons))
 
-    entry_price = (tick.bid + tick.ask) / 2.0
+    entry_price = tick.ask if policy.side == "buy" else tick.bid
     candidate = _indicator_candidate(profile, policy, entry_price)
     decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
     if not decision.allow:
@@ -656,7 +656,7 @@ def execute_breakout_policy_demo_only(
         )
         return ExecutionDecision(attempted=True, placed=False, reason="; ".join(eval_reasons))
 
-    entry_price = (tick.bid + tick.ask) / 2.0
+    entry_price = tick.ask if side == "buy" else tick.bid
     candidate = _breakout_candidate(profile, policy, entry_price, side)
     decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
     if not decision.allow:
@@ -849,7 +849,7 @@ def execute_bollinger_policy_demo_only(
             }
         )
         return ExecutionDecision(attempted=True, placed=False, reason="; ".join(eval_reasons))
-    entry_price = (tick.bid + tick.ask) / 2.0
+    entry_price = tick.ask if side == "buy" else tick.bid
     candidate = _bollinger_candidate(profile, policy, entry_price, side)
     decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
     if not decision.allow:
@@ -1084,7 +1084,7 @@ def execute_vwap_policy_demo_only(
             }
         )
         return ExecutionDecision(attempted=True, placed=False, reason="; ".join(eval_reasons))
-    entry_price = (tick.bid + tick.ask) / 2.0
+    entry_price = tick.ask if side == "buy" else tick.bid
     candidate = _vwap_candidate(profile, policy, entry_price, side)
     decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
     if not decision.allow:
@@ -1404,7 +1404,7 @@ def execute_ema_pullback_policy_demo_only(
             )
             return ExecutionDecision(attempted=True, placed=False, reason=reason or "atr_filter")
 
-    entry_price = (tick.bid + tick.ask) / 2.0
+    entry_price = tick.ask if side == "buy" else tick.bid
     pip = float(profile.pip_size)
 
     # avoid_round_numbers: reject if entry within buffer of round level (.00 or .50 for JPY)
@@ -1756,7 +1756,7 @@ def execute_ema_bb_scalp_policy_demo_only(
         )
         return ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter")
 
-    entry_price = (tick.bid + tick.ask) / 2.0
+    entry_price = tick.ask if side == "buy" else tick.bid
     candidate = _ema_bb_scalp_candidate(profile, policy, entry_price, side)
     decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
     if not decision.allow:
@@ -2026,7 +2026,7 @@ def execute_session_momentum_policy_demo_only(
         )
         return ExecutionDecision(attempted=True, placed=False, reason="; ".join(eval_reasons))
 
-    entry_price = (tick.bid + tick.ask) / 2.0
+    entry_price = tick.ask if side == "buy" else tick.bid
     candidate = _session_momentum_candidate(profile, policy, entry_price, side)
     decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
     if not decision.allow:
