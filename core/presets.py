@@ -31,6 +31,7 @@ class PresetId(str, Enum):
     DAY_TRADING_USD_JPY = "day_trading_usd_jpy"
     DAY_TRADING_USD_JPY_9_21 = "day_trading_usd_jpy_9_21"
     M5_M15_MOMENTUM_PULLBACK_9_21 = "m5_m15_momentum_pullback_9_21"
+    CODY_WIZARD_AGGR_OANDA_M5_CROSS = "cody_wizard_aggressive_oanda_m5_cross"
 
 
 # ---------------------------------------------------------------------------
@@ -638,6 +639,77 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "ema_zone_high": 21,
                     "tp_pips": 30.0,
                     "sl_pips": 16.0,
+                },
+            ],
+        },
+    },
+    # -----------------------------------------------------------------------
+    # Cody Wizard Aggressive (OANDA) M5 EMA Cross
+    # Aggressive day trading preset tuned for OANDA ~4 pip spread.
+    # Uses M5 confirmed-cross (EMA13/SMA30) with M15 trend/filters.
+    # -----------------------------------------------------------------------
+    PresetId.CODY_WIZARD_AGGR_OANDA_M5_CROSS: {
+        "name": "Cody Wizard Aggressive (OANDA) M5 EMA Cross",
+        "description": "Aggressive day trading preset for USD/JPY on OANDA (~4 pip spread): entries from M5 EMA13/SMA30 confirmed crosses, trading only during London+NY sessions with M15 trend/ATR filters. Uses 15 pip SL/TP and up to 30 trades/day, max 3 open.",
+        "pros": [
+            "M5 confirmed-cross entries provide frequent intraday opportunities",
+            "M15 trend + ATR + session filters help maintain win-rate despite wide spread",
+            "Fixed 15 pip SL/TP keeps risk and targets simple",
+        ],
+        "cons": [
+            "Aggressive trade count (up to 30/day) can increase drawdowns if filters are disabled",
+            "Wide spread means small moves can be eaten by costs; best in active London/NY hours",
+        ],
+        "risk": {
+            # Max lots is set very high so effective max is capped by Profile Editor limits.
+            "max_lots": 999.0,
+            "require_stop": True,
+            "min_stop_pips": 15.0,
+            "max_spread_pips": 4.3,
+            "max_trades_per_day": 30,
+            "max_open_trades": 3,
+            "cooldown_minutes_after_loss": 0,
+        },
+        "strategy": {
+            "filters": {
+                "alignment": {"enabled": True, "trend_timeframe": "M15"},
+                "ema_stack_filter": {"enabled": False},
+                "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 8.0},
+                "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
+            },
+            "setups": {
+                "m1_cross_entry": {
+                    "enabled": False,
+                },
+                "m5_cross_entry": {
+                    "enabled": True,
+                    "timeframe": "M5",
+                    "ema": 13,
+                    "sma": 30,
+                    "confirmation": {
+                        "confirm_bars": 2,
+                        "max_wait_bars": 5,
+                        "require_close_on_correct_side": True,
+                        "min_distance_pips": 1.0,
+                    },
+                },
+            },
+        },
+        "trade_management": {
+            "target": {
+                "mode": "fixed_pips",
+                "pips_default": 15.0,
+            },
+        },
+        "execution": {
+            "loop_poll_seconds": 5.0,
+            "loop_poll_seconds_fast": 2.0,
+            "policies": [
+                {
+                    "type": "confirmed_cross",
+                    "id": "wizard_m5_cross_oanda",
+                    "enabled": True,
+                    "setup_id": "m5_cross_entry",
                 },
             ],
         },

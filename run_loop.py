@@ -248,6 +248,18 @@ def main() -> None:
             getattr(p, "type", None) == "ema_pullback" and getattr(p, "enabled", True)
             for p in profile.execution.policies
         )
+        # Confirmed-cross setups can now use M5; detect if any do so we fetch M5 bars.
+        m5_cross_setup_ids = {
+            sid
+            for sid, setup in (profile.strategy.setups or {}).items()
+            if getattr(setup, "enabled", True) and getattr(setup, "timeframe", "M1") == "M5"
+        }
+        has_m5_confirmed_cross = any(
+            getattr(p, "type", None) == "confirmed_cross"
+            and getattr(p, "enabled", True)
+            and getattr(p, "setup_id", "m1_cross_entry") in m5_cross_setup_ids
+            for p in profile.execution.policies
+        )
 
         loop_count = 0
         last_sync_loop = 0
@@ -289,7 +301,8 @@ def main() -> None:
                         "M15": adapter.get_bars(profile.symbol, "M15", 2000),
                         "M1": adapter.get_bars(profile.symbol, "M1", 3000),
                     }
-                    if has_ema_pullback:
+                    # Fetch M5 data when needed by ema_pullback or M5 confirmed-cross setups.
+                    if has_ema_pullback or has_m5_confirmed_cross:
                         data_by_tf["M5"] = adapter.get_bars(profile.symbol, "M5", 2000)
                     tick = adapter.get_tick(profile.symbol)
                     break

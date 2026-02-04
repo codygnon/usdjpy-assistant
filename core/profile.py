@@ -52,7 +52,7 @@ class CrossSetup(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
-    timeframe: Literal["M1", "M15", "H4"] = "M1"
+    timeframe: Literal["M1", "M5", "M15", "H4"] = "M1"
     ema: int = 13
     sma: int = 30
     confirmation: ConfirmationConfig = Field(default_factory=ConfirmationConfig)
