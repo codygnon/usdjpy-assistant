@@ -131,7 +131,8 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
         return
     if not open_positions:
         return
-    our_trades = store.list_open_trades(profile.profile_name)
+    # sqlite3.Row doesn't support .get(); convert to dicts for safe access
+    our_trades = [dict(r) for r in store.list_open_trades(profile.profile_name)]
     position_to_trade = {
         row["mt5_position_id"]: row
         for row in our_trades
