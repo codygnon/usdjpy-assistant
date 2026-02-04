@@ -154,6 +154,9 @@ class SqliteStore:
             self._ensure_column(conn, "trades", "preset_name", "TEXT")
             # v1.4: add profit for MT5-aligned win/loss stats
             self._ensure_column(conn, "trades", "profit", "REAL")
+            # v1.5: trade-management tracking (breakeven, TP1 partial close)
+            self._ensure_column(conn, "trades", "breakeven_applied", "INTEGER")
+            self._ensure_column(conn, "trades", "tp1_partial_done", "INTEGER")
             conn.commit()
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, col: str, col_type: str) -> None:

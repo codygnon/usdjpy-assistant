@@ -87,7 +87,7 @@ def _insert_trade_for_policy(
         if position_id is None and dec.order_id:
             position_id = adapter.get_position_id_from_order(dec.order_id)
         trade_id = f"{policy_type}:{policy_id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}"
-        store.insert_trade({
+        row = {
             "trade_id": trade_id,
             "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
             "profile": profile.profile_name,
@@ -106,9 +106,91 @@ def _insert_trade_for_policy(
             "mt5_position_id": position_id,
             "opened_by": "program",
             "preset_name": profile.active_preset_name or "Unknown",
-        })
+        }
+        row["breakeven_applied"] = 0
+        row["tp1_partial_done"] = 0
+        store.insert_trade(row)
     except Exception:
         pass
+
+
+def _run_trade_management(profile, adapter, store, tick) -> None:
+    """Apply breakeven and TP1 partial close for open positions we manage. Order: breakeven first, then TP1."""
+    tm = getattr(profile, "trade_management", None)
+    if tm is None:
+        return
+    breakeven = getattr(tm, "breakeven", None)
+    target = getattr(tm, "target", None)
+    if (not breakeven or not getattr(breakeven, "enabled", False)) and (
+        not target or getattr(target, "mode", None) != "scaled" or not getattr(target, "tp1_pips", None)
+    ):
+        return
+    try:
+        open_positions = adapter.get_open_positions(profile.symbol)
+    except Exception:
+        return
+    if not open_positions:
+        return
+    our_trades = store.list_open_trades(profile.profile_name)
+    position_to_trade = {
+        row["mt5_position_id"]: row
+        for row in our_trades
+        if row.get("mt5_position_id") is not None
+    }
+    pip = float(profile.pip_size)
+    mid = (tick.bid + tick.ask) / 2.0
+    for pos in open_positions:
+        # OANDA: dict with "id", "currentUnits"; MT5: object with ticket, volume (lots)
+        position_id = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
+        if position_id is None:
+            continue
+        try:
+            position_id = int(position_id)
+        except (TypeError, ValueError):
+            continue
+        trade_row = position_to_trade.get(position_id)
+        if trade_row is None:
+            continue
+        trade_id = str(trade_row["trade_id"])
+        entry = float(trade_row["entry_price"])
+        side = str(trade_row["side"]).lower()
+        # 1) Breakeven first
+        if breakeven and getattr(breakeven, "enabled", False):
+            be_applied = trade_row.get("breakeven_applied") or 0
+            if not be_applied:
+                after_pips = float(getattr(breakeven, "after_pips", 0) or 0)
+                if after_pips > 0:
+                    in_favor_buy = mid >= entry + after_pips * pip
+                    in_favor_sell = mid <= entry - after_pips * pip
+                    if (side == "buy" and in_favor_buy) or (side == "sell" and in_favor_sell):
+                        adapter.update_position_stop_loss(position_id, profile.symbol, entry)
+                        store.update_trade(trade_id, {"breakeven_applied": 1})
+                        print(f"[{profile.profile_name}] breakeven applied position {position_id}")
+        # 2) TP1 partial close
+        if target and getattr(target, "mode", None) == "scaled":
+            tp1_pips = getattr(target, "tp1_pips", None)
+            tp1_pct = getattr(target, "tp1_close_percent", None)
+            if tp1_pips is not None and tp1_pct is not None:
+                tp1_done = trade_row.get("tp1_partial_done") or 0
+                if not tp1_done:
+                    reached_buy = mid >= entry + float(tp1_pips) * pip
+                    reached_sell = mid <= entry - float(tp1_pips) * pip
+                    if (side == "buy" and reached_buy) or (side == "sell" and reached_sell):
+                        if isinstance(pos, dict):
+                            current_units = pos.get("currentUnits") or 0
+                            current_lots = abs(int(current_units)) / 100_000.0
+                        else:
+                            current_lots = float(getattr(pos, "volume", 0) or 0)
+                        close_lots = current_lots * (float(tp1_pct) / 100.0)
+                        position_type = 1 if side == "sell" else 0
+                        adapter.close_position(
+                            ticket=position_id,
+                            symbol=profile.symbol,
+                            volume=close_lots,
+                            position_type=position_type,
+                        )
+                        store.update_trade(trade_id, {"tp1_partial_done": 1})
+                        print(f"[{profile.profile_name}] TP1 partial close position {position_id} ({tp1_pct}%)")
 
 
 def main() -> None:
@@ -220,6 +302,9 @@ def main() -> None:
                         time.sleep(60)
             if data_by_tf is None or tick is None:
                 continue
+
+            # Trade management: breakeven and TP1 partial close (only for positions we opened)
+            _run_trade_management(profile, adapter, store, tick)
 
             m1_df = data_by_tf["M1"]
             m1_last_time = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
@@ -410,6 +495,8 @@ def main() -> None:
                                     "mt5_position_id": position_id,
                                     "opened_by": "program",
                                     "preset_name": profile.active_preset_name or "Unknown",
+                                    "breakeven_applied": 0,
+                                    "tp1_partial_done": 0,
                                 }
                             )
                         except Exception:

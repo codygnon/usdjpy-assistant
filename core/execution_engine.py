@@ -10,6 +10,7 @@ import pandas as pd
 # Broker adapter (MT5 or OANDA) is passed into execute_* as adapter=
 from adapters.mt5_adapter import Tick
 from core.context_engine import compute_tf_context
+from core.indicators import atr as atr_fn
 from core.indicators import bollinger_bands as bollinger_bands_fn
 from core.indicators import ema as ema_fn
 from core.indicators import macd as macd_fn
@@ -28,7 +29,14 @@ from core.profile import (
     get_effective_risk,
 )
 from core.risk_engine import evaluate_trade
-from core.signal_engine import Signal, drop_incomplete_last_bar
+from core.signal_engine import (
+    Signal,
+    compute_latest_diffs,
+    drop_incomplete_last_bar,
+    passes_alignment_filter,
+    passes_atr_filter,
+    passes_ema_stack_filter,
+)
 from core.timeframes import Timeframe
 from storage.sqlite_store import SqliteStore
 
@@ -1194,6 +1202,34 @@ def evaluate_ema_pullback_conditions(
     in_zone = (zone_lo - tolerance) <= price <= (zone_hi + tolerance)
     if not in_zone:
         return False, None, [f"ema_pullback: price {price:.5f} not in zone [{zone_lo:.5f}, {zone_hi:.5f}]"]
+
+    # Rejection candle: long wick in direction of trade (sell: upper wick; buy: lower wick)
+    if policy.require_rejection_candle and len(entry_df) >= 1:
+        row = entry_df.iloc[-1]
+        o, h, l, c = float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"])
+        body = abs(c - o)
+        if bull:  # buy: want lower wick (rejection of lows)
+            wick = min(o, c) - l
+            if body < 1e-8 or wick <= body:
+                return False, None, ["ema_pullback: require_rejection_candle (buy) not met"]
+        else:  # sell: want upper wick
+            wick = h - max(o, c)
+            if body < 1e-8 or wick <= body:
+                return False, None, ["ema_pullback: require_rejection_candle (sell) not met"]
+
+    # Engulfing: current bar body engulfs previous bar body in direction of trade
+    if policy.require_engulfing_confirmation and len(entry_df) >= 2:
+        cur = entry_df.iloc[-1]
+        prev = entry_df.iloc[-2]
+        co, ch, cl, cc = float(cur["open"]), float(cur["high"]), float(cur["low"]), float(cur["close"])
+        po, pc = float(prev["open"]), float(prev["close"])
+        if bull:  # buy: current green candle engulfs previous
+            if cc <= co or co > pc or cc < po:
+                return False, None, ["ema_pullback: require_engulfing_confirmation (buy) not met"]
+        else:  # sell: current red candle engulfs previous
+            if cc >= co or co < pc or cc > po:
+                return False, None, ["ema_pullback: require_engulfing_confirmation (sell) not met"]
+
     if bull:
         return True, "buy", [f"ema_pullback: bull trend (EMA50>EMA200), price in EMA{policy.ema_zone_low}-{policy.ema_zone_high} zone"]
     else:
@@ -1205,14 +1241,23 @@ def _ema_pullback_candidate(
     policy: ExecutionPolicyEmaPullback,
     entry_price: float,
     side: str,
+    sl_pips_override: Optional[float] = None,
 ) -> TradeCandidate:
     pip = float(profile.pip_size)
-    sl_pips = policy.sl_pips if policy.sl_pips is not None else float(get_effective_risk(profile).min_stop_pips)
+    sl_pips = sl_pips_override if sl_pips_override is not None else (policy.sl_pips if policy.sl_pips is not None else float(get_effective_risk(profile).min_stop_pips))
+    tcfg = profile.trade_management.target
+    # When mode is scaled, do NOT set TP on the initial order (loop will partial-close at TP1)
+    if tcfg.mode == "scaled":
+        target = None
+    else:
+        tp_pips = policy.tp_pips
+        if side == "buy":
+            target = entry_price + tp_pips * pip if tp_pips else None
+        else:
+            target = entry_price - tp_pips * pip if tp_pips else None
     if side == "buy":
-        target = entry_price + policy.tp_pips * pip if policy.tp_pips else None
         stop = entry_price - sl_pips * pip
     else:
-        target = entry_price - policy.tp_pips * pip if policy.tp_pips else None
         stop = entry_price + sl_pips * pip
     return TradeCandidate(
         symbol=profile.symbol,
@@ -1267,8 +1312,165 @@ def execute_ema_pullback_policy_demo_only(
             }
         )
         return ExecutionDecision(attempted=True, placed=False, reason="; ".join(eval_reasons))
+
+    # Strategy filters: session, alignment (by trend or score), ema_stack (M15), atr (M15)
+    now_utc = datetime.now(timezone.utc)
+    ok, reason = passes_session_filter(profile, now_utc)
+    if not ok:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": reason or "session_filter",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter")
+    al = profile.strategy.filters.alignment
+    if al.enabled:
+        if al.trend_timeframe is not None:
+            ok, reason = passes_alignment_trend(
+                profile, data_by_tf, al.trend_timeframe, side,
+                ema_fast=policy.ema_trend_fast, ema_slow=policy.ema_trend_slow,
+            )
+        else:
+            diffs = compute_latest_diffs(profile, data_by_tf)
+            ok, reason = passes_alignment_filter(profile, diffs, side)
+        if not ok:
+            store.insert_execution(
+                {
+                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "profile": profile.profile_name,
+                    "symbol": profile.symbol,
+                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                    "rule_id": rule_id,
+                    "mode": mode,
+                    "attempted": 1,
+                    "placed": 0,
+                    "reason": reason or "alignment",
+                    "mt5_retcode": None,
+                    "mt5_order_id": None,
+                    "mt5_deal_id": None,
+                }
+            )
+            return ExecutionDecision(attempted=True, placed=False, reason=reason or "alignment")
+    df_m15 = data_by_tf.get(policy.trend_timeframe)
+    if df_m15 is not None:
+        ok, reason = passes_ema_stack_filter(profile, df_m15, policy.trend_timeframe)
+        if not ok:
+            store.insert_execution(
+                {
+                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "profile": profile.profile_name,
+                    "symbol": profile.symbol,
+                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                    "rule_id": rule_id,
+                    "mode": mode,
+                    "attempted": 1,
+                    "placed": 0,
+                    "reason": reason or "ema_stack_filter",
+                    "mt5_retcode": None,
+                    "mt5_order_id": None,
+                    "mt5_deal_id": None,
+                }
+            )
+            return ExecutionDecision(attempted=True, placed=False, reason=reason or "ema_stack_filter")
+        ok, reason = passes_atr_filter(profile, df_m15, policy.trend_timeframe)
+        if not ok:
+            store.insert_execution(
+                {
+                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "profile": profile.profile_name,
+                    "symbol": profile.symbol,
+                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                    "rule_id": rule_id,
+                    "mode": mode,
+                    "attempted": 1,
+                    "placed": 0,
+                    "reason": reason or "atr_filter",
+                    "mt5_retcode": None,
+                    "mt5_order_id": None,
+                    "mt5_deal_id": None,
+                }
+            )
+            return ExecutionDecision(attempted=True, placed=False, reason=reason or "atr_filter")
+
     entry_price = (tick.bid + tick.ask) / 2.0
-    candidate = _ema_pullback_candidate(profile, policy, entry_price, side)
+    pip = float(profile.pip_size)
+
+    # avoid_round_numbers: reject if entry within buffer of round level (.00 or .50 for JPY)
+    if getattr(policy, "avoid_round_numbers", False):
+        buf = getattr(policy, "round_number_buffer_pips", 5.0) * pip
+        for level in (round(entry_price * 2) / 2.0, round(entry_price)):
+            if abs(entry_price - level) < buf:
+                store.insert_execution(
+                    {
+                        "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                        "profile": profile.profile_name,
+                        "symbol": profile.symbol,
+                        "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                        "rule_id": rule_id,
+                        "mode": mode,
+                        "attempted": 1,
+                        "placed": 0,
+                        "reason": f"avoid_round_numbers: entry {entry_price:.5f} within {policy.round_number_buffer_pips} pips of {level}",
+                        "mt5_retcode": None,
+                        "mt5_order_id": None,
+                        "mt5_deal_id": None,
+                    }
+                )
+                return ExecutionDecision(attempted=True, placed=False, reason="avoid_round_numbers")
+
+    # ATR-based SL when trade_management.stop_loss.mode == "atr"
+    sl_pips_override = None
+    sl_cfg = getattr(profile.trade_management, "stop_loss", None)
+    if sl_cfg is not None and getattr(sl_cfg, "mode", None) == "atr":
+        trend_df = data_by_tf.get(policy.trend_timeframe)
+        if trend_df is not None and len(trend_df) >= 15:
+            atr_series = atr_fn(trend_df, 14)
+            atr_val = float(atr_series.iloc[-1]) if len(atr_series) else 0.0
+            atr_pips = atr_val / pip if pip else 0.0
+            sl_pips_override = min(atr_pips * sl_cfg.atr_multiplier, sl_cfg.max_sl_pips)
+            sl_pips_override = max(sl_pips_override, float(get_effective_risk(profile).min_stop_pips))
+
+    candidate = _ema_pullback_candidate(profile, policy, entry_price, side, sl_pips_override=sl_pips_override)
+
+    # min_rr: require TP distance >= min_rr * SL distance
+    tcfg = profile.trade_management.target
+    sl_dist_pips = abs(candidate.entry_price - candidate.stop_price) / pip if pip else 0.0
+    if getattr(policy, "min_rr", 0) > 0 and sl_dist_pips > 0:
+        tp_dist_pips = None
+        if candidate.target_price is not None:
+            tp_dist_pips = abs(candidate.target_price - candidate.entry_price) / pip
+        elif tcfg.mode == "scaled" and tcfg.tp1_pips is not None:
+            tp_dist_pips = float(tcfg.tp1_pips)
+        if tp_dist_pips is not None and tp_dist_pips / sl_dist_pips < policy.min_rr:
+            store.insert_execution(
+                {
+                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "profile": profile.profile_name,
+                    "symbol": profile.symbol,
+                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                    "rule_id": rule_id,
+                    "mode": mode,
+                    "attempted": 1,
+                    "placed": 0,
+                    "reason": f"min_rr: rr={tp_dist_pips/sl_dist_pips:.2f} < {policy.min_rr}",
+                    "mt5_retcode": None,
+                    "mt5_order_id": None,
+                    "mt5_deal_id": None,
+                }
+            )
+            return ExecutionDecision(attempted=True, placed=False, reason=f"min_rr not met (rr={tp_dist_pips/sl_dist_pips:.2f})")
+
     decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
     if not decision.allow:
         sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
@@ -1360,6 +1562,46 @@ def _get_session_times_utc(session: str) -> tuple[int, int]:
         "newyork": (13, 21),  # New York: 13:00 - 21:00 UTC
     }
     return sessions.get(session, (0, 24))
+
+
+def passes_session_filter(profile: ProfileV1, now_utc: datetime) -> tuple[bool, str | None]:
+    """Return (True, None) if session filter is disabled or current time is inside one of the allowed sessions."""
+    f = profile.strategy.filters.session_filter
+    if not f.enabled:
+        return True, None
+    current_hour = now_utc.hour
+    for name in f.sessions:
+        key = name.lower().replace(" ", "")  # Tokyo -> tokyo, NewYork -> newyork
+        open_h, close_h = _get_session_times_utc(key)
+        if open_h <= current_hour < close_h:
+            return True, None
+    return False, f"session_filter: outside allowed sessions (UTC hour={current_hour})"
+
+
+def passes_alignment_trend(
+    profile: ProfileV1,
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+    trend_timeframe: str,
+    side: str,
+    ema_fast: int = 50,
+    ema_slow: int = 200,
+) -> tuple[bool, str | None]:
+    """Check that trend on the given TF (EMA fast vs slow) agrees with side. Returns (True, None) if pass."""
+    df = data_by_tf.get(trend_timeframe)
+    if df is None or df.empty:
+        return False, f"alignment_trend: no {trend_timeframe} data"
+    df = drop_incomplete_last_bar(df.copy(), trend_timeframe)
+    if len(df) < ema_slow:
+        return False, f"alignment_trend: need at least {ema_slow} bars on {trend_timeframe}"
+    close = df["close"]
+    e_fast = ema_fn(close, ema_fast)
+    e_slow = ema_fn(close, ema_slow)
+    bull = float(e_fast.iloc[-1]) > float(e_slow.iloc[-1])
+    if side == "buy" and not bull:
+        return False, f"alignment_trend: {trend_timeframe} not bullish (EMA{ema_fast} <= EMA{ema_slow})"
+    if side == "sell" and bull:
+        return False, f"alignment_trend: {trend_timeframe} not bearish (EMA{ema_fast} > EMA{ema_slow})"
+    return True, None
 
 
 def evaluate_session_momentum(

@@ -65,6 +65,7 @@ class AlignmentFilter(BaseModel):
     method: Literal["score", "strict"] = "score"
     weights: dict[Literal["H4", "M15", "M1"], int] = Field(default_factory=lambda: {"H4": 1, "M15": 1, "M1": 1})
     min_score_to_trade: int = -3
+    trend_timeframe: Optional[Literal["M15", "H4", "M1"]] = None  # when set, alignment for non-cross policies = trend on this TF agrees with side
 
 
 class EmaStackFilter(BaseModel):
@@ -86,12 +87,20 @@ class AtrFilter(BaseModel):
     max_atr_pips: Optional[float] = None
 
 
+class SessionFilter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    sessions: list[Literal["Tokyo", "London", "NewYork"]] = Field(default_factory=lambda: ["Tokyo", "London", "NewYork"])
+
+
 class StrategyFilters(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     alignment: AlignmentFilter = Field(default_factory=AlignmentFilter)
     ema_stack_filter: EmaStackFilter = Field(default_factory=EmaStackFilter)
     atr_filter: AtrFilter = Field(default_factory=AtrFilter)
+    session_filter: SessionFilter = Field(default_factory=SessionFilter)
 
 
 class StrategyConfig(BaseModel):
@@ -112,15 +121,39 @@ class StrategyConfig(BaseModel):
 class TargetConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    mode: Literal["fixed_pips", "rr"] = "fixed_pips"
+    mode: Literal["fixed_pips", "rr", "scaled"] = "fixed_pips"
     pips_default: float = 10.0
     rr_default: float = 1.0
+    # scaled target: no TP on initial order; loop does partial close at TP1
+    tp1_pips: Optional[float] = None
+    tp1_close_percent: Optional[float] = None
+    tp2_mode: Optional[str] = None  # e.g. "runner"
+    trail_after_tp1: bool = False
+    trail_type: Optional[str] = None  # e.g. "ema"
+    trail_ema: Optional[int] = None
+
+
+class StopLossConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["fixed_pips", "atr"] = "fixed_pips"
+    atr_multiplier: float = 1.5
+    max_sl_pips: float = 20.0
+
+
+class BreakevenConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    after_pips: float = 10.0
 
 
 class TradeManagementConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     target: TargetConfig = Field(default_factory=TargetConfig)
+    stop_loss: Optional[StopLossConfig] = None  # when None, use policy sl_pips or min_stop_pips
+    breakeven: Optional[BreakevenConfig] = None
 
 
 # --- V1.1 Execution policies ---
@@ -262,6 +295,11 @@ class ExecutionPolicyEmaPullback(BaseModel):
     ema_zone_high: int = 50
     tp_pips: float = 30.0
     sl_pips: Optional[float] = 16.0
+    require_rejection_candle: bool = False
+    require_engulfing_confirmation: bool = False
+    min_rr: float = 1.0
+    avoid_round_numbers: bool = False
+    round_number_buffer_pips: float = 5.0
 
 
 ExecutionPolicy = Annotated[
@@ -447,9 +485,10 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
                 }
             },
             "filters": {
-                "alignment": {"enabled": False, "method": "score", "weights": {"H4": 1, "M15": 1, "M1": 1}, "min_score_to_trade": -3},
+                "alignment": {"enabled": False, "method": "score", "weights": {"H4": 1, "M15": 1, "M1": 1}, "min_score_to_trade": -3, "trend_timeframe": None},
                 "ema_stack_filter": {"enabled": False, "timeframe": "M1", "periods": [8, 13, 21], "min_separation_pips": 0.0},
                 "atr_filter": {"enabled": False, "timeframe": "M1", "atr_period": 14, "min_atr_pips": 0.0, "max_atr_pips": None},
+                "session_filter": {"enabled": False, "sessions": ["Tokyo", "London", "NewYork"]},
             },
         },
         "trade_management": {
@@ -457,7 +496,9 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
                 "mode": "fixed_pips",
                 "pips_default": float(target_profit_pips_default),
                 "rr_default": 1.0,
-            }
+            },
+            "stop_loss": None,
+            "breakeven": None,
         },
         "execution": _default_execution(),
     }

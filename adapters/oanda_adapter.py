@@ -349,6 +349,14 @@ class OandaAdapter:
             deal=None,
         )
 
+    def update_position_stop_loss(self, trade_id: int, symbol: str, stop_loss_price: float) -> None:
+        """Set or replace the stop loss order for an open trade (e.g. for breakeven)."""
+        aid = self._get_account_id()
+        inst = _symbol_to_instrument(symbol)
+        prec = _order_price_precision(inst)
+        body = {"stopLoss": {"timeInForce": "GTC", "price": str(round(stop_loss_price, prec))}}
+        self._req("PUT", f"/v3/accounts/{aid}/trades/{trade_id}/orders", json=body)
+
     def close_position(
         self,
         *,

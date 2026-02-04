@@ -45,6 +45,9 @@ class _Mt5Wrapper:
     def order_send_market(self, **kwargs): return self._m.order_send_market(**kwargs)
     def order_send_pending_limit(self, **kwargs): return self._m.order_send_pending_limit(**kwargs)
     def close_position(self, **kwargs): return self._m.close_position(**kwargs)
+    def update_position_stop_loss(self, trade_id: int, symbol: str, stop_loss_price: float) -> None:
+        """No-op for MT5; breakeven/trade-management only applied when using OANDA adapter."""
+        pass
     def get_position_by_ticket(self, ticket: int): return self._m.get_position_by_ticket(ticket)
     def get_position_id_from_deal(self, deal_id: int): return self._m.get_position_id_from_deal(deal_id)
     def get_position_id_from_order(self, order_id: int): return self._m.get_position_id_from_order(order_id)

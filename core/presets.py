@@ -28,6 +28,7 @@ class PresetId(str, Enum):
     VWAP_TREND = "vwap_trend"
     TREND_CONTINUATION = "trend_continuation"
     M5_M15_MOMENTUM_PULLBACK = "m5_m15_momentum_pullback"
+    DAY_TRADING_USD_JPY = "day_trading_usd_jpy"
 
 
 # ---------------------------------------------------------------------------
@@ -575,6 +576,74 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "ema_zone_high": 50,
                     "tp_pips": 30.0,
                     "sl_pips": 16.0,
+                },
+            ],
+        },
+    },
+    # -----------------------------------------------------------------------
+    # Day Trading USD/JPY (uncle preset: OANDA ~4.5 pip spread, scaled target, breakeven)
+    # -----------------------------------------------------------------------
+    PresetId.DAY_TRADING_USD_JPY: {
+        "name": "Day Trading USD/JPY",
+        "description": "Day trading USD/JPY with M15 trend, M5 pullback, strict filters, ATR-based SL, scaled target (TP1 partial + runner), and breakeven. Suited to OANDA spread (~4.5 pips).",
+        "pros": [
+            "Alignment and EMA stack (20/50/200) on M15; ATR and session filters reduce bad entries",
+            "ATR-based stop (1.3x, max 20 pips); breakeven at 14 pips; TP1 at 18 pips (50% close), remainder runner",
+            "Rejection candle and engulfing confirmation; min RR 2.3; avoid round numbers",
+        ],
+        "cons": [
+            "Wider spread (4.5 pips) requires larger targets; fewer trades (max 6/day, 1 open)",
+        ],
+        "risk": {
+            "max_lots": 0.03,
+            "require_stop": True,
+            "min_stop_pips": 12.0,
+            "max_spread_pips": 4.5,
+            "max_trades_per_day": 6,
+            "max_open_trades": 1,
+            "risk_per_trade_pct": 0.4,
+        },
+        "strategy": {
+            "filters": {
+                "alignment": {"enabled": True, "trend_timeframe": "M15"},
+                "ema_stack_filter": {"enabled": True, "timeframe": "M15", "periods": [20, 50, 200]},
+                "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 10.0},
+                "session_filter": {"enabled": True, "sessions": ["Tokyo", "London", "NewYork"]},
+            },
+        },
+        "trade_management": {
+            "stop_loss": {"mode": "atr", "atr_multiplier": 1.3, "max_sl_pips": 20.0},
+            "breakeven": {"enabled": True, "after_pips": 14.0},
+            "target": {
+                "mode": "scaled",
+                "tp1_pips": 18.0,
+                "tp1_close_percent": 50.0,
+                "tp2_mode": "runner",
+                "trail_after_tp1": True,
+                "trail_type": "ema",
+                "trail_ema": 20,
+            },
+        },
+        "execution": {
+            "loop_poll_seconds": 5.0,
+            "loop_poll_seconds_fast": 1.0,
+            "policies": [
+                {
+                    "type": "ema_pullback",
+                    "id": "usdjpy_m5_m15_pullback",
+                    "enabled": True,
+                    "trend_timeframe": "M15",
+                    "entry_timeframe": "M5",
+                    "ema_trend_fast": 50,
+                    "ema_trend_slow": 200,
+                    "ema_zone_low": 20,
+                    "ema_zone_high": 50,
+                    "require_rejection_candle": True,
+                    "require_engulfing_confirmation": True,
+                    "min_rr": 2.3,
+                    "avoid_round_numbers": True,
+                    "round_number_buffer_pips": 5.0,
+                    "tp_pips": 18.0,
                 },
             ],
         },
