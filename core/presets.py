@@ -81,8 +81,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "enabled": True,
                     "timeframe": "M1",
                     "confirmation": {
-                        "confirm_bars": 1,
-                        "max_wait_bars": 3,
+                        "confirm_bars": 2,
+                        "max_wait_bars": 4,
                     },
                 },
             },
@@ -194,6 +194,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                 "alignment": {"enabled": False},
                 "ema_stack_filter": {"enabled": False},
                 "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 8.0},
+                "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
             },
             "setups": {
                 "m1_cross_entry": {"enabled": False},
@@ -207,8 +208,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
-            "loop_poll_seconds": 10.0,
-            "loop_poll_seconds_fast": 5.0,
+            "loop_poll_seconds": 5.0,
+            "loop_poll_seconds_fast": 2.0,
             "policies": [
                 {
                     "type": "bollinger_bands",
@@ -271,6 +272,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                 "alignment": {"enabled": False},
                 "ema_stack_filter": {"enabled": False},
                 "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 8.0},
+                "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
             },
             "setups": {
                 "m1_cross_entry": {"enabled": False},
@@ -284,8 +286,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
-            "loop_poll_seconds": 15.0,
-            "loop_poll_seconds_fast": 5.0,
+            "loop_poll_seconds": 8.0,
+            "loop_poll_seconds_fast": 3.0,
             "policies": [
                 {
                     "type": "bollinger_bands",
@@ -375,7 +377,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "rsi_oversold": 30.0,
                     "rsi_overbought": 70.0,
                     "rsi_zone": "oversold",
-                    "use_macd_cross": False,
+                    "use_macd_cross": True,
                     "tp_pips": 18.0,
                     "sl_pips": 12.0,
                 },
@@ -390,7 +392,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "rsi_oversold": 30.0,
                     "rsi_overbought": 70.0,
                     "rsi_zone": "overbought",
-                    "use_macd_cross": False,
+                    "use_macd_cross": True,
                     "tp_pips": 18.0,
                     "sl_pips": 12.0,
                 },
@@ -441,20 +443,20 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
-            "loop_poll_seconds": 5.0,
-            "loop_poll_seconds_fast": 2.0,
+            "loop_poll_seconds": 3.0,
+            "loop_poll_seconds_fast": 1.0,
             "policies": [
                 {
                     "type": "vwap",
                     "id": "vwap_cross",
                     "enabled": True,
-                    "timeframe": "M15",
+                    "timeframe": "M5",
                     "trigger": "cross_above",
                     "side": "buy",
                     "tp_pips": 18.0,
                     "sl_pips": 12.0,
                     "use_slope_filter": True,
-                    "vwap_slope_lookback_bars": 20,
+                    "vwap_slope_lookback_bars": 12,
                     "session_filter_enabled": True,
                     "no_trade_zone_pips": 1.5,
                 },
@@ -462,13 +464,13 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "type": "vwap",
                     "id": "vwap_cross_sell",
                     "enabled": True,
-                    "timeframe": "M15",
+                    "timeframe": "M5",
                     "trigger": "cross_below",
                     "side": "sell",
                     "tp_pips": 18.0,
                     "sl_pips": 12.0,
                     "use_slope_filter": True,
-                    "vwap_slope_lookback_bars": 20,
+                    "vwap_slope_lookback_bars": 12,
                     "session_filter_enabled": True,
                     "no_trade_zone_pips": 1.5,
                 },
@@ -622,7 +624,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         },
         "strategy": {
             "filters": {
-                "alignment": {"enabled": False},
+                "alignment": {"enabled": True, "trend_timeframe": "M15"},
                 "ema_stack_filter": {"enabled": False},
                 "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 10.0},
                 "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
@@ -679,7 +681,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             # Max lots is set very high so effective max is capped by Profile Editor limits.
             "max_lots": 999.0,
             "require_stop": True,
-            "min_stop_pips": 15.0,
+            "min_stop_pips": 12.0,
             "max_spread_pips": 5.0,
             "max_trades_per_day": 30,
             "max_open_trades": 3,
