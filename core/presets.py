@@ -748,8 +748,9 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             },
         },
         "trade_management": {
-            "stop_loss": {"mode": "fixed_pips", "pips": 10.0},
-            "target": {"mode": "fixed_pips", "pips": 15.0},
+            # Use policy.sl_pips (10) and risk.min_stop_pips (10) for SL sizing.
+            # Target uses fixed_pips with pips_default.
+            "target": {"mode": "fixed_pips", "pips_default": 15.0},
         },
         "execution": {
             "loop_poll_seconds": 1.0,
