@@ -268,6 +268,23 @@ class SqliteStore:
             )
             return cur.fetchone() is not None
 
+    def has_recent_placement_by_prefix(
+        self,
+        profile: str,
+        rule_id_prefix: str,
+        within_minutes: float,
+    ) -> bool:
+        """True if we placed an order with rule_id starting with prefix within the last `within_minutes`."""
+        if within_minutes <= 0:
+            return False
+        since = (datetime.now(timezone.utc) - timedelta(minutes=within_minutes)).isoformat()
+        with self.connect() as conn:
+            cur = conn.execute(
+                "SELECT 1 FROM executions WHERE profile=? AND rule_id LIKE ? AND placed=1 AND timestamp_utc >= ? LIMIT 1",
+                [profile, rule_id_prefix + "%", since],
+            )
+            return cur.fetchone() is not None
+
     def upsert_pending_signal(self, row: dict[str, Any]) -> None:
         cols = list(row.keys())
         q = f"INSERT OR REPLACE INTO pending_signals ({', '.join(cols)}) VALUES ({', '.join(['?'] * len(cols))})"
