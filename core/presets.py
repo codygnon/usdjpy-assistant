@@ -993,7 +993,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "ema_slow": 21,
                     "tp_pips": 0.5,
                     "sl_pips": 20.0,
-                    "cooldown_minutes": 1.0,
+                    "cooldown_minutes": 2.0,
                 },
             ],
         },
