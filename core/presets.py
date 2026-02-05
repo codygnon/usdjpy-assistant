@@ -34,6 +34,7 @@ class PresetId(str, Enum):
     CODY_WIZARD_AGGR_OANDA_M5_CROSS = "cody_wizard_aggressive_oanda_m5_cross"
     KUMA_TORA_BB_EMA_9_21_SCALPER = "kuma_tora_bb_ema_9_21_scalper"
     KT_CG_TRIAL_BLOW_ACCOUNT = "kt_cg_trial_blow_account"
+    M5_M1_EMA_CROSS_9_21 = "m5_m1_ema_cross_9_21"
 
 
 # ---------------------------------------------------------------------------
@@ -994,6 +995,81 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "tp_pips": 0.5,
                     "sl_pips": 20.0,
                     "cooldown_minutes": 2.0,
+                },
+            ],
+        },
+    },
+    # -----------------------------------------------------------------------
+    # M5/M1 EMA Cross 9/21 (Experimental)
+    # Every M5 EMA 9/21 cross triggers a trade. M1 EMA state determines direction/TP.
+    # Fixed 20 pip SL, hedging allowed.
+    # -----------------------------------------------------------------------
+    PresetId.M5_M1_EMA_CROSS_9_21: {
+        "name": "M5/M1 EMA Cross 9/21 (Experimental)",
+        "description": "Experimental scalping: every M5 EMA 9/21 cross triggers a trade. Direction from M1 EMA position, TP scaled by M1 momentum + M5 BB width. Fixed 20 pip SL, hedging allowed.",
+        "pros": [
+            "High frequency - trades every M5 cross",
+            "Dynamic TP based on momentum",
+            "Hedging allowed",
+        ],
+        "cons": [
+            "Experimental - not backtested",
+            "Many small trades",
+            "No trend filtering",
+        ],
+        "risk": {
+            "max_lots": 0.05,
+            "require_stop": True,
+            "min_stop_pips": 10.0,
+            "max_spread_pips": 8.0,
+            "max_trades_per_day": 100,
+            "max_open_trades": 20,
+            "cooldown_minutes_after_loss": 0,
+        },
+        "strategy": {
+            "filters": {
+                "alignment": {"enabled": False},
+                "ema_stack_filter": {"enabled": False},
+                "atr_filter": {"enabled": False},
+                "session_filter": {"enabled": False},
+            },
+            "setups": {},
+        },
+        "trade_management": {
+            "target": {"mode": "fixed_pips", "pips_default": 2.0},
+            "stop_loss": None,  # SL is set by the policy (sl_pips: 20.0)
+            "breakeven": {"enabled": False},
+        },
+        "execution": {
+            "loop_poll_seconds": 3.0,
+            "loop_poll_seconds_fast": 1.0,
+            "policies": [
+                {
+                    "type": "m5_m1_ema_cross",
+                    "id": "m5_m1_cross_main",
+                    "enabled": True,
+                    "m5_ema_fast": 9,
+                    "m5_ema_slow": 21,
+                    "m1_ema_fast": 9,
+                    "m1_ema_slow": 21,
+                    "m1_slope_lookback": 5,
+                    "strong_slope_threshold": 0.3,
+                    "moderate_slope_threshold": 0.15,
+                    "weak_slope_threshold": 0.05,
+                    "cross_history_count": 5,
+                    "use_history_for_tp": True,
+                    "bb_period": 20,
+                    "bb_std_dev": 2.0,
+                    "bb_thin_threshold": 12.0,
+                    "bb_wide_threshold": 35.0,
+                    "tp_strong": 2.5,
+                    "tp_moderate": 1.5,
+                    "tp_weak": 0.75,
+                    "tp_flat": 0.5,
+                    "tp_min": 0.5,
+                    "tp_max": 5.0,
+                    "sl_pips": 20.0,
+                    "lots": 0.01,
                 },
             ],
         },

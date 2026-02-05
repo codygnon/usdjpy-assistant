@@ -350,6 +350,52 @@ class ExecutionPolicyKtCgHybrid(BaseModel):
     cooldown_minutes: float = 0.0
 
 
+class ExecutionPolicyM5M1EmaCross(BaseModel):
+    """M5 EMA 9/21 cross triggers trade; M1 EMA state determines direction/TP."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["m5_m1_ema_cross"] = "m5_m1_ema_cross"
+    id: str = "m5_m1_ema_cross_default"
+    enabled: bool = True
+
+    # M5 cross detection
+    m5_ema_fast: int = 9
+    m5_ema_slow: int = 21
+
+    # M1 state analysis
+    m1_ema_fast: int = 9
+    m1_ema_slow: int = 21
+    m1_slope_lookback: int = 5
+
+    # Momentum thresholds (pips per bar)
+    strong_slope_threshold: float = 0.3
+    moderate_slope_threshold: float = 0.15
+    weak_slope_threshold: float = 0.05
+
+    # Cross history settings
+    cross_history_count: int = 5
+    use_history_for_tp: bool = True
+
+    # Bollinger Band settings
+    bb_period: int = 20
+    bb_std_dev: float = 2.0
+    bb_thin_threshold: float = 15.0
+    bb_wide_threshold: float = 40.0
+
+    # Take profit bases (pips)
+    tp_strong: float = 2.5
+    tp_moderate: float = 1.5
+    tp_weak: float = 0.75
+    tp_flat: float = 0.5
+    tp_min: float = 0.5
+    tp_max: float = 5.0
+
+    # Stop loss and position sizing
+    sl_pips: float = 20.0
+    lots: float = 0.01
+
+
 ExecutionPolicy = Annotated[
     Union[
         ExecutionPolicyConfirmedCross,
@@ -362,6 +408,7 @@ ExecutionPolicy = Annotated[
         ExecutionPolicyEmaPullback,
         ExecutionPolicyEmaBbScalp,
         ExecutionPolicyKtCgHybrid,
+        ExecutionPolicyM5M1EmaCross,
     ],
     Field(discriminator="type"),
 ]

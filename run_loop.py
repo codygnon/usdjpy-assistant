@@ -23,6 +23,7 @@ from core.execution_engine import (
     execute_ema_pullback_policy_demo_only,
     execute_indicator_policy_demo_only,
     execute_kt_cg_hybrid_policy_demo_only,
+    execute_m5_m1_ema_cross_policy_demo_only,
     execute_price_level_policy_demo_only,
     execute_session_momentum_policy_demo_only,
     execute_signal_demo_only,
@@ -253,6 +254,10 @@ def main() -> None:
             getattr(p, "type", None) == "kt_cg_hybrid" and getattr(p, "enabled", True)
             for p in profile.execution.policies
         )
+        has_m5_m1_ema_cross = any(
+            getattr(p, "type", None) == "m5_m1_ema_cross" and getattr(p, "enabled", True)
+            for p in profile.execution.policies
+        )
         # Confirmed-cross setups can now use M5; detect if any do so we fetch M5 bars.
         m5_cross_setup_ids = {
             sid
@@ -306,8 +311,8 @@ def main() -> None:
                         "M15": adapter.get_bars(profile.symbol, "M15", 2000),
                         "M1": adapter.get_bars(profile.symbol, "M1", 3000),
                     }
-                    # Fetch M5 data when needed by ema_pullback or M5 confirmed-cross setups.
-                    if has_ema_pullback or has_m5_confirmed_cross:
+                    # Fetch M5 data when needed by ema_pullback, M5 confirmed-cross, or m5_m1_ema_cross.
+                    if has_ema_pullback or has_m5_confirmed_cross or has_m5_m1_ema_cross:
                         data_by_tf["M5"] = adapter.get_bars(profile.symbol, "M5", 2000)
                     tick = adapter.get_tick(profile.symbol)
                     break
@@ -872,6 +877,60 @@ def main() -> None:
                             )
                         else:
                             print(f"[{profile.profile_name}] kt_cg_hybrid {pol.id} mode={mode} -> {dec.reason}")
+
+            # M5/M1 EMA Cross policies
+            if has_m5_m1_ema_cross and mkt is None:
+                mkt = _compute_mkt(profile, tick, data_by_tf)
+            if has_m5_m1_ema_cross and mkt is not None:
+                trades_df = store.read_trades_df(profile.profile_name)
+                for pol in profile.execution.policies:
+                    if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "m5_m1_ema_cross":
+                        continue
+                    m5_df = data_by_tf.get("M5")
+                    if m5_df is None or m5_df.empty:
+                        continue
+                    bar_time_utc = pd.to_datetime(m5_df["time"].iloc[-1], utc=True).isoformat()
+                    dec = execute_m5_m1_ema_cross_policy_demo_only(
+                        adapter=adapter,
+                        profile=profile,
+                        log_dir=log_dir,
+                        policy=pol,
+                        context=mkt,
+                        data_by_tf=data_by_tf,
+                        tick=tick,
+                        trades_df=trades_df,
+                        mode=mode,
+                        bar_time_utc=bar_time_utc,
+                    )
+                    if dec.attempted:
+                        if dec.placed:
+                            side = dec.side or "buy"
+                            entry_price = tick.ask if side == "buy" else tick.bid
+                            pip = float(profile.pip_size)
+                            tp_pips = getattr(pol, "tp_strong", 2.0)  # Approximate; actual TP computed dynamically
+                            sl_pips = getattr(pol, "sl_pips", 20.0)
+                            if side == "buy":
+                                tp_price = entry_price + tp_pips * pip
+                                sl_price = entry_price - sl_pips * pip
+                            else:
+                                tp_price = entry_price - tp_pips * pip
+                                sl_price = entry_price + sl_pips * pip
+                            print(f"[{profile.profile_name}] TRADE PLACED: m5_m1_ema_cross:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
+                            _insert_trade_for_policy(
+                                profile=profile,
+                                adapter=adapter,
+                                store=store,
+                                policy_type="m5_m1_ema_cross",
+                                policy_id=pol.id,
+                                side=side,
+                                entry_price=entry_price,
+                                dec=dec,
+                                stop_price=sl_price,
+                                target_price=tp_price,
+                                size_lots=float(getattr(pol, "lots", 0.01)),
+                            )
+                        else:
+                            print(f"[{profile.profile_name}] m5_m1_ema_cross {pol.id} mode={mode} -> {dec.reason}")
 
             if args.once:
                 break

@@ -24,6 +24,7 @@ from core.profile import (
     ExecutionPolicyEmaPullback,
     ExecutionPolicyIndicator,
     ExecutionPolicyKtCgHybrid,
+    ExecutionPolicyM5M1EmaCross,
     ExecutionPolicyPriceLevelTrend,
     ExecutionPolicySessionMomentum,
     ExecutionPolicyVWAP,
@@ -2455,6 +2456,520 @@ def execute_kt_cg_hybrid_policy_demo_only(
             "attempted": 1,
             "placed": 1 if placed else 0,
             "reason": reason,
+            "mt5_retcode": res.retcode,
+            "mt5_order_id": res.order,
+            "mt5_deal_id": res.deal,
+        }
+    )
+
+    return ExecutionDecision(
+        attempted=True,
+        placed=placed,
+        reason=reason,
+        order_retcode=res.retcode,
+        order_id=res.order,
+        deal_id=res.deal,
+        side=side,
+    )
+
+
+# ---------------------------------------------------------------------------
+# M5/M1 EMA Cross Policy (M5 EMA 9/21 cross triggers, M1 determines direction/TP)
+# ---------------------------------------------------------------------------
+
+
+def compute_m1_ema_state(
+    m1_df: pd.DataFrame,
+    pip_size: float,
+    ema_fast: int = 9,
+    ema_slow: int = 21,
+    slope_lookback: int = 5,
+) -> dict:
+    """Analyze M1 EMA state for direction and momentum.
+
+    Returns dict with: ema9, ema21, is_above, spread_pips, slope_ema9, slope_ema21,
+    avg_slope, momentum_score, momentum_category.
+    """
+    close = m1_df["close"].astype(float)
+    ema9 = ema_fn(close, ema_fast)
+    ema21 = ema_fn(close, ema_slow)
+
+    if len(ema9) < slope_lookback + 1 or pd.isna(ema9.iloc[-1]) or pd.isna(ema21.iloc[-1]):
+        return {
+            "ema9": None,
+            "ema21": None,
+            "is_above": None,
+            "spread_pips": 0.0,
+            "slope_ema9": 0.0,
+            "slope_ema21": 0.0,
+            "avg_slope": 0.0,
+            "momentum_score": 0.0,
+            "momentum_category": "flat",
+        }
+
+    ema9_now = float(ema9.iloc[-1])
+    ema21_now = float(ema21.iloc[-1])
+    is_above = ema9_now > ema21_now
+    spread_pips = abs(ema9_now - ema21_now) / pip_size
+
+    # Calculate slopes (change in EMA value per bar, in pips)
+    ema9_prev = float(ema9.iloc[-1 - slope_lookback])
+    ema21_prev = float(ema21.iloc[-1 - slope_lookback])
+    slope_ema9 = (ema9_now - ema9_prev) / (slope_lookback * pip_size)
+    slope_ema21 = (ema21_now - ema21_prev) / (slope_lookback * pip_size)
+    avg_slope = (slope_ema9 + slope_ema21) / 2.0
+
+    # Momentum score is based on absolute average slope
+    momentum_score = abs(avg_slope)
+
+    return {
+        "ema9": ema9_now,
+        "ema21": ema21_now,
+        "is_above": is_above,
+        "spread_pips": spread_pips,
+        "slope_ema9": slope_ema9,
+        "slope_ema21": slope_ema21,
+        "avg_slope": avg_slope,
+        "momentum_score": momentum_score,
+        "momentum_category": "flat",  # Will be set below
+    }
+
+
+def categorize_momentum(
+    momentum_score: float,
+    strong_threshold: float,
+    moderate_threshold: float,
+    weak_threshold: float,
+) -> str:
+    """Categorize momentum based on thresholds."""
+    if momentum_score >= strong_threshold:
+        return "strong"
+    elif momentum_score >= moderate_threshold:
+        return "moderate"
+    elif momentum_score >= weak_threshold:
+        return "weak"
+    return "flat"
+
+
+def decide_direction_from_m1(m1_state: dict) -> str:
+    """Determine trade direction from M1 EMA state.
+
+    If spread < 0.5 pips: use slope direction.
+    Otherwise: ema9 > ema21 = BUY, else SELL.
+    """
+    if m1_state.get("spread_pips", 0) < 0.5:
+        # Use slope direction when EMAs are very close
+        avg_slope = m1_state.get("avg_slope", 0)
+        return "buy" if avg_slope > 0 else "sell"
+    return "buy" if m1_state.get("is_above", True) else "sell"
+
+
+def compute_tp_pips_m5_m1(
+    momentum_category: str,
+    bb_width_pips: float,
+    policy: ExecutionPolicyM5M1EmaCross,
+) -> float:
+    """Calculate TP in pips based on momentum category and BB width.
+
+    BB modifier: 0.7 (thin) to 1.5 (wide) based on BB width vs thresholds.
+    """
+    # Lookup base TP from momentum category
+    tp_map = {
+        "strong": policy.tp_strong,
+        "moderate": policy.tp_moderate,
+        "weak": policy.tp_weak,
+        "flat": policy.tp_flat,
+    }
+    base_tp = tp_map.get(momentum_category, policy.tp_flat)
+
+    # Calculate BB modifier
+    if bb_width_pips <= policy.bb_thin_threshold:
+        bb_modifier = 0.7
+    elif bb_width_pips >= policy.bb_wide_threshold:
+        bb_modifier = 1.5
+    else:
+        # Linear interpolation between thin and wide
+        ratio = (bb_width_pips - policy.bb_thin_threshold) / (
+            policy.bb_wide_threshold - policy.bb_thin_threshold
+        )
+        bb_modifier = 0.7 + (0.8 * ratio)  # 0.7 to 1.5
+
+    # Apply modifier and clamp
+    tp_pips = base_tp * bb_modifier
+    return max(policy.tp_min, min(policy.tp_max, tp_pips))
+
+
+def analyze_cross_history(
+    m5_df: pd.DataFrame,
+    pip_size: float,
+    ema_fast: int = 9,
+    ema_slow: int = 21,
+    count: int = 5,
+) -> dict:
+    """Analyze the last N M5 EMA crosses.
+
+    For each segment between crosses: calculate net move, MFE, MAE.
+    Returns dict with: history_available, segments, trend_consistency_score.
+    """
+    if m5_df is None or len(m5_df) < ema_slow + count * 10:
+        return {"history_available": False, "segments": [], "trend_consistency_score": 0.5}
+
+    close = m5_df["close"].astype(float)
+    high = m5_df["high"].astype(float)
+    low = m5_df["low"].astype(float)
+    ema9 = ema_fn(close, ema_fast)
+    ema21 = ema_fn(close, ema_slow)
+    diff = ema9 - ema21
+
+    # Find cross points (where sign changes)
+    crosses = []
+    for i in range(1, len(diff)):
+        if pd.isna(diff.iloc[i]) or pd.isna(diff.iloc[i - 1]):
+            continue
+        prev_sign = 1 if diff.iloc[i - 1] > 0 else -1
+        curr_sign = 1 if diff.iloc[i] > 0 else -1
+        if prev_sign != curr_sign:
+            cross_dir = "bullish" if curr_sign > 0 else "bearish"
+            crosses.append({"index": i, "direction": cross_dir, "price": float(close.iloc[i])})
+
+    if len(crosses) < 2:
+        return {"history_available": False, "segments": [], "trend_consistency_score": 0.5}
+
+    # Analyze segments between recent crosses
+    segments = []
+    recent_crosses = crosses[-min(count + 1, len(crosses)) :]
+
+    for i in range(len(recent_crosses) - 1):
+        start_idx = recent_crosses[i]["index"]
+        end_idx = recent_crosses[i + 1]["index"]
+        direction = recent_crosses[i]["direction"]
+
+        if start_idx >= end_idx or end_idx >= len(close):
+            continue
+
+        start_price = float(close.iloc[start_idx])
+        end_price = float(close.iloc[end_idx])
+        segment_high = float(high.iloc[start_idx:end_idx].max())
+        segment_low = float(low.iloc[start_idx:end_idx].min())
+
+        net_move_pips = (end_price - start_price) / pip_size
+        if direction == "bullish":
+            mfe_pips = (segment_high - start_price) / pip_size
+            mae_pips = (start_price - segment_low) / pip_size
+        else:
+            mfe_pips = (start_price - segment_low) / pip_size
+            mae_pips = (segment_high - start_price) / pip_size
+
+        # Classify segment
+        if abs(net_move_pips) > 5 and mfe_pips > mae_pips * 1.5:
+            classification = "strong_trend"
+        elif abs(net_move_pips) > 2:
+            classification = "weak_trend"
+        elif mfe_pips < 3 and mae_pips < 3:
+            classification = "consolidation"
+        else:
+            classification = "choppy"
+
+        segments.append(
+            {
+                "direction": direction,
+                "net_move_pips": net_move_pips,
+                "mfe_pips": mfe_pips,
+                "mae_pips": mae_pips,
+                "classification": classification,
+            }
+        )
+
+    if not segments:
+        return {"history_available": False, "segments": [], "trend_consistency_score": 0.5}
+
+    # Calculate consistency score (weight recent segments more)
+    weights = [1.0 + 0.2 * i for i in range(len(segments))]
+    trend_count = sum(
+        w for s, w in zip(segments, weights) if s["classification"] in ("strong_trend", "weak_trend")
+    )
+    total_weight = sum(weights)
+    trend_consistency_score = trend_count / total_weight if total_weight > 0 else 0.5
+
+    return {
+        "history_available": True,
+        "segments": segments,
+        "trend_consistency_score": trend_consistency_score,
+    }
+
+
+def detect_m5_ema_cross(
+    m5_df: pd.DataFrame,
+    ema_fast: int = 9,
+    ema_slow: int = 21,
+) -> tuple[bool, Optional[str]]:
+    """Detect if an M5 EMA 9/21 cross occurred on the current bar.
+
+    Returns (cross_occurred, cross_direction).
+    cross_direction is 'bullish' (9 crossed above 21) or 'bearish' (9 crossed below 21).
+    """
+    if m5_df is None or len(m5_df) < ema_slow + 2:
+        return False, None
+
+    close = m5_df["close"].astype(float)
+    ema9 = ema_fn(close, ema_fast)
+    ema21 = ema_fn(close, ema_slow)
+
+    if pd.isna(ema9.iloc[-1]) or pd.isna(ema21.iloc[-1]) or pd.isna(ema9.iloc[-2]) or pd.isna(ema21.iloc[-2]):
+        return False, None
+
+    diff_now = float(ema9.iloc[-1]) - float(ema21.iloc[-1])
+    diff_prev = float(ema9.iloc[-2]) - float(ema21.iloc[-2])
+
+    # Check for sign change
+    if diff_prev <= 0 < diff_now:
+        return True, "bullish"
+    if diff_prev >= 0 > diff_now:
+        return True, "bearish"
+
+    return False, None
+
+
+def _m5_m1_ema_cross_candidate(
+    profile: ProfileV1,
+    policy: ExecutionPolicyM5M1EmaCross,
+    entry_price: float,
+    side: str,
+    tp_pips: float,
+) -> TradeCandidate:
+    """Build TradeCandidate for m5_m1_ema_cross policy."""
+    pip = float(profile.pip_size)
+    sl_pips = float(policy.sl_pips)
+
+    if side == "buy":
+        stop = entry_price - sl_pips * pip
+        target = entry_price + tp_pips * pip
+    else:
+        stop = entry_price + sl_pips * pip
+        target = entry_price - tp_pips * pip
+
+    return TradeCandidate(
+        symbol=profile.symbol,
+        side=side,
+        entry_price=entry_price,
+        stop_price=stop,
+        target_price=target,
+        size_lots=float(policy.lots),
+    )
+
+
+def execute_m5_m1_ema_cross_policy_demo_only(
+    *,
+    adapter,
+    profile: ProfileV1,
+    log_dir: Path,
+    policy: ExecutionPolicyM5M1EmaCross,
+    context: MarketContext,
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+    tick: Tick,
+    trades_df: Optional[pd.DataFrame],
+    mode: str,
+    bar_time_utc: str,
+) -> ExecutionDecision:
+    """Evaluate M5/M1 EMA cross policy and optionally place a market order.
+
+    Every M5 EMA 9/21 cross triggers a trade. Direction and TP determined by M1 EMA state
+    and M5 Bollinger Band width. Fixed 20 pip SL, hedging allowed.
+    """
+    if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
+        return ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed")
+    if not adapter.is_demo_account():
+        return ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)")
+
+    store = _store(log_dir)
+
+    # Bar-level idempotency check using M5 bar time
+    rule_id = f"m5_m1_ema_cross:{policy.id}:M5:{bar_time_utc}"
+    within = 6  # M5 is 5 minutes, use 6 for safety
+    if store.has_recent_price_level_placement(profile.profile_name, rule_id, within):
+        return ExecutionDecision(attempted=False, placed=False, reason="m5_m1_ema_cross: recent placement (idempotent)")
+
+    # Data validation
+    m5_df = data_by_tf.get("M5")
+    m1_df = data_by_tf.get("M1")
+
+    if m5_df is None or len(m5_df) < 50:
+        return ExecutionDecision(attempted=False, placed=False, reason="m5_m1_ema_cross: need 50+ M5 bars")
+    if m1_df is None or len(m1_df) < 20:
+        return ExecutionDecision(attempted=False, placed=False, reason="m5_m1_ema_cross: need 20+ M1 bars")
+
+    m5_df = drop_incomplete_last_bar(m5_df.copy(), "M5")
+    m1_df = drop_incomplete_last_bar(m1_df.copy(), "M1")
+
+    # M5 cross detection
+    cross_occurred, cross_direction = detect_m5_ema_cross(
+        m5_df, policy.m5_ema_fast, policy.m5_ema_slow
+    )
+
+    if not cross_occurred:
+        return ExecutionDecision(attempted=False, placed=False, reason="no_m5_cross")
+
+    # Compute M1 state
+    pip_size = float(profile.pip_size)
+    m1_state = compute_m1_ema_state(
+        m1_df,
+        pip_size,
+        policy.m1_ema_fast,
+        policy.m1_ema_slow,
+        policy.m1_slope_lookback,
+    )
+
+    if m1_state.get("ema9") is None:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": "m5_m1_ema_cross: M1 EMA warmup not complete",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason="m5_m1_ema_cross: M1 EMA warmup not complete")
+
+    # Categorize momentum
+    momentum_category = categorize_momentum(
+        m1_state["momentum_score"],
+        policy.strong_slope_threshold,
+        policy.moderate_slope_threshold,
+        policy.weak_slope_threshold,
+    )
+    m1_state["momentum_category"] = momentum_category
+
+    # Determine direction
+    side = decide_direction_from_m1(m1_state)
+
+    # Calculate BB width
+    m5_close = m5_df["close"].astype(float)
+    upper, middle, lower = bollinger_bands_fn(m5_close, policy.bb_period, policy.bb_std_dev)
+    if pd.isna(upper.iloc[-1]) or pd.isna(lower.iloc[-1]):
+        bb_width_pips = (policy.bb_thin_threshold + policy.bb_wide_threshold) / 2  # default to middle
+    else:
+        bb_width_pips = (float(upper.iloc[-1]) - float(lower.iloc[-1])) / pip_size
+
+    # Compute TP
+    tp_pips = compute_tp_pips_m5_m1(momentum_category, bb_width_pips, policy)
+
+    # Adjust for history if enabled
+    if policy.use_history_for_tp:
+        history = analyze_cross_history(
+            m5_df, pip_size, policy.m5_ema_fast, policy.m5_ema_slow, policy.cross_history_count
+        )
+        if history["history_available"]:
+            consistency = history["trend_consistency_score"]
+            tp_pips = tp_pips * (0.5 + 0.5 * consistency)
+            tp_pips = max(policy.tp_min, min(policy.tp_max, tp_pips))
+
+    # Spread check
+    risk = get_effective_risk(profile)
+    spread_pips = (tick.ask - tick.bid) / pip_size
+    if spread_pips > risk.max_spread_pips:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": f"m5_m1_ema_cross: spread {spread_pips:.1f} > max {risk.max_spread_pips}",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(
+            attempted=True, placed=False, reason=f"spread_reject: {spread_pips:.1f} > {risk.max_spread_pips}"
+        )
+
+    entry_price = tick.ask if side == "buy" else tick.bid
+    candidate = _m5_m1_ema_cross_candidate(profile, policy, entry_price, side, tp_pips)
+
+    decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
+    if not decision.allow:
+        sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": sig_id,
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": "risk_reject: " + "; ".join(decision.hard_reasons),
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons))
+
+    if mode == "ARMED_MANUAL_CONFIRM":
+        sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": sig_id,
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": "manual_confirm_required",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason="manual confirm required")
+
+    res = adapter.order_send_market(
+        symbol=profile.symbol,
+        side=side,
+        volume_lots=float(policy.lots),
+        sl=candidate.stop_price,
+        tp=candidate.target_price,
+        comment=f"m5m1x:{policy.id}",
+    )
+    placed = res.retcode in (0, 10008, 10009)
+    reason = "order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
+    sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+
+    # Log with metadata
+    metadata = {
+        "cross_direction": cross_direction,
+        "momentum": momentum_category,
+        "bb_width_pips": round(bb_width_pips, 2),
+        "tp_pips": round(tp_pips, 2),
+        "m1_spread_pips": round(m1_state.get("spread_pips", 0), 2),
+    }
+    store.insert_execution(
+        {
+            "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+            "profile": profile.profile_name,
+            "symbol": profile.symbol,
+            "signal_id": sig_id,
+            "rule_id": rule_id,
+            "mode": mode,
+            "attempted": 1,
+            "placed": 1 if placed else 0,
+            "reason": reason + f" | meta={metadata}",
             "mt5_retcode": res.retcode,
             "mt5_order_id": res.order,
             "mt5_deal_id": res.deal,
