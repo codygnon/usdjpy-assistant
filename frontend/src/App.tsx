@@ -2716,6 +2716,18 @@ function CustomWizard({ profile, currentProfile, onComplete }: { profile: Profil
 // Presets Page
 // ---------------------------------------------------------------------------
 
+interface EditedSettings {
+  max_lots: number;
+  min_stop_pips: number;
+  max_spread_pips: number;
+  max_trades_per_day: number;
+  max_open_trades: number;
+  cooldown_minutes_after_loss: number;
+  target_pips: number;
+  loop_poll_seconds: number;
+  policy_cooldown_minutes: number;
+}
+
 function PresetsPage({ profile }: { profile: Profile }) {
   const [presets, setPresets] = useState<api.Preset[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -2726,6 +2738,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
   const [currentProfile, setCurrentProfile] = useState<Record<string, unknown> | null>(null);
   const [showActiveSettings, setShowActiveSettings] = useState(false);
   const [vwapSessionFilterOn, setVwapSessionFilterOn] = useState(true);
+  const [editedSettings, setEditedSettings] = useState<EditedSettings | null>(null);
+  const [applyingSettings, setApplyingSettings] = useState(false);
 
   // Fetch current profile to get active preset
   const fetchProfile = () => {
@@ -2748,6 +2762,120 @@ function PresetsPage({ profile }: { profile: Profile }) {
       setPreview(null);
     }
   }, [selected, profile.path]);
+
+  // Initialize edited settings when View Settings opens
+  useEffect(() => {
+    if (showActiveSettings && currentProfile) {
+      const effectiveRisk = currentProfile.effective_risk as Record<string, unknown> | undefined;
+      const risk = currentProfile.risk as Record<string, unknown> | undefined;
+      const execution = currentProfile.execution as Record<string, unknown> | undefined;
+      const tradeManagement = currentProfile.trade_management as Record<string, unknown> | undefined;
+      const targetSettings = tradeManagement?.target as Record<string, unknown> | undefined;
+      const policies = execution?.policies as Record<string, unknown>[] | undefined;
+
+      // Find cooldown_minutes from policies
+      let policyCooldown = 0;
+      if (policies) {
+        for (const pol of policies) {
+          if ('cooldown_minutes' in pol) {
+            policyCooldown = pol.cooldown_minutes as number;
+            break;
+          }
+        }
+      }
+
+      setEditedSettings({
+        max_lots: (effectiveRisk?.max_lots ?? risk?.max_lots ?? 0.01) as number,
+        min_stop_pips: (effectiveRisk?.min_stop_pips ?? risk?.min_stop_pips ?? 5) as number,
+        max_spread_pips: (effectiveRisk?.max_spread_pips ?? risk?.max_spread_pips ?? 2) as number,
+        max_trades_per_day: (effectiveRisk?.max_trades_per_day ?? risk?.max_trades_per_day ?? 10) as number,
+        max_open_trades: (effectiveRisk?.max_open_trades ?? risk?.max_open_trades ?? 5) as number,
+        cooldown_minutes_after_loss: (effectiveRisk?.cooldown_minutes_after_loss ?? risk?.cooldown_minutes_after_loss ?? 0) as number,
+        target_pips: (targetSettings?.pips_default ?? 0.5) as number,
+        loop_poll_seconds: (execution?.loop_poll_seconds ?? 5) as number,
+        policy_cooldown_minutes: policyCooldown,
+      });
+    }
+  }, [showActiveSettings, currentProfile]);
+
+  // Handler to apply temporary settings
+  const handleApplyTemporarySettings = async () => {
+    if (!editedSettings || !currentProfile) return;
+
+    setApplyingSettings(true);
+    try {
+      const risk = currentProfile.risk as Record<string, unknown> | undefined;
+      const effectiveRisk = currentProfile.effective_risk as Record<string, unknown> | undefined;
+      const execution = currentProfile.execution as Record<string, unknown> | undefined;
+      const tradeManagement = currentProfile.trade_management as Record<string, unknown> | undefined;
+
+      // Cap values by profile.risk limits
+      const cappedMaxLots = Math.min(editedSettings.max_lots, (risk?.max_lots ?? editedSettings.max_lots) as number);
+      const cappedMaxSpread = Math.min(editedSettings.max_spread_pips, (risk?.max_spread_pips ?? editedSettings.max_spread_pips) as number);
+      const cappedMaxTradesPerDay = Math.min(editedSettings.max_trades_per_day, (risk?.max_trades_per_day ?? editedSettings.max_trades_per_day) as number);
+      const cappedMaxOpenTrades = Math.min(editedSettings.max_open_trades, (risk?.max_open_trades ?? editedSettings.max_open_trades) as number);
+      // Min stop pips: use floor (can't go below profile limit)
+      const flooredMinStopPips = Math.max(editedSettings.min_stop_pips, (risk?.min_stop_pips ?? 0) as number);
+
+      // Build updated effective_risk
+      const newEffectiveRisk = {
+        ...(effectiveRisk || {}),
+        max_lots: cappedMaxLots,
+        min_stop_pips: flooredMinStopPips,
+        max_spread_pips: cappedMaxSpread,
+        max_trades_per_day: cappedMaxTradesPerDay,
+        max_open_trades: cappedMaxOpenTrades,
+        cooldown_minutes_after_loss: Math.max(0, editedSettings.cooldown_minutes_after_loss),
+      };
+
+      // Build updated trade_management
+      const newTradeManagement = {
+        ...(tradeManagement || {}),
+        target: {
+          ...(tradeManagement?.target as Record<string, unknown> || {}),
+          pips_default: editedSettings.target_pips,
+        },
+      };
+
+      // Build updated execution with updated policies
+      const policies = (execution?.policies as Record<string, unknown>[])?.map(pol => {
+        if ('cooldown_minutes' in pol) {
+          return { ...pol, cooldown_minutes: Math.max(0, editedSettings.policy_cooldown_minutes) };
+        }
+        return pol;
+      }) || [];
+
+      const newExecution = {
+        ...(execution || {}),
+        loop_poll_seconds: Math.max(0.5, editedSettings.loop_poll_seconds),
+        policies,
+      };
+
+      // Update preset name with (customized) suffix if not already present
+      let activePresetName = currentProfile.active_preset_name as string || '';
+      if (!activePresetName.includes('(customized)')) {
+        activePresetName = activePresetName ? `${activePresetName} (customized)` : 'custom (customized)';
+      }
+
+      // Build and save new profile
+      const newProfile = {
+        ...currentProfile,
+        active_preset_name: activePresetName,
+        effective_risk: newEffectiveRisk,
+        trade_management: newTradeManagement,
+        execution: newExecution,
+      };
+
+      await api.saveProfile(profile.path, newProfile);
+      setMessage('Temporary settings applied successfully!');
+      fetchProfile();
+      setTimeout(() => setMessage(null), 3000);
+    } catch (e: unknown) {
+      setMessage(`Error: ${(e as Error).message}`);
+    } finally {
+      setApplyingSettings(false);
+    }
+  };
 
   const handleApply = async () => {
     if (!selected || selected === 'custom') return;
@@ -2778,8 +2906,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
   const risk = currentProfile?.risk as Record<string, unknown> | undefined;
   const effectiveRisk = currentProfile?.effective_risk as Record<string, unknown> | undefined;
   const execution = currentProfile?.execution as Record<string, unknown> | undefined;
-  const tradeManagement = currentProfile?.trade_management as Record<string, unknown> | undefined;
-  const targetSettings = tradeManagement?.target as Record<string, unknown> | undefined;
 
   return (
     <div>
@@ -2804,13 +2930,25 @@ function PresetsPage({ profile }: { profile: Profile }) {
                 {activePresetName}
               </div>
             </div>
-            <button 
-              className="btn btn-secondary"
-              onClick={() => setShowActiveSettings(!showActiveSettings)}
-              style={{ fontSize: '0.8rem' }}
-            >
-              {showActiveSettings ? 'Hide Settings' : 'View Settings'}
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setShowActiveSettings(!showActiveSettings)}
+                style={{ fontSize: '0.8rem' }}
+              >
+                {showActiveSettings ? 'Hide Settings' : 'View Settings'}
+              </button>
+              {showActiveSettings && (
+                <button
+                  className="btn btn-primary"
+                  onClick={handleApplyTemporarySettings}
+                  disabled={applyingSettings || !editedSettings}
+                  style={{ fontSize: '0.8rem' }}
+                >
+                  {applyingSettings ? 'Applying...' : 'Apply Temporary Settings'}
+                </button>
+              )}
+            </div>
           </div>
           
           {showActiveSettings && risk && (
@@ -2820,40 +2958,114 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   Effective (used when running): preset risk capped by Profile Editor limits.
                 </div>
               )}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
-                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Max Lots {effectiveRisk ? '(effective)' : ''}</div>
-                  <div style={{ fontWeight: 600 }}>{(effectiveRisk?.max_lots ?? risk.max_lots) as number}</div>
+              {editedSettings && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
+                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max Lots (effective)</div>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      value={editedSettings.max_lots}
+                      onChange={(e) => setEditedSettings({ ...editedSettings, max_lots: parseFloat(e.target.value) || 0.01 })}
+                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                    />
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Max: {risk.max_lots as number}</div>
+                  </div>
+                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Min Stop Pips</div>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0"
+                      value={editedSettings.min_stop_pips}
+                      onChange={(e) => setEditedSettings({ ...editedSettings, min_stop_pips: parseFloat(e.target.value) || 0 })}
+                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                    />
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Floor: {risk.min_stop_pips as number}</div>
+                  </div>
+                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max Spread (pips)</div>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0.1"
+                      value={editedSettings.max_spread_pips}
+                      onChange={(e) => setEditedSettings({ ...editedSettings, max_spread_pips: parseFloat(e.target.value) || 0.1 })}
+                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                    />
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Max: {risk.max_spread_pips as number}</div>
+                  </div>
+                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max Trades/Day</div>
+                    <input
+                      type="number"
+                      step="1"
+                      min="1"
+                      value={editedSettings.max_trades_per_day}
+                      onChange={(e) => setEditedSettings({ ...editedSettings, max_trades_per_day: parseInt(e.target.value) || 1 })}
+                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                    />
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Max: {risk.max_trades_per_day as number}</div>
+                  </div>
+                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max Open Trades</div>
+                    <input
+                      type="number"
+                      step="1"
+                      min="1"
+                      value={editedSettings.max_open_trades}
+                      onChange={(e) => setEditedSettings({ ...editedSettings, max_open_trades: parseInt(e.target.value) || 1 })}
+                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                    />
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Max: {risk.max_open_trades as number}</div>
+                  </div>
+                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Cooldown After Loss (min)</div>
+                    <input
+                      type="number"
+                      step="1"
+                      min="0"
+                      value={editedSettings.cooldown_minutes_after_loss}
+                      onChange={(e) => setEditedSettings({ ...editedSettings, cooldown_minutes_after_loss: parseInt(e.target.value) || 0 })}
+                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                    />
+                  </div>
+                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Target Pips</div>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0.1"
+                      value={editedSettings.target_pips}
+                      onChange={(e) => setEditedSettings({ ...editedSettings, target_pips: parseFloat(e.target.value) || 0.1 })}
+                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                    />
+                  </div>
+                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Poll Interval (s)</div>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0.5"
+                      value={editedSettings.loop_poll_seconds}
+                      onChange={(e) => setEditedSettings({ ...editedSettings, loop_poll_seconds: parseFloat(e.target.value) || 0.5 })}
+                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                    />
+                  </div>
+                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Cooldown After Trade (min)</div>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0"
+                      value={editedSettings.policy_cooldown_minutes}
+                      onChange={(e) => setEditedSettings({ ...editedSettings, policy_cooldown_minutes: parseFloat(e.target.value) || 0 })}
+                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                    />
+                  </div>
                 </div>
-                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Min Stop Pips</div>
-                  <div style={{ fontWeight: 600 }}>{(effectiveRisk?.min_stop_pips ?? risk.min_stop_pips) as number}</div>
-                </div>
-                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Max Spread</div>
-                  <div style={{ fontWeight: 600 }}>{(effectiveRisk?.max_spread_pips ?? risk.max_spread_pips) as number} pips</div>
-                </div>
-                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Max Trades/Day</div>
-                  <div style={{ fontWeight: 600 }}>{(effectiveRisk?.max_trades_per_day ?? risk.max_trades_per_day) as number}</div>
-                </div>
-                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Max Open Trades</div>
-                  <div style={{ fontWeight: 600 }}>{(effectiveRisk?.max_open_trades ?? risk.max_open_trades) as number ?? '-'}</div>
-                </div>
-                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Cooldown After Loss</div>
-                  <div style={{ fontWeight: 600 }}>{(effectiveRisk?.cooldown_minutes_after_loss ?? risk.cooldown_minutes_after_loss ?? 0) as number} min</div>
-                </div>
-                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Target Pips</div>
-                  <div style={{ fontWeight: 600 }}>{targetSettings?.pips_default as number || '-'}</div>
-                </div>
-                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Poll Interval</div>
-                  <div style={{ fontWeight: 600 }}>{execution?.loop_poll_seconds as number || 5}s</div>
-                </div>
-              </div>
+              )}
               {(execution?.policies as Record<string, unknown>[])?.length > 0 && (
                 <div style={{ marginTop: 12 }}>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>Active Policies:</div>
