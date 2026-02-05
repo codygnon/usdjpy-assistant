@@ -343,7 +343,7 @@ class ExecutionPolicyKtCgHybrid(BaseModel):
     ema_slow: int = 21
 
     # TP/SL
-    tp_pips: float = 5.0
+    tp_pips: float = 1.0
     sl_pips: float = 20.0
 
 

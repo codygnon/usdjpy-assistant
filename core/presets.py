@@ -975,7 +975,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         "trade_management": {
             "target": {
                 "mode": "fixed_pips",
-                "pips_default": 5.0,
+                "pips_default": 1.0,
             },
             "breakeven": {"enabled": False},
         },
@@ -991,7 +991,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "entry_timeframe": "M1",
                     "ema_fast": 9,
                     "ema_slow": 21,
-                    "tp_pips": 5.0,
+                    "tp_pips": 1.0,
                     "sl_pips": 20.0,
                 },
             ],
