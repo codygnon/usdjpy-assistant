@@ -322,9 +322,9 @@ class ExecutionPolicyEmaBbScalp(BaseModel):
 
 
 class ExecutionPolicyKtCgHybrid(BaseModel):
-    """KT/CG hybrid policy: zone entry for bull, cross entry for bear.
+    """KT/CG hybrid policy: cross entries filtered by higher timeframe trend.
 
-    Bull trend (M15 close > EMA 21): Buy when M1 price is between EMA 9 and EMA 21 (pullback zone).
+    Bull trend (M15 close > EMA 21): Buy when M1 EMA 9 crosses above EMA 21.
     Bear trend (M15 close < EMA 21): Sell when M1 EMA 9 crosses below EMA 21.
     """
 

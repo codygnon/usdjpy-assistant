@@ -939,7 +939,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
     # -----------------------------------------------------------------------
     PresetId.KT_CG_TRIAL_BLOW_ACCOUNT: {
         "name": "KT/CG Trial #1 Blow Account",
-        "description": "Aggressive M1 scalper with M15 trend. Bull: zone entry (price in EMA 9-21). Bear: cross entry (EMA 9 < EMA 21). High frequency, no filters, testing preset.",
+        "description": "Aggressive M1 scalper with M15 trend filter. Bull: buy on EMA 9 cross above EMA 21. Bear: sell on EMA 9 cross below EMA 21. High frequency, no filters, testing preset.",
         "pros": [
             "Very fast entries on M1 with immediate execution",
             "High trade frequency (up to 100/day)",
