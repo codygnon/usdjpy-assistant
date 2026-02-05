@@ -958,7 +958,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "min_stop_pips": 20.0,
             "max_spread_pips": 6.0,
             "max_trades_per_day": 100,
-            "max_open_trades": 10,
+            "max_open_trades": 20,
             "cooldown_minutes_after_loss": 0,
         },
         "strategy": {
