@@ -322,10 +322,10 @@ class ExecutionPolicyEmaBbScalp(BaseModel):
 
 
 class ExecutionPolicyKtCgHybrid(BaseModel):
-    """KT/CG hybrid policy: cross entries filtered by higher timeframe trend.
+    """KT/CG hybrid policy: EMA position entries filtered by higher timeframe trend.
 
-    Bull trend (M15 close > EMA 21): Buy when M1 EMA 9 crosses above EMA 21.
-    Bear trend (M15 close < EMA 21): Sell when M1 EMA 9 crosses below EMA 21.
+    Bull trend (M15 close > EMA 21): Buy when M1 EMA 9 is above EMA 21.
+    Bear trend (M15 close < EMA 21): Sell when M1 EMA 9 is below EMA 21.
     """
 
     model_config = ConfigDict(extra="forbid")

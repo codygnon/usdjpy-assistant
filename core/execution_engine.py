@@ -2232,10 +2232,10 @@ def evaluate_kt_cg_hybrid_conditions(
     policy: ExecutionPolicyKtCgHybrid,
     data_by_tf: dict[Timeframe, pd.DataFrame],
 ) -> tuple[bool, Optional[str], list[str]]:
-    """KT/CG hybrid: M15 trend determines entry direction.
+    """KT/CG hybrid: M15 trend determines entry direction, M1 EMA position triggers entry.
 
-    Bull trend (M15 close > EMA 21): Buy when M1 EMA 9 crosses above EMA 21.
-    Bear trend (M15 close < EMA 21): Sell when M1 EMA 9 crosses below EMA 21.
+    Bull trend (M15 close > EMA 21): Buy when M1 EMA 9 is above EMA 21.
+    Bear trend (M15 close < EMA 21): Sell when M1 EMA 9 is below EMA 21.
 
     Returns (passed, side, reasons).
     """
@@ -2282,42 +2282,28 @@ def evaluate_kt_cg_hybrid_conditions(
     price_entry = float(entry_close.iloc[-1])
 
     if is_bull:
-        # Bull trend: cross entry - EMA 9 just crossed above EMA 21
-        if len(ema9) < 2 or len(ema21) < 2:
-            return False, None, ["kt_cg_hybrid: insufficient bars for cross detection"]
-
-        ema9_prev = float(ema9.iloc[-2])
-        ema21_prev = float(ema21.iloc[-2])
-
-        cross_up = ema9_prev <= ema21_prev and ema9_now > ema21_now
-        if cross_up:
+        # Bull trend: buy when EMA 9 is above EMA 21
+        if ema9_now > ema21_now:
             reasons.append(
-                f"kt_cg_hybrid: bull_cross_entry | {policy.trend_timeframe} close={price_trend:.3f} > EMA21={ema21_trend_val:.3f} | "
-                f"{policy.entry_timeframe} EMA9 crossed above EMA21 ({ema9_prev:.3f}->{ema9_now:.3f} vs {ema21_prev:.3f}->{ema21_now:.3f})"
+                f"kt_cg_hybrid: bull_ema_above | {policy.trend_timeframe} close={price_trend:.3f} > EMA21={ema21_trend_val:.3f} | "
+                f"{policy.entry_timeframe} EMA9={ema9_now:.3f} > EMA21={ema21_now:.3f}"
             )
             return True, "buy", reasons
         else:
             return False, None, [
-                f"kt_cg_hybrid: bull trend but no EMA9>EMA21 cross (EMA9={ema9_now:.3f}, EMA21={ema21_now:.3f})"
+                f"kt_cg_hybrid: bull trend but EMA9 not above EMA21 (EMA9={ema9_now:.3f}, EMA21={ema21_now:.3f})"
             ]
     else:
-        # Bear trend: cross entry - EMA 9 just crossed below EMA 21
-        if len(ema9) < 2 or len(ema21) < 2:
-            return False, None, ["kt_cg_hybrid: insufficient bars for cross detection"]
-
-        ema9_prev = float(ema9.iloc[-2])
-        ema21_prev = float(ema21.iloc[-2])
-
-        cross_down = ema9_prev >= ema21_prev and ema9_now < ema21_now
-        if cross_down:
+        # Bear trend: sell when EMA 9 is below EMA 21
+        if ema9_now < ema21_now:
             reasons.append(
-                f"kt_cg_hybrid: bear_cross_entry | {policy.trend_timeframe} close={price_trend:.3f} < EMA21={ema21_trend_val:.3f} | "
-                f"{policy.entry_timeframe} EMA9 crossed below EMA21 ({ema9_prev:.3f}->{ema9_now:.3f} vs {ema21_prev:.3f}->{ema21_now:.3f})"
+                f"kt_cg_hybrid: bear_ema_below | {policy.trend_timeframe} close={price_trend:.3f} < EMA21={ema21_trend_val:.3f} | "
+                f"{policy.entry_timeframe} EMA9={ema9_now:.3f} < EMA21={ema21_now:.3f}"
             )
             return True, "sell", reasons
         else:
             return False, None, [
-                f"kt_cg_hybrid: bear trend but no EMA9<EMA21 cross (EMA9={ema9_now:.3f}, EMA21={ema21_now:.3f})"
+                f"kt_cg_hybrid: bear trend but EMA9 not below EMA21 (EMA9={ema9_now:.3f}, EMA21={ema21_now:.3f})"
             ]
 
 
