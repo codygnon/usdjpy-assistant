@@ -2355,6 +2355,14 @@ def execute_kt_cg_hybrid_policy_demo_only(
         return ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)")
 
     store = _store(log_dir)
+
+    # Cooldown check: any recent trade from this policy within cooldown_minutes
+    if policy.cooldown_minutes > 0:
+        cooldown_rule_id = f"kt_cg_hybrid:{policy.id}:cooldown"
+        if store.has_recent_price_level_placement(profile.profile_name, cooldown_rule_id, policy.cooldown_minutes):
+            return ExecutionDecision(attempted=False, placed=False, reason=f"kt_cg_hybrid: cooldown ({policy.cooldown_minutes} min)")
+
+    # Bar-level idempotency check
     rule_id = f"kt_cg_hybrid:{policy.id}:{policy.entry_timeframe}:{bar_time_utc}"
     bar_minutes = {"M1": 2, "M5": 6}
     within = bar_minutes.get(policy.entry_timeframe, 2)
@@ -2452,6 +2460,27 @@ def execute_kt_cg_hybrid_policy_demo_only(
             "mt5_deal_id": res.deal,
         }
     )
+
+    # Insert cooldown tracking record if trade was placed
+    if placed and policy.cooldown_minutes > 0:
+        cooldown_rule_id = f"kt_cg_hybrid:{policy.id}:cooldown"
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{cooldown_rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": cooldown_rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 1,
+                "reason": "cooldown_marker",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+
     return ExecutionDecision(
         attempted=True,
         placed=placed,

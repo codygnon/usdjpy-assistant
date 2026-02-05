@@ -343,8 +343,11 @@ class ExecutionPolicyKtCgHybrid(BaseModel):
     ema_slow: int = 21
 
     # TP/SL
-    tp_pips: float = 1.0
+    tp_pips: float = 0.5
     sl_pips: float = 20.0
+
+    # Cooldown between trades (minutes)
+    cooldown_minutes: float = 0.0
 
 
 ExecutionPolicy = Annotated[
