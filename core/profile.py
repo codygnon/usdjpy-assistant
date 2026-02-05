@@ -321,6 +321,32 @@ class ExecutionPolicyEmaBbScalp(BaseModel):
     min_distance_pips: float = 1.0
 
 
+class ExecutionPolicyKtCgHybrid(BaseModel):
+    """KT/CG hybrid policy: zone entry for bull, cross entry for bear.
+
+    Bull trend (M15 close > EMA 21): Buy when M1 price is between EMA 9 and EMA 21 (pullback zone).
+    Bear trend (M15 close < EMA 21): Sell when M1 EMA 9 crosses below EMA 21.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["kt_cg_hybrid"] = "kt_cg_hybrid"
+    id: str = "kt_cg_hybrid_default"
+    enabled: bool = True
+
+    # Timeframes
+    trend_timeframe: Literal["M5", "M15", "H1"] = "M15"
+    entry_timeframe: Literal["M1", "M5"] = "M1"
+
+    # EMAs
+    ema_fast: int = 9
+    ema_slow: int = 21
+
+    # TP/SL
+    tp_pips: float = 5.0
+    sl_pips: float = 20.0
+
+
 ExecutionPolicy = Annotated[
     Union[
         ExecutionPolicyConfirmedCross,
@@ -332,6 +358,7 @@ ExecutionPolicy = Annotated[
         ExecutionPolicyVWAP,
         ExecutionPolicyEmaPullback,
         ExecutionPolicyEmaBbScalp,
+        ExecutionPolicyKtCgHybrid,
     ],
     Field(discriminator="type"),
 ]

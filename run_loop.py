@@ -22,6 +22,7 @@ from core.execution_engine import (
     execute_breakout_policy_demo_only,
     execute_ema_pullback_policy_demo_only,
     execute_indicator_policy_demo_only,
+    execute_kt_cg_hybrid_policy_demo_only,
     execute_price_level_policy_demo_only,
     execute_session_momentum_policy_demo_only,
     execute_signal_demo_only,
@@ -246,6 +247,10 @@ def main() -> None:
         )
         has_ema_pullback = any(
             getattr(p, "type", None) == "ema_pullback" and getattr(p, "enabled", True)
+            for p in profile.execution.policies
+        )
+        has_kt_cg_hybrid = any(
+            getattr(p, "type", None) == "kt_cg_hybrid" and getattr(p, "enabled", True)
             for p in profile.execution.policies
         )
         # Confirmed-cross setups can now use M5; detect if any do so we fetch M5 bars.
@@ -820,6 +825,53 @@ def main() -> None:
                             )
                         else:
                             print(f"[{profile.profile_name}] ema_pullback {pol.id} mode={mode} -> {dec.reason}")
+
+            # KT/CG Hybrid policies
+            if has_kt_cg_hybrid and mkt is None:
+                mkt = _compute_mkt(profile, tick, data_by_tf)
+            if has_kt_cg_hybrid and mkt is not None:
+                trades_df = store.read_trades_df(profile.profile_name)
+                for pol in profile.execution.policies:
+                    if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "kt_cg_hybrid":
+                        continue
+                    tf_df = data_by_tf.get(getattr(pol, "entry_timeframe", "M1"))
+                    if tf_df is None or tf_df.empty:
+                        continue
+                    bar_time_utc = pd.to_datetime(tf_df["time"].iloc[-1], utc=True).isoformat()
+                    dec = execute_kt_cg_hybrid_policy_demo_only(
+                        adapter=adapter,
+                        profile=profile,
+                        log_dir=log_dir,
+                        policy=pol,
+                        context=mkt,
+                        data_by_tf=data_by_tf,
+                        tick=tick,
+                        trades_df=trades_df,
+                        mode=mode,
+                        bar_time_utc=bar_time_utc,
+                    )
+                    if dec.attempted:
+                        if dec.placed:
+                            side = dec.side or "buy"
+                            entry_price = tick.ask if side == "buy" else tick.bid
+                            pip = float(profile.pip_size)
+                            tp_price = entry_price + pol.tp_pips * pip if side == "buy" else entry_price - pol.tp_pips * pip
+                            sl_price = entry_price - pol.sl_pips * pip if side == "buy" else entry_price + pol.sl_pips * pip
+                            print(f"[{profile.profile_name}] TRADE PLACED: kt_cg_hybrid:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
+                            _insert_trade_for_policy(
+                                profile=profile,
+                                adapter=adapter,
+                                store=store,
+                                policy_type="kt_cg_hybrid",
+                                policy_id=pol.id,
+                                side=side,
+                                entry_price=entry_price,
+                                dec=dec,
+                                stop_price=sl_price,
+                                target_price=tp_price,
+                            )
+                        else:
+                            print(f"[{profile.profile_name}] kt_cg_hybrid {pol.id} mode={mode} -> {dec.reason}")
 
             if args.once:
                 break

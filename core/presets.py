@@ -33,6 +33,7 @@ class PresetId(str, Enum):
     M5_M15_MOMENTUM_PULLBACK_9_21 = "m5_m15_momentum_pullback_9_21"
     CODY_WIZARD_AGGR_OANDA_M5_CROSS = "cody_wizard_aggressive_oanda_m5_cross"
     KUMA_TORA_BB_EMA_9_21_SCALPER = "kuma_tora_bb_ema_9_21_scalper"
+    KT_CG_TRIAL_BLOW_ACCOUNT = "kt_cg_trial_blow_account"
 
 
 # ---------------------------------------------------------------------------
@@ -928,6 +929,70 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "round_number_buffer_pips": 5.0,
                     # Used for min_rr calculations (scaled mode sets TP=None on initial order)
                     "tp_pips": 18.0,
+                },
+            ],
+        },
+    },
+    # -----------------------------------------------------------------------
+    # KT/CG Trial #1 "Blow Account" - Aggressive hybrid entry testing preset
+    # Bull: zone entry (price in EMA 9-21). Bear: cross entry (EMA 9 < EMA 21).
+    # -----------------------------------------------------------------------
+    PresetId.KT_CG_TRIAL_BLOW_ACCOUNT: {
+        "name": "KT/CG Trial #1 Blow Account",
+        "description": "Aggressive M1 scalper with M15 trend. Bull: zone entry (price in EMA 9-21). Bear: cross entry (EMA 9 < EMA 21). High frequency, no filters, testing preset.",
+        "pros": [
+            "Very fast entries on M1 with immediate execution",
+            "High trade frequency (up to 100/day)",
+            "No filters = maximum opportunity count",
+            "24/5 trading across all sessions",
+        ],
+        "cons": [
+            "Poor R:R (0.25:1) requires very high win rate",
+            "Wide SL (20 pips) vs tight TP (5 pips)",
+            "No session filter = trades during low liquidity",
+            "Testing preset - expect significant drawdowns",
+        ],
+        "risk": {
+            "max_lots": 0.1,
+            "require_stop": True,
+            "min_stop_pips": 20.0,
+            "max_spread_pips": 6.0,
+            "max_trades_per_day": 100,
+            "max_open_trades": 10,
+            "cooldown_minutes_after_loss": 0,
+        },
+        "strategy": {
+            "filters": {
+                "alignment": {"enabled": False},
+                "ema_stack_filter": {"enabled": False},
+                "atr_filter": {"enabled": False},
+                "session_filter": {"enabled": False},
+            },
+            "setups": {
+                "m1_cross_entry": {"enabled": False},
+            },
+        },
+        "trade_management": {
+            "target": {
+                "mode": "fixed_pips",
+                "pips_default": 5.0,
+            },
+            "breakeven": {"enabled": False},
+        },
+        "execution": {
+            "loop_poll_seconds": 1.0,
+            "loop_poll_seconds_fast": 0.5,
+            "policies": [
+                {
+                    "type": "kt_cg_hybrid",
+                    "id": "kt_cg_trial_1",
+                    "enabled": True,
+                    "trend_timeframe": "M15",
+                    "entry_timeframe": "M1",
+                    "ema_fast": 9,
+                    "ema_slow": 21,
+                    "tp_pips": 5.0,
+                    "sl_pips": 20.0,
                 },
             ],
         },

@@ -23,6 +23,7 @@ from core.profile import (
     ExecutionPolicyEmaBbScalp,
     ExecutionPolicyEmaPullback,
     ExecutionPolicyIndicator,
+    ExecutionPolicyKtCgHybrid,
     ExecutionPolicyPriceLevelTrend,
     ExecutionPolicySessionMomentum,
     ExecutionPolicyVWAP,
@@ -2218,5 +2219,256 @@ def execute_signal_demo_only(
         order_id=res.order,
         deal_id=res.deal,
         side=signal.side,
+    )
+
+
+# ---------------------------------------------------------------------------
+# KT/CG Hybrid Policy (zone entry for bull, cross entry for bear)
+# ---------------------------------------------------------------------------
+
+
+def evaluate_kt_cg_hybrid_conditions(
+    profile: ProfileV1,
+    policy: ExecutionPolicyKtCgHybrid,
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+) -> tuple[bool, Optional[str], list[str]]:
+    """KT/CG hybrid: M15 trend determines entry style.
+
+    Bull trend (M15 close > EMA 21): Buy when M1 price is between EMA 9 and EMA 21 (zone entry).
+    Bear trend (M15 close < EMA 21): Sell when M1 EMA 9 crosses below EMA 21 (cross entry).
+
+    Returns (passed, side, reasons).
+    """
+    reasons: list[str] = []
+
+    # Get trend timeframe data (M15 by default)
+    trend_df = data_by_tf.get(policy.trend_timeframe)
+    if trend_df is None or trend_df.empty:
+        return False, None, [f"kt_cg_hybrid: no {policy.trend_timeframe} data"]
+
+    trend_df = drop_incomplete_last_bar(trend_df.copy(), policy.trend_timeframe)
+    if len(trend_df) < policy.ema_slow + 1:
+        return False, None, [f"kt_cg_hybrid: need at least {policy.ema_slow + 1} {policy.trend_timeframe} bars"]
+
+    # Calculate M15 trend: close vs EMA 21
+    trend_close = trend_df["close"]
+    ema21_trend = ema_fn(trend_close, policy.ema_slow)
+    if pd.isna(ema21_trend.iloc[-1]):
+        return False, None, ["kt_cg_hybrid: EMA warmup not complete on trend TF"]
+
+    price_trend = float(trend_close.iloc[-1])
+    ema21_trend_val = float(ema21_trend.iloc[-1])
+    is_bull = price_trend > ema21_trend_val
+
+    # Get entry timeframe data (M1 by default)
+    entry_df = data_by_tf.get(policy.entry_timeframe)
+    if entry_df is None or entry_df.empty:
+        return False, None, [f"kt_cg_hybrid: no {policy.entry_timeframe} data"]
+
+    entry_df = drop_incomplete_last_bar(entry_df.copy(), policy.entry_timeframe)
+    if len(entry_df) < policy.ema_slow + 2:
+        return False, None, [f"kt_cg_hybrid: need at least {policy.ema_slow + 2} {policy.entry_timeframe} bars"]
+
+    # Calculate M1 EMAs
+    entry_close = entry_df["close"]
+    ema9 = ema_fn(entry_close, policy.ema_fast)
+    ema21 = ema_fn(entry_close, policy.ema_slow)
+
+    if pd.isna(ema9.iloc[-1]) or pd.isna(ema21.iloc[-1]):
+        return False, None, ["kt_cg_hybrid: EMA warmup not complete on entry TF"]
+
+    ema9_now = float(ema9.iloc[-1])
+    ema21_now = float(ema21.iloc[-1])
+    price_entry = float(entry_close.iloc[-1])
+
+    if is_bull:
+        # Bull trend: zone entry - price between EMA 9 and EMA 21
+        zone_low = min(ema9_now, ema21_now)
+        zone_high = max(ema9_now, ema21_now)
+        in_zone = zone_low <= price_entry <= zone_high
+        if in_zone:
+            reasons.append(
+                f"kt_cg_hybrid: bull_zone_entry | {policy.trend_timeframe} close={price_trend:.3f} > EMA21={ema21_trend_val:.3f} | "
+                f"{policy.entry_timeframe} price={price_entry:.3f} in zone [{zone_low:.3f}, {zone_high:.3f}]"
+            )
+            return True, "buy", reasons
+        else:
+            return False, None, [
+                f"kt_cg_hybrid: bull trend but price {price_entry:.3f} not in EMA zone [{zone_low:.3f}, {zone_high:.3f}]"
+            ]
+    else:
+        # Bear trend: cross entry - EMA 9 just crossed below EMA 21
+        if len(ema9) < 2 or len(ema21) < 2:
+            return False, None, ["kt_cg_hybrid: insufficient bars for cross detection"]
+
+        ema9_prev = float(ema9.iloc[-2])
+        ema21_prev = float(ema21.iloc[-2])
+
+        cross_down = ema9_prev >= ema21_prev and ema9_now < ema21_now
+        if cross_down:
+            reasons.append(
+                f"kt_cg_hybrid: bear_cross_entry | {policy.trend_timeframe} close={price_trend:.3f} < EMA21={ema21_trend_val:.3f} | "
+                f"{policy.entry_timeframe} EMA9 crossed below EMA21 ({ema9_prev:.3f}->{ema9_now:.3f} vs {ema21_prev:.3f}->{ema21_now:.3f})"
+            )
+            return True, "sell", reasons
+        else:
+            return False, None, [
+                f"kt_cg_hybrid: bear trend but no EMA9<EMA21 cross (EMA9={ema9_now:.3f}, EMA21={ema21_now:.3f})"
+            ]
+
+
+def _kt_cg_hybrid_candidate(
+    profile: ProfileV1,
+    policy: ExecutionPolicyKtCgHybrid,
+    entry_price: float,
+    side: str,
+) -> TradeCandidate:
+    """Build TradeCandidate for kt_cg_hybrid policy."""
+    pip = float(profile.pip_size)
+    sl_pips = float(policy.sl_pips)
+    tp_pips = float(policy.tp_pips)
+
+    if side == "buy":
+        stop = entry_price - sl_pips * pip
+        target = entry_price + tp_pips * pip
+    else:
+        stop = entry_price + sl_pips * pip
+        target = entry_price - tp_pips * pip
+
+    return TradeCandidate(
+        symbol=profile.symbol,
+        side=side,
+        entry_price=entry_price,
+        stop_price=stop,
+        target_price=target,
+        size_lots=float(get_effective_risk(profile).max_lots),
+    )
+
+
+def execute_kt_cg_hybrid_policy_demo_only(
+    *,
+    adapter,
+    profile: ProfileV1,
+    log_dir: Path,
+    policy: ExecutionPolicyKtCgHybrid,
+    context: MarketContext,
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+    tick: Tick,
+    trades_df: Optional[pd.DataFrame],
+    mode: str,
+    bar_time_utc: str,
+) -> ExecutionDecision:
+    """Evaluate KT/CG hybrid policy and optionally place a market order."""
+    if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
+        return ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed")
+    if not adapter.is_demo_account():
+        return ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)")
+
+    store = _store(log_dir)
+    rule_id = f"kt_cg_hybrid:{policy.id}:{policy.entry_timeframe}:{bar_time_utc}"
+    bar_minutes = {"M1": 2, "M5": 6}
+    within = bar_minutes.get(policy.entry_timeframe, 2)
+    if store.has_recent_price_level_placement(profile.profile_name, rule_id, within):
+        return ExecutionDecision(attempted=False, placed=False, reason="kt_cg_hybrid: recent placement (idempotent)")
+
+    passed, side, eval_reasons = evaluate_kt_cg_hybrid_conditions(profile, policy, data_by_tf)
+    if not passed or side is None:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": "; ".join(eval_reasons),
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason="; ".join(eval_reasons))
+
+    entry_price = tick.ask if side == "buy" else tick.bid
+    candidate = _kt_cg_hybrid_candidate(profile, policy, entry_price, side)
+
+    decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
+    if not decision.allow:
+        sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": sig_id,
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": "risk_reject: " + "; ".join(decision.hard_reasons),
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons))
+
+    if mode == "ARMED_MANUAL_CONFIRM":
+        sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": sig_id,
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": "manual_confirm_required",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason="manual confirm required")
+
+    res = adapter.order_send_market(
+        symbol=profile.symbol,
+        side=side,
+        volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
+        sl=candidate.stop_price,
+        tp=candidate.target_price,
+        comment=f"ktcg:{policy.id}",
+    )
+    placed = res.retcode in (0, 10008, 10009)
+    reason = "order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
+    sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+    store.insert_execution(
+        {
+            "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+            "profile": profile.profile_name,
+            "symbol": profile.symbol,
+            "signal_id": sig_id,
+            "rule_id": rule_id,
+            "mode": mode,
+            "attempted": 1,
+            "placed": 1 if placed else 0,
+            "reason": reason,
+            "mt5_retcode": res.retcode,
+            "mt5_order_id": res.order,
+            "mt5_deal_id": res.deal,
+        }
+    )
+    return ExecutionDecision(
+        attempted=True,
+        placed=placed,
+        reason=reason,
+        order_retcode=res.retcode,
+        order_id=res.order,
+        deal_id=res.deal,
+        side=side,
     )
 
