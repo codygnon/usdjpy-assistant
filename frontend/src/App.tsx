@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { createChart, createSeriesMarkers, IChartApi, ISeriesApi, CandlestickData, Time, CandlestickSeries, LineSeries, LineStyle } from 'lightweight-charts';
+import { createChart, createSeriesMarkers, IChartApi, ISeriesApi, CandlestickData, Time, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import * as api from './api';
 
 type Page = 'run' | 'presets' | 'profile' | 'logs' | 'analysis' | 'guide';
@@ -597,9 +597,10 @@ interface CandlestickChartProps {
   emaSlow?: { time: number; value: number }[];
   emaStack?: Record<string, { time: number; value: number }[]>;
   height?: number;
+  onCloseTrade?: (trade: ChartTrade) => void;
 }
 
-function CandlestickChart({ ohlc, trades, emaFast, emaSlow, emaStack, height = 300 }: CandlestickChartProps) {
+function CandlestickChart({ ohlc, trades, emaFast, emaSlow, emaStack, height = 300, onCloseTrade }: CandlestickChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -709,47 +710,6 @@ function CandlestickChart({ ohlc, trades, emaFast, emaSlow, emaStack, height = 3
       seriesMarkers.setMarkers(markers);
     }
 
-    // Dotted price lines for active trades only (entry, TP, SL) - colour-coded, values shown
-    const buyColor = '#3b82f6';
-    const sellColor = '#ef4444';
-    const tpColor = '#10b981';
-    const slColor = '#ef4444';
-    const activeTrades = trades.filter((t) => t.exit_time == null && t.exit_price == null);
-    activeTrades.forEach((t) => {
-      const isBuy = t.side.toLowerCase() === 'buy';
-      const entryColor = isBuy ? buyColor : sellColor;
-      if (t.entry_price != null) {
-        candlestickSeries.createPriceLine({
-          price: t.entry_price,
-          color: entryColor,
-          lineWidth: 1,
-          lineStyle: LineStyle.Solid,
-          axisLabelVisible: true,
-          title: 'Entry',
-        });
-      }
-      if (t.target_price != null) {
-        candlestickSeries.createPriceLine({
-          price: t.target_price,
-          color: tpColor,
-          lineWidth: 1,
-          lineStyle: LineStyle.Solid,
-          axisLabelVisible: true,
-          title: 'TP',
-        });
-      }
-      if (t.stop_price != null) {
-        candlestickSeries.createPriceLine({
-          price: t.stop_price,
-          color: slColor,
-          lineWidth: 1,
-          lineStyle: LineStyle.Solid,
-          axisLabelVisible: true,
-          title: 'SL',
-        });
-      }
-    });
-
     // Fit content
     chart.timeScale().fitContent();
 
@@ -786,16 +746,70 @@ function CandlestickChart({ ohlc, trades, emaFast, emaSlow, emaStack, height = 3
     );
   }
 
+  const activeTrades = trades.filter(t => !t.exit_time && !t.exit_price);
+
   return (
-    <div 
-      ref={chartContainerRef} 
-      style={{ 
-        width: '100%', 
-        height: height,
-        borderRadius: 6,
-        overflow: 'hidden'
-      }} 
-    />
+    <div style={{ position: 'relative', width: '100%', height: height }}>
+      <div
+        ref={chartContainerRef}
+        style={{
+          width: '100%',
+          height: height,
+          borderRadius: 6,
+          overflow: 'hidden'
+        }}
+      />
+      {/* Trade legend overlay */}
+      {onCloseTrade && activeTrades.length > 0 && (
+        <div style={{
+          position: 'absolute',
+          top: 8,
+          right: 8,
+          background: 'rgba(26, 26, 46, 0.9)',
+          border: '1px solid var(--border)',
+          borderRadius: 6,
+          padding: 8,
+          fontSize: '0.75rem',
+          maxWidth: 180,
+          zIndex: 10,
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)' }}>
+            Active Trades
+          </div>
+          {activeTrades.map(t => (
+            <div key={t.trade_id} style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 8,
+              padding: '4px 0',
+              borderTop: '1px solid var(--border)'
+            }}>
+              <span style={{
+                color: t.side.toLowerCase() === 'buy' ? '#3b82f6' : '#ef4444',
+                fontWeight: 500
+              }}>
+                {t.side.toUpperCase()} @ {t.entry_price.toFixed(3)}
+              </span>
+              <button
+                onClick={() => onCloseTrade(t)}
+                style={{
+                  background: 'var(--danger)',
+                  border: 'none',
+                  borderRadius: 3,
+                  color: 'white',
+                  padding: '2px 6px',
+                  fontSize: '0.65rem',
+                  cursor: 'pointer',
+                }}
+              >
+                Close
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -811,6 +825,9 @@ function AnalysisPage({ profile }: { profile: Profile }) {
   const [enlargedTf, setEnlargedTf] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [chartTrades, setChartTrades] = useState<ChartTrade[]>([]);
+  const [fullscreenTf, setFullscreenTf] = useState<string | null>(null);
+  const [confirmCloseTrade, setConfirmCloseTrade] = useState<ChartTrade | null>(null);
+  const [closingTrade, setClosingTrade] = useState(false);
 
   const fetchTa = async () => {
     try {
@@ -855,6 +872,31 @@ function AnalysisPage({ profile }: { profile: Profile }) {
     const interval = setInterval(fetchTa, 30000);
     return () => clearInterval(interval);
   }, [profile.name, profile.path]);
+
+  // ESC key to close fullscreen
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && fullscreenTf) {
+        setFullscreenTf(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [fullscreenTf]);
+
+  // Handle close trade
+  const handleCloseTrade = async (trade: ChartTrade) => {
+    setClosingTrade(true);
+    try {
+      await api.closeTrade(profile.name, trade.trade_id, profile.path);
+      setConfirmCloseTrade(null);
+      fetchTa(); // Refresh data
+    } catch (e: unknown) {
+      alert(`Failed to close trade: ${(e as Error).message}`);
+    } finally {
+      setClosingTrade(false);
+    }
+  };
 
   const toggleExpand = (tf: string) => {
     setExpandedTf(expandedTf === tf ? null : tf);
@@ -1111,14 +1153,23 @@ function AnalysisPage({ profile }: { profile: Profile }) {
                     >
                       {enlargedTf === tf ? 'Shrink' : 'Enlarge'}
                     </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ fontSize: '0.75rem' }}
+                      onClick={() => setFullscreenTf(tf)}
+                    >
+                      Fullscreen
+                    </button>
                   </div>
-                  <CandlestickChart 
-                    ohlc={tfData.ohlc || []} 
+                  <CandlestickChart
+                    ohlc={tfData.ohlc || []}
                     trades={chartTrades}
                     emaFast={tfData.ema_fast}
                     emaSlow={tfData.ema_slow}
                     emaStack={tfData.ema_stack}
                     height={enlargedTf === tf ? 520 : 280}
+                    onCloseTrade={(trade) => setConfirmCloseTrade(trade)}
                   />
                 </div>
 
@@ -1293,6 +1344,165 @@ function AnalysisPage({ profile }: { profile: Profile }) {
       {loading && !ta && (
         <div className="card">
           <p style={{ color: 'var(--text-secondary)', textAlign: 'center' }}>Loading technical analysis...</p>
+        </div>
+      )}
+
+      {/* Fullscreen Modal */}
+      {fullscreenTf && ta && ta.timeframes[fullscreenTf] && (() => {
+        const tfData = ta.timeframes[fullscreenTf];
+        const chartHeight = typeof window !== 'undefined' ? window.innerHeight - 200 : 500;
+        return (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'var(--bg-primary)',
+            zIndex: 1000,
+            display: 'flex',
+            flexDirection: 'column',
+          }}>
+            {/* Header */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '12px 20px',
+              borderBottom: '1px solid var(--border)',
+              background: 'var(--bg-secondary)',
+            }}>
+              <h2 style={{ margin: 0, fontSize: '1.2rem' }}>
+                {fullscreenTf} Chart ({timeframeLabel[fullscreenTf] || fullscreenTf})
+              </h2>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setFullscreenTf(null)}
+              >
+                Close (ESC)
+              </button>
+            </div>
+
+            {/* Chart */}
+            <div style={{ flex: 1, padding: 16, overflow: 'hidden' }}>
+              <CandlestickChart
+                ohlc={tfData.ohlc || []}
+                trades={chartTrades}
+                emaFast={tfData.ema_fast}
+                emaSlow={tfData.ema_slow}
+                emaStack={tfData.ema_stack}
+                height={chartHeight}
+                onCloseTrade={(trade) => setConfirmCloseTrade(trade)}
+              />
+            </div>
+
+            {/* Bottom Summary Panel */}
+            <div style={{
+              padding: '12px 20px',
+              borderTop: '1px solid var(--border)',
+              background: 'var(--bg-secondary)',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 20,
+              alignItems: 'center',
+            }}>
+              <div>
+                <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginRight: 8 }}>Regime:</span>
+                {getRegimeBadge(tfData.regime)}
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginRight: 8 }}>RSI:</span>
+                {getRsiDisplay(tfData.rsi)}
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginRight: 8 }}>MACD:</span>
+                {getMacdDisplay(tfData.macd)}
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginRight: 8 }}>ATR:</span>
+                {getAtrDisplay(tfData.atr)}
+              </div>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontStyle: 'italic' }}>
+                  {tfData.summary}
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Close Trade Confirmation Modal */}
+      {confirmCloseTrade && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.7)',
+          zIndex: 1100,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+          <div style={{
+            background: 'var(--bg-secondary)',
+            borderRadius: 8,
+            padding: 24,
+            maxWidth: 400,
+            width: '90%',
+            border: '1px solid var(--border)',
+          }}>
+            <h3 style={{ margin: '0 0 16px 0' }}>Close Trade?</h3>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: 8 }}>
+              Are you sure you want to close this trade?
+            </p>
+            <div style={{
+              padding: 12,
+              background: 'var(--bg-tertiary)',
+              borderRadius: 6,
+              marginBottom: 20,
+            }}>
+              <div style={{
+                color: confirmCloseTrade.side.toLowerCase() === 'buy' ? '#3b82f6' : '#ef4444',
+                fontWeight: 600,
+                fontSize: '1rem',
+              }}>
+                {confirmCloseTrade.side.toUpperCase()} @ {confirmCloseTrade.entry_price.toFixed(3)}
+              </div>
+              {confirmCloseTrade.stop_price && (
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                  SL: {confirmCloseTrade.stop_price.toFixed(3)}
+                </div>
+              )}
+              {confirmCloseTrade.target_price && (
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  TP: {confirmCloseTrade.target_price.toFixed(3)}
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setConfirmCloseTrade(null)}
+                disabled={closingTrade}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={() => handleCloseTrade(confirmCloseTrade)}
+                disabled={closingTrade}
+                style={{ background: 'var(--danger)' }}
+              >
+                {closingTrade ? 'Closing...' : 'Close Trade'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
