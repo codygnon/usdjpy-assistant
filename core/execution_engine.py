@@ -2564,14 +2564,77 @@ def decide_direction_from_m1(m1_state: dict) -> str:
     return "buy" if m1_state.get("is_above", True) else "sell"
 
 
+def compute_cross_quality_score(
+    m5_df: pd.DataFrame,
+    pip_size: float,
+    ema_fast: int = 9,
+    ema_slow: int = 21,
+    lookback: int = 3,
+    sharp_threshold: float = 0.5,
+) -> float:
+    """Measure how decisively the M5 cross occurred.
+
+    Calculates the speed of separation between EMA 9 and EMA 21 over the bars
+    around the cross. Sharp fast crosses get a quality score near 1.0,
+    slow grinding crosses get scores near 0.5.
+
+    Returns: quality score between 0.5 and 1.0
+    """
+    if m5_df is None or len(m5_df) < ema_slow + lookback + 1:
+        return 0.5  # default for insufficient data
+
+    close = m5_df["close"].astype(float)
+    ema9 = ema_fn(close, ema_fast)
+    ema21 = ema_fn(close, ema_slow)
+
+    # Get the EMA difference for the last few bars
+    if pd.isna(ema9.iloc[-1]) or pd.isna(ema21.iloc[-1]):
+        return 0.5
+
+    # Calculate separation speed: how fast are EMAs diverging?
+    # Look at the difference change over the lookback period
+    diffs = []
+    for i in range(lookback + 1):
+        idx = -1 - i
+        if abs(idx) > len(ema9) or pd.isna(ema9.iloc[idx]) or pd.isna(ema21.iloc[idx]):
+            continue
+        diff = abs(float(ema9.iloc[idx]) - float(ema21.iloc[idx])) / pip_size
+        diffs.append(diff)
+
+    if len(diffs) < 2:
+        return 0.5
+
+    # Current separation vs separation at lookback
+    current_sep = diffs[0]  # most recent
+    past_sep = diffs[-1]  # oldest in lookback
+
+    # Rate of separation (pips per bar)
+    separation_rate = (current_sep - past_sep) / lookback if lookback > 0 else 0
+
+    # Convert to quality score: sharp_threshold pips/bar = 1.0, 0 = 0.5
+    if separation_rate <= 0:
+        quality = 0.5
+    elif separation_rate >= sharp_threshold:
+        quality = 1.0
+    else:
+        # Linear interpolation: 0.5 to 1.0 based on separation rate
+        quality = 0.5 + 0.5 * (separation_rate / sharp_threshold)
+
+    return quality
+
+
 def compute_tp_pips_m5_m1(
     momentum_category: str,
     bb_width_pips: float,
     policy: ExecutionPolicyM5M1EmaCross,
+    cross_quality_score: float = 1.0,
+    spread_pips: float = 0.0,
 ) -> float:
-    """Calculate TP in pips based on momentum category and BB width.
+    """Calculate TP in pips based on momentum category, BB width, and cross quality.
 
     BB modifier: 0.7 (thin) to 1.5 (wide) based on BB width vs thresholds.
+    Cross quality modifier: 0.7 (slow cross) to 1.0 (sharp cross).
+    Spread buffer is added to account for spread on exit.
     """
     # Lookup base TP from momentum category
     tp_map = {
@@ -2594,8 +2657,18 @@ def compute_tp_pips_m5_m1(
         )
         bb_modifier = 0.7 + (0.8 * ratio)  # 0.7 to 1.5
 
-    # Apply modifier and clamp
-    tp_pips = base_tp * bb_modifier
+    # Cross quality modifier: sharp crosses can aim for larger targets
+    # Quality score 1.0 = 1.0 modifier, 0.5 = 0.7 modifier
+    cross_modifier = 0.7 + 0.3 * (cross_quality_score - 0.5) / 0.5 if cross_quality_score > 0.5 else 0.7
+
+    # Apply modifiers
+    tp_pips = base_tp * bb_modifier * cross_modifier
+
+    # Add spread buffer for strong momentum trades (let winners run)
+    if momentum_category == "strong":
+        tp_pips += getattr(policy, "tp_spread_buffer", 0.5)
+
+    # Clamp to min/max
     return max(policy.tp_min, min(policy.tp_max, tp_pips))
 
 
@@ -2730,12 +2803,44 @@ def detect_m5_ema_cross(
     return False, None
 
 
+def compute_momentum_lot_size(
+    policy: ExecutionPolicyM5M1EmaCross,
+    momentum_category: str,
+) -> float:
+    """Calculate lot size based on M1 momentum category.
+
+    Strong momentum = full lot size
+    Moderate momentum = 75% lot size
+    Weak/flat momentum = 50% lot size
+
+    This reduces exposure on low-conviction trades.
+    """
+    base_lots = float(policy.lots)
+
+    if not getattr(policy, "use_momentum_sizing", True):
+        return base_lots
+
+    multiplier_map = {
+        "strong": getattr(policy, "lots_multiplier_strong", 1.0),
+        "moderate": getattr(policy, "lots_multiplier_moderate", 0.75),
+        "weak": getattr(policy, "lots_multiplier_weak", 0.5),
+        "flat": getattr(policy, "lots_multiplier_weak", 0.5),
+    }
+
+    multiplier = multiplier_map.get(momentum_category, 0.5)
+    adjusted_lots = base_lots * multiplier
+
+    # Ensure minimum viable lot size (0.01 is typical minimum)
+    return max(0.01, round(adjusted_lots, 2))
+
+
 def _m5_m1_ema_cross_candidate(
     profile: ProfileV1,
     policy: ExecutionPolicyM5M1EmaCross,
     entry_price: float,
     side: str,
     tp_pips: float,
+    lot_size: float,
 ) -> TradeCandidate:
     """Build TradeCandidate for m5_m1_ema_cross policy."""
     pip = float(profile.pip_size)
@@ -2754,7 +2859,7 @@ def _m5_m1_ema_cross_candidate(
         entry_price=entry_price,
         stop_price=stop,
         target_price=target,
-        size_lots=float(policy.lots),
+        size_lots=lot_size,
     )
 
 
@@ -2858,8 +2963,26 @@ def execute_m5_m1_ema_cross_policy_demo_only(
     else:
         bb_width_pips = (float(upper.iloc[-1]) - float(lower.iloc[-1])) / pip_size
 
-    # Compute TP
-    tp_pips = compute_tp_pips_m5_m1(momentum_category, bb_width_pips, policy)
+    # Compute cross quality score (sharp crosses get higher scores)
+    cross_quality_score = 1.0  # default
+    if getattr(policy, "use_cross_quality", True):
+        cross_quality_score = compute_cross_quality_score(
+            m5_df,
+            pip_size,
+            policy.m5_ema_fast,
+            policy.m5_ema_slow,
+            getattr(policy, "cross_quality_lookback", 3),
+            getattr(policy, "sharp_cross_threshold", 0.5),
+        )
+
+    # Spread check (do early to use in TP calculation)
+    risk = get_effective_risk(profile)
+    spread_pips = (tick.ask - tick.bid) / pip_size
+
+    # Compute TP with cross quality and spread buffer
+    tp_pips = compute_tp_pips_m5_m1(
+        momentum_category, bb_width_pips, policy, cross_quality_score, spread_pips
+    )
 
     # Adjust for history if enabled
     if policy.use_history_for_tp:
@@ -2871,9 +2994,8 @@ def execute_m5_m1_ema_cross_policy_demo_only(
             tp_pips = tp_pips * (0.5 + 0.5 * consistency)
             tp_pips = max(policy.tp_min, min(policy.tp_max, tp_pips))
 
-    # Spread check
-    risk = get_effective_risk(profile)
-    spread_pips = (tick.ask - tick.bid) / pip_size
+    # Compute lot size based on momentum (full size for strong, reduced for weak/flat)
+    lot_size = compute_momentum_lot_size(policy, momentum_category)
     if spread_pips > risk.max_spread_pips:
         store.insert_execution(
             {
@@ -2896,7 +3018,7 @@ def execute_m5_m1_ema_cross_policy_demo_only(
         )
 
     entry_price = tick.ask if side == "buy" else tick.bid
-    candidate = _m5_m1_ema_cross_candidate(profile, policy, entry_price, side, tp_pips)
+    candidate = _m5_m1_ema_cross_candidate(profile, policy, entry_price, side, tp_pips, lot_size)
 
     decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
     if not decision.allow:
@@ -2942,7 +3064,7 @@ def execute_m5_m1_ema_cross_policy_demo_only(
     res = adapter.order_send_market(
         symbol=profile.symbol,
         side=side,
-        volume_lots=float(policy.lots),
+        volume_lots=lot_size,
         sl=candidate.stop_price,
         tp=candidate.target_price,
         comment=f"m5m1x:{policy.id}",
@@ -2951,12 +3073,14 @@ def execute_m5_m1_ema_cross_policy_demo_only(
     reason = "order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
     sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
 
-    # Log with metadata
+    # Log with metadata (includes cross quality and lot sizing info)
     metadata = {
         "cross_direction": cross_direction,
+        "cross_quality": round(cross_quality_score, 2),
         "momentum": momentum_category,
         "bb_width_pips": round(bb_width_pips, 2),
         "tp_pips": round(tp_pips, 2),
+        "lot_size": lot_size,
         "m1_spread_pips": round(m1_state.get("spread_pips", 0), 2),
     }
     store.insert_execution(

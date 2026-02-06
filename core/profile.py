@@ -377,23 +377,37 @@ class ExecutionPolicyM5M1EmaCross(BaseModel):
     cross_history_count: int = 5
     use_history_for_tp: bool = True
 
+    # Cross quality scoring
+    use_cross_quality: bool = True
+    cross_quality_lookback: int = 3  # bars to analyze around cross
+    sharp_cross_threshold: float = 0.5  # pip separation per bar for "sharp" cross
+
     # Bollinger Band settings
     bb_period: int = 20
     bb_std_dev: float = 2.0
     bb_thin_threshold: float = 15.0
     bb_wide_threshold: float = 40.0
 
-    # Take profit bases (pips)
-    tp_strong: float = 2.5
-    tp_moderate: float = 1.5
-    tp_weak: float = 0.75
-    tp_flat: float = 0.5
+    # Take profit bases (pips) - strong targets 6-10 pips to let winners run
+    tp_strong: float = 8.0
+    tp_moderate: float = 4.0
+    tp_weak: float = 2.0
+    tp_flat: float = 1.0
     tp_min: float = 0.5
-    tp_max: float = 5.0
+    tp_max: float = 12.0
+
+    # Spread buffer for TP (pips added to account for spread on exit)
+    tp_spread_buffer: float = 0.5
 
     # Stop loss and position sizing
     sl_pips: float = 20.0
     lots: float = 0.01
+
+    # Momentum-based position sizing
+    use_momentum_sizing: bool = True
+    lots_multiplier_strong: float = 1.0  # full size for strong momentum
+    lots_multiplier_moderate: float = 0.75  # 75% for moderate
+    lots_multiplier_weak: float = 0.5  # 50% for weak/flat
 
 
 ExecutionPolicy = Annotated[

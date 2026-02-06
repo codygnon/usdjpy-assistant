@@ -1058,18 +1058,31 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "weak_slope_threshold": 0.05,
                     "cross_history_count": 5,
                     "use_history_for_tp": True,
+                    # Cross quality scoring - sharp crosses get higher TP targets
+                    "use_cross_quality": True,
+                    "cross_quality_lookback": 3,
+                    "sharp_cross_threshold": 0.5,
+                    # Bollinger Bands
                     "bb_period": 20,
                     "bb_std_dev": 2.0,
                     "bb_thin_threshold": 12.0,
                     "bb_wide_threshold": 35.0,
-                    "tp_strong": 2.5,
-                    "tp_moderate": 1.5,
-                    "tp_weak": 0.75,
-                    "tp_flat": 0.5,
+                    # TP targets (strong = 6-10 pips to let winners run)
+                    "tp_strong": 8.0,
+                    "tp_moderate": 4.0,
+                    "tp_weak": 2.0,
+                    "tp_flat": 1.0,
                     "tp_min": 0.5,
-                    "tp_max": 5.0,
+                    "tp_max": 12.0,
+                    "tp_spread_buffer": 0.5,
+                    # Risk management
                     "sl_pips": 20.0,
-                    "lots": 0.01,
+                    "lots": 0.02,  # base lot size
+                    # Momentum-based position sizing
+                    "use_momentum_sizing": True,
+                    "lots_multiplier_strong": 1.0,  # full size for strong momentum
+                    "lots_multiplier_moderate": 0.75,  # 75% for moderate
+                    "lots_multiplier_weak": 0.5,  # 50% for weak/flat
                 },
             ],
         },
