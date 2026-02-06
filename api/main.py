@@ -974,21 +974,30 @@ def get_stats_by_preset(profile_name: str, profile_path: Optional[str] = None) -
 
 
 @app.get("/api/data/{profile_name}/technical-analysis")
-def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, Any]:
+def get_technical_analysis(profile_name: str, profile_path: str, bars: int = 200) -> dict[str, Any]:
     """Get real-time technical analysis for USDJPY across all timeframes (H4, M15, M1).
-    
-    Returns per-timeframe: regime, RSI value/zone, MACD line/signal/histogram, 
+
+    Returns per-timeframe: regime, RSI value/zone, MACD line/signal/histogram,
     ATR value/state, price info, and a plain-English summary.
+
+    Args:
+        bars: Number of bars to return (50-500, default 200)
     """
-    from core.indicators import ema, sma
+    from core.indicators import ema, sma, bollinger_bands, detect_swing_points
     from core.ta_analysis import compute_ta_for_tf
     from core.context_engine import _get_tf_config
     from core.timeframes import Timeframe
-    
+
+    # Clamp bars to valid range
+    bars = max(50, min(500, bars))
+
     path = _resolve_profile_path(profile_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Profile not found")
-    
+
+    # Common EMA periods for selectable EMAs
+    COMMON_EMA_PERIODS = [9, 13, 21, 34, 50, 89, 200]
+
     try:
         profile = load_profile_v1(path)
         from adapters.broker import get_adapter
@@ -1008,11 +1017,14 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
             # Timeframe is a Literal type, not an Enum - use string values directly
             timeframes: list[Timeframe] = ["H4", "H1", "M30", "M15", "M5", "M3", "M1"]
             result: dict[str, Any] = {"timeframes": {}}
-            
+
+            # Fetch more bars than requested to allow for indicator calculations
+            fetch_count = bars + 250
+
             for tf in timeframes:
                 try:
                     # Fetch OHLC data from broker (MT5 or OANDA)
-                    df = adapter.get_bars(profile.symbol, tf, count=200)
+                    df = adapter.get_bars(profile.symbol, tf, count=fetch_count)
                     if df is None or df.empty:
                         result["timeframes"][tf] = {
                             "error": f"No data available for {tf}",
@@ -1028,6 +1040,9 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
                             "ema_fast": [],
                             "ema_slow": [],
                             "ema_stack": {},
+                            "ema_lines": {},
+                            "bollinger_series": {"upper": [], "middle": [], "lower": []},
+                            "swing_levels": {"highs": [], "lows": []},
                         }
                         continue
                     # Compute TA for this timeframe
@@ -1039,17 +1054,24 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
                             macd_direction = "positive"
                         elif ta.macd_hist < 0:
                             macd_direction = "negative"
-                    # Build OHLC array for chart (last 100 bars)
-                    df_tail = df.tail(100)
+                    # Build OHLC array for chart (last N bars)
+                    df_tail = df.tail(bars)
                     ohlc_data = []
                     for _, row in df_tail.iterrows():
-                        ohlc_data.append({
+                        bar_data = {
                             "time": int(row["time"].timestamp()),
                             "open": round(float(row["open"]), 3),
                             "high": round(float(row["high"]), 3),
                             "low": round(float(row["low"]), 3),
                             "close": round(float(row["close"]), 3),
-                        })
+                        }
+                        # Add volume if available
+                        if "tick_volume" in row.index and pd.notna(row["tick_volume"]):
+                            bar_data["volume"] = int(row["tick_volume"])
+                        elif "real_volume" in row.index and pd.notna(row["real_volume"]):
+                            bar_data["volume"] = int(row["real_volume"])
+                        ohlc_data.append(bar_data)
+
                     # Build EMA/SMA series for chart (timeframe-appropriate)
                     tf_cfg = _get_tf_config(profile, tf)
                     close = df["close"]
@@ -1062,6 +1084,41 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
                         for p in tf_cfg.ema_stack:
                             s = ema(close, p)
                             ema_stack_arrs[f"ema{p}"] = [{"time": int(row["time"].timestamp()), "value": round(float(s.loc[row.name]), 3)} for _, row in df_tail.iterrows() if row.name in s.index and not pd.isna(s.loc[row.name])]
+
+                    # Calculate all common EMAs for selectable display
+                    ema_lines: dict[str, list[dict[str, Any]]] = {}
+                    for period in COMMON_EMA_PERIODS:
+                        ema_s = ema(close, period)
+                        ema_lines[f"ema{period}"] = [
+                            {"time": int(row["time"].timestamp()), "value": round(float(ema_s.loc[row.name]), 3)}
+                            for _, row in df_tail.iterrows()
+                            if row.name in ema_s.index and not pd.isna(ema_s.loc[row.name])
+                        ]
+
+                    # Calculate Bollinger Bands series
+                    bb_upper, bb_middle, bb_lower = bollinger_bands(close, period=20, std_dev=2.0)
+                    bollinger_series = {
+                        "upper": [
+                            {"time": int(row["time"].timestamp()), "value": round(float(bb_upper.loc[row.name]), 3)}
+                            for _, row in df_tail.iterrows()
+                            if row.name in bb_upper.index and not pd.isna(bb_upper.loc[row.name])
+                        ],
+                        "middle": [
+                            {"time": int(row["time"].timestamp()), "value": round(float(bb_middle.loc[row.name]), 3)}
+                            for _, row in df_tail.iterrows()
+                            if row.name in bb_middle.index and not pd.isna(bb_middle.loc[row.name])
+                        ],
+                        "lower": [
+                            {"time": int(row["time"].timestamp()), "value": round(float(bb_lower.loc[row.name]), 3)}
+                            for _, row in df_tail.iterrows()
+                            if row.name in bb_lower.index and not pd.isna(bb_lower.loc[row.name])
+                        ],
+                    }
+
+                    # Detect swing highs and lows
+                    swing_highs, swing_lows = detect_swing_points(df_tail, lookback=5)
+                    swing_levels = {"highs": swing_highs, "lows": swing_lows}
+
                     result["timeframes"][tf] = {
                         "regime": ta.regime,
                         "rsi": {
@@ -1096,6 +1153,9 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
                         "ema_fast": ema_fast_arr,
                         "ema_slow": ema_slow_arr,
                         "ema_stack": ema_stack_arrs,
+                        "ema_lines": ema_lines,
+                        "bollinger_series": bollinger_series,
+                        "swing_levels": swing_levels,
                     }
                 except Exception as tf_error:
                     # Handle errors for individual timeframes gracefully
@@ -1113,6 +1173,9 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
                         "ema_fast": [],
                         "ema_slow": [],
                         "ema_stack": {},
+                        "ema_lines": {},
+                        "bollinger_series": {"upper": [], "middle": [], "lower": []},
+                        "swing_levels": {"highs": [], "lows": []},
                     }
 
             # Get current tick for spread info
@@ -1124,7 +1187,7 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
                     "ask": round(tick.ask, 3),
                     "spread_pips": round(spread_pips, 1),
                 }
-            
+
             return result
         finally:
             adapter.shutdown()
