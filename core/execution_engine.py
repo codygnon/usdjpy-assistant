@@ -2336,6 +2336,102 @@ def _kt_cg_hybrid_candidate(
     )
 
 
+def _get_m15_trend_direction(
+    policy: ExecutionPolicyKtCgHybrid,
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+) -> Optional[str]:
+    """Get M15 trend direction: 'bull' or 'bear' or None if insufficient data."""
+    trend_df = data_by_tf.get(policy.trend_timeframe)
+    if trend_df is None or trend_df.empty:
+        return None
+
+    trend_df = drop_incomplete_last_bar(trend_df.copy(), policy.trend_timeframe)
+    if len(trend_df) < policy.ema_slow + 1:
+        return None
+
+    trend_close = trend_df["close"]
+    ema21_trend = ema_fn(trend_close, policy.ema_slow)
+    if pd.isna(ema21_trend.iloc[-1]):
+        return None
+
+    price_trend = float(trend_close.iloc[-1])
+    ema21_trend_val = float(ema21_trend.iloc[-1])
+    return "bull" if price_trend > ema21_trend_val else "bear"
+
+
+def _check_pullback_override(
+    profile: ProfileV1,
+    policy: ExecutionPolicyKtCgHybrid,
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+    m15_trend: str,
+) -> tuple[bool, Optional[str], list[str]]:
+    """Check if a pullback override condition is met.
+
+    Returns (passed, side, reasons).
+    A pullback override occurs when M1 EMA 9/21 crosses back in M15 trend direction.
+    """
+    reasons: list[str] = []
+
+    # Get M1 data
+    entry_df = data_by_tf.get(policy.entry_timeframe)
+    if entry_df is None or entry_df.empty:
+        return False, None, [f"pullback_override: no {policy.entry_timeframe} data"]
+
+    entry_df = drop_incomplete_last_bar(entry_df.copy(), policy.entry_timeframe)
+
+    # Detect M1 EMA cross on current bar
+    cross_occurred, cross_dir = detect_m1_ema_cross(
+        entry_df, policy.ema_fast, policy.ema_slow
+    )
+
+    if not cross_occurred or cross_dir is None:
+        return False, None, ["pullback_override: no M1 EMA cross on current bar"]
+
+    # Check if cross direction matches M15 trend
+    if policy.require_m15_trend_aligned:
+        if m15_trend == "bull" and cross_dir != "bullish":
+            return False, None, [f"pullback_override: cross is {cross_dir}, but M15 trend is bull"]
+        if m15_trend == "bear" and cross_dir != "bearish":
+            return False, None, [f"pullback_override: cross is {cross_dir}, but M15 trend is bear"]
+
+    side = "buy" if cross_dir == "bullish" else "sell"
+    reasons.append(f"pullback_override: M1 {cross_dir} cross matches M15 {m15_trend} trend")
+
+    # Check momentum-based engulfing filter (only if enabled)
+    if policy.require_engulfing_on_weak_momentum:
+        m1_state = compute_m1_ema_state(
+            entry_df,
+            float(profile.pip_size),
+            policy.ema_fast,
+            policy.ema_slow,
+            policy.momentum_slope_lookback,
+        )
+        momentum_cat = categorize_momentum(
+            m1_state["momentum_score"],
+            policy.strong_momentum_threshold,
+            policy.moderate_momentum_threshold,
+            policy.weak_momentum_threshold,
+        )
+
+        # If momentum is weak or flat, require engulfing
+        if momentum_cat in ("weak", "flat"):
+            if not check_engulfing_pattern(entry_df, side):
+                return False, None, [
+                    f"pullback_override: momentum={momentum_cat}, engulfing required but not found"
+                ]
+            reasons.append(f"pullback_override: momentum={momentum_cat}, engulfing pattern confirmed")
+        else:
+            reasons.append(f"pullback_override: momentum={momentum_cat}, engulfing not required")
+
+    # Check rejection candle filter (only if enabled)
+    if policy.require_rejection_candle:
+        if not check_rejection_candle(entry_df, side, policy.rejection_wick_ratio):
+            return False, None, ["pullback_override: rejection candle required but not found"]
+        reasons.append("pullback_override: rejection candle confirmed")
+
+    return True, side, reasons
+
+
 def execute_kt_cg_hybrid_policy_demo_only(
     *,
     adapter,
@@ -2349,7 +2445,11 @@ def execute_kt_cg_hybrid_policy_demo_only(
     mode: str,
     bar_time_utc: str,
 ) -> ExecutionDecision:
-    """Evaluate KT/CG hybrid policy and optionally place a market order."""
+    """Evaluate KT/CG hybrid policy and optionally place a market order.
+
+    Supports pullback override: if enable_pullback_override is True and we're in cooldown,
+    an M1 EMA cross in M15 trend direction can override the cooldown.
+    """
     if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
         return ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed")
     if not adapter.is_demo_account():
@@ -2358,37 +2458,81 @@ def execute_kt_cg_hybrid_policy_demo_only(
     store = _store(log_dir)
 
     # Cooldown check: any recent trade from this policy within cooldown_minutes
+    in_cooldown = False
     if policy.cooldown_minutes > 0:
         cooldown_prefix = f"kt_cg_hybrid:{policy.id}:{policy.entry_timeframe}:"
-        if store.has_recent_placement_by_prefix(profile.profile_name, cooldown_prefix, policy.cooldown_minutes):
-            return ExecutionDecision(attempted=False, placed=False, reason=f"kt_cg_hybrid: cooldown ({policy.cooldown_minutes} min)")
+        in_cooldown = store.has_recent_placement_by_prefix(
+            profile.profile_name, cooldown_prefix, policy.cooldown_minutes
+        )
+
+    is_pullback_entry = False
+    side: Optional[str] = None
+    eval_reasons: list[str] = []
+
+    if in_cooldown:
+        # Check for pullback override
+        if policy.enable_pullback_override:
+            m15_trend = _get_m15_trend_direction(policy, data_by_tf)
+            if m15_trend is None:
+                return ExecutionDecision(
+                    attempted=False, placed=False,
+                    reason=f"kt_cg_hybrid: cooldown ({policy.cooldown_minutes} min), pullback check skipped (no trend data)"
+                )
+
+            pullback_passed, pullback_side, pullback_reasons = _check_pullback_override(
+                profile, policy, data_by_tf, m15_trend
+            )
+
+            if pullback_passed and pullback_side:
+                is_pullback_entry = True
+                side = pullback_side
+                eval_reasons = pullback_reasons
+            else:
+                # No valid pullback, respect cooldown
+                return ExecutionDecision(
+                    attempted=False, placed=False,
+                    reason=f"kt_cg_hybrid: cooldown ({policy.cooldown_minutes} min), no pullback override"
+                )
+        else:
+            # Pullback override disabled, respect cooldown
+            return ExecutionDecision(
+                attempted=False, placed=False,
+                reason=f"kt_cg_hybrid: cooldown ({policy.cooldown_minutes} min)"
+            )
+    else:
+        # Not in cooldown: normal position-based entry
+        passed, side, eval_reasons = evaluate_kt_cg_hybrid_conditions(profile, policy, data_by_tf)
+        if not passed or side is None:
+            # Bar-level idempotency check
+            rule_id = f"kt_cg_hybrid:{policy.id}:{policy.entry_timeframe}:{bar_time_utc}"
+            store.insert_execution(
+                {
+                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "profile": profile.profile_name,
+                    "symbol": profile.symbol,
+                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                    "rule_id": rule_id,
+                    "mode": mode,
+                    "attempted": 1,
+                    "placed": 0,
+                    "reason": "; ".join(eval_reasons),
+                    "mt5_retcode": None,
+                    "mt5_order_id": None,
+                    "mt5_deal_id": None,
+                }
+            )
+            return ExecutionDecision(attempted=True, placed=False, reason="; ".join(eval_reasons))
 
     # Bar-level idempotency check
+    entry_type = "pullback" if is_pullback_entry else "normal"
     rule_id = f"kt_cg_hybrid:{policy.id}:{policy.entry_timeframe}:{bar_time_utc}"
     bar_minutes = {"M1": 2, "M5": 6}
     within = bar_minutes.get(policy.entry_timeframe, 2)
     if store.has_recent_price_level_placement(profile.profile_name, rule_id, within):
-        return ExecutionDecision(attempted=False, placed=False, reason="kt_cg_hybrid: recent placement (idempotent)")
-
-    passed, side, eval_reasons = evaluate_kt_cg_hybrid_conditions(profile, policy, data_by_tf)
-    if not passed or side is None:
-        store.insert_execution(
-            {
-                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
-                "profile": profile.profile_name,
-                "symbol": profile.symbol,
-                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
-                "rule_id": rule_id,
-                "mode": mode,
-                "attempted": 1,
-                "placed": 0,
-                "reason": "; ".join(eval_reasons),
-                "mt5_retcode": None,
-                "mt5_order_id": None,
-                "mt5_deal_id": None,
-            }
+        return ExecutionDecision(
+            attempted=False, placed=False,
+            reason=f"kt_cg_hybrid: recent placement (idempotent, {entry_type})"
         )
-        return ExecutionDecision(attempted=True, placed=False, reason="; ".join(eval_reasons))
 
     entry_price = tick.ask if side == "buy" else tick.bid
     candidate = _kt_cg_hybrid_candidate(profile, policy, entry_price, side)
@@ -2406,13 +2550,16 @@ def execute_kt_cg_hybrid_policy_demo_only(
                 "mode": mode,
                 "attempted": 1,
                 "placed": 0,
-                "reason": "risk_reject: " + "; ".join(decision.hard_reasons),
+                "reason": f"risk_reject ({entry_type}): " + "; ".join(decision.hard_reasons),
                 "mt5_retcode": None,
                 "mt5_order_id": None,
                 "mt5_deal_id": None,
             }
         )
-        return ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons))
+        return ExecutionDecision(
+            attempted=True, placed=False,
+            reason=f"risk rejected ({entry_type}): " + "; ".join(decision.hard_reasons)
+        )
 
     if mode == "ARMED_MANUAL_CONFIRM":
         sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
@@ -2426,13 +2573,19 @@ def execute_kt_cg_hybrid_policy_demo_only(
                 "mode": mode,
                 "attempted": 1,
                 "placed": 0,
-                "reason": "manual_confirm_required",
+                "reason": f"manual_confirm_required ({entry_type})",
                 "mt5_retcode": None,
                 "mt5_order_id": None,
                 "mt5_deal_id": None,
             }
         )
-        return ExecutionDecision(attempted=True, placed=False, reason="manual confirm required")
+        return ExecutionDecision(
+            attempted=True, placed=False,
+            reason=f"manual confirm required ({entry_type})"
+        )
+
+    # Build comment to indicate entry type
+    comment = f"ktcg:{policy.id}:{entry_type}"
 
     res = adapter.order_send_market(
         symbol=profile.symbol,
@@ -2440,10 +2593,10 @@ def execute_kt_cg_hybrid_policy_demo_only(
         volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
         sl=candidate.stop_price,
         tp=candidate.target_price,
-        comment=f"ktcg:{policy.id}",
+        comment=comment,
     )
     placed = res.retcode in (0, 10008, 10009)
-    reason = "order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
+    reason = f"order_sent ({entry_type})" if placed else f"order_failed:{res.retcode}:{res.comment}"
     sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
     store.insert_execution(
         {
@@ -2801,6 +2954,107 @@ def detect_m5_ema_cross(
         return True, "bearish"
 
     return False, None
+
+
+def detect_m1_ema_cross(
+    m1_df: pd.DataFrame,
+    ema_fast: int = 9,
+    ema_slow: int = 21,
+) -> tuple[bool, Optional[str]]:
+    """Detect if M1 EMA 9/21 crossed on current bar.
+
+    Returns (cross_occurred, 'bullish'|'bearish'|None).
+    Bullish cross: EMA9 crosses above EMA21
+    Bearish cross: EMA9 crosses below EMA21
+    """
+    if m1_df is None or len(m1_df) < ema_slow + 2:
+        return False, None
+
+    close = m1_df["close"].astype(float)
+    ema9 = ema_fn(close, ema_fast)
+    ema21 = ema_fn(close, ema_slow)
+
+    if pd.isna(ema9.iloc[-1]) or pd.isna(ema21.iloc[-1]) or pd.isna(ema9.iloc[-2]) or pd.isna(ema21.iloc[-2]):
+        return False, None
+
+    diff_now = float(ema9.iloc[-1]) - float(ema21.iloc[-1])
+    diff_prev = float(ema9.iloc[-2]) - float(ema21.iloc[-2])
+
+    # Check for sign change
+    if diff_prev <= 0 < diff_now:
+        return True, "bullish"
+    if diff_prev >= 0 > diff_now:
+        return True, "bearish"
+
+    return False, None
+
+
+def check_rejection_candle(
+    df: pd.DataFrame,
+    side: str,
+    wick_ratio: float = 1.0,
+) -> bool:
+    """Check if current candle is a rejection candle.
+
+    For buy: lower wick >= body × ratio (shows buying pressure)
+    For sell: upper wick >= body × ratio (shows selling pressure)
+    """
+    if df is None or len(df) < 1:
+        return False
+
+    o = float(df["open"].iloc[-1])
+    h = float(df["high"].iloc[-1])
+    l = float(df["low"].iloc[-1])
+    c = float(df["close"].iloc[-1])
+
+    body = abs(c - o)
+    upper_wick = h - max(o, c)
+    lower_wick = min(o, c) - l
+
+    # Avoid division by zero; if body is tiny, any wick passes
+    if body < 0.00001:
+        body = 0.00001
+
+    if side == "buy":
+        return lower_wick >= body * wick_ratio
+    else:
+        return upper_wick >= body * wick_ratio
+
+
+def check_engulfing_pattern(
+    df: pd.DataFrame,
+    side: str,
+) -> bool:
+    """Check if current candle is an engulfing candle.
+
+    For buy: current green candle body engulfs previous body
+    For sell: current red candle body engulfs previous body
+    """
+    if df is None or len(df) < 2:
+        return False
+
+    # Current candle
+    o_now = float(df["open"].iloc[-1])
+    c_now = float(df["close"].iloc[-1])
+    # Previous candle
+    o_prev = float(df["open"].iloc[-2])
+    c_prev = float(df["close"].iloc[-2])
+
+    body_now_low = min(o_now, c_now)
+    body_now_high = max(o_now, c_now)
+    body_prev_low = min(o_prev, c_prev)
+    body_prev_high = max(o_prev, c_prev)
+
+    if side == "buy":
+        # Bullish engulfing: current close > open (green), engulfs previous body
+        if c_now > o_now and body_now_low <= body_prev_low and body_now_high >= body_prev_high:
+            return True
+    else:
+        # Bearish engulfing: current close < open (red), engulfs previous body
+        if c_now < o_now and body_now_low <= body_prev_low and body_now_high >= body_prev_high:
+            return True
+
+    return False
 
 
 def compute_momentum_lot_size(

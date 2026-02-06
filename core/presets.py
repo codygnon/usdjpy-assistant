@@ -34,6 +34,7 @@ class PresetId(str, Enum):
     CODY_WIZARD_AGGR_OANDA_M5_CROSS = "cody_wizard_aggressive_oanda_m5_cross"
     KUMA_TORA_BB_EMA_9_21_SCALPER = "kuma_tora_bb_ema_9_21_scalper"
     KT_CG_TRIAL_BLOW_ACCOUNT = "kt_cg_trial_blow_account"
+    KT_CG_TRIAL_2 = "kt_cg_trial_2"
     M5_M1_EMA_CROSS_9_21 = "m5_m1_ema_cross_9_21"
 
 
@@ -995,6 +996,80 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "tp_pips": 0.5,
                     "sl_pips": 20.0,
                     "cooldown_minutes": 2.0,
+                },
+            ],
+        },
+    },
+    # -----------------------------------------------------------------------
+    # KT/CG Trial #2 (Pullback Override)
+    # Same as Trial #1 but pullbacks can override cooldown. M1 cross in M15 direction
+    # during cooldown triggers trade.
+    # -----------------------------------------------------------------------
+    PresetId.KT_CG_TRIAL_2: {
+        "name": "KT/CG Trial #2 (Pullback Override)",
+        "description": "Same as Trial #1 but pullbacks can override cooldown. M1 EMA 9/21 cross in M15 trend direction during cooldown triggers trade. Momentum-aware engulfing filter on pullback entries.",
+        "pros": [
+            "Captures pullback entries during cooldown",
+            "Momentum-aware engulfing filter on pullbacks",
+            "Doesn't change normal entry behavior",
+            "More opportunities than Trial #1",
+        ],
+        "cons": [
+            "More trades during pullbacks",
+            "Additional complexity",
+            "Testing preset - expect significant drawdowns",
+        ],
+        "risk": {
+            "max_lots": 0.1,
+            "require_stop": True,
+            "min_stop_pips": 20.0,
+            "max_spread_pips": 6.0,
+            "max_trades_per_day": 100,
+            "max_open_trades": 20,
+            "cooldown_minutes_after_loss": 0,
+        },
+        "strategy": {
+            "filters": {
+                "alignment": {"enabled": False},
+                "ema_stack_filter": {"enabled": False},
+                "atr_filter": {"enabled": False},
+                "session_filter": {"enabled": False},
+            },
+            "setups": {},
+        },
+        "trade_management": {
+            "target": {
+                "mode": "fixed_pips",
+                "pips_default": 0.5,
+            },
+            "stop_loss": None,
+            "breakeven": {"enabled": False},
+        },
+        "execution": {
+            "loop_poll_seconds": 1.0,
+            "loop_poll_seconds_fast": 0.5,
+            "policies": [
+                {
+                    "type": "kt_cg_hybrid",
+                    "id": "kt_cg_trial_2",
+                    "enabled": True,
+                    "trend_timeframe": "M15",
+                    "entry_timeframe": "M1",
+                    "ema_fast": 9,
+                    "ema_slow": 21,
+                    "tp_pips": 0.5,
+                    "sl_pips": 20.0,
+                    "cooldown_minutes": 2.0,
+                    # Pullback override
+                    "enable_pullback_override": True,
+                    "require_m15_trend_aligned": True,
+                    "require_engulfing_on_weak_momentum": True,
+                    "momentum_slope_lookback": 5,
+                    "strong_momentum_threshold": 0.3,
+                    "moderate_momentum_threshold": 0.15,
+                    "weak_momentum_threshold": 0.05,
+                    "require_rejection_candle": False,
+                    "rejection_wick_ratio": 1.0,
                 },
             ],
         },

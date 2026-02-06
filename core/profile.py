@@ -349,6 +349,21 @@ class ExecutionPolicyKtCgHybrid(BaseModel):
     # Cooldown between trades (minutes)
     cooldown_minutes: float = 0.0
 
+    # Pullback cooldown override
+    enable_pullback_override: bool = False  # Allow pullback to bypass cooldown
+    require_m15_trend_aligned: bool = True  # Pullback cross must match M15 direction
+
+    # Momentum-based engulfing filter (for pullback entries only)
+    require_engulfing_on_weak_momentum: bool = False
+    momentum_slope_lookback: int = 5
+    strong_momentum_threshold: float = 0.3  # pips per bar
+    moderate_momentum_threshold: float = 0.15
+    weak_momentum_threshold: float = 0.05
+
+    # Rejection candle filter (for pullback entries only)
+    require_rejection_candle: bool = False
+    rejection_wick_ratio: float = 1.0  # wick >= body * ratio
+
 
 class ExecutionPolicyM5M1EmaCross(BaseModel):
     """M5 EMA 9/21 cross triggers trade; M1 EMA state determines direction/TP."""
