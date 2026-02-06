@@ -2936,6 +2936,7 @@ interface EditedSettings {
   target_pips: number;
   loop_poll_seconds: number;
   policy_cooldown_minutes: number;
+  policy_sl_pips: number;
 }
 
 function PresetsPage({ profile }: { profile: Profile }) {
@@ -2983,14 +2984,18 @@ function PresetsPage({ profile }: { profile: Profile }) {
       const targetSettings = tradeManagement?.target as Record<string, unknown> | undefined;
       const policies = execution?.policies as Record<string, unknown>[] | undefined;
 
-      // Find cooldown_minutes from policies
+      // Find cooldown_minutes and sl_pips from policies
       let policyCooldown = 0;
+      let policySlPips = 20;
       if (policies) {
         for (const pol of policies) {
           if ('cooldown_minutes' in pol) {
             policyCooldown = pol.cooldown_minutes as number;
-            break;
           }
+          if ('sl_pips' in pol) {
+            policySlPips = pol.sl_pips as number;
+          }
+          if (policyCooldown > 0 || policySlPips !== 20) break;
         }
       }
 
@@ -3004,6 +3009,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         target_pips: (targetSettings?.pips_default ?? 0.5) as number,
         loop_poll_seconds: (execution?.loop_poll_seconds ?? 5) as number,
         policy_cooldown_minutes: policyCooldown,
+        policy_sl_pips: policySlPips,
       });
     }
   }, [showActiveSettings, currentProfile]);
@@ -3049,10 +3055,14 @@ function PresetsPage({ profile }: { profile: Profile }) {
 
       // Build updated execution with updated policies
       const policies = (execution?.policies as Record<string, unknown>[])?.map(pol => {
+        const updates: Record<string, unknown> = {};
         if ('cooldown_minutes' in pol) {
-          return { ...pol, cooldown_minutes: Math.max(0, editedSettings.policy_cooldown_minutes) };
+          updates.cooldown_minutes = Math.max(0, editedSettings.policy_cooldown_minutes);
         }
-        return pol;
+        if ('sl_pips' in pol) {
+          updates.sl_pips = Math.max(1, editedSettings.policy_sl_pips);
+        }
+        return Object.keys(updates).length > 0 ? { ...pol, ...updates } : pol;
       }) || [];
 
       const newExecution = {
@@ -3251,6 +3261,19 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       onChange={(e) => setEditedSettings({ ...editedSettings, target_pips: parseFloat(e.target.value) || 0.1 })}
                       style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
                     />
+                  </div>
+                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Stop Loss Pips</div>
+                    <input
+                      type="number"
+                      step="1"
+                      min="1"
+                      max="500"
+                      value={editedSettings.policy_sl_pips}
+                      onChange={(e) => setEditedSettings({ ...editedSettings, policy_sl_pips: parseFloat(e.target.value) || 20 })}
+                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                    />
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Must be ≥ Min Stop Pips ({editedSettings.min_stop_pips})</div>
                   </div>
                   <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Poll Interval (s)</div>
@@ -3863,12 +3886,12 @@ function ProfilePage({ profile, authStatus, onAuthChange }: { profile: Profile; 
               type="number"
               step="1"
               min={1}
-              max={100}
+              max={500}
               value={(risk.min_stop_pips as number) ?? 10}
               onChange={(e) => updateNested('risk', 'min_stop_pips', parseFloat(e.target.value) || 10)}
             />
             <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 4 }}>
-              Minimum stop loss distance in pips (1–100). Default is 10.
+              Minimum stop loss distance in pips. Default is 10.
             </p>
           </div>
         </div>
