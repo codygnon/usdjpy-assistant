@@ -110,7 +110,16 @@ def main() -> None:
         policies_summary = []
         if ex is not None:
             for pol in ex.policies:
-                policies_summary.append({"type": getattr(pol, "type", "?"), "id": getattr(pol, "id", "?"), "enabled": getattr(pol, "enabled", True)})
+                pol_info: dict = {"type": getattr(pol, "type", "?"), "id": getattr(pol, "id", "?"), "enabled": getattr(pol, "enabled", True)}
+                if getattr(pol, "type", None) == "kt_cg_hybrid":
+                    pol_info["cooldown_minutes"] = getattr(pol, "cooldown_minutes", None)
+                    pol_info["swing_filter"] = {
+                        "enabled": getattr(pol, "swing_level_filter_enabled", False),
+                        "danger_zone_pct": getattr(pol, "swing_danger_zone_pct", 0.15),
+                        "confirmation_bars": getattr(pol, "swing_confirmation_bars", 5),
+                        "lookback_bars": getattr(pol, "swing_lookback_bars", 100),
+                    }
+                policies_summary.append(pol_info)
         settings = {
             "symbol": profile.symbol,
             "pip_size": float(profile.pip_size),
