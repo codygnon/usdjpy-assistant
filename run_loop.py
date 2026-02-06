@@ -116,6 +116,76 @@ def _insert_trade_for_policy(
         pass
 
 
+def _check_and_close_tp(profile, adapter, store, tick) -> None:
+    """Monitor open positions and close them immediately when TP is hit.
+
+    This runs every loop iteration (0.5s with fast loop) to ensure trades
+    are closed the moment price hits the target, rather than waiting for
+    the broker's TP order to execute.
+    """
+    try:
+        open_positions = adapter.get_open_positions(profile.symbol)
+    except Exception:
+        return
+    if not open_positions:
+        return
+
+    our_trades = [dict(r) for r in store.list_open_trades(profile.profile_name)]
+    position_to_trade = {
+        row["mt5_position_id"]: row
+        for row in our_trades
+        if row.get("mt5_position_id") is not None
+    }
+
+    for pos in open_positions:
+        position_id = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
+        if position_id is None:
+            continue
+        try:
+            position_id = int(position_id)
+        except (TypeError, ValueError):
+            continue
+
+        trade_row = position_to_trade.get(position_id)
+        if trade_row is None:
+            continue
+
+        target_price = trade_row.get("target_price")
+        if target_price is None:
+            continue
+
+        target_price = float(target_price)
+        side = str(trade_row["side"]).lower()
+
+        # Check if TP is hit
+        # For buy: TP hit when bid >= target (we close at bid)
+        # For sell: TP hit when ask <= target (we close at ask)
+        tp_hit = False
+        if side == "buy" and tick.bid >= target_price:
+            tp_hit = True
+        elif side == "sell" and tick.ask <= target_price:
+            tp_hit = True
+
+        if tp_hit:
+            try:
+                if isinstance(pos, dict):
+                    current_units = pos.get("currentUnits") or 0
+                    current_lots = abs(int(current_units)) / 100_000.0
+                else:
+                    current_lots = float(getattr(pos, "volume", 0) or 0)
+
+                position_type = 1 if side == "sell" else 0
+                adapter.close_position(
+                    ticket=position_id,
+                    symbol=profile.symbol,
+                    volume=current_lots,
+                    position_type=position_type,
+                )
+                print(f"[{profile.profile_name}] TP hit - closed position {position_id} at {tick.bid if side == 'buy' else tick.ask:.5f} (target was {target_price:.5f})")
+            except Exception as e:
+                print(f"[{profile.profile_name}] TP close failed for position {position_id}: {e}")
+
+
 def _run_trade_management(profile, adapter, store, tick) -> None:
     """Apply breakeven and TP1 partial close for open positions we manage. Order: breakeven first, then TP1."""
     tm = getattr(profile, "trade_management", None)
@@ -326,6 +396,9 @@ def main() -> None:
                         time.sleep(60)
             if data_by_tf is None or tick is None:
                 continue
+
+            # TP monitoring: close positions immediately when TP is hit (runs every tick)
+            _check_and_close_tp(profile, adapter, store, tick)
 
             # Trade management: breakeven and TP1 partial close (only for positions we opened)
             _run_trade_management(profile, adapter, store, tick)
