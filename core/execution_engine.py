@@ -2442,6 +2442,23 @@ def _check_pullback_override(
             return False, None, ["pullback_override: rejection candle required but not found"]
         reasons.append("pullback_override: rejection candle confirmed")
 
+    # Check swing level proximity filter (if enabled)
+    if policy.swing_level_filter_enabled:
+        trend_df = data_by_tf.get("M15")
+        if trend_df is not None and len(trend_df) >= policy.swing_lookback_bars:
+            passed, block_reason, meta = check_swing_proximity(
+                df=trend_df,
+                current_price=float(trend_df["close"].iloc[-1]),
+                side=side,
+                pip_size=float(profile.pip_size),
+                lookback_bars=policy.swing_lookback_bars,
+                confirmation_bars=policy.swing_confirmation_bars,
+                danger_zone_pct=policy.swing_danger_zone_pct,
+            )
+            if not passed:
+                return False, None, [f"pullback_override: {block_reason}"]
+            reasons.append("swing_filter: proximity check passed")
+
     return True, side, reasons
 
 
@@ -3057,6 +3074,120 @@ def check_engulfing_pattern(
             return True
 
     return False
+
+
+def detect_swing_levels(
+    df: pd.DataFrame,
+    lookback_bars: int = 100,
+    confirmation_bars: int = 5,
+) -> tuple[Optional[float], Optional[float]]:
+    """Detect highest swing high and lowest swing low.
+
+    A swing high: bar high > highs of N bars before AND N bars after.
+    A swing low: bar low < lows of N bars before AND N bars after.
+
+    Returns (highest_swing_high, lowest_swing_low) or None if not found.
+    """
+    if len(df) < lookback_bars:
+        return None, None
+
+    # Use last `lookback_bars` of data
+    df_slice = df.iloc[-lookback_bars:].reset_index(drop=True)
+    highs = df_slice["high"].values
+    lows = df_slice["low"].values
+
+    swing_highs: list[float] = []
+    swing_lows: list[float] = []
+
+    # Scan for swings - need confirmation_bars before and after each candidate
+    for i in range(confirmation_bars, len(df_slice) - confirmation_bars):
+        # Check swing high
+        is_swing_high = True
+        for j in range(1, confirmation_bars + 1):
+            if highs[i] <= highs[i - j] or highs[i] <= highs[i + j]:
+                is_swing_high = False
+                break
+        if is_swing_high:
+            swing_highs.append(float(highs[i]))
+
+        # Check swing low
+        is_swing_low = True
+        for j in range(1, confirmation_bars + 1):
+            if lows[i] >= lows[i - j] or lows[i] >= lows[i + j]:
+                is_swing_low = False
+                break
+        if is_swing_low:
+            swing_lows.append(float(lows[i]))
+
+    highest_swing_high = max(swing_highs) if swing_highs else None
+    lowest_swing_low = min(swing_lows) if swing_lows else None
+
+    return highest_swing_high, lowest_swing_low
+
+
+def check_swing_proximity(
+    df: pd.DataFrame,
+    current_price: float,
+    side: str,
+    pip_size: float,
+    lookback_bars: int = 100,
+    confirmation_bars: int = 5,
+    danger_zone_pct: float = 0.15,
+) -> tuple[bool, Optional[str], dict]:
+    """Check if price is in a danger zone near swing levels.
+
+    Returns (passed, reason, metadata).
+    - passed=True: trade allowed
+    - passed=False: trade blocked, reason explains why
+    - metadata: swing_high, swing_low, range_pips, threshold_pips, current_price
+    """
+    swing_high, swing_low = detect_swing_levels(df, lookback_bars, confirmation_bars)
+
+    meta: dict = {
+        "swing_high": swing_high,
+        "swing_low": swing_low,
+        "current_price": current_price,
+        "range_pips": None,
+        "threshold_pips": None,
+    }
+
+    # If we can't detect both swing levels, allow the trade
+    if swing_high is None or swing_low is None:
+        return True, None, meta
+
+    range_price = swing_high - swing_low
+    if range_price <= 0:
+        return True, None, meta
+
+    range_pips = range_price / pip_size
+    threshold_pips = range_pips * danger_zone_pct
+    threshold_price = threshold_pips * pip_size
+
+    meta["range_pips"] = round(range_pips, 1)
+    meta["threshold_pips"] = round(threshold_pips, 1)
+
+    upper_danger_start = swing_high - threshold_price
+    lower_danger_end = swing_low + threshold_price
+
+    # Block BUY near swing high
+    if side.lower() == "buy" and current_price >= upper_danger_start:
+        reason = (
+            f"near_swing_high: price={current_price:.3f} in danger zone "
+            f"(swing_high={swing_high:.3f}, swing_low={swing_low:.3f}, "
+            f"range={range_pips:.1f} pips, threshold={threshold_pips:.1f} pips)"
+        )
+        return False, reason, meta
+
+    # Block SELL near swing low
+    if side.lower() == "sell" and current_price <= lower_danger_end:
+        reason = (
+            f"near_swing_low: price={current_price:.3f} in danger zone "
+            f"(swing_high={swing_high:.3f}, swing_low={swing_low:.3f}, "
+            f"range={range_pips:.1f} pips, threshold={threshold_pips:.1f} pips)"
+        )
+        return False, reason, meta
+
+    return True, None, meta
 
 
 def compute_momentum_lot_size(

@@ -372,6 +372,36 @@ def main() -> None:
                     sl_in = st.number_input("sl_pips (0 = none)", value=float(sl_val), step=0.5, key=f"pol_ind_sl_{i}_{pol.id}")
                     pol.sl_pips = None if sl_in == 0.0 else float(sl_in)
                     st.caption("Take-profit and optional stop-loss in pips.")
+                elif pol.type == "kt_cg_hybrid":
+                    st.markdown("**KT/CG Hybrid Settings**")
+                    pol.trend_timeframe = st.selectbox("trend_timeframe", ["M5", "M15"], index=["M5", "M15"].index(pol.trend_timeframe), key=f"pol_kt_ttf_{i}_{pol.id}")
+                    pol.entry_timeframe = st.selectbox("entry_timeframe", ["M1", "M5"], index=["M1", "M5"].index(pol.entry_timeframe), key=f"pol_kt_etf_{i}_{pol.id}")
+                    st.caption("Trend detection timeframe and entry signal timeframe.")
+                    pol.ema_fast = int(st.number_input("ema_fast", value=int(pol.ema_fast), step=1, key=f"pol_kt_ef_{i}_{pol.id}"))
+                    pol.ema_slow = int(st.number_input("ema_slow", value=int(pol.ema_slow), step=1, key=f"pol_kt_es_{i}_{pol.id}"))
+                    st.caption("EMA periods for trend and entry detection.")
+                    pol.tp_pips = st.number_input("tp_pips", value=float(pol.tp_pips), step=0.5, key=f"pol_kt_tp_{i}_{pol.id}")
+                    pol.sl_pips = st.number_input("sl_pips", value=float(pol.sl_pips), step=0.5, key=f"pol_kt_sl_{i}_{pol.id}")
+                    st.caption("Take-profit and stop-loss in pips.")
+                    pol.cooldown_minutes = st.number_input("cooldown_minutes", value=float(pol.cooldown_minutes), step=0.5, key=f"pol_kt_cd_{i}_{pol.id}")
+                    st.caption("Minutes to wait between trades.")
+
+                    st.markdown("**Pullback Settings**")
+                    pol.enable_pullback_override = st.checkbox("enable_pullback_override", value=bool(pol.enable_pullback_override), key=f"pol_kt_pbo_{i}_{pol.id}")
+                    st.caption("Allow pullback entries to bypass cooldown.")
+                    pol.require_counter_trend_cross = st.checkbox("require_counter_trend_cross", value=bool(pol.require_counter_trend_cross), key=f"pol_kt_ctc_{i}_{pol.id}")
+                    st.caption("M1 cross must be opposite to trend direction.")
+
+                    st.markdown("**Swing Level Filter**")
+                    pol.swing_level_filter_enabled = st.checkbox("swing_level_filter_enabled", value=bool(pol.swing_level_filter_enabled), key=f"pol_kt_swf_{i}_{pol.id}")
+                    st.caption("Block trades near swing highs/lows on M15.")
+                    if pol.swing_level_filter_enabled:
+                        pol.swing_danger_zone_pct = st.slider("danger_zone_pct", 0.05, 0.50, value=float(pol.swing_danger_zone_pct), step=0.01, key=f"pol_kt_dzp_{i}_{pol.id}")
+                        st.caption("Percentage of range to consider 'danger zone' (0.15 = 15%).")
+                        pol.swing_confirmation_bars = int(st.number_input("swing_confirmation_bars", value=int(pol.swing_confirmation_bars), min_value=2, max_value=20, key=f"pol_kt_scb_{i}_{pol.id}"))
+                        st.caption("Bars before/after required to confirm swing high/low.")
+                        pol.swing_lookback_bars = int(st.number_input("swing_lookback_bars", value=int(pol.swing_lookback_bars), min_value=20, max_value=500, key=f"pol_kt_slb_{i}_{pol.id}"))
+                        st.caption("Number of M15 bars to scan for swing levels.")
                 st.divider()
 
         with st.expander("Add new policy"):

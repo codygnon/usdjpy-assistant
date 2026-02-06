@@ -365,6 +365,12 @@ class ExecutionPolicyKtCgHybrid(BaseModel):
     require_rejection_candle: bool = False
     rejection_wick_ratio: float = 1.0  # wick >= body * ratio
 
+    # Swing level proximity filter
+    swing_level_filter_enabled: bool = False
+    swing_lookback_bars: int = 100  # M15 bars to scan for swings
+    swing_confirmation_bars: int = 5  # Bars before/after for swing confirmation
+    swing_danger_zone_pct: float = 0.15  # 15% of range defines danger zone
+
 
 class ExecutionPolicyM5M1EmaCross(BaseModel):
     """M5 EMA 9/21 cross triggers trade; M1 EMA state determines direction/TP."""

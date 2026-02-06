@@ -1003,16 +1003,18 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
     # -----------------------------------------------------------------------
     # KT/CG Trial #2 (Pullback Override)
     # Same as Trial #1 but pullbacks can override cooldown. M1 cross in M15 direction
-    # during cooldown triggers trade.
+    # during cooldown triggers trade. Includes swing level proximity filter to avoid
+    # entries near swing highs/lows.
     # -----------------------------------------------------------------------
     PresetId.KT_CG_TRIAL_2: {
         "name": "KT/CG Trial #2 (Counter-Trend Pullback)",
-        "description": "Counter-trend pullback strategy. M5 EMA determines trend. M1 EMA 9/13 cross opposite to M5 trend triggers entry in M5 trend direction.",
+        "description": "Counter-trend pullback strategy. M5 EMA determines trend. M1 EMA 9/13 cross opposite to M5 trend triggers entry in M5 trend direction. Swing level filter blocks entries near M15 swing highs/lows.",
         "pros": [
             "Enters on pullback completion (counter-trend cross)",
             "Trades in direction of higher timeframe trend",
             "Simple entry logic - no engulfing/rejection filters",
             "Tight TP for quick scalps",
+            "Swing filter avoids entries near key reversal zones",
         ],
         "cons": [
             "May enter too early if pullback continues",
@@ -1058,13 +1060,18 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "ema_slow": 13,
                     "tp_pips": 0.5,
                     "sl_pips": 20.0,
-                    "cooldown_minutes": 2.0,
+                    "cooldown_minutes": 3.0,
                     # Pullback override - counter-trend mode
                     "enable_pullback_override": True,
                     "require_m15_trend_aligned": False,
                     "require_counter_trend_cross": True,
                     "require_engulfing_on_weak_momentum": False,
                     "require_rejection_candle": False,
+                    # Swing level proximity filter
+                    "swing_level_filter_enabled": True,
+                    "swing_lookback_bars": 100,
+                    "swing_confirmation_bars": 5,
+                    "swing_danger_zone_pct": 0.15,
                 },
             ],
         },
