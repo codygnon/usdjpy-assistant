@@ -2387,15 +2387,28 @@ def _check_pullback_override(
     if not cross_occurred or cross_dir is None:
         return False, None, ["pullback_override: no M1 EMA cross on current bar"]
 
-    # Check if cross direction matches M15 trend
-    if policy.require_m15_trend_aligned:
+    # Determine side based on cross mode
+    if policy.require_counter_trend_cross:
+        # Counter-trend: M1 cross must be OPPOSITE to trend
+        if m15_trend == "bull" and cross_dir != "bearish":
+            return False, None, ["pullback: need bearish M1 cross for bull trend"]
+        if m15_trend == "bear" and cross_dir != "bullish":
+            return False, None, ["pullback: need bullish M1 cross for bear trend"]
+        # Trade in TREND direction, not cross direction
+        side = "buy" if m15_trend == "bull" else "sell"
+        reasons.append(f"pullback_override: M1 {cross_dir} cross (counter-trend) triggers {side} in {m15_trend} trend")
+    elif policy.require_m15_trend_aligned:
+        # Same-direction: M1 cross must MATCH trend (existing behavior)
         if m15_trend == "bull" and cross_dir != "bullish":
             return False, None, [f"pullback_override: cross is {cross_dir}, but M15 trend is bull"]
         if m15_trend == "bear" and cross_dir != "bearish":
             return False, None, [f"pullback_override: cross is {cross_dir}, but M15 trend is bear"]
-
-    side = "buy" if cross_dir == "bullish" else "sell"
-    reasons.append(f"pullback_override: M1 {cross_dir} cross matches M15 {m15_trend} trend")
+        side = "buy" if cross_dir == "bullish" else "sell"
+        reasons.append(f"pullback_override: M1 {cross_dir} cross matches {m15_trend} trend")
+    else:
+        # No alignment requirement - use cross direction
+        side = "buy" if cross_dir == "bullish" else "sell"
+        reasons.append(f"pullback_override: M1 {cross_dir} cross (no alignment check)")
 
     # Check momentum-based engulfing filter (only if enabled)
     if policy.require_engulfing_on_weak_momentum:

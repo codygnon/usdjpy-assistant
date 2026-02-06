@@ -352,6 +352,7 @@ class ExecutionPolicyKtCgHybrid(BaseModel):
     # Pullback cooldown override
     enable_pullback_override: bool = False  # Allow pullback to bypass cooldown
     require_m15_trend_aligned: bool = True  # Pullback cross must match M15 direction
+    require_counter_trend_cross: bool = False  # When True, M1 cross must be OPPOSITE to trend
 
     # Momentum-based engulfing filter (for pullback entries only)
     require_engulfing_on_weak_momentum: bool = False
