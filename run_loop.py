@@ -122,12 +122,15 @@ def _check_and_close_tp(profile, adapter, store, tick) -> None:
     This runs every loop iteration (0.5s with fast loop) to ensure trades
     are closed the moment price hits the target, rather than waiting for
     the broker's TP order to execute.
+
+    Also detects trades that were closed by the broker (via their TP order)
+    and updates the database immediately.
     """
+    pip_size = float(profile.pip_size)
+
     try:
         open_positions = adapter.get_open_positions(profile.symbol)
     except Exception:
-        return
-    if not open_positions:
         return
 
     our_trades = [dict(r) for r in store.list_open_trades(profile.profile_name)]
@@ -137,6 +140,64 @@ def _check_and_close_tp(profile, adapter, store, tick) -> None:
         if row.get("mt5_position_id") is not None
     }
 
+    # Build set of broker's open position IDs for quick lookup
+    broker_open_ids = set()
+    for pos in open_positions:
+        pos_id = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
+        if pos_id is not None:
+            try:
+                broker_open_ids.add(int(pos_id))
+            except (TypeError, ValueError):
+                pass
+
+    # Check for trades in our DB that are no longer open on broker (closed by broker's TP/SL)
+    for position_id, trade_row in position_to_trade.items():
+        if position_id not in broker_open_ids:
+            # Trade was closed by broker - update our database
+            trade_id = str(trade_row["trade_id"])
+            entry_price = float(trade_row["entry_price"])
+            side = str(trade_row["side"]).lower()
+            target_price = trade_row.get("target_price")
+            stop_price = trade_row.get("stop_price")
+
+            # Use current price as approximate exit (actual will be synced later)
+            exit_price = tick.bid if side == "buy" else tick.ask
+
+            # Calculate pips
+            if side == "buy":
+                pips = (exit_price - entry_price) / pip_size
+            else:
+                pips = (entry_price - exit_price) / pip_size
+
+            # Determine exit reason
+            exit_reason = "broker_closed"
+            if target_price and abs(exit_price - float(target_price)) <= pip_size * 2:
+                exit_reason = "hit_take_profit"
+            elif stop_price and abs(exit_price - float(stop_price)) <= pip_size * 2:
+                exit_reason = "hit_stop_loss"
+
+            # Calculate R-multiple
+            risk_pips = None
+            r_multiple = None
+            if stop_price:
+                risk_pips = abs(entry_price - float(stop_price)) / pip_size
+                if risk_pips > 0:
+                    r_multiple = pips / risk_pips
+
+            store.close_trade(
+                trade_id=trade_id,
+                updates={
+                    "exit_price": exit_price,
+                    "exit_timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "exit_reason": exit_reason,
+                    "pips": pips,
+                    "risk_pips": risk_pips,
+                    "r_multiple": r_multiple,
+                },
+            )
+            print(f"[{profile.profile_name}] Broker closed position {position_id}: {exit_reason}, pips={pips:.2f}")
+
+    # Now check open positions for manual TP close
     for pos in open_positions:
         position_id = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
         if position_id is None:
@@ -155,18 +216,23 @@ def _check_and_close_tp(profile, adapter, store, tick) -> None:
             continue
 
         target_price = float(target_price)
+        entry_price = float(trade_row["entry_price"])
         side = str(trade_row["side"]).lower()
+        trade_id = str(trade_row["trade_id"])
 
         # Check if TP is hit
         # For buy: TP hit when bid >= target (we close at bid)
         # For sell: TP hit when ask <= target (we close at ask)
         tp_hit = False
+        exit_price = None
         if side == "buy" and tick.bid >= target_price:
             tp_hit = True
+            exit_price = tick.bid
         elif side == "sell" and tick.ask <= target_price:
             tp_hit = True
+            exit_price = tick.ask
 
-        if tp_hit:
+        if tp_hit and exit_price is not None:
             try:
                 if isinstance(pos, dict):
                     current_units = pos.get("currentUnits") or 0
@@ -181,7 +247,34 @@ def _check_and_close_tp(profile, adapter, store, tick) -> None:
                     volume=current_lots,
                     position_type=position_type,
                 )
-                print(f"[{profile.profile_name}] TP hit - closed position {position_id} at {tick.bid if side == 'buy' else tick.ask:.5f} (target was {target_price:.5f})")
+
+                # Update database immediately
+                if side == "buy":
+                    pips = (exit_price - entry_price) / pip_size
+                else:
+                    pips = (entry_price - exit_price) / pip_size
+
+                stop_price = trade_row.get("stop_price")
+                risk_pips = None
+                r_multiple = None
+                if stop_price:
+                    risk_pips = abs(entry_price - float(stop_price)) / pip_size
+                    if risk_pips > 0:
+                        r_multiple = pips / risk_pips
+
+                store.close_trade(
+                    trade_id=trade_id,
+                    updates={
+                        "exit_price": exit_price,
+                        "exit_timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                        "exit_reason": "hit_take_profit",
+                        "pips": pips,
+                        "risk_pips": risk_pips,
+                        "r_multiple": r_multiple,
+                    },
+                )
+
+                print(f"[{profile.profile_name}] TP hit - closed position {position_id} at {exit_price:.5f} (target was {target_price:.5f}), pips={pips:.2f}")
             except Exception as e:
                 print(f"[{profile.profile_name}] TP close failed for position {position_id}: {e}")
 
@@ -343,7 +436,7 @@ def main() -> None:
 
         loop_count = 0
         last_sync_loop = 0
-        SYNC_INTERVAL_LOOPS = 12  # Sync every ~60 seconds (assuming 5s poll)
+        SYNC_INTERVAL_LOOPS = 60  # Sync every ~30 seconds (with 0.5s fast poll); primary sync now in _check_and_close_tp
         _MAX_FETCH_RETRIES = 3  # Retry broker fetch this many times before sleeping and continuing
 
         while True:
