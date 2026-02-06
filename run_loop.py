@@ -474,8 +474,8 @@ def main() -> None:
                         "M15": adapter.get_bars(profile.symbol, "M15", 2000),
                         "M1": adapter.get_bars(profile.symbol, "M1", 3000),
                     }
-                    # Fetch M5 data when needed by ema_pullback, M5 confirmed-cross, or m5_m1_ema_cross.
-                    if has_ema_pullback or has_m5_confirmed_cross or has_m5_m1_ema_cross:
+                    # Fetch M5 data when needed by ema_pullback, M5 confirmed-cross, m5_m1_ema_cross, or kt_cg_hybrid.
+                    if has_ema_pullback or has_m5_confirmed_cross or has_m5_m1_ema_cross or has_kt_cg_hybrid:
                         data_by_tf["M5"] = adapter.get_bars(profile.symbol, "M5", 2000)
                     tick = adapter.get_tick(profile.symbol)
                     break
