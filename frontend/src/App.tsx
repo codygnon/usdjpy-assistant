@@ -2937,6 +2937,10 @@ interface EditedSettings {
   loop_poll_seconds: number;
   policy_cooldown_minutes: number;
   policy_sl_pips: number;
+  swing_level_filter_enabled: boolean;
+  swing_danger_zone_pct: number;
+  swing_confirmation_bars: number;
+  swing_lookback_bars: number;
 }
 
 function PresetsPage({ profile }: { profile: Profile }) {
@@ -2984,9 +2988,13 @@ function PresetsPage({ profile }: { profile: Profile }) {
       const targetSettings = tradeManagement?.target as Record<string, unknown> | undefined;
       const policies = execution?.policies as Record<string, unknown>[] | undefined;
 
-      // Find cooldown_minutes and sl_pips from policies
+      // Find cooldown_minutes, sl_pips, and swing filter settings from policies
       let policyCooldown = 0;
       let policySlPips = 20;
+      let swingFilterEnabled = false;
+      let swingDangerZonePct = 0.15;
+      let swingConfirmationBars = 5;
+      let swingLookbackBars = 100;
       if (policies) {
         for (const pol of policies) {
           if ('cooldown_minutes' in pol) {
@@ -2994,6 +3002,12 @@ function PresetsPage({ profile }: { profile: Profile }) {
           }
           if ('sl_pips' in pol) {
             policySlPips = pol.sl_pips as number;
+          }
+          if ('swing_level_filter_enabled' in pol) {
+            swingFilterEnabled = pol.swing_level_filter_enabled as boolean;
+            swingDangerZonePct = (pol.swing_danger_zone_pct as number) ?? 0.15;
+            swingConfirmationBars = (pol.swing_confirmation_bars as number) ?? 5;
+            swingLookbackBars = (pol.swing_lookback_bars as number) ?? 100;
           }
           if (policyCooldown > 0 || policySlPips !== 20) break;
         }
@@ -3010,6 +3024,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
         loop_poll_seconds: (execution?.loop_poll_seconds ?? 5) as number,
         policy_cooldown_minutes: policyCooldown,
         policy_sl_pips: policySlPips,
+        swing_level_filter_enabled: swingFilterEnabled,
+        swing_danger_zone_pct: swingDangerZonePct,
+        swing_confirmation_bars: swingConfirmationBars,
+        swing_lookback_bars: swingLookbackBars,
       });
     }
   }, [showActiveSettings, currentProfile]);
@@ -3061,6 +3079,13 @@ function PresetsPage({ profile }: { profile: Profile }) {
         }
         if ('sl_pips' in pol) {
           updates.sl_pips = Math.max(1, editedSettings.policy_sl_pips);
+        }
+        // Update swing filter settings for kt_cg_hybrid policies
+        if (pol.type === 'kt_cg_hybrid') {
+          updates.swing_level_filter_enabled = editedSettings.swing_level_filter_enabled;
+          updates.swing_danger_zone_pct = Math.max(0.05, Math.min(0.50, editedSettings.swing_danger_zone_pct));
+          updates.swing_confirmation_bars = Math.max(2, Math.min(20, editedSettings.swing_confirmation_bars));
+          updates.swing_lookback_bars = Math.max(20, Math.min(500, editedSettings.swing_lookback_bars));
         }
         return Object.keys(updates).length > 0 ? { ...pol, ...updates } : pol;
       }) || [];
@@ -3296,6 +3321,69 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       onChange={(e) => setEditedSettings({ ...editedSettings, policy_cooldown_minutes: parseFloat(e.target.value) || 0 })}
                       style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
                     />
+                  </div>
+                </div>
+              )}
+              {/* Swing Level Filter Settings (for kt_cg_hybrid policies) */}
+              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_hybrid') && (
+                <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
+                    Swing Level Filter (blocks trades near M15 swing highs/lows)
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Swing Filter Enabled</div>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={editedSettings.swing_level_filter_enabled}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, swing_level_filter_enabled: e.target.checked })}
+                          style={{ width: 18, height: 18, cursor: 'pointer' }}
+                        />
+                        <span style={{ fontWeight: 600, color: editedSettings.swing_level_filter_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                          {editedSettings.swing_level_filter_enabled ? 'ON' : 'OFF'}
+                        </span>
+                      </label>
+                    </div>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Danger Zone %</div>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0.05"
+                        max="0.50"
+                        value={editedSettings.swing_danger_zone_pct}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, swing_danger_zone_pct: parseFloat(e.target.value) || 0.15 })}
+                        style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                      />
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>0.15 = 15% of range</div>
+                    </div>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Confirmation Bars</div>
+                      <input
+                        type="number"
+                        step="1"
+                        min="2"
+                        max="20"
+                        value={editedSettings.swing_confirmation_bars}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, swing_confirmation_bars: parseInt(e.target.value) || 5 })}
+                        style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                      />
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Bars before/after swing</div>
+                    </div>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Lookback Bars</div>
+                      <input
+                        type="number"
+                        step="10"
+                        min="20"
+                        max="500"
+                        value={editedSettings.swing_lookback_bars}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, swing_lookback_bars: parseInt(e.target.value) || 100 })}
+                        style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                      />
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>M15 bars to scan</div>
+                    </div>
                   </div>
                 </div>
               )}
