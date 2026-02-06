@@ -3856,6 +3856,21 @@ function ProfilePage({ profile, authStatus, onAuthChange }: { profile: Profile; 
               Require Stop Loss
             </label>
           </div>
+
+          <div className="form-group">
+            <label>Min Stop Pips</label>
+            <input
+              type="number"
+              step="1"
+              min={1}
+              max={100}
+              value={(risk.min_stop_pips as number) ?? 10}
+              onChange={(e) => updateNested('risk', 'min_stop_pips', parseFloat(e.target.value) || 10)}
+            />
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+              Minimum stop loss distance in pips (1–100). Default is 10.
+            </p>
+          </div>
         </div>
       </div>
 
