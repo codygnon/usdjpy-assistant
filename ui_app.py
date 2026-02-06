@@ -395,13 +395,12 @@ def main() -> None:
                     st.markdown("**Swing Level Filter**")
                     pol.swing_level_filter_enabled = st.checkbox("swing_level_filter_enabled", value=bool(pol.swing_level_filter_enabled), key=f"pol_kt_swf_{i}_{pol.id}")
                     st.caption("Block trades near swing highs/lows on M15.")
-                    if pol.swing_level_filter_enabled:
-                        pol.swing_danger_zone_pct = st.slider("danger_zone_pct", 0.05, 0.50, value=float(pol.swing_danger_zone_pct), step=0.01, key=f"pol_kt_dzp_{i}_{pol.id}")
-                        st.caption("Percentage of range to consider 'danger zone' (0.15 = 15%).")
-                        pol.swing_confirmation_bars = int(st.number_input("swing_confirmation_bars", value=int(pol.swing_confirmation_bars), min_value=2, max_value=20, key=f"pol_kt_scb_{i}_{pol.id}"))
-                        st.caption("Bars before/after required to confirm swing high/low.")
-                        pol.swing_lookback_bars = int(st.number_input("swing_lookback_bars", value=int(pol.swing_lookback_bars), min_value=20, max_value=500, key=f"pol_kt_slb_{i}_{pol.id}"))
-                        st.caption("Number of M15 bars to scan for swing levels.")
+                    pol.swing_danger_zone_pct = st.slider("danger_zone_pct", 0.05, 0.50, value=float(pol.swing_danger_zone_pct), step=0.01, key=f"pol_kt_dzp_{i}_{pol.id}")
+                    st.caption("Percentage of range to consider 'danger zone' (0.15 = 15%).")
+                    pol.swing_confirmation_bars = int(st.number_input("swing_confirmation_bars", value=int(pol.swing_confirmation_bars), min_value=2, max_value=20, key=f"pol_kt_scb_{i}_{pol.id}"))
+                    st.caption("Bars before/after required to confirm swing high/low.")
+                    pol.swing_lookback_bars = int(st.number_input("swing_lookback_bars", value=int(pol.swing_lookback_bars), min_value=20, max_value=500, key=f"pol_kt_slb_{i}_{pol.id}"))
+                    st.caption("Number of M15 bars to scan for swing levels.")
                 st.divider()
 
         with st.expander("Add new policy"):
