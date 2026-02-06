@@ -493,8 +493,20 @@ def get_trades(
     profile_path: Optional[str] = None,
 ) -> list[dict[str, Any]] | dict[str, Any]:
     """Get recent trades. If profile_path is provided, returns an object with
-    trades (each including profit_display in display currency) and display_currency."""
+    trades (each including profit_display in display currency) and display_currency.
+
+    Also syncs with broker first to detect any trades closed externally.
+    """
     store = _store_for(profile_name)
+
+    # Sync with broker to detect closed trades
+    if profile_path and _resolve_profile_path(profile_path).exists():
+        try:
+            profile = load_profile_v1(_resolve_profile_path(profile_path))
+            _sync_open_trades_with_broker(profile, store)
+        except Exception as e:
+            print(f"[api] sync error in get_trades: {e}")
+
     df = store.read_trades_df(profile_name).tail(limit)
     # Convert NaN to None for JSON
     df = df.where(pd.notna(df), None)
@@ -1126,11 +1138,146 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
 
 
 @app.get("/api/data/{profile_name}/open-trades")
-def get_open_trades(profile_name: str) -> list[dict[str, Any]]:
-    """Get open trades (trades without exit_price)."""
+def get_open_trades(profile_name: str, profile_path: Optional[str] = None) -> list[dict[str, Any]]:
+    """Get open trades (trades without exit_price).
+
+    Syncs with broker first to detect any trades closed externally.
+    """
     store = _store_for(profile_name)
+
+    # Sync with broker to detect closed trades
+    if profile_path:
+        try:
+            profile = load_profile_v1(profile_path)
+            _sync_open_trades_with_broker(profile, store)
+        except Exception as e:
+            print(f"[api] sync error in open-trades: {e}")
+
     rows = store.list_open_trades(profile_name)
     return [dict(row) for row in rows]
+
+
+def _sync_open_trades_with_broker(profile: ProfileV1, store: SqliteStore) -> int:
+    """Quick sync: check if any DB open trades are closed on broker."""
+    from adapters.broker import get_adapter
+
+    open_trades = store.list_open_trades(profile.profile_name)
+    if not open_trades:
+        return 0
+
+    try:
+        adapter = get_adapter(profile)
+        adapter.initialize()
+        adapter.ensure_symbol(profile.symbol)
+    except Exception as e:
+        print(f"[api] broker init failed for sync: {e}")
+        return 0
+
+    try:
+        broker_positions = adapter.get_open_positions(profile.symbol)
+    except Exception as e:
+        print(f"[api] get_open_positions failed: {e}")
+        try:
+            adapter.shutdown()
+        except Exception:
+            pass
+        return 0
+
+    # Build set of broker's open position IDs
+    broker_open_ids = set()
+    for pos in broker_positions:
+        pos_id = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
+        if pos_id is not None:
+            try:
+                broker_open_ids.add(int(pos_id))
+            except (TypeError, ValueError):
+                pass
+
+    pip_size = float(profile.pip_size)
+    synced = 0
+
+    for trade_row in open_trades:
+        trade_row = dict(trade_row)
+        mt5_position_id = trade_row.get("mt5_position_id")
+        if mt5_position_id is None:
+            continue
+
+        try:
+            position_id = int(mt5_position_id)
+        except (TypeError, ValueError):
+            continue
+
+        if position_id in broker_open_ids:
+            # Still open on broker
+            continue
+
+        # Trade was closed on broker - update our DB
+        trade_id = str(trade_row["trade_id"])
+        entry_price = float(trade_row["entry_price"])
+        side = str(trade_row["side"]).lower()
+        target_price = trade_row.get("target_price")
+        stop_price = trade_row.get("stop_price")
+
+        # Try to get close info from broker
+        exit_price = None
+        exit_time = None
+        profit = None
+        try:
+            close_info = adapter.get_position_close_info(position_id)
+            if close_info:
+                exit_price = close_info.exit_price
+                exit_time = close_info.exit_time_utc
+                profit = close_info.profit
+        except Exception:
+            pass
+
+        if exit_price is None:
+            # Use approximate values
+            exit_price = entry_price  # Will be corrected on next full sync
+            exit_time = pd.Timestamp.now(tz="UTC").isoformat()
+
+        # Calculate pips
+        if side == "buy":
+            pips = (exit_price - entry_price) / pip_size
+        else:
+            pips = (entry_price - exit_price) / pip_size
+
+        # Determine exit reason
+        exit_reason = "broker_closed"
+        if target_price and abs(exit_price - float(target_price)) <= pip_size * 2:
+            exit_reason = "hit_take_profit"
+        elif stop_price and abs(exit_price - float(stop_price)) <= pip_size * 2:
+            exit_reason = "hit_stop_loss"
+
+        # Calculate R-multiple
+        risk_pips = None
+        r_multiple = None
+        if stop_price:
+            risk_pips = abs(entry_price - float(stop_price)) / pip_size
+            if risk_pips > 0:
+                r_multiple = pips / risk_pips
+
+        updates = {
+            "exit_price": exit_price,
+            "exit_timestamp_utc": exit_time,
+            "exit_reason": exit_reason,
+            "pips": pips,
+            "risk_pips": risk_pips,
+            "r_multiple": r_multiple,
+        }
+        if profit is not None:
+            updates["profit"] = profit
+
+        store.close_trade(trade_id=trade_id, updates=updates)
+        print(f"[api] synced closed trade {trade_id}: {exit_reason}, pips={pips:.2f}")
+        synced += 1
+
+    try:
+        adapter.shutdown()
+    except Exception:
+        pass
+
+    return synced
 
 
 @app.post("/api/trades/{profile_name}/{trade_id}/close")

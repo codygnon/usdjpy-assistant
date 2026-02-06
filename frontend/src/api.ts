@@ -405,6 +405,7 @@ export interface OpenTrade {
   mt5_position_id?: number;
 }
 
-export async function getOpenTrades(profileName: string): Promise<OpenTrade[]> {
-  return fetchJson<OpenTrade[]>(`${API_BASE}/data/${profileName}/open-trades`);
+export async function getOpenTrades(profileName: string, profilePath?: string): Promise<OpenTrade[]> {
+  const params = profilePath ? `?profile_path=${encodeURIComponent(profilePath)}` : '';
+  return fetchJson<OpenTrade[]>(`${API_BASE}/data/${profileName}/open-trades${params}`);
 }
