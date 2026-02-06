@@ -2469,37 +2469,26 @@ def execute_kt_cg_hybrid_policy_demo_only(
     side: Optional[str] = None
     eval_reasons: list[str] = []
 
-    if in_cooldown:
-        # Check for pullback override
-        if policy.enable_pullback_override:
-            m15_trend = _get_m15_trend_direction(policy, data_by_tf)
-            if m15_trend is None:
-                return ExecutionDecision(
-                    attempted=False, placed=False,
-                    reason=f"kt_cg_hybrid: cooldown ({policy.cooldown_minutes} min), pullback check skipped (no trend data)"
-                )
-
+    # Check for pullback entry first (regardless of cooldown) when enabled
+    if policy.enable_pullback_override:
+        m15_trend = _get_m15_trend_direction(policy, data_by_tf)
+        if m15_trend is not None:
             pullback_passed, pullback_side, pullback_reasons = _check_pullback_override(
                 profile, policy, data_by_tf, m15_trend
             )
-
             if pullback_passed and pullback_side:
                 is_pullback_entry = True
                 side = pullback_side
                 eval_reasons = pullback_reasons
-            else:
-                # No valid pullback, respect cooldown
-                return ExecutionDecision(
-                    attempted=False, placed=False,
-                    reason=f"kt_cg_hybrid: cooldown ({policy.cooldown_minutes} min), no pullback override"
-                )
-        else:
-            # Pullback override disabled, respect cooldown
+
+    # If no pullback entry, check cooldown and normal entry
+    if not is_pullback_entry:
+        if in_cooldown:
+            # Respect cooldown for normal entries
             return ExecutionDecision(
                 attempted=False, placed=False,
                 reason=f"kt_cg_hybrid: cooldown ({policy.cooldown_minutes} min)"
             )
-    else:
         # Not in cooldown: normal position-based entry
         passed, side, eval_reasons = evaluate_kt_cg_hybrid_conditions(profile, policy, data_by_tf)
         if not passed or side is None:
