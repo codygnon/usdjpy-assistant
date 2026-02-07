@@ -321,6 +321,20 @@ class ExecutionPolicyEmaBbScalp(BaseModel):
     min_distance_pips: float = 1.0
 
 
+class ExecutionPolicyKtCgHybrid(BaseModel):
+    """KT/CG Hybrid strategy: Custom hybrid policy with flexible parameters."""
+
+    model_config = ConfigDict(extra="allow")  # Allow additional custom fields
+
+    type: Literal["kt_cg_hybrid"] = "kt_cg_hybrid"
+    id: str = "kt_cg_hybrid_default"
+    enabled: bool = False
+    timeframe: Literal["M1", "M3", "M5", "M15", "M30", "H1", "H4"] = "M5"
+    tp_pips: float = 15.0
+    sl_pips: Optional[float] = 10.0
+    # Additional fields are allowed via extra="allow"
+
+
 ExecutionPolicy = Annotated[
     Union[
         ExecutionPolicyConfirmedCross,
@@ -332,6 +346,7 @@ ExecutionPolicy = Annotated[
         ExecutionPolicyVWAP,
         ExecutionPolicyEmaPullback,
         ExecutionPolicyEmaBbScalp,
+        ExecutionPolicyKtCgHybrid,
     ],
     Field(discriminator="type"),
 ]
