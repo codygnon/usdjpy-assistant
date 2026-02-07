@@ -22,15 +22,15 @@ interface ChartSettings {
 
 const DEFAULT_CHART_SETTINGS: ChartSettings = {
   emaVisibility: {
-    ema9: true,
-    ema13: true,
-    ema21: true,
+    ema9: false,
+    ema13: false,
+    ema21: false,
     ema34: false,
     ema50: false,
     ema89: false,
     ema200: false,
   },
-  showVolume: true,
+  showVolume: false,
   showBollingerBands: false,
   showSwingLevels: false,
   showCrossovers: true,
@@ -655,13 +655,13 @@ interface ChartTrade {
   exit_price?: number;
 }
 
-// Detect crossovers between two EMA series
+// Detect crossovers between two EMA series and return crossover price
 function detectCrossovers(
   ema1: api.EmaPoint[],
   ema2: api.EmaPoint[],
   ema1Period: number,
   ema2Period: number
-): { time: number; type: 'bullish' | 'bearish' }[] {
+): { time: number; type: 'bullish' | 'bearish'; price: number }[] {
   if (ema1.length < 2 || ema2.length < 2) return [];
 
   // Determine which is shorter/longer period
@@ -671,7 +671,7 @@ function detectCrossovers(
   const longerMap = new Map<number, number>();
   longer.forEach(p => longerMap.set(p.time, p.value));
 
-  const crossovers: { time: number; type: 'bullish' | 'bearish' }[] = [];
+  const crossovers: { time: number; type: 'bullish' | 'bearish'; price: number }[] = [];
 
   for (let i = 1; i < shorter.length; i++) {
     const prevTime = shorter[i - 1].time;
@@ -687,9 +687,14 @@ function detectCrossovers(
     const currDiff = currShorter - currLonger;
 
     if (prevDiff < 0 && currDiff > 0) {
-      crossovers.push({ time: currTime, type: 'bullish' });
+      // Bullish crossover - shorter crosses above longer
+      // Crossover price is approximately the average of the two EMAs at crossover
+      const crossPrice = (currShorter + currLonger) / 2;
+      crossovers.push({ time: currTime, type: 'bullish', price: crossPrice });
     } else if (prevDiff > 0 && currDiff < 0) {
-      crossovers.push({ time: currTime, type: 'bearish' });
+      // Bearish crossover - shorter crosses below longer
+      const crossPrice = (currShorter + currLonger) / 2;
+      crossovers.push({ time: currTime, type: 'bearish', price: crossPrice });
     }
   }
 
@@ -833,46 +838,69 @@ function CandlestickChart({
 
     // Add swing level horizontal lines if enabled
     if (settings.showSwingLevels && swingLevels) {
-      // Draw horizontal lines for recent swing highs
-      swingLevels.highs.slice(-5).forEach(level => {
-        const lineSeries = chart.addSeries(LineSeries, {
-          color: 'rgba(38, 166, 154, 0.6)',
-          lineWidth: 1,
-          lineStyle: LineStyle.Dashed,
-          lastValueVisible: false,
-          priceLineVisible: false,
-        });
-        // Extend line from swing point to end of chart
-        const endTime = ohlc[ohlc.length - 1].time;
-        lineSeries.setData([
-          { time: level.time as Time, value: level.price },
-          { time: endTime as Time, value: level.price },
-        ]);
-      });
+      const startTime = ohlc[0].time;
+      const endTime = ohlc[ohlc.length - 1].time;
 
-      // Draw horizontal lines for recent swing lows
-      swingLevels.lows.slice(-5).forEach(level => {
-        const lineSeries = chart.addSeries(LineSeries, {
-          color: 'rgba(239, 83, 80, 0.6)',
-          lineWidth: 1,
-          lineStyle: LineStyle.Dashed,
-          lastValueVisible: false,
-          priceLineVisible: false,
+      // Draw horizontal lines for recent swing highs (only if within chart range)
+      swingLevels.highs
+        .filter(level => level.time >= startTime && level.time <= endTime)
+        .slice(-5)
+        .forEach(level => {
+          const lineSeries = chart.addSeries(LineSeries, {
+            color: 'rgba(38, 166, 154, 0.6)',
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            lastValueVisible: false,
+            priceLineVisible: false,
+          });
+          lineSeries.setData([
+            { time: level.time as Time, value: level.price },
+            { time: endTime as Time, value: level.price },
+          ]);
         });
-        const endTime = ohlc[ohlc.length - 1].time;
-        lineSeries.setData([
-          { time: level.time as Time, value: level.price },
-          { time: endTime as Time, value: level.price },
-        ]);
+
+      // Draw horizontal lines for recent swing lows (only if within chart range)
+      swingLevels.lows
+        .filter(level => level.time >= startTime && level.time <= endTime)
+        .slice(-5)
+        .forEach(level => {
+          const lineSeries = chart.addSeries(LineSeries, {
+            color: 'rgba(239, 83, 80, 0.6)',
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            lastValueVisible: false,
+            priceLineVisible: false,
+          });
+          lineSeries.setData([
+            { time: level.time as Time, value: level.price },
+            { time: endTime as Time, value: level.price },
+          ]);
+        });
+    }
+
+    // Add EMA lines
+    const emaSeriesOptions = { lastValueVisible: false, priceLineVisible: false };
+
+    // Always show the profile's configured emaStack (timeframe-appropriate EMAs)
+    if (emaStack) {
+      Object.entries(emaStack).forEach(([key, arr]) => {
+        if (arr && arr.length > 0) {
+          const color = EMA_COLORS[key] || '#94a3b8';
+          const emaSeries = chart.addSeries(LineSeries, { color, lineWidth: 1, ...emaSeriesOptions });
+          emaSeries.setData(arr.map(d => ({ time: d.time as Time, value: d.value })));
+        }
       });
     }
 
-    // Add selectable EMA lines
-    const emaSeriesOptions = { lastValueVisible: false, priceLineVisible: false };
-
+    // Add user-selected additional EMAs from emaLines (only those toggled on that aren't already in emaStack)
     if (emaLines) {
       const emaKeys = ['ema9', 'ema13', 'ema21', 'ema34', 'ema50', 'ema89', 'ema200'] as const;
+      const stackKeys = emaStack ? new Set(Object.keys(emaStack)) : new Set<string>();
+
       emaKeys.forEach(key => {
+        // Skip if already shown via emaStack
+        if (stackKeys.has(key)) return;
+
         const visibilityKey = key as keyof typeof settings.emaVisibility;
         if (settings.emaVisibility[visibilityKey] && emaLines[key] && emaLines[key].length > 0) {
           const color = EMA_COLORS[key] || '#94a3b8';
@@ -884,23 +912,12 @@ function CandlestickChart({
           emaSeries.setData(emaLines[key].map(d => ({ time: d.time as Time, value: d.value })));
         }
       });
-    } else {
-      // Fallback to legacy emaStack if emaLines not available
-      if (emaStack) {
-        Object.entries(emaStack).forEach(([key, arr]) => {
-          if (arr && arr.length > 0) {
-            const color = EMA_COLORS[key] || '#94a3b8';
-            const emaSeries = chart.addSeries(LineSeries, { color, lineWidth: 1, ...emaSeriesOptions });
-            emaSeries.setData(arr.map(d => ({ time: d.time as Time, value: d.value })));
-          }
-        });
-      }
     }
 
     // Collect all markers
     const markers: { time: Time; position: 'aboveBar' | 'belowBar'; color: string; shape: 'arrowUp' | 'arrowDown' | 'circle' | 'square'; text: string; size?: number }[] = [];
 
-    // Add trade markers
+    // Add trade markers (small size for many trades)
     trades.forEach((t) => {
       const isBuy = t.side.toLowerCase() === 'buy';
       const buyColor = '#3b82f6';
@@ -913,6 +930,7 @@ function CandlestickChart({
           color,
           shape: isBuy ? 'arrowUp' : 'arrowDown',
           text: '',
+          size: 0.3,  // Small markers for many trades
         });
       }
       if (t.exit_time != null) {
@@ -922,68 +940,40 @@ function CandlestickChart({
           color,
           shape: 'circle',
           text: '',
+          size: 0.3,  // Small markers for many trades
         });
       }
     });
 
     // Add swing level markers if enabled
     if (settings.showSwingLevels && swingLevels) {
-      swingLevels.highs.forEach(level => {
-        markers.push({
-          time: level.time as Time,
-          position: 'aboveBar',
-          color: '#26a69a',
-          shape: 'arrowDown',
-          text: '',
-          size: 0.5,
-        });
-      });
-      swingLevels.lows.forEach(level => {
-        markers.push({
-          time: level.time as Time,
-          position: 'belowBar',
-          color: '#ef5350',
-          shape: 'arrowUp',
-          text: '',
-          size: 0.5,
-        });
-      });
-    }
+      const startTime = ohlc[0].time;
+      const endTime = ohlc[ohlc.length - 1].time;
 
-    // Add EMA crossover markers if enabled
-    if (settings.showCrossovers && emaLines) {
-      const visibleEmas: { period: number; data: api.EmaPoint[] }[] = [];
-      const emaKeys = ['ema9', 'ema13', 'ema21', 'ema34', 'ema50', 'ema89', 'ema200'] as const;
-      const emaPeriods: Record<string, number> = { ema9: 9, ema13: 13, ema21: 21, ema34: 34, ema50: 50, ema89: 89, ema200: 200 };
-
-      emaKeys.forEach(key => {
-        const visibilityKey = key as keyof typeof settings.emaVisibility;
-        if (settings.emaVisibility[visibilityKey] && emaLines[key] && emaLines[key].length > 0) {
-          visibleEmas.push({ period: emaPeriods[key], data: emaLines[key] });
-        }
-      });
-
-      // Detect crossovers between all pairs of visible EMAs
-      for (let i = 0; i < visibleEmas.length; i++) {
-        for (let j = i + 1; j < visibleEmas.length; j++) {
-          const crossovers = detectCrossovers(
-            visibleEmas[i].data,
-            visibleEmas[j].data,
-            visibleEmas[i].period,
-            visibleEmas[j].period
-          );
-          crossovers.forEach(cross => {
-            markers.push({
-              time: cross.time as Time,
-              position: cross.type === 'bullish' ? 'belowBar' : 'aboveBar',
-              color: cross.type === 'bullish' ? '#26a69a' : '#ef5350',
-              shape: 'circle',
-              text: 'X',
-              size: 1,
-            });
+      swingLevels.highs
+        .filter(level => level.time >= startTime && level.time <= endTime)
+        .forEach(level => {
+          markers.push({
+            time: level.time as Time,
+            position: 'aboveBar',
+            color: '#26a69a',
+            shape: 'arrowDown',
+            text: '',
+            size: 0.4,
           });
-        }
-      }
+        });
+      swingLevels.lows
+        .filter(level => level.time >= startTime && level.time <= endTime)
+        .forEach(level => {
+          markers.push({
+            time: level.time as Time,
+            position: 'belowBar',
+            color: '#ef5350',
+            shape: 'arrowUp',
+            text: '',
+            size: 0.4,
+          });
+        });
     }
 
     // Sort markers by time and apply
@@ -993,26 +983,127 @@ function CandlestickChart({
       seriesMarkers.setMarkers(markers);
     }
 
-    // Add trade connection lines (dashed lines from entry to exit)
+    // Draw EMA crossover X marks directly at crossover price using line series
+    if (settings.showCrossovers) {
+      const visibleEmas: { period: number; data: api.EmaPoint[] }[] = [];
+      const emaKeys = ['ema9', 'ema13', 'ema21', 'ema34', 'ema50', 'ema89', 'ema200'] as const;
+      const emaPeriods: Record<string, number> = { ema9: 9, ema13: 13, ema21: 21, ema34: 34, ema50: 50, ema89: 89, ema200: 200 };
+      const addedPeriods = new Set<number>();
+
+      // Include EMAs from emaStack (timeframe-appropriate EMAs always shown)
+      if (emaStack) {
+        Object.entries(emaStack).forEach(([key, data]) => {
+          if (data && data.length > 0) {
+            const period = emaPeriods[key];
+            if (period && !addedPeriods.has(period)) {
+              visibleEmas.push({ period, data });
+              addedPeriods.add(period);
+            }
+          }
+        });
+      }
+
+      // Include user-selected EMAs from emaLines
+      if (emaLines) {
+        emaKeys.forEach(key => {
+          const period = emaPeriods[key];
+          if (addedPeriods.has(period)) return;  // Skip if already added from emaStack
+
+          const visibilityKey = key as keyof typeof settings.emaVisibility;
+          if (settings.emaVisibility[visibilityKey] && emaLines[key] && emaLines[key].length > 0) {
+            visibleEmas.push({ period, data: emaLines[key] });
+            addedPeriods.add(period);
+          }
+        });
+      }
+
+      // Detect crossovers between all pairs of visible EMAs
+      const allCrossovers: { time: number; type: 'bullish' | 'bearish'; price: number }[] = [];
+      for (let i = 0; i < visibleEmas.length; i++) {
+        for (let j = i + 1; j < visibleEmas.length; j++) {
+          const crossovers = detectCrossovers(
+            visibleEmas[i].data,
+            visibleEmas[j].data,
+            visibleEmas[i].period,
+            visibleEmas[j].period
+          );
+          allCrossovers.push(...crossovers);
+        }
+      }
+
+      // Draw X markers at each crossover using a marker series with contrasting colors
+      // Use a separate invisible series to place markers at exact prices
+      if (allCrossovers.length > 0) {
+        // Create a line series just for holding crossover markers
+        const crossoverSeries = chart.addSeries(LineSeries, {
+          color: 'rgba(0,0,0,0)',  // Invisible line
+          lineWidth: 1,
+          lineVisible: false,
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
+        });
+
+        // Set data points at crossover locations
+        const crossoverData = allCrossovers.map(c => ({
+          time: c.time as Time,
+          value: c.price,
+        }));
+        crossoverSeries.setData(crossoverData);
+
+        // Add markers to this series at exact crossover prices
+        const crossoverMarkers = createSeriesMarkers(crossoverSeries);
+        crossoverMarkers.setMarkers(
+          allCrossovers.map(cross => ({
+            time: cross.time as Time,
+            position: 'inBar' as const,
+            color: cross.type === 'bullish' ? '#00ff00' : '#ff0000',  // Bright contrasting colors
+            shape: 'square' as const,
+            text: '\u2716',  // Large X character (heavy multiplication X)
+            size: 2,
+          }))
+        );
+      }
+    }
+
+    // Add trade connection lines (diagonal dashed lines from entry to exit)
     const completedTrades = trades.filter(t =>
-      t.entry_time && t.exit_time && t.entry_price && t.exit_price
+      t.entry_time != null && t.exit_time != null &&
+      t.entry_price != null && t.exit_price != null &&
+      t.entry_time !== t.exit_time  // Ensure different times for diagonal line
     );
     completedTrades.forEach(trade => {
       const lineSeries = chart.addSeries(LineSeries, {
-        color: trade.side.toLowerCase() === 'buy' ? '#3b82f6' : '#ef4444',
+        color: trade.side.toLowerCase() === 'buy' ? 'rgba(59, 130, 246, 0.7)' : 'rgba(239, 68, 68, 0.7)',
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         lastValueVisible: false,
         priceLineVisible: false,
+        crosshairMarkerVisible: false,
       });
-      lineSeries.setData([
-        { time: trade.entry_time as Time, value: trade.entry_price },
-        { time: trade.exit_time as Time, value: trade.exit_price! },
-      ]);
+
+      // Sort by time to ensure proper line direction
+      const entryTime = trade.entry_time as number;
+      const exitTime = trade.exit_time as number;
+      const points = [
+        { time: entryTime as Time, value: trade.entry_price },
+        { time: exitTime as Time, value: trade.exit_price! },
+      ].sort((a, b) => (a.time as number) - (b.time as number));
+
+      lineSeries.setData(points);
     });
 
-    // Fit content
+    // Fit content initially
     chart.timeScale().fitContent();
+
+    // Auto-fit price scale when visible range changes (zoom/scroll)
+    const handleVisibleRangeChange = () => {
+      // Auto-fit the price scale to visible data
+      chart.priceScale('right').applyOptions({
+        autoScale: true,
+      });
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
 
     // Handle resize
     const handleResize = () => {
@@ -1027,6 +1118,7 @@ function CandlestickChart({
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
       chart.remove();
     };
   }, [ohlc, trades, emaFast, emaSlow, emaStack, emaLines, bollingerSeries, swingLevels, height, settings]);
