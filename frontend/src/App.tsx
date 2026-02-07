@@ -17,6 +17,9 @@ interface ChartSettings {
   showBollingerBands: boolean;
   showSwingLevels: boolean;
   showCrossovers: boolean;
+  showTrades: boolean;
+  showTradeLines: boolean;
+  showAllOverlays: boolean;
   barCount: number;
 }
 
@@ -34,6 +37,9 @@ const DEFAULT_CHART_SETTINGS: ChartSettings = {
   showBollingerBands: false,
   showSwingLevels: false,
   showCrossovers: true,
+  showTrades: true,
+  showTradeLines: true,
+  showAllOverlays: true,
   barCount: 200,
 };
 
@@ -786,7 +792,7 @@ function CandlestickChart({
     candlestickSeries.setData(chartData);
 
     // Add volume histogram if enabled
-    if (settings.showVolume && ohlc.some(bar => bar.volume !== undefined)) {
+    if (settings.showVolume && settings.showAllOverlays && ohlc.some(bar => bar.volume !== undefined)) {
       const volumeSeries = chart.addSeries(HistogramSeries, {
         priceFormat: { type: 'volume' },
         priceScaleId: 'volume',
@@ -808,7 +814,7 @@ function CandlestickChart({
     }
 
     // Add Bollinger Bands if enabled
-    if (settings.showBollingerBands && bollingerSeries) {
+    if (settings.showBollingerBands && settings.showAllOverlays && bollingerSeries) {
       const bbOptions = { lastValueVisible: false, priceLineVisible: false, lineWidth: 1 as const };
 
       if (bollingerSeries.upper && bollingerSeries.upper.length > 0) {
@@ -837,6 +843,7 @@ function CandlestickChart({
     }
 
     // Add swing level horizontal lines if enabled
+<<<<<<< HEAD
     if (settings.showSwingLevels && swingLevels) {
       const startTime = ohlc[0].time;
       const endTime = ohlc[ohlc.length - 1].time;
@@ -857,6 +864,34 @@ function CandlestickChart({
             { time: level.time as Time, value: level.price },
             { time: endTime as Time, value: level.price },
           ]);
+=======
+    if (settings.showSwingLevels && settings.showAllOverlays && swingLevels) {
+      // Draw horizontal lines for recent swing highs
+      swingLevels.highs.slice(-5).forEach(level => {
+        const lineSeries = chart.addSeries(LineSeries, {
+          color: 'rgba(38, 166, 154, 0.35)',
+          lineWidth: 1,
+          lineStyle: LineStyle.SparseDotted,
+          lastValueVisible: false,
+          priceLineVisible: false,
+        });
+        // Extend line from swing point to end of chart
+        const endTime = ohlc[ohlc.length - 1].time;
+        lineSeries.setData([
+          { time: level.time as Time, value: level.price },
+          { time: endTime as Time, value: level.price },
+        ]);
+      });
+
+      // Draw horizontal lines for recent swing lows
+      swingLevels.lows.slice(-5).forEach(level => {
+        const lineSeries = chart.addSeries(LineSeries, {
+          color: 'rgba(239, 83, 80, 0.35)',
+          lineWidth: 1,
+          lineStyle: LineStyle.SparseDotted,
+          lastValueVisible: false,
+          priceLineVisible: false,
+>>>>>>> 6f4601722945490400a5455aefceb4831720cda3
         });
 
       // Draw horizontal lines for recent swing lows (only if within chart range)
@@ -892,6 +927,7 @@ function CandlestickChart({
       });
     }
 
+<<<<<<< HEAD
     // Add user-selected additional EMAs from emaLines (only those toggled on that aren't already in emaStack)
     if (emaLines) {
       const emaKeys = ['ema9', 'ema13', 'ema21', 'ema34', 'ema50', 'ema89', 'ema200'] as const;
@@ -912,11 +948,44 @@ function CandlestickChart({
           emaSeries.setData(emaLines[key].map(d => ({ time: d.time as Time, value: d.value })));
         }
       });
+=======
+    // Add selectable EMA lines
+    if (settings.showAllOverlays) {
+      const emaSeriesOptions = { lastValueVisible: false, priceLineVisible: false };
+
+      if (emaLines) {
+        const emaKeys = ['ema9', 'ema13', 'ema21', 'ema34', 'ema50', 'ema89', 'ema200'] as const;
+        emaKeys.forEach(key => {
+          const visibilityKey = key as keyof typeof settings.emaVisibility;
+          if (settings.emaVisibility[visibilityKey] && emaLines[key] && emaLines[key].length > 0) {
+            const color = EMA_COLORS[key] || '#94a3b8';
+            const emaSeries = chart.addSeries(LineSeries, {
+              color,
+              lineWidth: 1,
+              ...emaSeriesOptions,
+            });
+            emaSeries.setData(emaLines[key].map(d => ({ time: d.time as Time, value: d.value })));
+          }
+        });
+      } else {
+        // Fallback to legacy emaStack if emaLines not available
+        if (emaStack) {
+          Object.entries(emaStack).forEach(([key, arr]) => {
+            if (arr && arr.length > 0) {
+              const color = EMA_COLORS[key] || '#94a3b8';
+              const emaSeries = chart.addSeries(LineSeries, { color, lineWidth: 1, ...emaSeriesOptions });
+              emaSeries.setData(arr.map(d => ({ time: d.time as Time, value: d.value })));
+            }
+          });
+        }
+      }
+>>>>>>> 6f4601722945490400a5455aefceb4831720cda3
     }
 
     // Collect all markers
     const markers: { time: Time; position: 'aboveBar' | 'belowBar'; color: string; shape: 'arrowUp' | 'arrowDown' | 'circle' | 'square'; text: string; size?: number }[] = [];
 
+<<<<<<< HEAD
     // Add trade markers (small size for many trades)
     trades.forEach((t) => {
       const isBuy = t.side.toLowerCase() === 'buy';
@@ -960,6 +1029,91 @@ function CandlestickChart({
             shape: 'arrowDown',
             text: '',
             size: 0.4,
+=======
+    // Add trade markers (toggleable)
+    if (settings.showTrades && settings.showAllOverlays) {
+      trades.forEach((t) => {
+        const isBuy = t.side.toLowerCase() === 'buy';
+        const buyColor = '#3b82f6';
+        const sellColor = '#ef4444';
+        const color = isBuy ? buyColor : sellColor;
+        if (t.entry_time != null) {
+          markers.push({
+            time: t.entry_time as Time,
+            position: isBuy ? 'belowBar' : 'aboveBar',
+            color,
+            shape: isBuy ? 'arrowUp' : 'arrowDown',
+            text: '',
+          });
+        }
+        if (t.exit_time != null) {
+          markers.push({
+            time: t.exit_time as Time,
+            position: isBuy ? 'aboveBar' : 'belowBar',
+            color,
+            shape: 'circle',
+            text: '',
+          });
+        }
+      });
+    }
+
+    // Add swing level markers if enabled
+    if (settings.showSwingLevels && settings.showAllOverlays && swingLevels) {
+      swingLevels.highs.forEach(level => {
+        markers.push({
+          time: level.time as Time,
+          position: 'aboveBar',
+          color: '#26a69a',
+          shape: 'arrowDown',
+          text: '',
+          size: 0.5,
+        });
+      });
+      swingLevels.lows.forEach(level => {
+        markers.push({
+          time: level.time as Time,
+          position: 'belowBar',
+          color: '#ef5350',
+          shape: 'arrowUp',
+          text: '',
+          size: 0.5,
+        });
+      });
+    }
+
+    // Add EMA crossover markers if enabled
+    if (settings.showCrossovers && settings.showAllOverlays && emaLines) {
+      const visibleEmas: { period: number; data: api.EmaPoint[] }[] = [];
+      const emaKeys = ['ema9', 'ema13', 'ema21', 'ema34', 'ema50', 'ema89', 'ema200'] as const;
+      const emaPeriods: Record<string, number> = { ema9: 9, ema13: 13, ema21: 21, ema34: 34, ema50: 50, ema89: 89, ema200: 200 };
+
+      emaKeys.forEach(key => {
+        const visibilityKey = key as keyof typeof settings.emaVisibility;
+        if (settings.emaVisibility[visibilityKey] && emaLines[key] && emaLines[key].length > 0) {
+          visibleEmas.push({ period: emaPeriods[key], data: emaLines[key] });
+        }
+      });
+
+      // Detect crossovers between all pairs of visible EMAs
+      for (let i = 0; i < visibleEmas.length; i++) {
+        for (let j = i + 1; j < visibleEmas.length; j++) {
+          const crossovers = detectCrossovers(
+            visibleEmas[i].data,
+            visibleEmas[j].data,
+            visibleEmas[i].period,
+            visibleEmas[j].period
+          );
+          crossovers.forEach(cross => {
+            markers.push({
+              time: cross.time as Time,
+              position: cross.type === 'bullish' ? 'belowBar' : 'aboveBar',
+              color: cross.type === 'bullish' ? '#26a69a' : '#ef5350',
+              shape: 'circle',
+              text: 'X',
+              size: 1,
+            });
+>>>>>>> 6f4601722945490400a5455aefceb4831720cda3
           });
         });
       swingLevels.lows
@@ -983,6 +1137,7 @@ function CandlestickChart({
       seriesMarkers.setMarkers(markers);
     }
 
+<<<<<<< HEAD
     // Draw EMA crossover X marks directly at crossover price using line series
     if (settings.showCrossovers) {
       const visibleEmas: { period: number; data: api.EmaPoint[] }[] = [];
@@ -1092,6 +1247,27 @@ function CandlestickChart({
 
       lineSeries.setData(points);
     });
+=======
+    // Add trade connection lines (dotted lines from entry to exit, toggleable)
+    if (settings.showTradeLines && settings.showAllOverlays) {
+      const completedTrades = trades.filter(t =>
+        t.entry_time && t.exit_time && t.entry_price && t.exit_price
+      );
+      completedTrades.forEach(trade => {
+        const lineSeries = chart.addSeries(LineSeries, {
+          color: trade.side.toLowerCase() === 'buy' ? 'rgba(59, 130, 246, 0.7)' : 'rgba(239, 68, 68, 0.7)',
+          lineWidth: 2,
+          lineStyle: LineStyle.Dotted,
+          lastValueVisible: false,
+          priceLineVisible: false,
+        });
+        lineSeries.setData([
+          { time: trade.entry_time as Time, value: trade.entry_price },
+          { time: trade.exit_time as Time, value: trade.exit_price! },
+        ]);
+      });
+    }
+>>>>>>> 6f4601722945490400a5455aefceb4831720cda3
 
     // Fit content initially
     chart.timeScale().fitContent();
@@ -1231,8 +1407,14 @@ function ChartSettingsPanel({ settings, onSettingsChange, onBarCountChange }: Ch
     saveChartSettings(newSettings);
   };
 
-  const handleToggle = (key: 'showVolume' | 'showBollingerBands' | 'showSwingLevels' | 'showCrossovers') => {
+  const handleToggle = (key: 'showVolume' | 'showBollingerBands' | 'showSwingLevels' | 'showCrossovers' | 'showTrades' | 'showTradeLines') => {
     const newSettings = { ...settings, [key]: !settings[key] };
+    onSettingsChange(newSettings);
+    saveChartSettings(newSettings);
+  };
+
+  const handleMasterToggle = () => {
+    const newSettings = { ...settings, showAllOverlays: !settings.showAllOverlays };
     onSettingsChange(newSettings);
     saveChartSettings(newSettings);
   };
@@ -1290,8 +1472,29 @@ function ChartSettingsPanel({ settings, onSettingsChange, onBarCountChange }: Ch
           padding: 12,
           minWidth: 180,
         }}>
-          {/* EMAs Section */}
+          {/* Master Toggle */}
           <div style={{ marginBottom: 12 }}>
+            <label style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              cursor: 'pointer',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              color: settings.showAllOverlays ? '#d1d5db' : '#ef4444',
+            }}>
+              <input
+                type="checkbox"
+                checked={settings.showAllOverlays}
+                onChange={handleMasterToggle}
+                style={{ width: 'auto', margin: 0 }}
+              />
+              {settings.showAllOverlays ? 'All Overlays On' : 'Candles Only'}
+            </label>
+          </div>
+
+          {/* EMAs Section */}
+          <div style={{ marginBottom: 12, borderTop: '1px solid rgba(42, 46, 57, 0.6)', paddingTop: 12, opacity: settings.showAllOverlays ? 1 : 0.4, pointerEvents: settings.showAllOverlays ? 'auto' : 'none' }}>
             <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#787B86', marginBottom: 8, textTransform: 'uppercase' }}>
               EMAs
             </div>
@@ -1328,7 +1531,7 @@ function ChartSettingsPanel({ settings, onSettingsChange, onBarCountChange }: Ch
           </div>
 
           {/* Indicators Section */}
-          <div style={{ marginBottom: 12, borderTop: '1px solid rgba(42, 46, 57, 0.6)', paddingTop: 12 }}>
+          <div style={{ marginBottom: 12, borderTop: '1px solid rgba(42, 46, 57, 0.6)', paddingTop: 12, opacity: settings.showAllOverlays ? 1 : 0.4, pointerEvents: settings.showAllOverlays ? 'auto' : 'none' }}>
             <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#787B86', marginBottom: 8, textTransform: 'uppercase' }}>
               Indicators
             </div>
@@ -1347,6 +1550,21 @@ function ChartSettingsPanel({ settings, onSettingsChange, onBarCountChange }: Ch
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, cursor: 'pointer', fontSize: '0.75rem', color: settings.showVolume ? '#d1d5db' : '#787B86' }}>
               <input type="checkbox" checked={settings.showVolume} onChange={() => handleToggle('showVolume')} style={{ width: 'auto', margin: 0 }} />
               Volume
+            </label>
+          </div>
+
+          {/* Trades Section */}
+          <div style={{ marginBottom: 12, borderTop: '1px solid rgba(42, 46, 57, 0.6)', paddingTop: 12, opacity: settings.showAllOverlays ? 1 : 0.4, pointerEvents: settings.showAllOverlays ? 'auto' : 'none' }}>
+            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#787B86', marginBottom: 8, textTransform: 'uppercase' }}>
+              Trades
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, cursor: 'pointer', fontSize: '0.75rem', color: settings.showTrades ? '#d1d5db' : '#787B86' }}>
+              <input type="checkbox" checked={settings.showTrades} onChange={() => handleToggle('showTrades')} style={{ width: 'auto', margin: 0 }} />
+              Trade Markers
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, cursor: 'pointer', fontSize: '0.75rem', color: settings.showTradeLines ? '#d1d5db' : '#787B86' }}>
+              <input type="checkbox" checked={settings.showTradeLines} onChange={() => handleToggle('showTradeLines')} style={{ width: 'auto', margin: 0 }} />
+              Entry/Exit Lines
             </label>
           </div>
 
