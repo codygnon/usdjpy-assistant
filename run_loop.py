@@ -22,8 +22,6 @@ from core.execution_engine import (
     execute_breakout_policy_demo_only,
     execute_ema_pullback_policy_demo_only,
     execute_indicator_policy_demo_only,
-    execute_kt_cg_hybrid_policy_demo_only,
-    execute_m5_m1_ema_cross_policy_demo_only,
     execute_price_level_policy_demo_only,
     execute_session_momentum_policy_demo_only,
     execute_signal_demo_only,
@@ -114,169 +112,6 @@ def _insert_trade_for_policy(
         store.insert_trade(row)
     except Exception:
         pass
-
-
-def _check_and_close_tp(profile, adapter, store, tick) -> None:
-    """Monitor open positions and close them immediately when TP is hit.
-
-    This runs every loop iteration (0.5s with fast loop) to ensure trades
-    are closed the moment price hits the target, rather than waiting for
-    the broker's TP order to execute.
-
-    Also detects trades that were closed by the broker (via their TP order)
-    and updates the database immediately.
-    """
-    pip_size = float(profile.pip_size)
-
-    try:
-        open_positions = adapter.get_open_positions(profile.symbol)
-    except Exception:
-        return
-
-    our_trades = [dict(r) for r in store.list_open_trades(profile.profile_name)]
-    position_to_trade = {
-        row["mt5_position_id"]: row
-        for row in our_trades
-        if row.get("mt5_position_id") is not None
-    }
-
-    # Build set of broker's open position IDs for quick lookup
-    broker_open_ids = set()
-    for pos in open_positions:
-        pos_id = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
-        if pos_id is not None:
-            try:
-                broker_open_ids.add(int(pos_id))
-            except (TypeError, ValueError):
-                pass
-
-    # Check for trades in our DB that are no longer open on broker (closed by broker's TP/SL)
-    for position_id, trade_row in position_to_trade.items():
-        if position_id not in broker_open_ids:
-            # Trade was closed by broker - update our database
-            trade_id = str(trade_row["trade_id"])
-            entry_price = float(trade_row["entry_price"])
-            side = str(trade_row["side"]).lower()
-            target_price = trade_row.get("target_price")
-            stop_price = trade_row.get("stop_price")
-
-            # Use current price as approximate exit (actual will be synced later)
-            exit_price = tick.bid if side == "buy" else tick.ask
-
-            # Calculate pips
-            if side == "buy":
-                pips = (exit_price - entry_price) / pip_size
-            else:
-                pips = (entry_price - exit_price) / pip_size
-
-            # Determine exit reason
-            exit_reason = "broker_closed"
-            if target_price and abs(exit_price - float(target_price)) <= pip_size * 2:
-                exit_reason = "hit_take_profit"
-            elif stop_price and abs(exit_price - float(stop_price)) <= pip_size * 2:
-                exit_reason = "hit_stop_loss"
-
-            # Calculate R-multiple
-            risk_pips = None
-            r_multiple = None
-            if stop_price:
-                risk_pips = abs(entry_price - float(stop_price)) / pip_size
-                if risk_pips > 0:
-                    r_multiple = pips / risk_pips
-
-            store.close_trade(
-                trade_id=trade_id,
-                updates={
-                    "exit_price": exit_price,
-                    "exit_timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
-                    "exit_reason": exit_reason,
-                    "pips": pips,
-                    "risk_pips": risk_pips,
-                    "r_multiple": r_multiple,
-                },
-            )
-            print(f"[{profile.profile_name}] Broker closed position {position_id}: {exit_reason}, pips={pips:.2f}")
-
-    # Now check open positions for manual TP close
-    for pos in open_positions:
-        position_id = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
-        if position_id is None:
-            continue
-        try:
-            position_id = int(position_id)
-        except (TypeError, ValueError):
-            continue
-
-        trade_row = position_to_trade.get(position_id)
-        if trade_row is None:
-            continue
-
-        target_price = trade_row.get("target_price")
-        if target_price is None:
-            continue
-
-        target_price = float(target_price)
-        entry_price = float(trade_row["entry_price"])
-        side = str(trade_row["side"]).lower()
-        trade_id = str(trade_row["trade_id"])
-
-        # Check if TP is hit
-        # For buy: TP hit when bid >= target (we close at bid)
-        # For sell: TP hit when ask <= target (we close at ask)
-        tp_hit = False
-        exit_price = None
-        if side == "buy" and tick.bid >= target_price:
-            tp_hit = True
-            exit_price = tick.bid
-        elif side == "sell" and tick.ask <= target_price:
-            tp_hit = True
-            exit_price = tick.ask
-
-        if tp_hit and exit_price is not None:
-            try:
-                if isinstance(pos, dict):
-                    current_units = pos.get("currentUnits") or 0
-                    current_lots = abs(int(current_units)) / 100_000.0
-                else:
-                    current_lots = float(getattr(pos, "volume", 0) or 0)
-
-                position_type = 1 if side == "sell" else 0
-                adapter.close_position(
-                    ticket=position_id,
-                    symbol=profile.symbol,
-                    volume=current_lots,
-                    position_type=position_type,
-                )
-
-                # Update database immediately
-                if side == "buy":
-                    pips = (exit_price - entry_price) / pip_size
-                else:
-                    pips = (entry_price - exit_price) / pip_size
-
-                stop_price = trade_row.get("stop_price")
-                risk_pips = None
-                r_multiple = None
-                if stop_price:
-                    risk_pips = abs(entry_price - float(stop_price)) / pip_size
-                    if risk_pips > 0:
-                        r_multiple = pips / risk_pips
-
-                store.close_trade(
-                    trade_id=trade_id,
-                    updates={
-                        "exit_price": exit_price,
-                        "exit_timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
-                        "exit_reason": "hit_take_profit",
-                        "pips": pips,
-                        "risk_pips": risk_pips,
-                        "r_multiple": r_multiple,
-                    },
-                )
-
-                print(f"[{profile.profile_name}] TP hit - closed position {position_id} at {exit_price:.5f} (target was {target_price:.5f}), pips={pips:.2f}")
-            except Exception as e:
-                print(f"[{profile.profile_name}] TP close failed for position {position_id}: {e}")
 
 
 def _run_trade_management(profile, adapter, store, tick) -> None:
@@ -413,14 +248,6 @@ def main() -> None:
             getattr(p, "type", None) == "ema_pullback" and getattr(p, "enabled", True)
             for p in profile.execution.policies
         )
-        has_kt_cg_hybrid = any(
-            getattr(p, "type", None) == "kt_cg_hybrid" and getattr(p, "enabled", True)
-            for p in profile.execution.policies
-        )
-        has_m5_m1_ema_cross = any(
-            getattr(p, "type", None) == "m5_m1_ema_cross" and getattr(p, "enabled", True)
-            for p in profile.execution.policies
-        )
         # Confirmed-cross setups can now use M5; detect if any do so we fetch M5 bars.
         m5_cross_setup_ids = {
             sid
@@ -436,7 +263,7 @@ def main() -> None:
 
         loop_count = 0
         last_sync_loop = 0
-        SYNC_INTERVAL_LOOPS = 60  # Sync every ~30 seconds (with 0.5s fast poll); primary sync now in _check_and_close_tp
+        SYNC_INTERVAL_LOOPS = 12  # Sync every ~60 seconds (assuming 5s poll)
         _MAX_FETCH_RETRIES = 3  # Retry broker fetch this many times before sleeping and continuing
 
         while True:
@@ -474,8 +301,8 @@ def main() -> None:
                         "M15": adapter.get_bars(profile.symbol, "M15", 2000),
                         "M1": adapter.get_bars(profile.symbol, "M1", 3000),
                     }
-                    # Fetch M5 data when needed by ema_pullback, M5 confirmed-cross, m5_m1_ema_cross, or kt_cg_hybrid.
-                    if has_ema_pullback or has_m5_confirmed_cross or has_m5_m1_ema_cross or has_kt_cg_hybrid:
+                    # Fetch M5 data when needed by ema_pullback or M5 confirmed-cross setups.
+                    if has_ema_pullback or has_m5_confirmed_cross:
                         data_by_tf["M5"] = adapter.get_bars(profile.symbol, "M5", 2000)
                     tick = adapter.get_tick(profile.symbol)
                     break
@@ -489,9 +316,6 @@ def main() -> None:
                         time.sleep(60)
             if data_by_tf is None or tick is None:
                 continue
-
-            # TP monitoring: close positions immediately when TP is hit (runs every tick)
-            _check_and_close_tp(profile, adapter, store, tick)
 
             # Trade management: breakeven and TP1 partial close (only for positions we opened)
             _run_trade_management(profile, adapter, store, tick)
@@ -996,107 +820,6 @@ def main() -> None:
                             )
                         else:
                             print(f"[{profile.profile_name}] ema_pullback {pol.id} mode={mode} -> {dec.reason}")
-
-            # KT/CG Hybrid policies
-            if has_kt_cg_hybrid and mkt is None:
-                mkt = _compute_mkt(profile, tick, data_by_tf)
-            if has_kt_cg_hybrid and mkt is not None:
-                trades_df = store.read_trades_df(profile.profile_name)
-                for pol in profile.execution.policies:
-                    if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "kt_cg_hybrid":
-                        continue
-                    tf_df = data_by_tf.get(getattr(pol, "entry_timeframe", "M1"))
-                    if tf_df is None or tf_df.empty:
-                        continue
-                    bar_time_utc = pd.to_datetime(tf_df["time"].iloc[-1], utc=True).isoformat()
-                    dec = execute_kt_cg_hybrid_policy_demo_only(
-                        adapter=adapter,
-                        profile=profile,
-                        log_dir=log_dir,
-                        policy=pol,
-                        context=mkt,
-                        data_by_tf=data_by_tf,
-                        tick=tick,
-                        trades_df=trades_df,
-                        mode=mode,
-                        bar_time_utc=bar_time_utc,
-                    )
-                    if dec.attempted:
-                        if dec.placed:
-                            side = dec.side or "buy"
-                            entry_price = tick.ask if side == "buy" else tick.bid
-                            pip = float(profile.pip_size)
-                            tp_price = entry_price + pol.tp_pips * pip if side == "buy" else entry_price - pol.tp_pips * pip
-                            sl_price = entry_price - pol.sl_pips * pip if side == "buy" else entry_price + pol.sl_pips * pip
-                            print(f"[{profile.profile_name}] TRADE PLACED: kt_cg_hybrid:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
-                            _insert_trade_for_policy(
-                                profile=profile,
-                                adapter=adapter,
-                                store=store,
-                                policy_type="kt_cg_hybrid",
-                                policy_id=pol.id,
-                                side=side,
-                                entry_price=entry_price,
-                                dec=dec,
-                                stop_price=sl_price,
-                                target_price=tp_price,
-                            )
-                        else:
-                            print(f"[{profile.profile_name}] kt_cg_hybrid {pol.id} mode={mode} -> {dec.reason}")
-
-            # M5/M1 EMA Cross policies
-            if has_m5_m1_ema_cross and mkt is None:
-                mkt = _compute_mkt(profile, tick, data_by_tf)
-            if has_m5_m1_ema_cross and mkt is not None:
-                trades_df = store.read_trades_df(profile.profile_name)
-                for pol in profile.execution.policies:
-                    if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "m5_m1_ema_cross":
-                        continue
-                    m5_df = data_by_tf.get("M5")
-                    if m5_df is None or m5_df.empty:
-                        continue
-                    bar_time_utc = pd.to_datetime(m5_df["time"].iloc[-1], utc=True).isoformat()
-                    dec = execute_m5_m1_ema_cross_policy_demo_only(
-                        adapter=adapter,
-                        profile=profile,
-                        log_dir=log_dir,
-                        policy=pol,
-                        context=mkt,
-                        data_by_tf=data_by_tf,
-                        tick=tick,
-                        trades_df=trades_df,
-                        mode=mode,
-                        bar_time_utc=bar_time_utc,
-                    )
-                    if dec.attempted:
-                        if dec.placed:
-                            side = dec.side or "buy"
-                            entry_price = tick.ask if side == "buy" else tick.bid
-                            pip = float(profile.pip_size)
-                            tp_pips = getattr(pol, "tp_strong", 2.0)  # Approximate; actual TP computed dynamically
-                            sl_pips = getattr(pol, "sl_pips", 20.0)
-                            if side == "buy":
-                                tp_price = entry_price + tp_pips * pip
-                                sl_price = entry_price - sl_pips * pip
-                            else:
-                                tp_price = entry_price - tp_pips * pip
-                                sl_price = entry_price + sl_pips * pip
-                            print(f"[{profile.profile_name}] TRADE PLACED: m5_m1_ema_cross:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
-                            _insert_trade_for_policy(
-                                profile=profile,
-                                adapter=adapter,
-                                store=store,
-                                policy_type="m5_m1_ema_cross",
-                                policy_id=pol.id,
-                                side=side,
-                                entry_price=entry_price,
-                                dec=dec,
-                                stop_price=sl_price,
-                                target_price=tp_price,
-                                size_lots=float(getattr(pol, "lots", 0.01)),
-                            )
-                        else:
-                            print(f"[{profile.profile_name}] m5_m1_ema_cross {pol.id} mode={mode} -> {dec.reason}")
 
             if args.once:
                 break

@@ -33,9 +33,6 @@ class PresetId(str, Enum):
     M5_M15_MOMENTUM_PULLBACK_9_21 = "m5_m15_momentum_pullback_9_21"
     CODY_WIZARD_AGGR_OANDA_M5_CROSS = "cody_wizard_aggressive_oanda_m5_cross"
     KUMA_TORA_BB_EMA_9_21_SCALPER = "kuma_tora_bb_ema_9_21_scalper"
-    KT_CG_TRIAL_BLOW_ACCOUNT = "kt_cg_trial_blow_account"
-    KT_CG_TRIAL_2 = "kt_cg_trial_2"
-    M5_M1_EMA_CROSS_9_21 = "m5_m1_ema_cross_9_21"
 
 
 # ---------------------------------------------------------------------------
@@ -84,8 +81,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "enabled": True,
                     "timeframe": "M1",
                     "confirmation": {
-                        "confirm_bars": 2,
-                        "max_wait_bars": 4,
+                        "confirm_bars": 1,
+                        "max_wait_bars": 3,
                     },
                 },
             },
@@ -197,7 +194,6 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                 "alignment": {"enabled": False},
                 "ema_stack_filter": {"enabled": False},
                 "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 8.0},
-                "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
             },
             "setups": {
                 "m1_cross_entry": {"enabled": False},
@@ -211,8 +207,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
-            "loop_poll_seconds": 5.0,
-            "loop_poll_seconds_fast": 2.0,
+            "loop_poll_seconds": 10.0,
+            "loop_poll_seconds_fast": 5.0,
             "policies": [
                 {
                     "type": "bollinger_bands",
@@ -275,7 +271,6 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                 "alignment": {"enabled": False},
                 "ema_stack_filter": {"enabled": False},
                 "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 8.0},
-                "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
             },
             "setups": {
                 "m1_cross_entry": {"enabled": False},
@@ -289,8 +284,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
-            "loop_poll_seconds": 8.0,
-            "loop_poll_seconds_fast": 3.0,
+            "loop_poll_seconds": 15.0,
+            "loop_poll_seconds_fast": 5.0,
             "policies": [
                 {
                     "type": "bollinger_bands",
@@ -380,7 +375,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "rsi_oversold": 30.0,
                     "rsi_overbought": 70.0,
                     "rsi_zone": "oversold",
-                    "use_macd_cross": True,
+                    "use_macd_cross": False,
                     "tp_pips": 18.0,
                     "sl_pips": 12.0,
                 },
@@ -395,7 +390,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "rsi_oversold": 30.0,
                     "rsi_overbought": 70.0,
                     "rsi_zone": "overbought",
-                    "use_macd_cross": True,
+                    "use_macd_cross": False,
                     "tp_pips": 18.0,
                     "sl_pips": 12.0,
                 },
@@ -446,20 +441,20 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
-            "loop_poll_seconds": 3.0,
-            "loop_poll_seconds_fast": 1.0,
+            "loop_poll_seconds": 5.0,
+            "loop_poll_seconds_fast": 2.0,
             "policies": [
                 {
                     "type": "vwap",
                     "id": "vwap_cross",
                     "enabled": True,
-                    "timeframe": "M5",
+                    "timeframe": "M15",
                     "trigger": "cross_above",
                     "side": "buy",
                     "tp_pips": 18.0,
                     "sl_pips": 12.0,
                     "use_slope_filter": True,
-                    "vwap_slope_lookback_bars": 12,
+                    "vwap_slope_lookback_bars": 20,
                     "session_filter_enabled": True,
                     "no_trade_zone_pips": 1.5,
                 },
@@ -467,13 +462,13 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "type": "vwap",
                     "id": "vwap_cross_sell",
                     "enabled": True,
-                    "timeframe": "M5",
+                    "timeframe": "M15",
                     "trigger": "cross_below",
                     "side": "sell",
                     "tp_pips": 18.0,
                     "sl_pips": 12.0,
                     "use_slope_filter": True,
-                    "vwap_slope_lookback_bars": 12,
+                    "vwap_slope_lookback_bars": 20,
                     "session_filter_enabled": True,
                     "no_trade_zone_pips": 1.5,
                 },
@@ -627,7 +622,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         },
         "strategy": {
             "filters": {
-                "alignment": {"enabled": True, "trend_timeframe": "M15"},
+                "alignment": {"enabled": False},
                 "ema_stack_filter": {"enabled": False},
                 "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 10.0},
                 "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
@@ -684,7 +679,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             # Max lots is set very high so effective max is capped by Profile Editor limits.
             "max_lots": 999.0,
             "require_stop": True,
-            "min_stop_pips": 12.0,
+            "min_stop_pips": 15.0,
             "max_spread_pips": 5.0,
             "max_trades_per_day": 30,
             "max_open_trades": 3,
@@ -931,235 +926,6 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "round_number_buffer_pips": 5.0,
                     # Used for min_rr calculations (scaled mode sets TP=None on initial order)
                     "tp_pips": 18.0,
-                },
-            ],
-        },
-    },
-    # -----------------------------------------------------------------------
-    # KT/CG Trial #1 "Blow Account" - Aggressive hybrid entry testing preset
-    # Bull: zone entry (price in EMA 9-21). Bear: cross entry (EMA 9 < EMA 21).
-    # -----------------------------------------------------------------------
-    PresetId.KT_CG_TRIAL_BLOW_ACCOUNT: {
-        "name": "KT/CG Trial #1 Blow Account",
-        "description": "Aggressive M1 scalper with M15 trend filter. Bull: buy when EMA 9 is above EMA 21. Bear: sell when EMA 9 is below EMA 21. High frequency, no filters, testing preset.",
-        "pros": [
-            "Very fast entries on M1 with immediate execution",
-            "High trade frequency (up to 100/day)",
-            "No filters = maximum opportunity count",
-            "24/5 trading across all sessions",
-        ],
-        "cons": [
-            "Poor R:R (0.25:1) requires very high win rate",
-            "Wide SL (20 pips) vs tight TP (5 pips)",
-            "No session filter = trades during low liquidity",
-            "Testing preset - expect significant drawdowns",
-        ],
-        "risk": {
-            "max_lots": 0.1,
-            "require_stop": True,
-            "min_stop_pips": 20.0,
-            "max_spread_pips": 6.0,
-            "max_trades_per_day": 100,
-            "max_open_trades": 20,
-            "cooldown_minutes_after_loss": 0,
-        },
-        "strategy": {
-            "filters": {
-                "alignment": {"enabled": False},
-                "ema_stack_filter": {"enabled": False},
-                "atr_filter": {"enabled": False},
-                "session_filter": {"enabled": False},
-            },
-            "setups": {
-                "m1_cross_entry": {"enabled": False},
-            },
-        },
-        "trade_management": {
-            "target": {
-                "mode": "fixed_pips",
-                "pips_default": 0.5,
-            },
-            "breakeven": {"enabled": False},
-        },
-        "execution": {
-            "loop_poll_seconds": 1.0,
-            "loop_poll_seconds_fast": 0.5,
-            "policies": [
-                {
-                    "type": "kt_cg_hybrid",
-                    "id": "kt_cg_trial_1",
-                    "enabled": True,
-                    "trend_timeframe": "M15",
-                    "entry_timeframe": "M1",
-                    "ema_fast": 9,
-                    "ema_slow": 21,
-                    "tp_pips": 0.5,
-                    "sl_pips": 20.0,
-                    "cooldown_minutes": 2.0,
-                },
-            ],
-        },
-    },
-    # -----------------------------------------------------------------------
-    # KT/CG Trial #2 (Pullback Override)
-    # Same as Trial #1 but pullbacks can override cooldown. M1 cross in M15 direction
-    # during cooldown triggers trade. Includes swing level proximity filter to avoid
-    # entries near swing highs/lows.
-    # -----------------------------------------------------------------------
-    PresetId.KT_CG_TRIAL_2: {
-        "name": "KT/CG Trial #2 (Counter-Trend Pullback)",
-        "description": "Counter-trend pullback strategy. M5 EMA determines trend. M1 EMA 9/13 cross opposite to M5 trend triggers entry in M5 trend direction. Swing level filter blocks entries near M15 swing highs/lows.",
-        "pros": [
-            "Enters on pullback completion (counter-trend cross)",
-            "Trades in direction of higher timeframe trend",
-            "Simple entry logic - no engulfing/rejection filters",
-            "Tight TP for quick scalps",
-            "Swing filter avoids entries near key reversal zones",
-        ],
-        "cons": [
-            "May enter too early if pullback continues",
-            "Testing preset - expect significant drawdowns",
-        ],
-        "risk": {
-            "max_lots": 0.1,
-            "require_stop": True,
-            "min_stop_pips": 20.0,
-            "max_spread_pips": 6.0,
-            "max_trades_per_day": 100,
-            "max_open_trades": 20,
-            "cooldown_minutes_after_loss": 0,
-        },
-        "strategy": {
-            "filters": {
-                "alignment": {"enabled": False},
-                "ema_stack_filter": {"enabled": False},
-                "atr_filter": {"enabled": False},
-                "session_filter": {"enabled": False},
-            },
-            "setups": {},
-        },
-        "trade_management": {
-            "target": {
-                "mode": "fixed_pips",
-                "pips_default": 0.5,
-            },
-            "stop_loss": None,
-            "breakeven": {"enabled": False},
-        },
-        "execution": {
-            "loop_poll_seconds": 1.0,
-            "loop_poll_seconds_fast": 0.5,
-            "policies": [
-                {
-                    "type": "kt_cg_hybrid",
-                    "id": "kt_cg_trial_2",
-                    "enabled": True,
-                    "trend_timeframe": "M5",
-                    "entry_timeframe": "M1",
-                    "ema_fast": 9,
-                    "ema_slow": 13,
-                    "tp_pips": 0.5,
-                    "sl_pips": 20.0,
-                    "cooldown_minutes": 3.0,
-                    # Pullback override - counter-trend mode
-                    "enable_pullback_override": True,
-                    "require_m15_trend_aligned": False,
-                    "require_counter_trend_cross": True,
-                    "require_engulfing_on_weak_momentum": False,
-                    "require_rejection_candle": False,
-                    # Swing level proximity filter
-                    "swing_level_filter_enabled": True,
-                    "swing_lookback_bars": 100,
-                    "swing_confirmation_bars": 5,
-                    "swing_danger_zone_pct": 0.15,
-                },
-            ],
-        },
-    },
-    # -----------------------------------------------------------------------
-    # M5/M1 EMA Cross 9/21 (Experimental)
-    # Every M5 EMA 9/21 cross triggers a trade. M1 EMA state determines direction/TP.
-    # Fixed 20 pip SL, hedging allowed.
-    # -----------------------------------------------------------------------
-    PresetId.M5_M1_EMA_CROSS_9_21: {
-        "name": "M5/M1 EMA Cross 9/21 (Experimental)",
-        "description": "Experimental scalping: every M5 EMA 9/21 cross triggers a trade. Direction from M1 EMA position, TP scaled by M1 momentum + M5 BB width. Fixed 20 pip SL, hedging allowed.",
-        "pros": [
-            "High frequency - trades every M5 cross",
-            "Dynamic TP based on momentum",
-            "Hedging allowed",
-        ],
-        "cons": [
-            "Experimental - not backtested",
-            "Many small trades",
-            "No trend filtering",
-        ],
-        "risk": {
-            "max_lots": 0.05,
-            "require_stop": True,
-            "min_stop_pips": 10.0,
-            "max_spread_pips": 8.0,
-            "max_trades_per_day": 100,
-            "max_open_trades": 20,
-            "cooldown_minutes_after_loss": 0,
-        },
-        "strategy": {
-            "filters": {
-                "alignment": {"enabled": False},
-                "ema_stack_filter": {"enabled": False},
-                "atr_filter": {"enabled": False},
-                "session_filter": {"enabled": False},
-            },
-            "setups": {},
-        },
-        "trade_management": {
-            "target": {"mode": "fixed_pips", "pips_default": 2.0},
-            "stop_loss": None,  # SL is set by the policy (sl_pips: 20.0)
-            "breakeven": {"enabled": False},
-        },
-        "execution": {
-            "loop_poll_seconds": 3.0,
-            "loop_poll_seconds_fast": 1.0,
-            "policies": [
-                {
-                    "type": "m5_m1_ema_cross",
-                    "id": "m5_m1_cross_main",
-                    "enabled": True,
-                    "m5_ema_fast": 9,
-                    "m5_ema_slow": 21,
-                    "m1_ema_fast": 9,
-                    "m1_ema_slow": 21,
-                    "m1_slope_lookback": 5,
-                    "strong_slope_threshold": 0.3,
-                    "moderate_slope_threshold": 0.15,
-                    "weak_slope_threshold": 0.05,
-                    "cross_history_count": 5,
-                    "use_history_for_tp": True,
-                    # Cross quality scoring - sharp crosses get higher TP targets
-                    "use_cross_quality": True,
-                    "cross_quality_lookback": 3,
-                    "sharp_cross_threshold": 0.5,
-                    # Bollinger Bands
-                    "bb_period": 20,
-                    "bb_std_dev": 2.0,
-                    "bb_thin_threshold": 12.0,
-                    "bb_wide_threshold": 35.0,
-                    # TP targets (strong = 6-10 pips to let winners run)
-                    "tp_strong": 8.0,
-                    "tp_moderate": 4.0,
-                    "tp_weak": 2.0,
-                    "tp_flat": 1.0,
-                    "tp_min": 0.5,
-                    "tp_max": 12.0,
-                    "tp_spread_buffer": 0.5,
-                    # Risk management
-                    "sl_pips": 20.0,
-                    "lots": 0.02,  # base lot size
-                    # Momentum-based position sizing
-                    "use_momentum_sizing": True,
-                    "lots_multiplier_strong": 1.0,  # full size for strong momentum
-                    "lots_multiplier_moderate": 0.75,  # 75% for moderate
-                    "lots_multiplier_weak": 0.5,  # 50% for weak/flat
                 },
             ],
         },

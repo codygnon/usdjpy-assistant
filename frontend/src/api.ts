@@ -358,28 +358,6 @@ export interface OhlcBar {
   high: number;
   low: number;
   close: number;
-  volume?: number;  // tick_volume
-}
-
-export interface EmaPoint {
-  time: number;
-  value: number;
-}
-
-export interface SwingLevel {
-  time: number;
-  price: number;
-}
-
-export interface SwingLevels {
-  highs: SwingLevel[];
-  lows: SwingLevel[];
-}
-
-export interface BollingerSeries {
-  upper: EmaPoint[];
-  middle: EmaPoint[];
-  lower: EmaPoint[];
 }
 
 export interface TaTimeframe {
@@ -390,12 +368,9 @@ export interface TaTimeframe {
   price: TaPrice;
   summary: string;
   ohlc: OhlcBar[];
-  ema_fast?: EmaPoint[];
-  ema_slow?: EmaPoint[];
-  ema_stack?: Record<string, EmaPoint[]>;
-  ema_lines?: Record<string, EmaPoint[]>;  // All common EMAs: ema9, ema13, ema21, etc.
-  bollinger_series?: BollingerSeries;
-  swing_levels?: SwingLevels;
+  ema_fast?: { time: number; value: number }[];
+  ema_slow?: { time: number; value: number }[];
+  ema_stack?: Record<string, { time: number; value: number }[]>;
   error?: string;
 }
 
@@ -410,11 +385,10 @@ export interface TechnicalAnalysis {
 
 export async function getTechnicalAnalysis(
   profileName: string,
-  profilePath: string,
-  bars: number = 200
+  profilePath: string
 ): Promise<TechnicalAnalysis> {
   return fetchJson<TechnicalAnalysis>(
-    `${API_BASE}/data/${profileName}/technical-analysis?profile_path=${encodeURIComponent(profilePath)}&bars=${bars}`
+    `${API_BASE}/data/${profileName}/technical-analysis?profile_path=${encodeURIComponent(profilePath)}`
   );
 }
 
@@ -431,7 +405,6 @@ export interface OpenTrade {
   mt5_position_id?: number;
 }
 
-export async function getOpenTrades(profileName: string, profilePath?: string): Promise<OpenTrade[]> {
-  const params = profilePath ? `?profile_path=${encodeURIComponent(profilePath)}` : '';
-  return fetchJson<OpenTrade[]>(`${API_BASE}/data/${profileName}/open-trades${params}`);
+export async function getOpenTrades(profileName: string): Promise<OpenTrade[]> {
+  return fetchJson<OpenTrade[]>(`${API_BASE}/data/${profileName}/open-trades`);
 }

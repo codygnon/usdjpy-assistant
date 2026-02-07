@@ -321,117 +321,6 @@ class ExecutionPolicyEmaBbScalp(BaseModel):
     min_distance_pips: float = 1.0
 
 
-class ExecutionPolicyKtCgHybrid(BaseModel):
-    """KT/CG hybrid policy: EMA position entries filtered by higher timeframe trend.
-
-    Bull trend (M15 close > EMA 21): Buy when M1 EMA 9 is above EMA 21.
-    Bear trend (M15 close < EMA 21): Sell when M1 EMA 9 is below EMA 21.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["kt_cg_hybrid"] = "kt_cg_hybrid"
-    id: str = "kt_cg_hybrid_default"
-    enabled: bool = True
-
-    # Timeframes
-    trend_timeframe: Literal["M5", "M15", "H1"] = "M15"
-    entry_timeframe: Literal["M1", "M5"] = "M1"
-
-    # EMAs
-    ema_fast: int = 9
-    ema_slow: int = 21
-
-    # TP/SL
-    tp_pips: float = 0.5
-    sl_pips: float = 20.0
-
-    # Cooldown between trades (minutes)
-    cooldown_minutes: float = 0.0
-
-    # Pullback cooldown override
-    enable_pullback_override: bool = False  # Allow pullback to bypass cooldown
-    require_m15_trend_aligned: bool = True  # Pullback cross must match M15 direction
-    require_counter_trend_cross: bool = False  # When True, M1 cross must be OPPOSITE to trend
-
-    # Momentum-based engulfing filter (for pullback entries only)
-    require_engulfing_on_weak_momentum: bool = False
-    momentum_slope_lookback: int = 5
-    strong_momentum_threshold: float = 0.3  # pips per bar
-    moderate_momentum_threshold: float = 0.15
-    weak_momentum_threshold: float = 0.05
-
-    # Rejection candle filter (for pullback entries only)
-    require_rejection_candle: bool = False
-    rejection_wick_ratio: float = 1.0  # wick >= body * ratio
-
-    # Swing level proximity filter
-    swing_level_filter_enabled: bool = False
-    swing_lookback_bars: int = 100  # M15 bars to scan for swings
-    swing_confirmation_bars: int = 5  # Bars before/after for swing confirmation
-    swing_danger_zone_pct: float = 0.15  # 15% of range defines danger zone
-
-
-class ExecutionPolicyM5M1EmaCross(BaseModel):
-    """M5 EMA 9/21 cross triggers trade; M1 EMA state determines direction/TP."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["m5_m1_ema_cross"] = "m5_m1_ema_cross"
-    id: str = "m5_m1_ema_cross_default"
-    enabled: bool = True
-
-    # M5 cross detection
-    m5_ema_fast: int = 9
-    m5_ema_slow: int = 21
-
-    # M1 state analysis
-    m1_ema_fast: int = 9
-    m1_ema_slow: int = 21
-    m1_slope_lookback: int = 5
-
-    # Momentum thresholds (pips per bar)
-    strong_slope_threshold: float = 0.3
-    moderate_slope_threshold: float = 0.15
-    weak_slope_threshold: float = 0.05
-
-    # Cross history settings
-    cross_history_count: int = 5
-    use_history_for_tp: bool = True
-
-    # Cross quality scoring
-    use_cross_quality: bool = True
-    cross_quality_lookback: int = 3  # bars to analyze around cross
-    sharp_cross_threshold: float = 0.5  # pip separation per bar for "sharp" cross
-
-    # Bollinger Band settings
-    bb_period: int = 20
-    bb_std_dev: float = 2.0
-    bb_thin_threshold: float = 15.0
-    bb_wide_threshold: float = 40.0
-
-    # Take profit bases (pips) - strong targets 6-10 pips to let winners run
-    tp_strong: float = 8.0
-    tp_moderate: float = 4.0
-    tp_weak: float = 2.0
-    tp_flat: float = 1.0
-    tp_min: float = 0.5
-    tp_max: float = 12.0
-
-    # Spread buffer for TP (pips added to account for spread on exit)
-    tp_spread_buffer: float = 0.5
-
-    # Stop loss and position sizing
-    sl_pips: float = 20.0
-    lots: float = 0.01
-
-    # Momentum-based position sizing
-    use_momentum_sizing: bool = True
-    lots_multiplier_strong: float = 1.0  # full size for strong momentum
-    lots_multiplier_moderate: float = 0.75  # 75% for moderate
-    lots_multiplier_weak: float = 0.5  # 50% for weak/flat
-
-
 ExecutionPolicy = Annotated[
     Union[
         ExecutionPolicyConfirmedCross,
@@ -443,8 +332,6 @@ ExecutionPolicy = Annotated[
         ExecutionPolicyVWAP,
         ExecutionPolicyEmaPullback,
         ExecutionPolicyEmaBbScalp,
-        ExecutionPolicyKtCgHybrid,
-        ExecutionPolicyM5M1EmaCross,
     ],
     Field(discriminator="type"),
 ]

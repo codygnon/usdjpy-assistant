@@ -1,77 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
-import { createChart, createSeriesMarkers, IChartApi, ISeriesApi, CandlestickData, Time, CandlestickSeries, LineSeries, HistogramSeries, LineStyle } from 'lightweight-charts';
+import { createChart, createSeriesMarkers, IChartApi, ISeriesApi, CandlestickData, Time, CandlestickSeries, LineSeries, LineStyle } from 'lightweight-charts';
 import * as api from './api';
-
-// Chart settings interface for EMA visibility and other toggles
-interface ChartSettings {
-  emaVisibility: {
-    ema9: boolean;
-    ema13: boolean;
-    ema21: boolean;
-    ema34: boolean;
-    ema50: boolean;
-    ema89: boolean;
-    ema200: boolean;
-  };
-  showVolume: boolean;
-  showBollingerBands: boolean;
-  showSwingLevels: boolean;
-  showCrossovers: boolean;
-  showTrades: boolean;
-  showTradeLines: boolean;
-  showAllOverlays: boolean;
-  barCount: number;
-}
-
-const DEFAULT_CHART_SETTINGS: ChartSettings = {
-  emaVisibility: {
-    ema9: false,
-    ema13: false,
-    ema21: false,
-    ema34: false,
-    ema50: false,
-    ema89: false,
-    ema200: false,
-  },
-  showVolume: false,
-  showBollingerBands: false,
-  showSwingLevels: false,
-  showCrossovers: true,
-  showTrades: true,
-  showTradeLines: true,
-  showAllOverlays: true,
-  barCount: 200,
-};
-
-// EMA colors for the settings panel
-const EMA_COLORS: Record<string, string> = {
-  ema9: '#f59e0b',   // amber
-  ema13: '#3b82f6',  // blue
-  ema21: '#8b5cf6',  // purple
-  ema34: '#06b6d4',  // cyan
-  ema50: '#10b981',  // green
-  ema89: '#6366f1',  // indigo
-  ema200: '#ec4899', // pink
-};
-
-// Load chart settings from localStorage
-function loadChartSettings(): ChartSettings {
-  try {
-    const stored = localStorage.getItem('chartSettings');
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      return { ...DEFAULT_CHART_SETTINGS, ...parsed };
-    }
-  } catch {
-    // Ignore parse errors
-  }
-  return DEFAULT_CHART_SETTINGS;
-}
-
-// Save chart settings to localStorage
-function saveChartSettings(settings: ChartSettings) {
-  localStorage.setItem('chartSettings', JSON.stringify(settings));
-}
 
 type Page = 'run' | 'presets' | 'profile' | 'logs' | 'analysis' | 'guide';
 
@@ -647,7 +576,7 @@ function RunPage({ profile }: { profile: Profile }) {
 }
 
 // ---------------------------------------------------------------------------
-// Candlestick Chart Component with TradingView-style enhancements
+// Candlestick Chart Component
 // ---------------------------------------------------------------------------
 
 interface ChartTrade {
@@ -661,79 +590,16 @@ interface ChartTrade {
   exit_price?: number;
 }
 
-// Detect crossovers between two EMA series and return crossover price
-function detectCrossovers(
-  ema1: api.EmaPoint[],
-  ema2: api.EmaPoint[],
-  ema1Period: number,
-  ema2Period: number
-): { time: number; type: 'bullish' | 'bearish'; price: number }[] {
-  if (ema1.length < 2 || ema2.length < 2) return [];
-
-  // Determine which is shorter/longer period
-  const [shorter, longer] = ema1Period < ema2Period ? [ema1, ema2] : [ema2, ema1];
-
-  // Build a map of time -> value for the longer EMA
-  const longerMap = new Map<number, number>();
-  longer.forEach(p => longerMap.set(p.time, p.value));
-
-  const crossovers: { time: number; type: 'bullish' | 'bearish'; price: number }[] = [];
-
-  for (let i = 1; i < shorter.length; i++) {
-    const prevTime = shorter[i - 1].time;
-    const currTime = shorter[i].time;
-    const prevShorter = shorter[i - 1].value;
-    const currShorter = shorter[i].value;
-    const prevLonger = longerMap.get(prevTime);
-    const currLonger = longerMap.get(currTime);
-
-    if (prevLonger === undefined || currLonger === undefined) continue;
-
-    const prevDiff = prevShorter - prevLonger;
-    const currDiff = currShorter - currLonger;
-
-    if (prevDiff < 0 && currDiff > 0) {
-      // Bullish crossover - shorter crosses above longer
-      // Crossover price is approximately the average of the two EMAs at crossover
-      const crossPrice = (currShorter + currLonger) / 2;
-      crossovers.push({ time: currTime, type: 'bullish', price: crossPrice });
-    } else if (prevDiff > 0 && currDiff < 0) {
-      // Bearish crossover - shorter crosses below longer
-      const crossPrice = (currShorter + currLonger) / 2;
-      crossovers.push({ time: currTime, type: 'bearish', price: crossPrice });
-    }
-  }
-
-  return crossovers;
-}
-
 interface CandlestickChartProps {
   ohlc: api.OhlcBar[];
   trades: ChartTrade[];
-  emaFast?: api.EmaPoint[];
-  emaSlow?: api.EmaPoint[];
-  emaStack?: Record<string, api.EmaPoint[]>;
-  emaLines?: Record<string, api.EmaPoint[]>;
-  bollingerSeries?: api.BollingerSeries;
-  swingLevels?: api.SwingLevels;
+  emaFast?: { time: number; value: number }[];
+  emaSlow?: { time: number; value: number }[];
+  emaStack?: Record<string, { time: number; value: number }[]>;
   height?: number;
-  onCloseTrade?: (trade: ChartTrade) => void;
-  settings?: ChartSettings;
 }
 
-function CandlestickChart({
-  ohlc,
-  trades,
-  emaFast,
-  emaSlow,
-  emaStack,
-  emaLines,
-  bollingerSeries,
-  swingLevels,
-  height = 300,
-  onCloseTrade,
-  settings = DEFAULT_CHART_SETTINGS,
-}: CandlestickChartProps) {
+function CandlestickChart({ ohlc, trades, emaFast, emaSlow, emaStack, height = 300 }: CandlestickChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -741,26 +607,26 @@ function CandlestickChart({
   useEffect(() => {
     if (!chartContainerRef.current || ohlc.length === 0) return;
 
-    // Create chart with TradingView-style colors
+    // Create chart
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
       height: height,
       layout: {
-        background: { color: '#131722' },  // TradingView dark background
-        textColor: '#787B86',              // TradingView text color
+        background: { color: '#1a1a2e' },
+        textColor: '#d1d5db',
       },
       grid: {
-        vertLines: { color: 'rgba(42, 46, 57, 0.6)' },  // TradingView grid
-        horzLines: { color: 'rgba(42, 46, 57, 0.6)' },
+        vertLines: { color: '#2d2d44' },
+        horzLines: { color: '#2d2d44' },
       },
       crosshair: {
         mode: 1,
       },
       rightPriceScale: {
-        borderColor: 'rgba(42, 46, 57, 0.6)',
+        borderColor: '#2d2d44',
       },
       timeScale: {
-        borderColor: 'rgba(42, 46, 57, 0.6)',
+        borderColor: '#2d2d44',
         timeVisible: true,
         secondsVisible: false,
       },
@@ -768,14 +634,14 @@ function CandlestickChart({
 
     chartRef.current = chart;
 
-    // Add candlestick series with TradingView colors
+    // Add candlestick series (v4+ API)
     const candlestickSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#26a69a',      // TradingView green
-      downColor: '#ef5350',    // TradingView red
-      borderUpColor: '#26a69a',
-      borderDownColor: '#ef5350',
-      wickUpColor: '#26a69a',
-      wickDownColor: '#ef5350',
+      upColor: '#10b981',
+      downColor: '#ef4444',
+      borderUpColor: '#10b981',
+      borderDownColor: '#ef4444',
+      wickUpColor: '#10b981',
+      wickDownColor: '#ef4444',
     });
 
     seriesRef.current = candlestickSeries;
@@ -791,202 +657,29 @@ function CandlestickChart({
 
     candlestickSeries.setData(chartData);
 
-    // Add volume histogram if enabled
-    if (settings.showVolume && settings.showAllOverlays && ohlc.some(bar => bar.volume !== undefined)) {
-      const volumeSeries = chart.addSeries(HistogramSeries, {
-        priceFormat: { type: 'volume' },
-        priceScaleId: 'volume',
-        lastValueVisible: false,
-        priceLineVisible: false,
-      });
-
-      // Configure volume scale to take bottom 20% of chart
-      chart.priceScale('volume').applyOptions({
-        scaleMargins: { top: 0.8, bottom: 0 },
-      });
-
-      const volumeData = ohlc.map((bar) => ({
-        time: bar.time as Time,
-        value: bar.volume || 0,
-        color: bar.close >= bar.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)',
-      }));
-      volumeSeries.setData(volumeData);
-    }
-
-    // Add Bollinger Bands if enabled
-    if (settings.showBollingerBands && settings.showAllOverlays && bollingerSeries) {
-      const bbOptions = { lastValueVisible: false, priceLineVisible: false, lineWidth: 1 as const };
-
-      if (bollingerSeries.upper && bollingerSeries.upper.length > 0) {
-        const upperSeries = chart.addSeries(LineSeries, {
-          color: 'rgba(149, 165, 166, 0.5)',
-          ...bbOptions,
-        });
-        upperSeries.setData(bollingerSeries.upper.map(d => ({ time: d.time as Time, value: d.value })));
-      }
-
-      if (bollingerSeries.middle && bollingerSeries.middle.length > 0) {
-        const middleSeries = chart.addSeries(LineSeries, {
-          color: 'rgba(149, 165, 166, 0.7)',
-          ...bbOptions,
-        });
-        middleSeries.setData(bollingerSeries.middle.map(d => ({ time: d.time as Time, value: d.value })));
-      }
-
-      if (bollingerSeries.lower && bollingerSeries.lower.length > 0) {
-        const lowerSeries = chart.addSeries(LineSeries, {
-          color: 'rgba(149, 165, 166, 0.5)',
-          ...bbOptions,
-        });
-        lowerSeries.setData(bollingerSeries.lower.map(d => ({ time: d.time as Time, value: d.value })));
-      }
-    }
-
-    // Add swing level horizontal lines if enabled
-<<<<<<< HEAD
-    if (settings.showSwingLevels && swingLevels) {
-      const startTime = ohlc[0].time;
-      const endTime = ohlc[ohlc.length - 1].time;
-
-      // Draw horizontal lines for recent swing highs (only if within chart range)
-      swingLevels.highs
-        .filter(level => level.time >= startTime && level.time <= endTime)
-        .slice(-5)
-        .forEach(level => {
-          const lineSeries = chart.addSeries(LineSeries, {
-            color: 'rgba(38, 166, 154, 0.6)',
-            lineWidth: 1,
-            lineStyle: LineStyle.Dashed,
-            lastValueVisible: false,
-            priceLineVisible: false,
-          });
-          lineSeries.setData([
-            { time: level.time as Time, value: level.price },
-            { time: endTime as Time, value: level.price },
-          ]);
-=======
-    if (settings.showSwingLevels && settings.showAllOverlays && swingLevels) {
-      // Draw horizontal lines for recent swing highs
-      swingLevels.highs.slice(-5).forEach(level => {
-        const lineSeries = chart.addSeries(LineSeries, {
-          color: 'rgba(38, 166, 154, 0.35)',
-          lineWidth: 1,
-          lineStyle: LineStyle.SparseDotted,
-          lastValueVisible: false,
-          priceLineVisible: false,
-        });
-        // Extend line from swing point to end of chart
-        const endTime = ohlc[ohlc.length - 1].time;
-        lineSeries.setData([
-          { time: level.time as Time, value: level.price },
-          { time: endTime as Time, value: level.price },
-        ]);
-      });
-
-      // Draw horizontal lines for recent swing lows
-      swingLevels.lows.slice(-5).forEach(level => {
-        const lineSeries = chart.addSeries(LineSeries, {
-          color: 'rgba(239, 83, 80, 0.35)',
-          lineWidth: 1,
-          lineStyle: LineStyle.SparseDotted,
-          lastValueVisible: false,
-          priceLineVisible: false,
->>>>>>> 6f4601722945490400a5455aefceb4831720cda3
-        });
-
-      // Draw horizontal lines for recent swing lows (only if within chart range)
-      swingLevels.lows
-        .filter(level => level.time >= startTime && level.time <= endTime)
-        .slice(-5)
-        .forEach(level => {
-          const lineSeries = chart.addSeries(LineSeries, {
-            color: 'rgba(239, 83, 80, 0.6)',
-            lineWidth: 1,
-            lineStyle: LineStyle.Dashed,
-            lastValueVisible: false,
-            priceLineVisible: false,
-          });
-          lineSeries.setData([
-            { time: level.time as Time, value: level.price },
-            { time: endTime as Time, value: level.price },
-          ]);
-        });
-    }
-
-    // Add EMA lines
+    // Add EMA lines (no value labels or price lines on the right - lines only)
     const emaSeriesOptions = { lastValueVisible: false, priceLineVisible: false };
-
-    // Always show the profile's configured emaStack (timeframe-appropriate EMAs)
+    const emaColors: Record<string, string> = { ema8: '#f59e0b', ema13: '#3b82f6', ema21: '#8b5cf6', ema34: '#06b6d4', ema50: '#10b981', ema89: '#6366f1', ema200: '#a855f7' };
+    if (emaFast && emaFast.length > 0) {
+      const emaSeries = chart.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 2, title: 'EMA Fast', ...emaSeriesOptions });
+      emaSeries.setData(emaFast.map(d => ({ time: d.time as Time, value: d.value })));
+    }
+    if (emaSlow && emaSlow.length > 0) {
+      const emaSeries = chart.addSeries(LineSeries, { color: '#10b981', lineWidth: 2, title: 'SMA Slow', ...emaSeriesOptions });
+      emaSeries.setData(emaSlow.map(d => ({ time: d.time as Time, value: d.value })));
+    }
     if (emaStack) {
       Object.entries(emaStack).forEach(([key, arr]) => {
         if (arr && arr.length > 0) {
-          const color = EMA_COLORS[key] || '#94a3b8';
-          const emaSeries = chart.addSeries(LineSeries, { color, lineWidth: 1, ...emaSeriesOptions });
+          const color = emaColors[key] || '#94a3b8';
+          const emaSeries = chart.addSeries(LineSeries, { color, lineWidth: 1, title: key.toUpperCase(), ...emaSeriesOptions });
           emaSeries.setData(arr.map(d => ({ time: d.time as Time, value: d.value })));
         }
       });
     }
 
-<<<<<<< HEAD
-    // Add user-selected additional EMAs from emaLines (only those toggled on that aren't already in emaStack)
-    if (emaLines) {
-      const emaKeys = ['ema9', 'ema13', 'ema21', 'ema34', 'ema50', 'ema89', 'ema200'] as const;
-      const stackKeys = emaStack ? new Set(Object.keys(emaStack)) : new Set<string>();
-
-      emaKeys.forEach(key => {
-        // Skip if already shown via emaStack
-        if (stackKeys.has(key)) return;
-
-        const visibilityKey = key as keyof typeof settings.emaVisibility;
-        if (settings.emaVisibility[visibilityKey] && emaLines[key] && emaLines[key].length > 0) {
-          const color = EMA_COLORS[key] || '#94a3b8';
-          const emaSeries = chart.addSeries(LineSeries, {
-            color,
-            lineWidth: 1,
-            ...emaSeriesOptions,
-          });
-          emaSeries.setData(emaLines[key].map(d => ({ time: d.time as Time, value: d.value })));
-        }
-      });
-=======
-    // Add selectable EMA lines
-    if (settings.showAllOverlays) {
-      const emaSeriesOptions = { lastValueVisible: false, priceLineVisible: false };
-
-      if (emaLines) {
-        const emaKeys = ['ema9', 'ema13', 'ema21', 'ema34', 'ema50', 'ema89', 'ema200'] as const;
-        emaKeys.forEach(key => {
-          const visibilityKey = key as keyof typeof settings.emaVisibility;
-          if (settings.emaVisibility[visibilityKey] && emaLines[key] && emaLines[key].length > 0) {
-            const color = EMA_COLORS[key] || '#94a3b8';
-            const emaSeries = chart.addSeries(LineSeries, {
-              color,
-              lineWidth: 1,
-              ...emaSeriesOptions,
-            });
-            emaSeries.setData(emaLines[key].map(d => ({ time: d.time as Time, value: d.value })));
-          }
-        });
-      } else {
-        // Fallback to legacy emaStack if emaLines not available
-        if (emaStack) {
-          Object.entries(emaStack).forEach(([key, arr]) => {
-            if (arr && arr.length > 0) {
-              const color = EMA_COLORS[key] || '#94a3b8';
-              const emaSeries = chart.addSeries(LineSeries, { color, lineWidth: 1, ...emaSeriesOptions });
-              emaSeries.setData(arr.map(d => ({ time: d.time as Time, value: d.value })));
-            }
-          });
-        }
-      }
->>>>>>> 6f4601722945490400a5455aefceb4831720cda3
-    }
-
-    // Collect all markers
-    const markers: { time: Time; position: 'aboveBar' | 'belowBar'; color: string; shape: 'arrowUp' | 'arrowDown' | 'circle' | 'square'; text: string; size?: number }[] = [];
-
-<<<<<<< HEAD
-    // Add trade markers (small size for many trades)
+    // Markers: blue arrow for buy, red arrow for sell; no text
+    const markers: { time: Time; position: 'aboveBar' | 'belowBar'; color: string; shape: 'arrowUp' | 'arrowDown' | 'circle'; text: string }[] = [];
     trades.forEach((t) => {
       const isBuy = t.side.toLowerCase() === 'buy';
       const buyColor = '#3b82f6';
@@ -999,7 +692,6 @@ function CandlestickChart({
           color,
           shape: isBuy ? 'arrowUp' : 'arrowDown',
           text: '',
-          size: 0.3,  // Small markers for many trades
         });
       }
       if (t.exit_time != null) {
@@ -1009,283 +701,63 @@ function CandlestickChart({
           color,
           shape: 'circle',
           text: '',
-          size: 0.3,  // Small markers for many trades
         });
       }
     });
-
-    // Add swing level markers if enabled
-    if (settings.showSwingLevels && swingLevels) {
-      const startTime = ohlc[0].time;
-      const endTime = ohlc[ohlc.length - 1].time;
-
-      swingLevels.highs
-        .filter(level => level.time >= startTime && level.time <= endTime)
-        .forEach(level => {
-          markers.push({
-            time: level.time as Time,
-            position: 'aboveBar',
-            color: '#26a69a',
-            shape: 'arrowDown',
-            text: '',
-            size: 0.4,
-=======
-    // Add trade markers (toggleable)
-    if (settings.showTrades && settings.showAllOverlays) {
-      trades.forEach((t) => {
-        const isBuy = t.side.toLowerCase() === 'buy';
-        const buyColor = '#3b82f6';
-        const sellColor = '#ef4444';
-        const color = isBuy ? buyColor : sellColor;
-        if (t.entry_time != null) {
-          markers.push({
-            time: t.entry_time as Time,
-            position: isBuy ? 'belowBar' : 'aboveBar',
-            color,
-            shape: isBuy ? 'arrowUp' : 'arrowDown',
-            text: '',
-          });
-        }
-        if (t.exit_time != null) {
-          markers.push({
-            time: t.exit_time as Time,
-            position: isBuy ? 'aboveBar' : 'belowBar',
-            color,
-            shape: 'circle',
-            text: '',
-          });
-        }
-      });
-    }
-
-    // Add swing level markers if enabled
-    if (settings.showSwingLevels && settings.showAllOverlays && swingLevels) {
-      swingLevels.highs.forEach(level => {
-        markers.push({
-          time: level.time as Time,
-          position: 'aboveBar',
-          color: '#26a69a',
-          shape: 'arrowDown',
-          text: '',
-          size: 0.5,
-        });
-      });
-      swingLevels.lows.forEach(level => {
-        markers.push({
-          time: level.time as Time,
-          position: 'belowBar',
-          color: '#ef5350',
-          shape: 'arrowUp',
-          text: '',
-          size: 0.5,
-        });
-      });
-    }
-
-    // Add EMA crossover markers if enabled
-    if (settings.showCrossovers && settings.showAllOverlays && emaLines) {
-      const visibleEmas: { period: number; data: api.EmaPoint[] }[] = [];
-      const emaKeys = ['ema9', 'ema13', 'ema21', 'ema34', 'ema50', 'ema89', 'ema200'] as const;
-      const emaPeriods: Record<string, number> = { ema9: 9, ema13: 13, ema21: 21, ema34: 34, ema50: 50, ema89: 89, ema200: 200 };
-
-      emaKeys.forEach(key => {
-        const visibilityKey = key as keyof typeof settings.emaVisibility;
-        if (settings.emaVisibility[visibilityKey] && emaLines[key] && emaLines[key].length > 0) {
-          visibleEmas.push({ period: emaPeriods[key], data: emaLines[key] });
-        }
-      });
-
-      // Detect crossovers between all pairs of visible EMAs
-      for (let i = 0; i < visibleEmas.length; i++) {
-        for (let j = i + 1; j < visibleEmas.length; j++) {
-          const crossovers = detectCrossovers(
-            visibleEmas[i].data,
-            visibleEmas[j].data,
-            visibleEmas[i].period,
-            visibleEmas[j].period
-          );
-          crossovers.forEach(cross => {
-            markers.push({
-              time: cross.time as Time,
-              position: cross.type === 'bullish' ? 'belowBar' : 'aboveBar',
-              color: cross.type === 'bullish' ? '#26a69a' : '#ef5350',
-              shape: 'circle',
-              text: 'X',
-              size: 1,
-            });
->>>>>>> 6f4601722945490400a5455aefceb4831720cda3
-          });
-        });
-      swingLevels.lows
-        .filter(level => level.time >= startTime && level.time <= endTime)
-        .forEach(level => {
-          markers.push({
-            time: level.time as Time,
-            position: 'belowBar',
-            color: '#ef5350',
-            shape: 'arrowUp',
-            text: '',
-            size: 0.4,
-          });
-        });
-    }
-
-    // Sort markers by time and apply
-    markers.sort((a, b) => (a.time as number) - (b.time as number));
     if (markers.length > 0) {
       const seriesMarkers = createSeriesMarkers(candlestickSeries);
       seriesMarkers.setMarkers(markers);
     }
 
-<<<<<<< HEAD
-    // Draw EMA crossover X marks directly at crossover price using line series
-    if (settings.showCrossovers) {
-      const visibleEmas: { period: number; data: api.EmaPoint[] }[] = [];
-      const emaKeys = ['ema9', 'ema13', 'ema21', 'ema34', 'ema50', 'ema89', 'ema200'] as const;
-      const emaPeriods: Record<string, number> = { ema9: 9, ema13: 13, ema21: 21, ema34: 34, ema50: 50, ema89: 89, ema200: 200 };
-      const addedPeriods = new Set<number>();
-
-      // Include EMAs from emaStack (timeframe-appropriate EMAs always shown)
-      if (emaStack) {
-        Object.entries(emaStack).forEach(([key, data]) => {
-          if (data && data.length > 0) {
-            const period = emaPeriods[key];
-            if (period && !addedPeriods.has(period)) {
-              visibleEmas.push({ period, data });
-              addedPeriods.add(period);
-            }
-          }
-        });
-      }
-
-      // Include user-selected EMAs from emaLines
-      if (emaLines) {
-        emaKeys.forEach(key => {
-          const period = emaPeriods[key];
-          if (addedPeriods.has(period)) return;  // Skip if already added from emaStack
-
-          const visibilityKey = key as keyof typeof settings.emaVisibility;
-          if (settings.emaVisibility[visibilityKey] && emaLines[key] && emaLines[key].length > 0) {
-            visibleEmas.push({ period, data: emaLines[key] });
-            addedPeriods.add(period);
-          }
-        });
-      }
-
-      // Detect crossovers between all pairs of visible EMAs
-      const allCrossovers: { time: number; type: 'bullish' | 'bearish'; price: number }[] = [];
-      for (let i = 0; i < visibleEmas.length; i++) {
-        for (let j = i + 1; j < visibleEmas.length; j++) {
-          const crossovers = detectCrossovers(
-            visibleEmas[i].data,
-            visibleEmas[j].data,
-            visibleEmas[i].period,
-            visibleEmas[j].period
-          );
-          allCrossovers.push(...crossovers);
-        }
-      }
-
-      // Draw X markers at each crossover using a marker series with contrasting colors
-      // Use a separate invisible series to place markers at exact prices
-      if (allCrossovers.length > 0) {
-        // Create a line series just for holding crossover markers
-        const crossoverSeries = chart.addSeries(LineSeries, {
-          color: 'rgba(0,0,0,0)',  // Invisible line
+    // Dotted price lines for active trades only (entry, TP, SL) - colour-coded, values shown
+    const buyColor = '#3b82f6';
+    const sellColor = '#ef4444';
+    const tpColor = '#10b981';
+    const slColor = '#ef4444';
+    const activeTrades = trades.filter((t) => t.exit_time == null && t.exit_price == null);
+    activeTrades.forEach((t) => {
+      const isBuy = t.side.toLowerCase() === 'buy';
+      const entryColor = isBuy ? buyColor : sellColor;
+      if (t.entry_price != null) {
+        candlestickSeries.createPriceLine({
+          price: t.entry_price,
+          color: entryColor,
           lineWidth: 1,
-          lineVisible: false,
-          lastValueVisible: false,
-          priceLineVisible: false,
-          crosshairMarkerVisible: false,
+          lineStyle: LineStyle.Solid,
+          axisLabelVisible: true,
+          title: 'Entry',
         });
-
-        // Set data points at crossover locations
-        const crossoverData = allCrossovers.map(c => ({
-          time: c.time as Time,
-          value: c.price,
-        }));
-        crossoverSeries.setData(crossoverData);
-
-        // Add markers to this series at exact crossover prices
-        const crossoverMarkers = createSeriesMarkers(crossoverSeries);
-        crossoverMarkers.setMarkers(
-          allCrossovers.map(cross => ({
-            time: cross.time as Time,
-            position: 'inBar' as const,
-            color: cross.type === 'bullish' ? '#00ff00' : '#ff0000',  // Bright contrasting colors
-            shape: 'square' as const,
-            text: '\u2716',  // Large X character (heavy multiplication X)
-            size: 2,
-          }))
-        );
       }
-    }
-
-    // Add trade connection lines (diagonal dashed lines from entry to exit)
-    const completedTrades = trades.filter(t =>
-      t.entry_time != null && t.exit_time != null &&
-      t.entry_price != null && t.exit_price != null &&
-      t.entry_time !== t.exit_time  // Ensure different times for diagonal line
-    );
-    completedTrades.forEach(trade => {
-      const lineSeries = chart.addSeries(LineSeries, {
-        color: trade.side.toLowerCase() === 'buy' ? 'rgba(59, 130, 246, 0.7)' : 'rgba(239, 68, 68, 0.7)',
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        lastValueVisible: false,
-        priceLineVisible: false,
-        crosshairMarkerVisible: false,
-      });
-
-      // Sort by time to ensure proper line direction
-      const entryTime = trade.entry_time as number;
-      const exitTime = trade.exit_time as number;
-      const points = [
-        { time: entryTime as Time, value: trade.entry_price },
-        { time: exitTime as Time, value: trade.exit_price! },
-      ].sort((a, b) => (a.time as number) - (b.time as number));
-
-      lineSeries.setData(points);
-    });
-=======
-    // Add trade connection lines (dotted lines from entry to exit, toggleable)
-    if (settings.showTradeLines && settings.showAllOverlays) {
-      const completedTrades = trades.filter(t =>
-        t.entry_time && t.exit_time && t.entry_price && t.exit_price
-      );
-      completedTrades.forEach(trade => {
-        const lineSeries = chart.addSeries(LineSeries, {
-          color: trade.side.toLowerCase() === 'buy' ? 'rgba(59, 130, 246, 0.7)' : 'rgba(239, 68, 68, 0.7)',
-          lineWidth: 2,
-          lineStyle: LineStyle.Dotted,
-          lastValueVisible: false,
-          priceLineVisible: false,
+      if (t.target_price != null) {
+        candlestickSeries.createPriceLine({
+          price: t.target_price,
+          color: tpColor,
+          lineWidth: 1,
+          lineStyle: LineStyle.Solid,
+          axisLabelVisible: true,
+          title: 'TP',
         });
-        lineSeries.setData([
-          { time: trade.entry_time as Time, value: trade.entry_price },
-          { time: trade.exit_time as Time, value: trade.exit_price! },
-        ]);
-      });
-    }
->>>>>>> 6f4601722945490400a5455aefceb4831720cda3
+      }
+      if (t.stop_price != null) {
+        candlestickSeries.createPriceLine({
+          price: t.stop_price,
+          color: slColor,
+          lineWidth: 1,
+          lineStyle: LineStyle.Solid,
+          axisLabelVisible: true,
+          title: 'SL',
+        });
+      }
+    });
 
-    // Fit content initially
+    // Fit content
     chart.timeScale().fitContent();
-
-    // Auto-fit price scale when visible range changes (zoom/scroll)
-    const handleVisibleRangeChange = () => {
-      // Auto-fit the price scale to visible data
-      chart.priceScale('right').applyOptions({
-        autoScale: true,
-      });
-    };
-    chart.timeScale().subscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
 
     // Handle resize
     const handleResize = () => {
       if (chartContainerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({
-          width: chartContainerRef.current.clientWidth
+        chartRef.current.applyOptions({ 
+          width: chartContainerRef.current.clientWidth 
         });
       }
     };
@@ -1294,17 +766,16 @@ function CandlestickChart({
 
     return () => {
       window.removeEventListener('resize', handleResize);
-      chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
       chart.remove();
     };
-  }, [ohlc, trades, emaFast, emaSlow, emaStack, emaLines, bollingerSeries, swingLevels, height, settings]);
+  }, [ohlc, trades, emaFast, emaSlow, emaStack, height]);
 
   if (ohlc.length === 0) {
     return (
-      <div style={{
-        height: height,
-        display: 'flex',
-        alignItems: 'center',
+      <div style={{ 
+        height: height, 
+        display: 'flex', 
+        alignItems: 'center', 
         justifyContent: 'center',
         background: 'var(--bg-tertiary)',
         borderRadius: 6,
@@ -1315,285 +786,16 @@ function CandlestickChart({
     );
   }
 
-  const activeTrades = trades.filter(t => !t.exit_time && !t.exit_price);
-
   return (
-    <div style={{ position: 'relative', width: '100%', height: height }}>
-      <div
-        ref={chartContainerRef}
-        style={{
-          width: '100%',
-          height: height,
-          borderRadius: 6,
-          overflow: 'hidden'
-        }}
-      />
-      {/* Trade legend overlay */}
-      {onCloseTrade && activeTrades.length > 0 && (
-        <div style={{
-          position: 'absolute',
-          top: 8,
-          right: 8,
-          background: 'rgba(19, 23, 34, 0.9)',
-          border: '1px solid rgba(42, 46, 57, 0.6)',
-          borderRadius: 6,
-          padding: 8,
-          fontSize: '0.75rem',
-          maxWidth: 180,
-          zIndex: 10,
-        }}>
-          <div style={{ fontWeight: 600, marginBottom: 6, color: '#787B86' }}>
-            Active Trades
-          </div>
-          {activeTrades.map(t => (
-            <div key={t.trade_id} style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 8,
-              padding: '4px 0',
-              borderTop: '1px solid rgba(42, 46, 57, 0.6)'
-            }}>
-              <span style={{
-                color: t.side.toLowerCase() === 'buy' ? '#3b82f6' : '#ef4444',
-                fontWeight: 500
-              }}>
-                {t.side.toUpperCase()} @ {t.entry_price.toFixed(3)}
-              </span>
-              <button
-                onClick={() => onCloseTrade(t)}
-                style={{
-                  background: 'var(--danger)',
-                  border: 'none',
-                  borderRadius: 3,
-                  color: 'white',
-                  padding: '2px 6px',
-                  fontSize: '0.65rem',
-                  cursor: 'pointer',
-                }}
-              >
-                Close
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Chart Settings Panel Component
-// ---------------------------------------------------------------------------
-
-interface ChartSettingsPanelProps {
-  settings: ChartSettings;
-  onSettingsChange: (settings: ChartSettings) => void;
-  onBarCountChange?: (barCount: number) => void;
-}
-
-function ChartSettingsPanel({ settings, onSettingsChange, onBarCountChange }: ChartSettingsPanelProps) {
-  const [isOpen, setIsOpen] = useState(false);
-
-  const handleEmaToggle = (emaKey: keyof ChartSettings['emaVisibility']) => {
-    const newSettings = {
-      ...settings,
-      emaVisibility: {
-        ...settings.emaVisibility,
-        [emaKey]: !settings.emaVisibility[emaKey],
-      },
-    };
-    onSettingsChange(newSettings);
-    saveChartSettings(newSettings);
-  };
-
-  const handleToggle = (key: 'showVolume' | 'showBollingerBands' | 'showSwingLevels' | 'showCrossovers' | 'showTrades' | 'showTradeLines') => {
-    const newSettings = { ...settings, [key]: !settings[key] };
-    onSettingsChange(newSettings);
-    saveChartSettings(newSettings);
-  };
-
-  const handleMasterToggle = () => {
-    const newSettings = { ...settings, showAllOverlays: !settings.showAllOverlays };
-    onSettingsChange(newSettings);
-    saveChartSettings(newSettings);
-  };
-
-  const handleBarCountChange = (count: number) => {
-    const newSettings = { ...settings, barCount: count };
-    onSettingsChange(newSettings);
-    saveChartSettings(newSettings);
-    if (onBarCountChange) {
-      onBarCountChange(count);
-    }
-  };
-
-  const emaOptions: { key: keyof ChartSettings['emaVisibility']; label: string }[] = [
-    { key: 'ema9', label: 'EMA 9' },
-    { key: 'ema13', label: 'EMA 13' },
-    { key: 'ema21', label: 'EMA 21' },
-    { key: 'ema34', label: 'EMA 34' },
-    { key: 'ema50', label: 'EMA 50' },
-    { key: 'ema89', label: 'EMA 89' },
-    { key: 'ema200', label: 'EMA 200' },
-  ];
-
-  return (
-    <div style={{
-      position: 'absolute',
-      top: 8,
-      left: 8,
-      zIndex: 20,
-    }}>
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        style={{
-          background: 'rgba(19, 23, 34, 0.9)',
-          border: '1px solid rgba(42, 46, 57, 0.6)',
-          borderRadius: 4,
-          color: '#787B86',
-          padding: '4px 8px',
-          fontSize: '0.75rem',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 4,
-        }}
-      >
-        Settings {isOpen ? '\u25B2' : '\u25BC'}
-      </button>
-
-      {isOpen && (
-        <div style={{
-          marginTop: 4,
-          background: 'rgba(19, 23, 34, 0.95)',
-          border: '1px solid rgba(42, 46, 57, 0.6)',
-          borderRadius: 6,
-          padding: 12,
-          minWidth: 180,
-        }}>
-          {/* Master Toggle */}
-          <div style={{ marginBottom: 12 }}>
-            <label style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              cursor: 'pointer',
-              fontSize: '0.75rem',
-              fontWeight: 600,
-              color: settings.showAllOverlays ? '#d1d5db' : '#ef4444',
-            }}>
-              <input
-                type="checkbox"
-                checked={settings.showAllOverlays}
-                onChange={handleMasterToggle}
-                style={{ width: 'auto', margin: 0 }}
-              />
-              {settings.showAllOverlays ? 'All Overlays On' : 'Candles Only'}
-            </label>
-          </div>
-
-          {/* EMAs Section */}
-          <div style={{ marginBottom: 12, borderTop: '1px solid rgba(42, 46, 57, 0.6)', paddingTop: 12, opacity: settings.showAllOverlays ? 1 : 0.4, pointerEvents: settings.showAllOverlays ? 'auto' : 'none' }}>
-            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#787B86', marginBottom: 8, textTransform: 'uppercase' }}>
-              EMAs
-            </div>
-            {emaOptions.map(({ key, label }) => (
-              <label
-                key={key}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  marginBottom: 4,
-                  cursor: 'pointer',
-                  fontSize: '0.75rem',
-                  color: settings.emaVisibility[key] ? '#d1d5db' : '#787B86',
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={settings.emaVisibility[key]}
-                  onChange={() => handleEmaToggle(key)}
-                  style={{ width: 'auto', margin: 0 }}
-                />
-                <span
-                  style={{
-                    width: 10,
-                    height: 10,
-                    borderRadius: '50%',
-                    background: EMA_COLORS[key],
-                  }}
-                />
-                {label}
-              </label>
-            ))}
-          </div>
-
-          {/* Indicators Section */}
-          <div style={{ marginBottom: 12, borderTop: '1px solid rgba(42, 46, 57, 0.6)', paddingTop: 12, opacity: settings.showAllOverlays ? 1 : 0.4, pointerEvents: settings.showAllOverlays ? 'auto' : 'none' }}>
-            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#787B86', marginBottom: 8, textTransform: 'uppercase' }}>
-              Indicators
-            </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, cursor: 'pointer', fontSize: '0.75rem', color: settings.showBollingerBands ? '#d1d5db' : '#787B86' }}>
-              <input type="checkbox" checked={settings.showBollingerBands} onChange={() => handleToggle('showBollingerBands')} style={{ width: 'auto', margin: 0 }} />
-              Bollinger Bands
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, cursor: 'pointer', fontSize: '0.75rem', color: settings.showSwingLevels ? '#d1d5db' : '#787B86' }}>
-              <input type="checkbox" checked={settings.showSwingLevels} onChange={() => handleToggle('showSwingLevels')} style={{ width: 'auto', margin: 0 }} />
-              Swing Levels
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, cursor: 'pointer', fontSize: '0.75rem', color: settings.showCrossovers ? '#d1d5db' : '#787B86' }}>
-              <input type="checkbox" checked={settings.showCrossovers} onChange={() => handleToggle('showCrossovers')} style={{ width: 'auto', margin: 0 }} />
-              EMA Crossovers
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, cursor: 'pointer', fontSize: '0.75rem', color: settings.showVolume ? '#d1d5db' : '#787B86' }}>
-              <input type="checkbox" checked={settings.showVolume} onChange={() => handleToggle('showVolume')} style={{ width: 'auto', margin: 0 }} />
-              Volume
-            </label>
-          </div>
-
-          {/* Trades Section */}
-          <div style={{ marginBottom: 12, borderTop: '1px solid rgba(42, 46, 57, 0.6)', paddingTop: 12, opacity: settings.showAllOverlays ? 1 : 0.4, pointerEvents: settings.showAllOverlays ? 'auto' : 'none' }}>
-            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#787B86', marginBottom: 8, textTransform: 'uppercase' }}>
-              Trades
-            </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, cursor: 'pointer', fontSize: '0.75rem', color: settings.showTrades ? '#d1d5db' : '#787B86' }}>
-              <input type="checkbox" checked={settings.showTrades} onChange={() => handleToggle('showTrades')} style={{ width: 'auto', margin: 0 }} />
-              Trade Markers
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, cursor: 'pointer', fontSize: '0.75rem', color: settings.showTradeLines ? '#d1d5db' : '#787B86' }}>
-              <input type="checkbox" checked={settings.showTradeLines} onChange={() => handleToggle('showTradeLines')} style={{ width: 'auto', margin: 0 }} />
-              Entry/Exit Lines
-            </label>
-          </div>
-
-          {/* Bar Count Section */}
-          <div style={{ borderTop: '1px solid rgba(42, 46, 57, 0.6)', paddingTop: 12 }}>
-            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#787B86', marginBottom: 8, textTransform: 'uppercase' }}>
-              Bars
-            </div>
-            <select
-              value={settings.barCount}
-              onChange={(e) => handleBarCountChange(Number(e.target.value))}
-              style={{
-                width: '100%',
-                padding: '4px 8px',
-                fontSize: '0.75rem',
-                background: 'rgba(42, 46, 57, 0.6)',
-                border: '1px solid rgba(42, 46, 57, 0.8)',
-                borderRadius: 4,
-                color: '#d1d5db',
-              }}
-            >
-              <option value={100}>100 bars</option>
-              <option value={200}>200 bars</option>
-              <option value={300}>300 bars</option>
-            </select>
-          </div>
-        </div>
-      )}
-    </div>
+    <div 
+      ref={chartContainerRef} 
+      style={{ 
+        width: '100%', 
+        height: height,
+        borderRadius: 6,
+        overflow: 'hidden'
+      }} 
+    />
   );
 }
 
@@ -1609,16 +811,11 @@ function AnalysisPage({ profile }: { profile: Profile }) {
   const [enlargedTf, setEnlargedTf] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [chartTrades, setChartTrades] = useState<ChartTrade[]>([]);
-  const [fullscreenTf, setFullscreenTf] = useState<string | null>(null);
-  const [confirmCloseTrade, setConfirmCloseTrade] = useState<ChartTrade | null>(null);
-  const [closingTrade, setClosingTrade] = useState(false);
-  const [chartSettings, setChartSettings] = useState<ChartSettings>(loadChartSettings);
 
-  const fetchTa = async (barCount?: number) => {
+  const fetchTa = async () => {
     try {
-      const bars = barCount ?? chartSettings.barCount;
       const [taData, allTradesData] = await Promise.all([
-        api.getTechnicalAnalysis(profile.name, profile.path, bars),
+        api.getTechnicalAnalysis(profile.name, profile.path),
         api.getTrades(profile.name, 50).then((r) => r.trades).catch(() => []),
       ]);
       setTa(taData);
@@ -1658,31 +855,6 @@ function AnalysisPage({ profile }: { profile: Profile }) {
     const interval = setInterval(fetchTa, 30000);
     return () => clearInterval(interval);
   }, [profile.name, profile.path]);
-
-  // ESC key to close fullscreen
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && fullscreenTf) {
-        setFullscreenTf(null);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [fullscreenTf]);
-
-  // Handle close trade
-  const handleCloseTrade = async (trade: ChartTrade) => {
-    setClosingTrade(true);
-    try {
-      await api.closeTrade(profile.name, trade.trade_id, profile.path);
-      setConfirmCloseTrade(null);
-      fetchTa(); // Refresh data
-    } catch (e: unknown) {
-      alert(`Failed to close trade: ${(e as Error).message}`);
-    } finally {
-      setClosingTrade(false);
-    }
-  };
 
   const toggleExpand = (tf: string) => {
     setExpandedTf(expandedTf === tf ? null : tf);
@@ -1813,7 +985,7 @@ function AnalysisPage({ profile }: { profile: Profile }) {
           )}
           <button
             className="btn btn-secondary"
-            onClick={() => fetchTa()}
+            onClick={fetchTa}
             disabled={loading}
           >
             {loading ? 'Loading...' : 'Refresh'}
@@ -1939,35 +1111,15 @@ function AnalysisPage({ profile }: { profile: Profile }) {
                     >
                       {enlargedTf === tf ? 'Shrink' : 'Enlarge'}
                     </button>
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      style={{ fontSize: '0.75rem' }}
-                      onClick={() => setFullscreenTf(tf)}
-                    >
-                      Fullscreen
-                    </button>
                   </div>
-                  <div style={{ position: 'relative' }}>
-                    <ChartSettingsPanel
-                      settings={chartSettings}
-                      onSettingsChange={setChartSettings}
-                      onBarCountChange={(count) => fetchTa(count)}
-                    />
-                    <CandlestickChart
-                      ohlc={tfData.ohlc || []}
-                      trades={chartTrades}
-                      emaFast={tfData.ema_fast}
-                      emaSlow={tfData.ema_slow}
-                      emaStack={tfData.ema_stack}
-                      emaLines={tfData.ema_lines}
-                      bollingerSeries={tfData.bollinger_series}
-                      swingLevels={tfData.swing_levels}
-                      height={enlargedTf === tf ? 520 : 280}
-                      onCloseTrade={(trade) => setConfirmCloseTrade(trade)}
-                      settings={chartSettings}
-                    />
-                  </div>
+                  <CandlestickChart 
+                    ohlc={tfData.ohlc || []} 
+                    trades={chartTrades}
+                    emaFast={tfData.ema_fast}
+                    emaSlow={tfData.ema_slow}
+                    emaStack={tfData.ema_stack}
+                    height={enlargedTf === tf ? 520 : 280}
+                  />
                 </div>
 
                 {/* Plain English Summary */}
@@ -2141,174 +1293,6 @@ function AnalysisPage({ profile }: { profile: Profile }) {
       {loading && !ta && (
         <div className="card">
           <p style={{ color: 'var(--text-secondary)', textAlign: 'center' }}>Loading technical analysis...</p>
-        </div>
-      )}
-
-      {/* Fullscreen Modal */}
-      {fullscreenTf && ta && ta.timeframes[fullscreenTf] && (() => {
-        const tfData = ta.timeframes[fullscreenTf];
-        const chartHeight = typeof window !== 'undefined' ? window.innerHeight - 200 : 500;
-        return (
-          <div style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'var(--bg-primary)',
-            zIndex: 1000,
-            display: 'flex',
-            flexDirection: 'column',
-          }}>
-            {/* Header */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '12px 20px',
-              borderBottom: '1px solid var(--border)',
-              background: 'var(--bg-secondary)',
-            }}>
-              <h2 style={{ margin: 0, fontSize: '1.2rem' }}>
-                {fullscreenTf} Chart ({timeframeLabel[fullscreenTf] || fullscreenTf})
-              </h2>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setFullscreenTf(null)}
-              >
-                Close (ESC)
-              </button>
-            </div>
-
-            {/* Chart */}
-            <div style={{ flex: 1, padding: 16, overflow: 'hidden', position: 'relative' }}>
-              <ChartSettingsPanel
-                settings={chartSettings}
-                onSettingsChange={setChartSettings}
-                onBarCountChange={(count) => fetchTa(count)}
-              />
-              <CandlestickChart
-                ohlc={tfData.ohlc || []}
-                trades={chartTrades}
-                emaFast={tfData.ema_fast}
-                emaSlow={tfData.ema_slow}
-                emaStack={tfData.ema_stack}
-                emaLines={tfData.ema_lines}
-                bollingerSeries={tfData.bollinger_series}
-                swingLevels={tfData.swing_levels}
-                height={chartHeight}
-                onCloseTrade={(trade) => setConfirmCloseTrade(trade)}
-                settings={chartSettings}
-              />
-            </div>
-
-            {/* Bottom Summary Panel */}
-            <div style={{
-              padding: '12px 20px',
-              borderTop: '1px solid var(--border)',
-              background: 'var(--bg-secondary)',
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: 20,
-              alignItems: 'center',
-            }}>
-              <div>
-                <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginRight: 8 }}>Regime:</span>
-                {getRegimeBadge(tfData.regime)}
-              </div>
-              <div>
-                <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginRight: 8 }}>RSI:</span>
-                {getRsiDisplay(tfData.rsi)}
-              </div>
-              <div>
-                <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginRight: 8 }}>MACD:</span>
-                {getMacdDisplay(tfData.macd)}
-              </div>
-              <div>
-                <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginRight: 8 }}>ATR:</span>
-                {getAtrDisplay(tfData.atr)}
-              </div>
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontStyle: 'italic' }}>
-                  {tfData.summary}
-                </span>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Close Trade Confirmation Modal */}
-      {confirmCloseTrade && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0, 0, 0, 0.7)',
-          zIndex: 1100,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}>
-          <div style={{
-            background: 'var(--bg-secondary)',
-            borderRadius: 8,
-            padding: 24,
-            maxWidth: 400,
-            width: '90%',
-            border: '1px solid var(--border)',
-          }}>
-            <h3 style={{ margin: '0 0 16px 0' }}>Close Trade?</h3>
-            <p style={{ color: 'var(--text-secondary)', marginBottom: 8 }}>
-              Are you sure you want to close this trade?
-            </p>
-            <div style={{
-              padding: 12,
-              background: 'var(--bg-tertiary)',
-              borderRadius: 6,
-              marginBottom: 20,
-            }}>
-              <div style={{
-                color: confirmCloseTrade.side.toLowerCase() === 'buy' ? '#3b82f6' : '#ef4444',
-                fontWeight: 600,
-                fontSize: '1rem',
-              }}>
-                {confirmCloseTrade.side.toUpperCase()} @ {confirmCloseTrade.entry_price.toFixed(3)}
-              </div>
-              {confirmCloseTrade.stop_price && (
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 4 }}>
-                  SL: {confirmCloseTrade.stop_price.toFixed(3)}
-                </div>
-              )}
-              {confirmCloseTrade.target_price && (
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                  TP: {confirmCloseTrade.target_price.toFixed(3)}
-                </div>
-              )}
-            </div>
-            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setConfirmCloseTrade(null)}
-                disabled={closingTrade}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn btn-danger"
-                onClick={() => handleCloseTrade(confirmCloseTrade)}
-                disabled={closingTrade}
-                style={{ background: 'var(--danger)' }}
-              >
-                {closingTrade ? 'Closing...' : 'Close Trade'}
-              </button>
-            </div>
-          </div>
         </div>
       )}
     </div>
@@ -3732,23 +2716,6 @@ function CustomWizard({ profile, currentProfile, onComplete }: { profile: Profil
 // Presets Page
 // ---------------------------------------------------------------------------
 
-interface EditedSettings {
-  max_lots: number;
-  min_stop_pips: number;
-  max_spread_pips: number;
-  max_trades_per_day: number;
-  max_open_trades: number;
-  cooldown_minutes_after_loss: number;
-  target_pips: number;
-  loop_poll_seconds: number;
-  policy_cooldown_minutes: number;
-  policy_sl_pips: number;
-  swing_level_filter_enabled: boolean;
-  swing_danger_zone_pct: number;
-  swing_confirmation_bars: number;
-  swing_lookback_bars: number;
-}
-
 function PresetsPage({ profile }: { profile: Profile }) {
   const [presets, setPresets] = useState<api.Preset[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -3759,8 +2726,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
   const [currentProfile, setCurrentProfile] = useState<Record<string, unknown> | null>(null);
   const [showActiveSettings, setShowActiveSettings] = useState(false);
   const [vwapSessionFilterOn, setVwapSessionFilterOn] = useState(true);
-  const [editedSettings, setEditedSettings] = useState<EditedSettings | null>(null);
-  const [applyingSettings, setApplyingSettings] = useState(false);
 
   // Fetch current profile to get active preset
   const fetchProfile = () => {
@@ -3783,150 +2748,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
       setPreview(null);
     }
   }, [selected, profile.path]);
-
-  // Initialize edited settings when View Settings opens
-  useEffect(() => {
-    if (showActiveSettings && currentProfile) {
-      const effectiveRisk = currentProfile.effective_risk as Record<string, unknown> | undefined;
-      const risk = currentProfile.risk as Record<string, unknown> | undefined;
-      const execution = currentProfile.execution as Record<string, unknown> | undefined;
-      const tradeManagement = currentProfile.trade_management as Record<string, unknown> | undefined;
-      const targetSettings = tradeManagement?.target as Record<string, unknown> | undefined;
-      const policies = execution?.policies as Record<string, unknown>[] | undefined;
-
-      // Find cooldown_minutes, sl_pips, and swing filter settings from policies
-      let policyCooldown = 0;
-      let policySlPips = 20;
-      let swingFilterEnabled = false;
-      let swingDangerZonePct = 0.15;
-      let swingConfirmationBars = 5;
-      let swingLookbackBars = 100;
-      if (policies) {
-        for (const pol of policies) {
-          if ('cooldown_minutes' in pol) {
-            policyCooldown = pol.cooldown_minutes as number;
-          }
-          if ('sl_pips' in pol) {
-            policySlPips = pol.sl_pips as number;
-          }
-          if ('swing_level_filter_enabled' in pol) {
-            swingFilterEnabled = pol.swing_level_filter_enabled as boolean;
-            swingDangerZonePct = (pol.swing_danger_zone_pct as number) ?? 0.15;
-            swingConfirmationBars = (pol.swing_confirmation_bars as number) ?? 5;
-            swingLookbackBars = (pol.swing_lookback_bars as number) ?? 100;
-          }
-          if (policyCooldown > 0 || policySlPips !== 20) break;
-        }
-      }
-
-      setEditedSettings({
-        max_lots: (effectiveRisk?.max_lots ?? risk?.max_lots ?? 0.01) as number,
-        min_stop_pips: (effectiveRisk?.min_stop_pips ?? risk?.min_stop_pips ?? 5) as number,
-        max_spread_pips: (effectiveRisk?.max_spread_pips ?? risk?.max_spread_pips ?? 2) as number,
-        max_trades_per_day: (effectiveRisk?.max_trades_per_day ?? risk?.max_trades_per_day ?? 10) as number,
-        max_open_trades: (effectiveRisk?.max_open_trades ?? risk?.max_open_trades ?? 5) as number,
-        cooldown_minutes_after_loss: (effectiveRisk?.cooldown_minutes_after_loss ?? risk?.cooldown_minutes_after_loss ?? 0) as number,
-        target_pips: (targetSettings?.pips_default ?? 0.5) as number,
-        loop_poll_seconds: (execution?.loop_poll_seconds ?? 5) as number,
-        policy_cooldown_minutes: policyCooldown,
-        policy_sl_pips: policySlPips,
-        swing_level_filter_enabled: swingFilterEnabled,
-        swing_danger_zone_pct: swingDangerZonePct,
-        swing_confirmation_bars: swingConfirmationBars,
-        swing_lookback_bars: swingLookbackBars,
-      });
-    }
-  }, [showActiveSettings, currentProfile]);
-
-  // Handler to apply temporary settings
-  const handleApplyTemporarySettings = async () => {
-    if (!editedSettings || !currentProfile) return;
-
-    setApplyingSettings(true);
-    try {
-      const risk = currentProfile.risk as Record<string, unknown> | undefined;
-      const effectiveRisk = currentProfile.effective_risk as Record<string, unknown> | undefined;
-      const execution = currentProfile.execution as Record<string, unknown> | undefined;
-      const tradeManagement = currentProfile.trade_management as Record<string, unknown> | undefined;
-
-      // Cap values by profile.risk limits
-      const cappedMaxLots = Math.min(editedSettings.max_lots, (risk?.max_lots ?? editedSettings.max_lots) as number);
-      const cappedMaxSpread = Math.min(editedSettings.max_spread_pips, (risk?.max_spread_pips ?? editedSettings.max_spread_pips) as number);
-      const cappedMaxTradesPerDay = Math.min(editedSettings.max_trades_per_day, (risk?.max_trades_per_day ?? editedSettings.max_trades_per_day) as number);
-      const cappedMaxOpenTrades = Math.min(editedSettings.max_open_trades, (risk?.max_open_trades ?? editedSettings.max_open_trades) as number);
-      // Min stop pips: use floor (can't go below profile limit)
-      const flooredMinStopPips = Math.max(editedSettings.min_stop_pips, (risk?.min_stop_pips ?? 0) as number);
-
-      // Build updated effective_risk
-      const newEffectiveRisk = {
-        ...(effectiveRisk || {}),
-        max_lots: cappedMaxLots,
-        min_stop_pips: flooredMinStopPips,
-        max_spread_pips: cappedMaxSpread,
-        max_trades_per_day: cappedMaxTradesPerDay,
-        max_open_trades: cappedMaxOpenTrades,
-        cooldown_minutes_after_loss: Math.max(0, editedSettings.cooldown_minutes_after_loss),
-      };
-
-      // Build updated trade_management
-      const newTradeManagement = {
-        ...(tradeManagement || {}),
-        target: {
-          ...(tradeManagement?.target as Record<string, unknown> || {}),
-          pips_default: editedSettings.target_pips,
-        },
-      };
-
-      // Build updated execution with updated policies
-      const policies = (execution?.policies as Record<string, unknown>[])?.map(pol => {
-        const updates: Record<string, unknown> = {};
-        if ('cooldown_minutes' in pol) {
-          updates.cooldown_minutes = Math.max(0, editedSettings.policy_cooldown_minutes);
-        }
-        if ('sl_pips' in pol) {
-          updates.sl_pips = Math.max(1, editedSettings.policy_sl_pips);
-        }
-        // Update swing filter settings for kt_cg_hybrid policies
-        if (pol.type === 'kt_cg_hybrid') {
-          updates.swing_level_filter_enabled = editedSettings.swing_level_filter_enabled;
-          updates.swing_danger_zone_pct = Math.max(0.05, Math.min(0.50, editedSettings.swing_danger_zone_pct));
-          updates.swing_confirmation_bars = Math.max(2, Math.min(20, editedSettings.swing_confirmation_bars));
-          updates.swing_lookback_bars = Math.max(20, Math.min(500, editedSettings.swing_lookback_bars));
-        }
-        return Object.keys(updates).length > 0 ? { ...pol, ...updates } : pol;
-      }) || [];
-
-      const newExecution = {
-        ...(execution || {}),
-        loop_poll_seconds: Math.max(0.5, editedSettings.loop_poll_seconds),
-        policies,
-      };
-
-      // Update preset name with (customized) suffix if not already present
-      let activePresetName = currentProfile.active_preset_name as string || '';
-      if (!activePresetName.includes('(customized)')) {
-        activePresetName = activePresetName ? `${activePresetName} (customized)` : 'custom (customized)';
-      }
-
-      // Build and save new profile
-      const newProfile = {
-        ...currentProfile,
-        active_preset_name: activePresetName,
-        effective_risk: newEffectiveRisk,
-        trade_management: newTradeManagement,
-        execution: newExecution,
-      };
-
-      await api.saveProfile(profile.path, newProfile);
-      setMessage('Temporary settings applied successfully!');
-      fetchProfile();
-      setTimeout(() => setMessage(null), 3000);
-    } catch (e: unknown) {
-      setMessage(`Error: ${(e as Error).message}`);
-    } finally {
-      setApplyingSettings(false);
-    }
-  };
 
   const handleApply = async () => {
     if (!selected || selected === 'custom') return;
@@ -3957,6 +2778,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
   const risk = currentProfile?.risk as Record<string, unknown> | undefined;
   const effectiveRisk = currentProfile?.effective_risk as Record<string, unknown> | undefined;
   const execution = currentProfile?.execution as Record<string, unknown> | undefined;
+  const tradeManagement = currentProfile?.trade_management as Record<string, unknown> | undefined;
+  const targetSettings = tradeManagement?.target as Record<string, unknown> | undefined;
 
   return (
     <div>
@@ -3981,25 +2804,13 @@ function PresetsPage({ profile }: { profile: Profile }) {
                 {activePresetName}
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button
-                className="btn btn-secondary"
-                onClick={() => setShowActiveSettings(!showActiveSettings)}
-                style={{ fontSize: '0.8rem' }}
-              >
-                {showActiveSettings ? 'Hide Settings' : 'View Settings'}
-              </button>
-              {showActiveSettings && (
-                <button
-                  className="btn btn-primary"
-                  onClick={handleApplyTemporarySettings}
-                  disabled={applyingSettings || !editedSettings}
-                  style={{ fontSize: '0.8rem' }}
-                >
-                  {applyingSettings ? 'Applying...' : 'Apply Temporary Settings'}
-                </button>
-              )}
-            </div>
+            <button 
+              className="btn btn-secondary"
+              onClick={() => setShowActiveSettings(!showActiveSettings)}
+              style={{ fontSize: '0.8rem' }}
+            >
+              {showActiveSettings ? 'Hide Settings' : 'View Settings'}
+            </button>
           </div>
           
           {showActiveSettings && risk && (
@@ -4009,190 +2820,40 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   Effective (used when running): preset risk capped by Profile Editor limits.
                 </div>
               )}
-              {editedSettings && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
-                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max Lots (effective)</div>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0.01"
-                      value={editedSettings.max_lots}
-                      onChange={(e) => setEditedSettings({ ...editedSettings, max_lots: parseFloat(e.target.value) || 0.01 })}
-                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                    />
-                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Max: {risk.max_lots as number}</div>
-                  </div>
-                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Min Stop Pips</div>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0"
-                      value={editedSettings.min_stop_pips}
-                      onChange={(e) => setEditedSettings({ ...editedSettings, min_stop_pips: parseFloat(e.target.value) || 0 })}
-                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                    />
-                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Floor: {risk.min_stop_pips as number}</div>
-                  </div>
-                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max Spread (pips)</div>
-                    <input
-                      type="number"
-                      step="0.1"
-                      min="0.1"
-                      value={editedSettings.max_spread_pips}
-                      onChange={(e) => setEditedSettings({ ...editedSettings, max_spread_pips: parseFloat(e.target.value) || 0.1 })}
-                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                    />
-                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Max: {risk.max_spread_pips as number}</div>
-                  </div>
-                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max Trades/Day</div>
-                    <input
-                      type="number"
-                      step="1"
-                      min="1"
-                      value={editedSettings.max_trades_per_day}
-                      onChange={(e) => setEditedSettings({ ...editedSettings, max_trades_per_day: parseInt(e.target.value) || 1 })}
-                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                    />
-                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Max: {risk.max_trades_per_day as number}</div>
-                  </div>
-                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max Open Trades</div>
-                    <input
-                      type="number"
-                      step="1"
-                      min="1"
-                      value={editedSettings.max_open_trades}
-                      onChange={(e) => setEditedSettings({ ...editedSettings, max_open_trades: parseInt(e.target.value) || 1 })}
-                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                    />
-                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Max: {risk.max_open_trades as number}</div>
-                  </div>
-                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Cooldown After Loss (min)</div>
-                    <input
-                      type="number"
-                      step="1"
-                      min="0"
-                      value={editedSettings.cooldown_minutes_after_loss}
-                      onChange={(e) => setEditedSettings({ ...editedSettings, cooldown_minutes_after_loss: parseInt(e.target.value) || 0 })}
-                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                    />
-                  </div>
-                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Target Pips</div>
-                    <input
-                      type="number"
-                      step="0.1"
-                      min="0.1"
-                      value={editedSettings.target_pips}
-                      onChange={(e) => setEditedSettings({ ...editedSettings, target_pips: parseFloat(e.target.value) || 0.1 })}
-                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                    />
-                  </div>
-                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Stop Loss Pips</div>
-                    <input
-                      type="number"
-                      step="1"
-                      min="1"
-                      max="500"
-                      value={editedSettings.policy_sl_pips}
-                      onChange={(e) => setEditedSettings({ ...editedSettings, policy_sl_pips: parseFloat(e.target.value) || 20 })}
-                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                    />
-                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Must be ≥ Min Stop Pips ({editedSettings.min_stop_pips})</div>
-                  </div>
-                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Poll Interval (s)</div>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0.5"
-                      value={editedSettings.loop_poll_seconds}
-                      onChange={(e) => setEditedSettings({ ...editedSettings, loop_poll_seconds: parseFloat(e.target.value) || 0.5 })}
-                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                    />
-                  </div>
-                  <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Cooldown After Trade (min)</div>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0"
-                      value={editedSettings.policy_cooldown_minutes}
-                      onChange={(e) => setEditedSettings({ ...editedSettings, policy_cooldown_minutes: parseFloat(e.target.value) || 0 })}
-                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                    />
-                  </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
+                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Max Lots {effectiveRisk ? '(effective)' : ''}</div>
+                  <div style={{ fontWeight: 600 }}>{(effectiveRisk?.max_lots ?? risk.max_lots) as number}</div>
                 </div>
-              )}
-              {/* Swing Level Filter Settings (for kt_cg_hybrid policies) */}
-              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_hybrid') && (
-                <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
-                    Swing Level Filter (blocks trades near M15 swing highs/lows)
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
-                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Swing Filter Enabled</div>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={editedSettings.swing_level_filter_enabled}
-                          onChange={(e) => setEditedSettings({ ...editedSettings, swing_level_filter_enabled: e.target.checked })}
-                          style={{ width: 18, height: 18, cursor: 'pointer' }}
-                        />
-                        <span style={{ fontWeight: 600, color: editedSettings.swing_level_filter_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
-                          {editedSettings.swing_level_filter_enabled ? 'ON' : 'OFF'}
-                        </span>
-                      </label>
-                    </div>
-                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Danger Zone %</div>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0.05"
-                        max="0.50"
-                        value={editedSettings.swing_danger_zone_pct}
-                        onChange={(e) => setEditedSettings({ ...editedSettings, swing_danger_zone_pct: parseFloat(e.target.value) || 0.15 })}
-                        style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                      />
-                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>0.15 = 15% of range</div>
-                    </div>
-                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Confirmation Bars</div>
-                      <input
-                        type="number"
-                        step="1"
-                        min="2"
-                        max="20"
-                        value={editedSettings.swing_confirmation_bars}
-                        onChange={(e) => setEditedSettings({ ...editedSettings, swing_confirmation_bars: parseInt(e.target.value) || 5 })}
-                        style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                      />
-                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Bars before/after swing</div>
-                    </div>
-                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Lookback Bars</div>
-                      <input
-                        type="number"
-                        step="10"
-                        min="20"
-                        max="500"
-                        value={editedSettings.swing_lookback_bars}
-                        onChange={(e) => setEditedSettings({ ...editedSettings, swing_lookback_bars: parseInt(e.target.value) || 100 })}
-                        style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                      />
-                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>M15 bars to scan</div>
-                    </div>
-                  </div>
+                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Min Stop Pips</div>
+                  <div style={{ fontWeight: 600 }}>{(effectiveRisk?.min_stop_pips ?? risk.min_stop_pips) as number}</div>
                 </div>
-              )}
+                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Max Spread</div>
+                  <div style={{ fontWeight: 600 }}>{(effectiveRisk?.max_spread_pips ?? risk.max_spread_pips) as number} pips</div>
+                </div>
+                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Max Trades/Day</div>
+                  <div style={{ fontWeight: 600 }}>{(effectiveRisk?.max_trades_per_day ?? risk.max_trades_per_day) as number}</div>
+                </div>
+                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Max Open Trades</div>
+                  <div style={{ fontWeight: 600 }}>{(effectiveRisk?.max_open_trades ?? risk.max_open_trades) as number ?? '-'}</div>
+                </div>
+                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Cooldown After Loss</div>
+                  <div style={{ fontWeight: 600 }}>{(effectiveRisk?.cooldown_minutes_after_loss ?? risk.cooldown_minutes_after_loss ?? 0) as number} min</div>
+                </div>
+                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Target Pips</div>
+                  <div style={{ fontWeight: 600 }}>{targetSettings?.pips_default as number || '-'}</div>
+                </div>
+                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Poll Interval</div>
+                  <div style={{ fontWeight: 600 }}>{execution?.loop_poll_seconds as number || 5}s</div>
+                </div>
+              </div>
               {(execution?.policies as Record<string, unknown>[])?.length > 0 && (
                 <div style={{ marginTop: 12 }}>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>Active Policies:</div>
@@ -4772,21 +3433,6 @@ function ProfilePage({ profile, authStatus, onAuthChange }: { profile: Profile; 
               />
               Require Stop Loss
             </label>
-          </div>
-
-          <div className="form-group">
-            <label>Min Stop Pips</label>
-            <input
-              type="number"
-              step="1"
-              min={1}
-              max={500}
-              value={(risk.min_stop_pips as number) ?? 10}
-              onChange={(e) => updateNested('risk', 'min_stop_pips', parseFloat(e.target.value) || 10)}
-            />
-            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 4 }}>
-              Minimum stop loss distance in pips. Default is 10.
-            </p>
           </div>
         </div>
       </div>
