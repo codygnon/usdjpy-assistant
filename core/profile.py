@@ -368,6 +368,12 @@ class ExecutionPolicyKtCgCounterTrendPullback(BaseModel):
     sl_pips: Optional[float] = 10.0
     confirm_bars: int = 1
 
+    # Swing level proximity filter (from Trial #2)
+    swing_level_filter_enabled: bool = False
+    swing_lookback_bars: int = 100
+    swing_confirmation_bars: int = 5
+    swing_danger_zone_pct: float = 0.15
+
 
 ExecutionPolicy = Annotated[
     Union[
