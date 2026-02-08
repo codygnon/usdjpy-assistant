@@ -335,6 +335,40 @@ class ExecutionPolicyKtCgHybrid(BaseModel):
     # Additional fields are allowed via extra="allow"
 
 
+class ExecutionPolicyKtCgCounterTrendPullback(BaseModel):
+    """KT/CG Counter-Trend Pullback strategy (Trial #3).
+
+    Logic:
+    - M5 Trend: EMA fast > EMA slow = BULL, else BEAR
+    - M1 Zone Entry: BULL + M1 EMA9 > M1 EMA slow, or BEAR + M1 EMA9 < M1 EMA slow
+    - M1 Pullback Cross: BULL + EMA9 crosses below EMA slow -> BUY; BEAR + EMA9 crosses above EMA slow -> SELL
+    - Auto-close opposite direction trades before placing new trade
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["kt_cg_counter_trend_pullback"] = "kt_cg_counter_trend_pullback"
+    id: str = "kt_cg_ctp_default"
+    enabled: bool = False
+
+    # M5 Trend EMAs
+    m5_trend_ema_fast: int = 9
+    m5_trend_ema_slow: int = 21
+
+    # M1 Zone Entry - EMA 9 vs slow EMA
+    m1_zone_entry_ema_slow: int = 13
+
+    # M1 Pullback Cross - EMA 9 crosses slow EMA
+    m1_pullback_cross_ema_slow: int = 15
+
+    # Close opposite trades before placing new trade
+    close_opposite_on_trade: bool = True
+
+    tp_pips: float = 15.0
+    sl_pips: Optional[float] = 10.0
+    confirm_bars: int = 1
+
+
 ExecutionPolicy = Annotated[
     Union[
         ExecutionPolicyConfirmedCross,
@@ -347,6 +381,7 @@ ExecutionPolicy = Annotated[
         ExecutionPolicyEmaPullback,
         ExecutionPolicyEmaBbScalp,
         ExecutionPolicyKtCgHybrid,
+        ExecutionPolicyKtCgCounterTrendPullback,
     ],
     Field(discriminator="type"),
 ]

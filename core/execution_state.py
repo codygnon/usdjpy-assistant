@@ -17,6 +17,12 @@ class RuntimeState:
     # Used for idempotency / loop progress tracking
     last_processed_bar_time_utc: Optional[str] = None
 
+    # Temporary EMA overrides for KT/CG Counter-Trend Pullback
+    temp_m5_trend_ema_fast: Optional[int] = None
+    temp_m5_trend_ema_slow: Optional[int] = None
+    temp_m1_zone_entry_ema_slow: Optional[int] = None
+    temp_m1_pullback_cross_ema_slow: Optional[int] = None
+
 
 def load_state(path: str | Path) -> RuntimeState:
     p = Path(path)
@@ -27,6 +33,10 @@ def load_state(path: str | Path) -> RuntimeState:
         mode=data.get("mode", "DISARMED"),
         kill_switch=bool(data.get("kill_switch", False)),
         last_processed_bar_time_utc=data.get("last_processed_bar_time_utc"),
+        temp_m5_trend_ema_fast=data.get("temp_m5_trend_ema_fast"),
+        temp_m5_trend_ema_slow=data.get("temp_m5_trend_ema_slow"),
+        temp_m1_zone_entry_ema_slow=data.get("temp_m1_zone_entry_ema_slow"),
+        temp_m1_pullback_cross_ema_slow=data.get("temp_m1_pullback_cross_ema_slow"),
     )
 
 
@@ -39,6 +49,10 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "mode": state.mode,
                 "kill_switch": state.kill_switch,
                 "last_processed_bar_time_utc": state.last_processed_bar_time_utc,
+                "temp_m5_trend_ema_fast": state.temp_m5_trend_ema_fast,
+                "temp_m5_trend_ema_slow": state.temp_m5_trend_ema_slow,
+                "temp_m1_zone_entry_ema_slow": state.temp_m1_zone_entry_ema_slow,
+                "temp_m1_pullback_cross_ema_slow": state.temp_m1_pullback_cross_ema_slow,
             },
             indent=2,
             sort_keys=False,

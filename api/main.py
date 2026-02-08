@@ -401,6 +401,48 @@ def update_runtime_state(profile_name: str, req: RuntimeStateUpdate) -> dict[str
         mode=req.mode,  # type: ignore
         kill_switch=req.kill_switch,
         last_processed_bar_time_utc=old.last_processed_bar_time_utc,
+        temp_m5_trend_ema_fast=old.temp_m5_trend_ema_fast,
+        temp_m5_trend_ema_slow=old.temp_m5_trend_ema_slow,
+        temp_m1_zone_entry_ema_slow=old.temp_m1_zone_entry_ema_slow,
+        temp_m1_pullback_cross_ema_slow=old.temp_m1_pullback_cross_ema_slow,
+    )
+    save_state(state_path, new_state)
+    return {"status": "saved"}
+
+
+class TempSettingsUpdate(BaseModel):
+    temp_m5_trend_ema_fast: Optional[int] = None
+    temp_m5_trend_ema_slow: Optional[int] = None
+    temp_m1_zone_entry_ema_slow: Optional[int] = None
+    temp_m1_pullback_cross_ema_slow: Optional[int] = None
+
+
+@app.get("/api/runtime/{profile_name}/temp-settings")
+def get_temp_settings(profile_name: str) -> dict[str, Any]:
+    """Get temporary EMA settings for KT/CG Counter-Trend Pullback."""
+    state_path = _runtime_state_path(profile_name)
+    state = load_state(state_path)
+    return {
+        "temp_m5_trend_ema_fast": state.temp_m5_trend_ema_fast,
+        "temp_m5_trend_ema_slow": state.temp_m5_trend_ema_slow,
+        "temp_m1_zone_entry_ema_slow": state.temp_m1_zone_entry_ema_slow,
+        "temp_m1_pullback_cross_ema_slow": state.temp_m1_pullback_cross_ema_slow,
+    }
+
+
+@app.put("/api/runtime/{profile_name}/temp-settings")
+def update_temp_settings(profile_name: str, req: TempSettingsUpdate) -> dict[str, str]:
+    """Update temporary EMA settings for KT/CG Counter-Trend Pullback."""
+    state_path = _runtime_state_path(profile_name)
+    old = load_state(state_path)
+    new_state = RuntimeState(
+        mode=old.mode,
+        kill_switch=old.kill_switch,
+        last_processed_bar_time_utc=old.last_processed_bar_time_utc,
+        temp_m5_trend_ema_fast=req.temp_m5_trend_ema_fast,
+        temp_m5_trend_ema_slow=req.temp_m5_trend_ema_slow,
+        temp_m1_zone_entry_ema_slow=req.temp_m1_zone_entry_ema_slow,
+        temp_m1_pullback_cross_ema_slow=req.temp_m1_pullback_cross_ema_slow,
     )
     save_state(state_path, new_state)
     return {"status": "saved"}

@@ -33,6 +33,7 @@ class PresetId(str, Enum):
     M5_M15_MOMENTUM_PULLBACK_9_21 = "m5_m15_momentum_pullback_9_21"
     CODY_WIZARD_AGGR_OANDA_M5_CROSS = "cody_wizard_aggressive_oanda_m5_cross"
     KUMA_TORA_BB_EMA_9_21_SCALPER = "kuma_tora_bb_ema_9_21_scalper"
+    KT_CG_COUNTER_TREND_PULLBACK = "kt_cg_counter_trend_pullback"
 
 
 # ---------------------------------------------------------------------------
@@ -785,6 +786,64 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "sl_pips": 12.0,
                     "confirm_bars": 2,
                     "min_distance_pips": 1.0,
+                },
+            ],
+        },
+    },
+    # -----------------------------------------------------------------------
+    # KT/CG Counter-Trend Pullback (Trial #3)
+    # M5 trend from EMA 9/21, M1 zone entry, M1 pullback cross.
+    # -----------------------------------------------------------------------
+    PresetId.KT_CG_COUNTER_TREND_PULLBACK: {
+        "name": "KT/CG Counter-Trend Pullback",
+        "description": "Counter-trend pullback strategy: M5 trend from EMA 9/21, M1 zone entry when EMA9 vs EMA13 agrees with trend, M1 pullback cross when EMA9 crosses EMA15 in counter-trend direction. Auto-closes opposite trades before new entries.",
+        "pros": [
+            "Multi-timeframe confirmation: M5 trend + M1 zone + M1 pullback cross",
+            "Counter-trend pullback entries often catch reversions to mean",
+            "Auto-close opposite trades ensures clean direction switches",
+            "Temporary EMA customization via UI for real-time tuning",
+        ],
+        "cons": [
+            "Counter-trend entries can be risky in strong trends",
+            "Requires M5 and M1 data alignment",
+            "May miss entries if zone or cross conditions are too strict",
+        ],
+        "risk": {
+            "max_lots": 0.1,
+            "require_stop": True,
+            "min_stop_pips": 10.0,
+            "max_spread_pips": 5.0,
+            "max_trades_per_day": 20,
+            "max_open_trades": 2,
+        },
+        "strategy": {
+            "filters": {
+                "alignment": {"enabled": False},
+                "ema_stack_filter": {"enabled": False},
+                "atr_filter": {"enabled": True, "timeframe": "M1", "min_atr_pips": 5.0},
+                "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
+            },
+        },
+        "trade_management": {
+            "target": {"mode": "fixed_pips", "pips_default": 15.0},
+            "breakeven": {"enabled": True, "after_pips": 8.0},
+        },
+        "execution": {
+            "loop_poll_seconds": 3.0,
+            "loop_poll_seconds_fast": 1.0,
+            "policies": [
+                {
+                    "type": "kt_cg_counter_trend_pullback",
+                    "id": "kt_cg_ctp_default",
+                    "enabled": True,
+                    "m5_trend_ema_fast": 9,
+                    "m5_trend_ema_slow": 21,
+                    "m1_zone_entry_ema_slow": 13,
+                    "m1_pullback_cross_ema_slow": 15,
+                    "close_opposite_on_trade": True,
+                    "tp_pips": 15.0,
+                    "sl_pips": 10.0,
+                    "confirm_bars": 1,
                 },
             ],
         },

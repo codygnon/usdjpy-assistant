@@ -408,3 +408,23 @@ export interface OpenTrade {
 export async function getOpenTrades(profileName: string): Promise<OpenTrade[]> {
   return fetchJson<OpenTrade[]>(`${API_BASE}/data/${profileName}/open-trades`);
 }
+
+// Temporary EMA settings for KT/CG Counter-Trend Pullback
+export interface TempSettings {
+  temp_m5_trend_ema_fast: number | null;
+  temp_m5_trend_ema_slow: number | null;
+  temp_m1_zone_entry_ema_slow: number | null;
+  temp_m1_pullback_cross_ema_slow: number | null;
+}
+
+export async function getTempSettings(profileName: string): Promise<TempSettings> {
+  return fetchJson<TempSettings>(`${API_BASE}/runtime/${profileName}/temp-settings`);
+}
+
+export async function updateTempSettings(profileName: string, settings: Partial<TempSettings>): Promise<void> {
+  await fetchJson<unknown>(`${API_BASE}/runtime/${profileName}/temp-settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
+}
