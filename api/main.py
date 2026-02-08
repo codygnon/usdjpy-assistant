@@ -134,6 +134,13 @@ class RuntimeStateUpdate(BaseModel):
     kill_switch: bool
 
 
+class TempEmaSettingsUpdate(BaseModel):
+    m5_trend_ema_fast: Optional[int] = None
+    m5_trend_ema_slow: Optional[int] = None
+    m1_zone_entry_ema_slow: Optional[int] = None
+    m1_pullback_cross_ema_slow: Optional[int] = None
+
+
 class ApplyPresetRequest(BaseModel):
     preset_id: str
     options: Optional[dict[str, Any]] = None  # e.g. vwap_session_filter_enabled for vwap_trend
@@ -410,39 +417,32 @@ def update_runtime_state(profile_name: str, req: RuntimeStateUpdate) -> dict[str
     return {"status": "saved"}
 
 
-class TempSettingsUpdate(BaseModel):
-    temp_m5_trend_ema_fast: Optional[int] = None
-    temp_m5_trend_ema_slow: Optional[int] = None
-    temp_m1_zone_entry_ema_slow: Optional[int] = None
-    temp_m1_pullback_cross_ema_slow: Optional[int] = None
-
-
 @app.get("/api/runtime/{profile_name}/temp-settings")
 def get_temp_settings(profile_name: str) -> dict[str, Any]:
-    """Get temporary EMA settings for KT/CG Counter-Trend Pullback."""
+    """Get temporary EMA settings for Apply Temporary Settings menu."""
     state_path = _runtime_state_path(profile_name)
     state = load_state(state_path)
     return {
-        "temp_m5_trend_ema_fast": state.temp_m5_trend_ema_fast,
-        "temp_m5_trend_ema_slow": state.temp_m5_trend_ema_slow,
-        "temp_m1_zone_entry_ema_slow": state.temp_m1_zone_entry_ema_slow,
-        "temp_m1_pullback_cross_ema_slow": state.temp_m1_pullback_cross_ema_slow,
+        "m5_trend_ema_fast": state.temp_m5_trend_ema_fast,
+        "m5_trend_ema_slow": state.temp_m5_trend_ema_slow,
+        "m1_zone_entry_ema_slow": state.temp_m1_zone_entry_ema_slow,
+        "m1_pullback_cross_ema_slow": state.temp_m1_pullback_cross_ema_slow,
     }
 
 
 @app.put("/api/runtime/{profile_name}/temp-settings")
-def update_temp_settings(profile_name: str, req: TempSettingsUpdate) -> dict[str, str]:
-    """Update temporary EMA settings for KT/CG Counter-Trend Pullback."""
+def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[str, str]:
+    """Update temporary EMA settings for Apply Temporary Settings menu."""
     state_path = _runtime_state_path(profile_name)
     old = load_state(state_path)
     new_state = RuntimeState(
         mode=old.mode,
         kill_switch=old.kill_switch,
         last_processed_bar_time_utc=old.last_processed_bar_time_utc,
-        temp_m5_trend_ema_fast=req.temp_m5_trend_ema_fast,
-        temp_m5_trend_ema_slow=req.temp_m5_trend_ema_slow,
-        temp_m1_zone_entry_ema_slow=req.temp_m1_zone_entry_ema_slow,
-        temp_m1_pullback_cross_ema_slow=req.temp_m1_pullback_cross_ema_slow,
+        temp_m5_trend_ema_fast=req.m5_trend_ema_fast,
+        temp_m5_trend_ema_slow=req.m5_trend_ema_slow,
+        temp_m1_zone_entry_ema_slow=req.m1_zone_entry_ema_slow,
+        temp_m1_pullback_cross_ema_slow=req.m1_pullback_cross_ema_slow,
     )
     save_state(state_path, new_state)
     return {"status": "saved"}
@@ -535,8 +535,20 @@ def get_trades(
     profile_path: Optional[str] = None,
 ) -> list[dict[str, Any]] | dict[str, Any]:
     """Get recent trades. If profile_path is provided, returns an object with
-    trades (each including profit_display in display currency) and display_currency."""
+    trades (each including profit_display in display currency) and display_currency.
+
+    Also syncs with broker first to detect any trades closed externally.
+    """
     store = _store_for(profile_name)
+
+    # Sync with broker to detect closed trades
+    if profile_path and _resolve_profile_path(profile_path).exists():
+        try:
+            profile = load_profile_v1(_resolve_profile_path(profile_path))
+            _sync_open_trades_with_broker(profile, store)
+        except Exception as e:
+            print(f"[api] sync error in get_trades: {e}")
+
     df = store.read_trades_df(profile_name).tail(limit)
     # Convert NaN to None for JSON
     df = df.where(pd.notna(df), None)
@@ -1168,11 +1180,163 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
 
 
 @app.get("/api/data/{profile_name}/open-trades")
-def get_open_trades(profile_name: str) -> list[dict[str, Any]]:
-    """Get open trades (trades without exit_price)."""
+def get_open_trades(profile_name: str, profile_path: Optional[str] = None) -> list[dict[str, Any]]:
+    """Get open trades (trades without exit_price).
+
+    Syncs with broker first to detect any trades closed externally.
+    """
     store = _store_for(profile_name)
+
+    # Sync with broker to detect closed trades
+    if profile_path:
+        try:
+            profile = load_profile_v1(profile_path)
+            _sync_open_trades_with_broker(profile, store)
+        except Exception as e:
+            print(f"[api] sync error in open-trades: {e}")
+
     rows = store.list_open_trades(profile_name)
     return [dict(row) for row in rows]
+
+
+def _sync_open_trades_with_broker(profile: ProfileV1, store: SqliteStore) -> int:
+    """Quick sync: check if any DB open trades are closed on broker."""
+    from adapters.broker import get_adapter
+
+    open_trades = store.list_open_trades(profile.profile_name)
+    if not open_trades:
+        return 0
+
+    try:
+        adapter = get_adapter(profile)
+        adapter.initialize()
+        adapter.ensure_symbol(profile.symbol)
+    except Exception as e:
+        print(f"[api] broker init failed for sync: {e}")
+        return 0
+
+    try:
+        broker_positions = adapter.get_open_positions(profile.symbol)
+    except Exception as e:
+        print(f"[api] get_open_positions failed: {e}")
+        try:
+            adapter.shutdown()
+        except Exception:
+            pass
+        return 0
+
+    # Build set of broker's open position IDs
+    broker_open_ids = set()
+    for pos in broker_positions:
+        pos_id = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
+        if pos_id is not None:
+            try:
+                broker_open_ids.add(int(pos_id))
+            except (TypeError, ValueError):
+                pass
+
+    pip_size = float(profile.pip_size)
+    synced = 0
+
+    # Log for debugging
+    print(f"[api] _sync_open_trades_with_broker: {len(open_trades)} DB trades, {len(broker_open_ids)} broker positions")
+    print(f"[api] broker position IDs: {broker_open_ids}")
+
+    for trade_row in open_trades:
+        trade_row = dict(trade_row)
+        mt5_position_id = trade_row.get("mt5_position_id")
+        trade_id = str(trade_row["trade_id"])
+
+        # Check if this trade is on broker
+        on_broker = False
+        if mt5_position_id is not None:
+            try:
+                position_id = int(mt5_position_id)
+                if position_id in broker_open_ids:
+                    on_broker = True
+            except (TypeError, ValueError):
+                pass
+
+        if on_broker:
+            # Still open on broker
+            continue
+
+        # Trade is NOT on broker (or has no position ID but broker has fewer positions)
+        # If trade has no position ID and we have more DB trades than broker positions, close it
+        if mt5_position_id is None:
+            if len(open_trades) <= len(broker_open_ids):
+                # Can't determine if it's closed without position ID
+                print(f"[api] sync: skipping trade {trade_id} - no position ID")
+                continue
+            print(f"[api] sync: closing trade {trade_id} - no position ID and DB > broker count")
+
+        # Trade was closed on broker - update our DB
+        entry_price = float(trade_row["entry_price"])
+        side = str(trade_row["side"]).lower()
+        target_price = trade_row.get("target_price")
+        stop_price = trade_row.get("stop_price")
+
+        # Try to get close info from broker if we have position ID
+        exit_price = None
+        exit_time = None
+        profit = None
+        if mt5_position_id is not None:
+            try:
+                close_info = adapter.get_position_close_info(int(mt5_position_id))
+                if close_info:
+                    exit_price = close_info.exit_price
+                    exit_time = close_info.exit_time_utc
+                    profit = close_info.profit
+            except Exception:
+                pass
+
+        if exit_price is None:
+            # Use approximate values
+            exit_price = entry_price  # Will be corrected on next full sync
+            exit_time = pd.Timestamp.now(tz="UTC").isoformat()
+
+        # Calculate pips
+        if side == "buy":
+            pips = (exit_price - entry_price) / pip_size
+        else:
+            pips = (entry_price - exit_price) / pip_size
+
+        # Determine exit reason
+        exit_reason = "broker_closed"
+        if target_price and abs(exit_price - float(target_price)) <= pip_size * 2:
+            exit_reason = "hit_take_profit"
+        elif stop_price and abs(exit_price - float(stop_price)) <= pip_size * 2:
+            exit_reason = "hit_stop_loss"
+
+        # Calculate R-multiple
+        risk_pips = None
+        r_multiple = None
+        if stop_price:
+            risk_pips = abs(entry_price - float(stop_price)) / pip_size
+            if risk_pips > 0:
+                r_multiple = pips / risk_pips
+
+        updates = {
+            "exit_price": exit_price,
+            "exit_timestamp_utc": exit_time,
+            "exit_reason": exit_reason,
+            "pips": pips,
+            "risk_pips": risk_pips,
+            "r_multiple": r_multiple,
+        }
+        if profit is not None:
+            updates["profit"] = profit
+
+        store.close_trade(trade_id=trade_id, updates=updates)
+        print(f"[api] synced closed trade {trade_id}: {exit_reason}, pips={pips:.2f}")
+        synced += 1
+
+    try:
+        adapter.shutdown()
+    except Exception:
+        pass
+
+    return synced
 
 
 @app.post("/api/trades/{profile_name}/{trade_id}/close")
@@ -1342,42 +1506,173 @@ def sync_trades_endpoint(
     force_profit_refresh: bool = True,
 ) -> dict[str, Any]:
     """Sync trades with MT5 - detect externally closed trades and update database.
-    
+
     Also backfills position_ids and imports manual trades from MT5 history.
     Set force_profit_refresh=true to recompute profit from MT5 for all trades (fixes
     incorrect win rate when profit was from partial close only).
     """
     from core.trade_sync import sync_closed_trades, import_mt5_history, backfill_position_ids, backfill_profit
-    
+
     path = _resolve_profile_path(profile_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Profile not found")
-    
+
     try:
         profile = load_profile_v1(path)
         store = _store_for(profile_name)
-        
+
+        # First: aggressive sync - close any DB trades not on broker
+        aggressive_synced = _aggressive_sync_with_broker(profile, store)
+
         # First backfill position_ids for existing trades
         backfilled_count = backfill_position_ids(profile, store)
-        
+
         # Sync closed trades (detect externally closed)
         synced_count = sync_closed_trades(profile, store)
-        
+
         # Import manual trades from broker history (MT5 or OANDA activity/transactions)
         imported_count = import_mt5_history(profile, store, days_back=90)
-        
+
         # Backfill profit (force_refresh=True recomputes all to fix partial-close bug)
         profit_backfilled = backfill_profit(profile, store, force_refresh=force_profit_refresh)
-        
+
         return {
             "status": "synced",
-            "trades_updated": synced_count,
+            "trades_updated": synced_count + aggressive_synced,
             "trades_imported": imported_count,
             "position_ids_backfilled": backfilled_count,
             "profit_backfilled": profit_backfilled,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Sync error: {str(e)}")
+
+
+def _aggressive_sync_with_broker(profile: ProfileV1, store: SqliteStore) -> int:
+    """Aggressively sync: close ANY DB open trade that is not on broker.
+
+    This handles cases where mt5_position_id doesn't match or is missing.
+    It compares by checking if there are MORE open trades in DB than on broker,
+    and closes the excess ones that have no matching position.
+    """
+    from adapters.broker import get_adapter
+
+    open_trades = list(store.list_open_trades(profile.profile_name))
+    if not open_trades:
+        return 0
+
+    try:
+        adapter = get_adapter(profile)
+        adapter.initialize()
+        adapter.ensure_symbol(profile.symbol)
+        broker_positions = adapter.get_open_positions(profile.symbol)
+    except Exception as e:
+        print(f"[api] aggressive sync - broker error: {e}")
+        return 0
+
+    # Get all broker position IDs
+    broker_ids = set()
+    for pos in broker_positions:
+        pos_id = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
+        if pos_id is not None:
+            try:
+                broker_ids.add(int(pos_id))
+            except (TypeError, ValueError):
+                pass
+
+    print(f"[api] aggressive sync: DB has {len(open_trades)} open trades, broker has {len(broker_ids)} positions")
+    print(f"[api] aggressive sync: broker position IDs: {broker_ids}")
+
+    pip_size = float(profile.pip_size)
+    synced = 0
+
+    for trade_row in open_trades:
+        trade_row = dict(trade_row)
+        trade_id = str(trade_row["trade_id"])
+        mt5_position_id = trade_row.get("mt5_position_id")
+
+        # Check if this trade's position is on broker
+        position_on_broker = False
+        if mt5_position_id is not None:
+            try:
+                if int(mt5_position_id) in broker_ids:
+                    position_on_broker = True
+            except (TypeError, ValueError):
+                pass
+
+        if position_on_broker:
+            print(f"[api] aggressive sync: trade {trade_id} (pos {mt5_position_id}) still on broker")
+            continue
+
+        # Trade is NOT on broker - close it in DB
+        print(f"[api] aggressive sync: closing trade {trade_id} (pos {mt5_position_id}) - not on broker")
+
+        entry_price = float(trade_row["entry_price"])
+        side = str(trade_row["side"]).lower()
+        target_price = trade_row.get("target_price")
+        stop_price = trade_row.get("stop_price")
+
+        # Try to get close info from broker if we have position ID
+        exit_price = None
+        exit_time = None
+        profit = None
+        if mt5_position_id is not None:
+            try:
+                close_info = adapter.get_position_close_info(int(mt5_position_id))
+                if close_info:
+                    exit_price = close_info.exit_price
+                    exit_time = close_info.exit_time_utc
+                    profit = close_info.profit
+                    print(f"[api] aggressive sync: got close info for {trade_id}: exit={exit_price}, profit={profit}")
+            except Exception as e:
+                print(f"[api] aggressive sync: no close info for {trade_id}: {e}")
+
+        if exit_price is None:
+            # Use entry price as fallback (unknown exit)
+            exit_price = entry_price
+            exit_time = pd.Timestamp.now(tz="UTC").isoformat()
+
+        # Calculate pips
+        if side == "buy":
+            pips = (exit_price - entry_price) / pip_size
+        else:
+            pips = (entry_price - exit_price) / pip_size
+
+        # Determine exit reason
+        exit_reason = "broker_closed_sync"
+        if target_price and abs(exit_price - float(target_price)) <= pip_size * 2:
+            exit_reason = "hit_take_profit"
+        elif stop_price and abs(exit_price - float(stop_price)) <= pip_size * 2:
+            exit_reason = "hit_stop_loss"
+
+        # Calculate R-multiple
+        risk_pips = None
+        r_multiple = None
+        if stop_price:
+            risk_pips = abs(entry_price - float(stop_price)) / pip_size
+            if risk_pips > 0:
+                r_multiple = pips / risk_pips
+
+        updates: dict[str, Any] = {
+            "exit_price": exit_price,
+            "exit_timestamp_utc": exit_time,
+            "exit_reason": exit_reason,
+            "pips": pips,
+            "risk_pips": risk_pips,
+            "r_multiple": r_multiple,
+        }
+        if profit is not None:
+            updates["profit"] = profit
+
+        store.close_trade(trade_id=trade_id, updates=updates)
+        print(f"[api] aggressive sync: closed {trade_id} with exit_reason={exit_reason}, pips={pips:.2f}")
+        synced += 1
+
+    try:
+        adapter.shutdown()
+    except Exception:
+        pass
+
+    return synced
 
 
 # ---------------------------------------------------------------------------

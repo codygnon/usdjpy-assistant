@@ -35,7 +35,7 @@ class PresetId(str, Enum):
     KUMA_TORA_BB_EMA_9_21_SCALPER = "kuma_tora_bb_ema_9_21_scalper"
     KT_CG_TRIAL_BLOW_ACCOUNT = "kt_cg_trial_blow_account"
     KT_CG_TRIAL_2 = "kt_cg_trial_2"
-    KT_CG_COUNTER_TREND_PULLBACK = "kt_cg_counter_trend_pullback"
+    KT_CG_TRIAL_3 = "kt_cg_trial_3"
     M5_M1_EMA_CROSS_9_21 = "m5_m1_ema_cross_9_21"
 
 
@@ -85,8 +85,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "enabled": True,
                     "timeframe": "M1",
                     "confirmation": {
-                        "confirm_bars": 1,
-                        "max_wait_bars": 3,
+                        "confirm_bars": 2,
+                        "max_wait_bars": 4,
                     },
                 },
             },
@@ -198,6 +198,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                 "alignment": {"enabled": False},
                 "ema_stack_filter": {"enabled": False},
                 "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 8.0},
+                "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
             },
             "setups": {
                 "m1_cross_entry": {"enabled": False},
@@ -211,8 +212,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
-            "loop_poll_seconds": 10.0,
-            "loop_poll_seconds_fast": 5.0,
+            "loop_poll_seconds": 5.0,
+            "loop_poll_seconds_fast": 2.0,
             "policies": [
                 {
                     "type": "bollinger_bands",
@@ -275,6 +276,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                 "alignment": {"enabled": False},
                 "ema_stack_filter": {"enabled": False},
                 "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 8.0},
+                "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
             },
             "setups": {
                 "m1_cross_entry": {"enabled": False},
@@ -288,8 +290,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
-            "loop_poll_seconds": 15.0,
-            "loop_poll_seconds_fast": 5.0,
+            "loop_poll_seconds": 8.0,
+            "loop_poll_seconds_fast": 3.0,
             "policies": [
                 {
                     "type": "bollinger_bands",
@@ -379,7 +381,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "rsi_oversold": 30.0,
                     "rsi_overbought": 70.0,
                     "rsi_zone": "oversold",
-                    "use_macd_cross": False,
+                    "use_macd_cross": True,
                     "tp_pips": 18.0,
                     "sl_pips": 12.0,
                 },
@@ -394,7 +396,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "rsi_oversold": 30.0,
                     "rsi_overbought": 70.0,
                     "rsi_zone": "overbought",
-                    "use_macd_cross": False,
+                    "use_macd_cross": True,
                     "tp_pips": 18.0,
                     "sl_pips": 12.0,
                 },
@@ -445,20 +447,20 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "breakeven": {"enabled": True, "after_pips": 8.0},
         },
         "execution": {
-            "loop_poll_seconds": 5.0,
-            "loop_poll_seconds_fast": 2.0,
+            "loop_poll_seconds": 3.0,
+            "loop_poll_seconds_fast": 1.0,
             "policies": [
                 {
                     "type": "vwap",
                     "id": "vwap_cross",
                     "enabled": True,
-                    "timeframe": "M15",
+                    "timeframe": "M5",
                     "trigger": "cross_above",
                     "side": "buy",
                     "tp_pips": 18.0,
                     "sl_pips": 12.0,
                     "use_slope_filter": True,
-                    "vwap_slope_lookback_bars": 20,
+                    "vwap_slope_lookback_bars": 12,
                     "session_filter_enabled": True,
                     "no_trade_zone_pips": 1.5,
                 },
@@ -466,13 +468,13 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "type": "vwap",
                     "id": "vwap_cross_sell",
                     "enabled": True,
-                    "timeframe": "M15",
+                    "timeframe": "M5",
                     "trigger": "cross_below",
                     "side": "sell",
                     "tp_pips": 18.0,
                     "sl_pips": 12.0,
                     "use_slope_filter": True,
-                    "vwap_slope_lookback_bars": 20,
+                    "vwap_slope_lookback_bars": 12,
                     "session_filter_enabled": True,
                     "no_trade_zone_pips": 1.5,
                 },
@@ -626,7 +628,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         },
         "strategy": {
             "filters": {
-                "alignment": {"enabled": False},
+                "alignment": {"enabled": True, "trend_timeframe": "M15"},
                 "ema_stack_filter": {"enabled": False},
                 "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 10.0},
                 "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
@@ -683,7 +685,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             # Max lots is set very high so effective max is capped by Profile Editor limits.
             "max_lots": 999.0,
             "require_stop": True,
-            "min_stop_pips": 15.0,
+            "min_stop_pips": 12.0,
             "max_spread_pips": 5.0,
             "max_trades_per_day": 30,
             "max_open_trades": 3,
@@ -789,6 +791,147 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "sl_pips": 12.0,
                     "confirm_bars": 2,
                     "min_distance_pips": 1.0,
+                },
+            ],
+        },
+    },
+    # -----------------------------------------------------------------------
+    # Day Trading USD/JPY (uncle preset: OANDA ~4.5 pip spread, scaled target, breakeven)
+    # -----------------------------------------------------------------------
+    PresetId.DAY_TRADING_USD_JPY: {
+        "name": "Day Trading USD/JPY",
+        "description": "Day trading USD/JPY with M15 trend, M5 pullback, strict filters, ATR-based SL, scaled target (TP1 partial + runner), and breakeven. Suited to OANDA spread (~4.5 pips).",
+        "pros": [
+            "Alignment and EMA stack (20/50/200) on M15; ATR and session filters reduce bad entries",
+            "ATR-based stop (1.3x, max 20 pips); breakeven at 14 pips; TP1 at 18 pips (50% close), remainder runner",
+            "Rejection candle and engulfing confirmation; min RR 2.3; avoid round numbers",
+        ],
+        "cons": [
+            "Wider spread (4.5 pips) requires larger targets; fewer trades (max 6/day, 1 open)",
+        ],
+        "risk": {
+            "max_lots": 0.03,
+            "require_stop": True,
+            "min_stop_pips": 12.0,
+            "max_spread_pips": 5.0,
+            "max_trades_per_day": 10,
+            "max_open_trades": 1,
+            "risk_per_trade_pct": 0.4,
+        },
+        "strategy": {
+            "filters": {
+                "alignment": {"enabled": True, "trend_timeframe": "M15"},
+                "ema_stack_filter": {"enabled": True, "timeframe": "M15", "periods": [20, 50]},
+                "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 10.0},
+                "session_filter": {"enabled": True, "sessions": ["Tokyo", "London", "NewYork"]},
+            },
+        },
+        "trade_management": {
+            "stop_loss": {"mode": "atr", "atr_multiplier": 1.3, "max_sl_pips": 20.0},
+            "breakeven": {"enabled": True, "after_pips": 8.0},
+            "target": {
+                "mode": "scaled",
+                "tp1_pips": 18.0,
+                "tp1_close_percent": 50.0,
+                "tp2_mode": "runner",
+                "trail_after_tp1": True,
+                "trail_type": "ema",
+                "trail_ema": 20,
+            },
+        },
+        "execution": {
+            "loop_poll_seconds": 5.0,
+            "loop_poll_seconds_fast": 1.0,
+            "policies": [
+                {
+                    "type": "ema_pullback",
+                    "id": "usdjpy_m5_m15_pullback",
+                    "enabled": True,
+                    "trend_timeframe": "M15",
+                    "entry_timeframe": "M5",
+                    "ema_trend_fast": 50,
+                    "ema_trend_slow": 200,
+                    "ema_zone_low": 20,
+                    "ema_zone_high": 50,
+                    "require_rejection_candle": True,
+                    "require_engulfing_confirmation": False,
+                    "min_rr": 1.5,
+                    "avoid_round_numbers": True,
+                    "round_number_buffer_pips": 5.0,
+                    "tp_pips": 18.0,
+                },
+            ],
+        },
+    },
+    # -----------------------------------------------------------------------
+    # Day Trading USD/JPY (EMA 9–21 Pullback) - more signals, win-rate focused
+    # Fork of DAY_TRADING_USD_JPY with 9/21 pullback zone.
+    # -----------------------------------------------------------------------
+    PresetId.DAY_TRADING_USD_JPY_9_21: {
+        "name": "Day Trading USD/JPY (EMA 9–21 Pullback)",
+        "description": "Day trading USD/JPY with M15 trend and M5 pullback entries in the EMA 9–21 zone (more frequent entries than 20–50). Strict filters + ATR-based SL + scaled target + breakeven. Tuned for OANDA spread (~4.5 pips).",
+        "pros": [
+            "EMA 9–21 pullback zone tends to trigger earlier/more often than 20–50",
+            "Keeps session + ATR + EMA-stack + alignment-by-trend filters to protect win-rate",
+            "Scaled target with earlier breakeven aims to lock in wins in choppier pullbacks",
+        ],
+        "cons": [
+            "Shallower pullback zone can overtrade chop if filters are disabled",
+            "Wider spread (4.5 pips) still requires meaningful targets; fewer trades than tight-spread brokers",
+        ],
+        "risk": {
+            "max_lots": 0.03,
+            "require_stop": True,
+            "min_stop_pips": 12.0,
+            "max_spread_pips": 5.0,
+            "max_trades_per_day": 12,
+            "max_open_trades": 1,
+            "risk_per_trade_pct": 0.4,
+        },
+        "strategy": {
+            "filters": {
+                "alignment": {"enabled": True, "trend_timeframe": "M15"},
+                "ema_stack_filter": {"enabled": True, "timeframe": "M15", "periods": [20, 50]},
+                "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 10.0},
+                "session_filter": {"enabled": True, "sessions": ["Tokyo", "London", "NewYork"]},
+            },
+        },
+        "trade_management": {
+            "stop_loss": {"mode": "atr", "atr_multiplier": 1.3, "max_sl_pips": 20.0},
+            "breakeven": {"enabled": True, "after_pips": 8.0},
+            "target": {
+                "mode": "scaled",
+                "tp1_pips": 18.0,
+                "tp1_close_percent": 50.0,
+                "tp2_mode": "runner",
+                "trail_after_tp1": True,
+                "trail_type": "ema",
+                "trail_ema": 20,
+            },
+        },
+        "execution": {
+            "loop_poll_seconds": 5.0,
+            "loop_poll_seconds_fast": 1.0,
+            "policies": [
+                {
+                    "type": "ema_pullback",
+                    "id": "usdjpy_m5_m15_pullback_9_21",
+                    "enabled": True,
+                    "trend_timeframe": "M15",
+                    "entry_timeframe": "M5",
+                    "ema_trend_fast": 50,
+                    "ema_trend_slow": 200,
+                    "ema_zone_low": 9,
+                    "ema_zone_high": 21,
+                    "require_rejection_candle": True,
+                    # Balanced default: keep rejection candle, loosen engulfing for more trades
+                    "require_engulfing_confirmation": False,
+                    # Win-rate focus: min_rr uses tp1_pips when scaled; keep realistic given ATR SL/min_stop_pips
+                    "min_rr": 1.5,
+                    "avoid_round_numbers": True,
+                    "round_number_buffer_pips": 5.0,
+                    # Used for min_rr calculations (scaled mode sets TP=None on initial order)
+                    "tp_pips": 18.0,
                 },
             ],
         },
@@ -935,60 +1078,74 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         },
     },
     # -----------------------------------------------------------------------
-    # KT/CG Counter-Trend Pullback (Trial #3)
-    # M5 trend from EMA 9/21, M1 zone entry, M1 pullback cross.
+    # KT/CG Trial #3 (Counter-Trend Pullback with Updated EMAs)
+    # Based on Trial #2 with:
+    # - Zone Entry: M1 EMA 9 vs EMA 13 (was 21)
+    # - Pullback Cross: M1 EMA 9 crosses EMA 15 (was 13)
+    # - Close opposite trades before new trades
     # -----------------------------------------------------------------------
-    PresetId.KT_CG_COUNTER_TREND_PULLBACK: {
-        "name": "KT/CG Counter-Trend Pullback",
-        "description": "Counter-trend pullback strategy: M5 trend from EMA 9/21, M1 zone entry when EMA9 vs EMA13 agrees with trend, M1 pullback cross when EMA9 crosses EMA15 in counter-trend direction. Auto-closes opposite trades before new entries.",
+    PresetId.KT_CG_TRIAL_3: {
+        "name": "KT/CG Trial #3 (Counter-Trend Pullback)",
+        "description": "Counter-trend pullback strategy with updated EMAs. M5 EMA 9/21 trend. M1 Zone Entry: EMA 9 vs EMA 13. M1 Pullback Cross: EMA 9 crosses EMA 15. Auto-closes opposite trades. Swing level filter blocks entries near M15 swing highs/lows.",
         "pros": [
-            "Multi-timeframe confirmation: M5 trend + M1 zone + M1 pullback cross",
-            "Counter-trend pullback entries often catch reversions to mean",
-            "Auto-close opposite trades ensures clean direction switches",
-            "Temporary EMA customization via UI for real-time tuning",
+            "Enters on pullback completion (counter-trend cross)",
+            "Trades in direction of higher timeframe trend",
+            "Simple entry logic - no engulfing/rejection filters",
+            "Tight TP for quick scalps",
+            "Swing filter avoids entries near key reversal zones",
+            "Auto-closes opposite direction trades",
         ],
         "cons": [
-            "Counter-trend entries can be risky in strong trends",
-            "Requires M5 and M1 data alignment",
-            "May miss entries if zone or cross conditions are too strict",
+            "May enter too early if pullback continues",
+            "Testing preset - expect significant drawdowns",
         ],
         "risk": {
             "max_lots": 0.1,
             "require_stop": True,
-            "min_stop_pips": 10.0,
-            "max_spread_pips": 5.0,
-            "max_trades_per_day": 20,
-            "max_open_trades": 2,
+            "min_stop_pips": 20.0,
+            "max_spread_pips": 6.0,
+            "max_trades_per_day": 100,
+            "max_open_trades": 20,
+            "cooldown_minutes_after_loss": 0,
         },
         "strategy": {
             "filters": {
                 "alignment": {"enabled": False},
                 "ema_stack_filter": {"enabled": False},
-                "atr_filter": {"enabled": True, "timeframe": "M1", "min_atr_pips": 5.0},
-                "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
+                "atr_filter": {"enabled": False},
+                "session_filter": {"enabled": False},
             },
+            "setups": {},
         },
         "trade_management": {
-            "target": {"mode": "fixed_pips", "pips_default": 15.0},
-            "breakeven": {"enabled": True, "after_pips": 8.0},
+            "target": {
+                "mode": "fixed_pips",
+                "pips_default": 0.5,
+            },
+            "stop_loss": None,
+            "breakeven": {"enabled": False},
         },
         "execution": {
-            "loop_poll_seconds": 3.0,
-            "loop_poll_seconds_fast": 1.0,
+            "loop_poll_seconds": 1.0,
+            "loop_poll_seconds_fast": 0.5,
             "policies": [
                 {
                     "type": "kt_cg_counter_trend_pullback",
-                    "id": "kt_cg_ctp_default",
+                    "id": "kt_cg_trial_3",
                     "enabled": True,
+                    # M5 Trend EMAs (default 9/21)
                     "m5_trend_ema_fast": 9,
                     "m5_trend_ema_slow": 21,
+                    # M1 Zone Entry - EMA 9 vs slow EMA (default 13)
                     "m1_zone_entry_ema_slow": 13,
+                    # M1 Pullback Cross - EMA 9 crosses slow EMA (default 15)
                     "m1_pullback_cross_ema_slow": 15,
+                    # Close opposite trades before placing new trade
                     "close_opposite_on_trade": True,
-                    "tp_pips": 15.0,
-                    "sl_pips": 10.0,
+                    "tp_pips": 0.5,
+                    "sl_pips": 20.0,
                     "confirm_bars": 1,
-                    # Swing level proximity filter (same as Trial #2)
+                    # Swing level proximity filter (from Trial #2)
                     "swing_level_filter_enabled": True,
                     "swing_lookback_bars": 100,
                     "swing_confirmation_bars": 5,
@@ -1081,147 +1238,6 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "lots_multiplier_strong": 1.0,  # full size for strong momentum
                     "lots_multiplier_moderate": 0.75,  # 75% for moderate
                     "lots_multiplier_weak": 0.5,  # 50% for weak/flat
-                },
-            ],
-        },
-    },
-    # -----------------------------------------------------------------------
-    # Day Trading USD/JPY (uncle preset: OANDA ~4.5 pip spread, scaled target, breakeven)
-    # -----------------------------------------------------------------------
-    PresetId.DAY_TRADING_USD_JPY: {
-        "name": "Day Trading USD/JPY",
-        "description": "Day trading USD/JPY with M15 trend, M5 pullback, strict filters, ATR-based SL, scaled target (TP1 partial + runner), and breakeven. Suited to OANDA spread (~4.5 pips).",
-        "pros": [
-            "Alignment and EMA stack (20/50/200) on M15; ATR and session filters reduce bad entries",
-            "ATR-based stop (1.3x, max 20 pips); breakeven at 14 pips; TP1 at 18 pips (50% close), remainder runner",
-            "Rejection candle and engulfing confirmation; min RR 2.3; avoid round numbers",
-        ],
-        "cons": [
-            "Wider spread (4.5 pips) requires larger targets; fewer trades (max 6/day, 1 open)",
-        ],
-        "risk": {
-            "max_lots": 0.03,
-            "require_stop": True,
-            "min_stop_pips": 12.0,
-            "max_spread_pips": 5.0,
-            "max_trades_per_day": 10,
-            "max_open_trades": 1,
-            "risk_per_trade_pct": 0.4,
-        },
-        "strategy": {
-            "filters": {
-                "alignment": {"enabled": True, "trend_timeframe": "M15"},
-                "ema_stack_filter": {"enabled": True, "timeframe": "M15", "periods": [20, 50]},
-                "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 10.0},
-                "session_filter": {"enabled": True, "sessions": ["Tokyo", "London", "NewYork"]},
-            },
-        },
-        "trade_management": {
-            "stop_loss": {"mode": "atr", "atr_multiplier": 1.3, "max_sl_pips": 20.0},
-            "breakeven": {"enabled": True, "after_pips": 8.0},
-            "target": {
-                "mode": "scaled",
-                "tp1_pips": 18.0,
-                "tp1_close_percent": 50.0,
-                "tp2_mode": "runner",
-                "trail_after_tp1": True,
-                "trail_type": "ema",
-                "trail_ema": 20,
-            },
-        },
-        "execution": {
-            "loop_poll_seconds": 5.0,
-            "loop_poll_seconds_fast": 1.0,
-            "policies": [
-                {
-                    "type": "ema_pullback",
-                    "id": "usdjpy_m5_m15_pullback",
-                    "enabled": True,
-                    "trend_timeframe": "M15",
-                    "entry_timeframe": "M5",
-                    "ema_trend_fast": 50,
-                    "ema_trend_slow": 200,
-                    "ema_zone_low": 20,
-                    "ema_zone_high": 50,
-                    "require_rejection_candle": True,
-                    "require_engulfing_confirmation": False,
-                    "min_rr": 1.5,
-                    "avoid_round_numbers": True,
-                    "round_number_buffer_pips": 5.0,
-                    "tp_pips": 18.0,
-                },
-            ],
-        },
-    },
-    # -----------------------------------------------------------------------
-    # Day Trading USD/JPY (EMA 9–21 Pullback) - more signals, win-rate focused
-    # Fork of DAY_TRADING_USD_JPY with 9/21 pullback zone.
-    # -----------------------------------------------------------------------
-    PresetId.DAY_TRADING_USD_JPY_9_21: {
-        "name": "Day Trading USD/JPY (EMA 9–21 Pullback)",
-        "description": "Day trading USD/JPY with M15 trend and M5 pullback entries in the EMA 9–21 zone (more frequent entries than 20–50). Strict filters + ATR-based SL + scaled target + breakeven. Tuned for OANDA spread (~4.5 pips).",
-        "pros": [
-            "EMA 9–21 pullback zone tends to trigger earlier/more often than 20–50",
-            "Keeps session + ATR + EMA-stack + alignment-by-trend filters to protect win-rate",
-            "Scaled target with earlier breakeven aims to lock in wins in choppier pullbacks",
-        ],
-        "cons": [
-            "Shallower pullback zone can overtrade chop if filters are disabled",
-            "Wider spread (4.5 pips) still requires meaningful targets; fewer trades than tight-spread brokers",
-        ],
-        "risk": {
-            "max_lots": 0.03,
-            "require_stop": True,
-            "min_stop_pips": 12.0,
-            "max_spread_pips": 5.0,
-            "max_trades_per_day": 12,
-            "max_open_trades": 1,
-            "risk_per_trade_pct": 0.4,
-        },
-        "strategy": {
-            "filters": {
-                "alignment": {"enabled": True, "trend_timeframe": "M15"},
-                "ema_stack_filter": {"enabled": True, "timeframe": "M15", "periods": [20, 50]},
-                "atr_filter": {"enabled": True, "timeframe": "M15", "min_atr_pips": 10.0},
-                "session_filter": {"enabled": True, "sessions": ["Tokyo", "London", "NewYork"]},
-            },
-        },
-        "trade_management": {
-            "stop_loss": {"mode": "atr", "atr_multiplier": 1.3, "max_sl_pips": 20.0},
-            "breakeven": {"enabled": True, "after_pips": 8.0},
-            "target": {
-                "mode": "scaled",
-                "tp1_pips": 18.0,
-                "tp1_close_percent": 50.0,
-                "tp2_mode": "runner",
-                "trail_after_tp1": True,
-                "trail_type": "ema",
-                "trail_ema": 20,
-            },
-        },
-        "execution": {
-            "loop_poll_seconds": 5.0,
-            "loop_poll_seconds_fast": 1.0,
-            "policies": [
-                {
-                    "type": "ema_pullback",
-                    "id": "usdjpy_m5_m15_pullback_9_21",
-                    "enabled": True,
-                    "trend_timeframe": "M15",
-                    "entry_timeframe": "M5",
-                    "ema_trend_fast": 50,
-                    "ema_trend_slow": 200,
-                    "ema_zone_low": 9,
-                    "ema_zone_high": 21,
-                    "require_rejection_candle": True,
-                    # Balanced default: keep rejection candle, loosen engulfing for more trades
-                    "require_engulfing_confirmation": False,
-                    # Win-rate focus: min_rr uses tp1_pips when scaled; keep realistic given ATR SL/min_stop_pips
-                    "min_rr": 1.5,
-                    "avoid_round_numbers": True,
-                    "round_number_buffer_pips": 5.0,
-                    # Used for min_rr calculations (scaled mode sets TP=None on initial order)
-                    "tp_pips": 18.0,
                 },
             ],
         },

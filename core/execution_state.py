@@ -17,7 +17,7 @@ class RuntimeState:
     # Used for idempotency / loop progress tracking
     last_processed_bar_time_utc: Optional[str] = None
 
-    # Temporary EMA overrides for KT/CG Counter-Trend Pullback
+    # Temporary EMA overrides for Trial #3 (Apply Temporary Settings)
     temp_m5_trend_ema_fast: Optional[int] = None
     temp_m5_trend_ema_slow: Optional[int] = None
     temp_m1_zone_entry_ema_slow: Optional[int] = None
