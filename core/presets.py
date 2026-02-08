@@ -1002,19 +1002,20 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         },
     },
     # -----------------------------------------------------------------------
-    # KT/CG Trial #2 (Pullback Override)
-    # Same as Trial #1 but pullbacks can override cooldown. M1 cross in M15 direction
-    # during cooldown triggers trade. Includes swing level proximity filter to avoid
-    # entries near swing highs/lows.
+    # KT/CG Trial #2 (Zone Entry + Pullback Cross)
+    # Two independent entry triggers:
+    # 1. Zone Entry (continuous, respects cooldown): M1 EMA9 vs EMA21
+    # 2. Pullback Cross (discrete, overrides cooldown): M1 EMA9 crosses EMA13
+    # Direction switch close: closes opposite positions before new trade.
     # -----------------------------------------------------------------------
     PresetId.KT_CG_TRIAL_2: {
         "name": "KT/CG Trial #2 (Zone Entry + Pullback Cross)",
-        "description": "M5 EMA trend determines direction. Zone Entry: M1 EMA 9 vs EMA 21. Pullback Cross: M1 EMA 9 crosses EMA 13. Swing level filter blocks entries near M15 swing highs/lows.",
+        "description": "Two independent triggers: Zone Entry (M1 EMA 9 vs 21, respects cooldown) OR Pullback Cross (M1 EMA 9 crosses 13, overrides cooldown). Direction switch close enabled.",
         "pros": [
-            "Enters on pullback completion (counter-trend cross)",
-            "Trades in direction of higher timeframe trend",
-            "Simple entry logic - no engulfing/rejection filters",
-            "Tight TP for quick scalps",
+            "Zone Entry trades with trend when EMAs aligned",
+            "Pullback Cross catches counter-trend pullbacks",
+            "Pullback Cross overrides cooldown for faster re-entry",
+            "Direction switch close prevents hedged positions",
             "Swing filter avoids entries near key reversal zones",
         ],
         "cons": [
@@ -1058,10 +1059,14 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     # M5 Trend EMAs
                     "m5_trend_ema_fast": 9,
                     "m5_trend_ema_slow": 21,
-                    # M1 Zone Entry - EMA 9 vs EMA 21
+                    # M1 Zone Entry - EMA 9 vs EMA 21 (respects cooldown)
                     "m1_zone_entry_ema_slow": 21,
-                    # M1 Pullback Cross - EMA 9 crosses EMA 13
+                    # M1 Pullback Cross - EMA 9 crosses EMA 13 (overrides cooldown)
                     "m1_pullback_cross_ema_slow": 13,
+                    # Close opposite trades before placing new trade
+                    "close_opposite_on_trade": True,
+                    # Cooldown (Zone Entry respects, Pullback Cross overrides)
+                    "cooldown_minutes": 3.0,
                     "tp_pips": 0.5,
                     "sl_pips": 20.0,
                     "confirm_bars": 1,
@@ -1075,22 +1080,21 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         },
     },
     # -----------------------------------------------------------------------
-    # KT/CG Trial #3 (Counter-Trend Pullback with Updated EMAs)
-    # Based on Trial #2 with:
-    # - Zone Entry: M1 EMA 9 vs EMA 13 (was 21)
-    # - Pullback Cross: M1 EMA 9 crosses EMA 15 (was 13)
-    # - Close opposite trades before new trades
+    # KT/CG Trial #3 (Zone Entry + Pullback Cross)
+    # Two independent entry triggers:
+    # 1. Zone Entry (continuous, respects cooldown): M1 EMA9 vs EMA13
+    # 2. Pullback Cross (discrete, overrides cooldown): M1 EMA9 crosses EMA15
+    # Direction switch close: closes opposite positions before new trade.
     # -----------------------------------------------------------------------
     PresetId.KT_CG_TRIAL_3: {
         "name": "KT/CG Trial #3 (Counter-Trend Pullback)",
-        "description": "Counter-trend pullback strategy with updated EMAs. M5 EMA 9/21 trend. M1 Zone Entry: EMA 9 vs EMA 13. M1 Pullback Cross: EMA 9 crosses EMA 15. Auto-closes opposite trades. Swing level filter blocks entries near M15 swing highs/lows.",
+        "description": "Two independent triggers: Zone Entry (M1 EMA 9 vs 13, respects cooldown) OR Pullback Cross (M1 EMA 9 crosses 15, overrides cooldown). Direction switch close enabled.",
         "pros": [
-            "Enters on pullback completion (counter-trend cross)",
-            "Trades in direction of higher timeframe trend",
-            "Simple entry logic - no engulfing/rejection filters",
-            "Tight TP for quick scalps",
+            "Zone Entry trades with trend when EMAs aligned",
+            "Pullback Cross catches counter-trend pullbacks",
+            "Pullback Cross overrides cooldown for faster re-entry",
+            "Direction switch close prevents hedged positions",
             "Swing filter avoids entries near key reversal zones",
-            "Auto-closes opposite direction trades",
         ],
         "cons": [
             "May enter too early if pullback continues",
@@ -1133,16 +1137,18 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     # M5 Trend EMAs (default 9/21)
                     "m5_trend_ema_fast": 9,
                     "m5_trend_ema_slow": 21,
-                    # M1 Zone Entry - EMA 9 vs slow EMA (default 13)
+                    # M1 Zone Entry - EMA 9 vs EMA 13 (respects cooldown)
                     "m1_zone_entry_ema_slow": 13,
-                    # M1 Pullback Cross - EMA 9 crosses slow EMA (default 15)
+                    # M1 Pullback Cross - EMA 9 crosses EMA 15 (overrides cooldown)
                     "m1_pullback_cross_ema_slow": 15,
                     # Close opposite trades before placing new trade
                     "close_opposite_on_trade": True,
+                    # Cooldown (Zone Entry respects, Pullback Cross overrides)
+                    "cooldown_minutes": 3.0,
                     "tp_pips": 0.5,
                     "sl_pips": 20.0,
                     "confirm_bars": 1,
-                    # Swing level proximity filter (from Trial #2)
+                    # Swing level proximity filter
                     "swing_level_filter_enabled": True,
                     "swing_lookback_bars": 100,
                     "swing_confirmation_bars": 5,

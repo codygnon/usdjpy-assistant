@@ -2232,16 +2232,20 @@ def evaluate_kt_cg_hybrid_conditions(
     profile: ProfileV1,
     policy: ExecutionPolicyKtCgHybrid,
     data_by_tf: dict[Timeframe, pd.DataFrame],
-) -> tuple[bool, Optional[str], list[str]]:
+) -> tuple[bool, Optional[str], list[str], str]:
     """Evaluate KT/CG Hybrid (Trial #2) conditions.
 
-    Logic:
-    1. M5 Trend: EMA fast > EMA slow = BULL, else BEAR
-    2. M1 Zone Entry: BULL + M1 EMA9 > M1 EMA(zone_slow), or BEAR + M1 EMA9 < M1 EMA(zone_slow)
-    3. M1 Pullback Cross: BULL + EMA9 crosses BELOW EMA(pullback_slow) -> BUY signal
-                          BEAR + EMA9 crosses ABOVE EMA(pullback_slow) -> SELL signal
+    Two INDEPENDENT entry triggers:
+    1. Zone Entry (continuous state, respects cooldown):
+       - M5 BULL + M1 EMA9 > M1 EMA(zone_slow) -> BUY
+       - M5 BEAR + M1 EMA9 < M1 EMA(zone_slow) -> SELL
 
-    Returns: (passed, side, reasons)
+    2. Pullback Cross (discrete event, OVERRIDES cooldown):
+       - M5 BULL + M1 EMA9 crosses BELOW EMA(pullback_slow) -> BUY
+       - M5 BEAR + M1 EMA9 crosses ABOVE EMA(pullback_slow) -> SELL
+
+    Returns: (passed, side, reasons, trigger_type)
+    trigger_type: "zone_entry" or "pullback_cross" (for cooldown handling)
     """
     reasons: list[str] = []
 
@@ -2253,19 +2257,19 @@ def evaluate_kt_cg_hybrid_conditions(
     # Get M5 data for trend
     m5_df = data_by_tf.get("M5")
     if m5_df is None or m5_df.empty:
-        return False, None, ["kt_cg_hybrid: no M5 data"]
+        return False, None, ["kt_cg_hybrid: no M5 data"], ""
     m5_df = drop_incomplete_last_bar(m5_df.copy(), "M5")
     if len(m5_df) < m5_ema_slow + 1:
-        return False, None, [f"kt_cg_hybrid: need at least {m5_ema_slow + 1} M5 bars"]
+        return False, None, [f"kt_cg_hybrid: need at least {m5_ema_slow + 1} M5 bars"], ""
 
     # Get M1 data for zone entry and pullback cross
     m1_df = data_by_tf.get("M1")
     if m1_df is None or m1_df.empty:
-        return False, None, ["kt_cg_hybrid: no M1 data"]
+        return False, None, ["kt_cg_hybrid: no M1 data"], ""
     m1_df = drop_incomplete_last_bar(m1_df.copy(), "M1")
     min_m1_bars = max(m1_zone_ema_slow, m1_pullback_ema_slow) + policy.confirm_bars + 2
     if len(m1_df) < min_m1_bars:
-        return False, None, [f"kt_cg_hybrid: need at least {min_m1_bars} M1 bars"]
+        return False, None, [f"kt_cg_hybrid: need at least {min_m1_bars} M1 bars"], ""
 
     # Step 1: M5 Trend
     m5_close = m5_df["close"]
@@ -2277,57 +2281,57 @@ def evaluate_kt_cg_hybrid_conditions(
     trend = "BULL" if is_bull else "BEAR"
     reasons.append(f"M5 trend: {trend} (EMA{m5_ema_fast}={m5_ema_fast_val:.3f} vs EMA{m5_ema_slow}={m5_ema_slow_val:.3f})")
 
-    # Step 2: M1 Zone Entry
+    # Compute M1 EMAs
     m1_close = m1_df["close"]
     m1_ema9 = ema_fn(m1_close, 9)
     m1_ema_zone = ema_fn(m1_close, m1_zone_ema_slow)
+    m1_ema_pullback = ema_fn(m1_close, m1_pullback_ema_slow)
     m1_ema9_val = float(m1_ema9.iloc[-1])
     m1_zone_val = float(m1_ema_zone.iloc[-1])
 
-    zone_ok = False
-    if is_bull and m1_ema9_val > m1_zone_val:
-        zone_ok = True
-        reasons.append(f"Zone OK: BULL + M1 EMA9 ({m1_ema9_val:.3f}) > EMA{m1_zone_ema_slow} ({m1_zone_val:.3f})")
-    elif not is_bull and m1_ema9_val < m1_zone_val:
-        zone_ok = True
-        reasons.append(f"Zone OK: BEAR + M1 EMA9 ({m1_ema9_val:.3f}) < EMA{m1_zone_ema_slow} ({m1_zone_val:.3f})")
-    else:
-        if is_bull:
-            reasons.append(f"Zone FAIL: BULL but M1 EMA9 ({m1_ema9_val:.3f}) <= EMA{m1_zone_ema_slow} ({m1_zone_val:.3f})")
-        else:
-            reasons.append(f"Zone FAIL: BEAR but M1 EMA9 ({m1_ema9_val:.3f}) >= EMA{m1_zone_ema_slow} ({m1_zone_val:.3f})")
-        return False, None, ["kt_cg_hybrid: " + "; ".join(reasons)]
-
-    # Step 3: M1 Pullback Cross
-    m1_ema_pullback = ema_fn(m1_close, m1_pullback_ema_slow)
+    # Check Pullback Cross FIRST (it overrides cooldown, so prioritize it)
     diff = m1_ema9 - m1_ema_pullback
     cb = max(int(policy.confirm_bars), 1)
-    if len(diff) < cb + 1:
-        return False, None, [f"kt_cg_hybrid: insufficient bars for confirm_bars={cb}"]
+    pullback_cross_triggered = False
+    pullback_side: Optional[str] = None
 
-    now_diff = float(diff.iloc[-1])
-    prev_diff = float(diff.iloc[-cb - 1])
+    if len(diff) >= cb + 1:
+        now_diff = float(diff.iloc[-1])
+        prev_diff = float(diff.iloc[-cb - 1])
+        cross_below = prev_diff >= 0 > now_diff
+        cross_above = prev_diff <= 0 < now_diff
 
-    cross_below = prev_diff >= 0 > now_diff  # EMA9 crossed below EMA pullback
-    cross_above = prev_diff <= 0 < now_diff  # EMA9 crossed above EMA pullback
+        if is_bull and cross_below:
+            pullback_cross_triggered = True
+            pullback_side = "buy"
+            reasons.append(f"PULLBACK CROSS: BULL + EMA9 crossed BELOW EMA{m1_pullback_ema_slow} -> BUY (overrides cooldown)")
+        elif not is_bull and cross_above:
+            pullback_cross_triggered = True
+            pullback_side = "sell"
+            reasons.append(f"PULLBACK CROSS: BEAR + EMA9 crossed ABOVE EMA{m1_pullback_ema_slow} -> SELL (overrides cooldown)")
 
-    side: Optional[str] = None
-    if is_bull and cross_below:
-        # BULL trend + EMA9 crosses below pullback EMA -> BUY (counter-trend pullback entry)
-        side = "buy"
-        reasons.append(f"Pullback Cross: BULL + EMA9 crossed BELOW EMA{m1_pullback_ema_slow} -> BUY")
-    elif not is_bull and cross_above:
-        # BEAR trend + EMA9 crosses above pullback EMA -> SELL (counter-trend pullback entry)
-        side = "sell"
-        reasons.append(f"Pullback Cross: BEAR + EMA9 crossed ABOVE EMA{m1_pullback_ema_slow} -> SELL")
-    else:
-        if is_bull:
-            reasons.append(f"No pullback cross: BULL needs EMA9 cross below EMA{m1_pullback_ema_slow} (prev_diff={prev_diff:.5f}, now_diff={now_diff:.5f})")
-        else:
-            reasons.append(f"No pullback cross: BEAR needs EMA9 cross above EMA{m1_pullback_ema_slow} (prev_diff={prev_diff:.5f}, now_diff={now_diff:.5f})")
-        return False, None, ["kt_cg_hybrid: " + "; ".join(reasons)]
+    if pullback_cross_triggered and pullback_side:
+        return True, pullback_side, reasons, "pullback_cross"
 
-    return True, side, reasons
+    # Check Zone Entry (respects cooldown)
+    zone_entry_triggered = False
+    zone_side: Optional[str] = None
+
+    if is_bull and m1_ema9_val > m1_zone_val:
+        zone_entry_triggered = True
+        zone_side = "buy"
+        reasons.append(f"ZONE ENTRY: BULL + M1 EMA9 ({m1_ema9_val:.3f}) > EMA{m1_zone_ema_slow} ({m1_zone_val:.3f}) -> BUY")
+    elif not is_bull and m1_ema9_val < m1_zone_val:
+        zone_entry_triggered = True
+        zone_side = "sell"
+        reasons.append(f"ZONE ENTRY: BEAR + M1 EMA9 ({m1_ema9_val:.3f}) < EMA{m1_zone_ema_slow} ({m1_zone_val:.3f}) -> SELL")
+
+    if zone_entry_triggered and zone_side:
+        return True, zone_side, reasons, "zone_entry"
+
+    # Neither trigger fired
+    reasons.append(f"No trigger: Zone={m1_ema9_val:.3f} vs EMA{m1_zone_ema_slow}={m1_zone_val:.3f}, no pullback cross")
+    return False, None, reasons, ""
 
 
 def _kt_cg_hybrid_candidate(
@@ -2355,6 +2359,46 @@ def _kt_cg_hybrid_candidate(
     )
 
 
+def _check_kt_cg_hybrid_cooldown(
+    store: SqliteStore,
+    profile_name: str,
+    policy_id: str,
+    cooldown_minutes: float,
+) -> tuple[bool, Optional[str]]:
+    """Check if cooldown has elapsed since last kt_cg_hybrid trade.
+
+    Returns: (cooldown_ok, reason)
+    """
+    if cooldown_minutes <= 0:
+        return True, None
+
+    # Check executions for recent placements with this policy
+    try:
+        execs = store.read_executions_df(profile_name)
+        if execs is None or execs.empty:
+            return True, None
+
+        # Filter to kt_cg_hybrid executions that were placed
+        kt_cg_execs = execs[
+            (execs["rule_id"].str.contains(f"kt_cg_hybrid:{policy_id}", na=False)) &
+            (execs["placed"] == 1)
+        ]
+        if kt_cg_execs.empty:
+            return True, None
+
+        # Get the most recent placed execution
+        last_exec = kt_cg_execs.iloc[-1]
+        last_time = pd.to_datetime(last_exec["timestamp_utc"])
+        now = pd.Timestamp.now(tz="UTC")
+        elapsed = (now - last_time).total_seconds() / 60.0
+
+        if elapsed < cooldown_minutes:
+            return False, f"cooldown: {elapsed:.1f}m < {cooldown_minutes}m since last trade"
+        return True, None
+    except Exception:
+        return True, None  # If we can't check, allow the trade
+
+
 def execute_kt_cg_hybrid_policy_demo_only(
     *,
     adapter,
@@ -2368,7 +2412,12 @@ def execute_kt_cg_hybrid_policy_demo_only(
     mode: str,
     bar_time_utc: str,
 ) -> ExecutionDecision:
-    """Evaluate KT/CG Hybrid (Trial #2) policy and optionally place a market order."""
+    """Evaluate KT/CG Hybrid (Trial #2) policy and optionally place a market order.
+
+    Two independent triggers:
+    1. Zone Entry (respects cooldown)
+    2. Pullback Cross (overrides cooldown)
+    """
     if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
         return ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed")
     if not adapter.is_demo_account():
@@ -2380,7 +2429,8 @@ def execute_kt_cg_hybrid_policy_demo_only(
     if store.has_recent_price_level_placement(profile.profile_name, rule_id, within):
         return ExecutionDecision(attempted=False, placed=False, reason="kt_cg_hybrid: recent placement (idempotent)")
 
-    passed, side, eval_reasons = evaluate_kt_cg_hybrid_conditions(profile, policy, data_by_tf)
+    # Evaluate conditions - returns (passed, side, reasons, trigger_type)
+    passed, side, eval_reasons, trigger_type = evaluate_kt_cg_hybrid_conditions(profile, policy, data_by_tf)
     if not passed or side is None:
         store.insert_execution(
             {
@@ -2399,6 +2449,30 @@ def execute_kt_cg_hybrid_policy_demo_only(
             }
         )
         return ExecutionDecision(attempted=True, placed=False, reason="; ".join(eval_reasons))
+
+    # Check cooldown for Zone Entry (Pullback Cross overrides cooldown)
+    if trigger_type == "zone_entry":
+        cooldown_ok, cooldown_reason = _check_kt_cg_hybrid_cooldown(
+            store, profile.profile_name, policy.id, policy.cooldown_minutes
+        )
+        if not cooldown_ok:
+            store.insert_execution(
+                {
+                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "profile": profile.profile_name,
+                    "symbol": profile.symbol,
+                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                    "rule_id": rule_id,
+                    "mode": mode,
+                    "attempted": 1,
+                    "placed": 0,
+                    "reason": cooldown_reason or "zone_entry_cooldown",
+                    "mt5_retcode": None,
+                    "mt5_order_id": None,
+                    "mt5_deal_id": None,
+                }
+            )
+            return ExecutionDecision(attempted=True, placed=False, reason=cooldown_reason or "zone_entry_cooldown")
 
     # Strategy filters: session, ATR
     now_utc = datetime.now(timezone.utc)
@@ -2467,6 +2541,12 @@ def execute_kt_cg_hybrid_policy_demo_only(
         )
         return ExecutionDecision(attempted=True, placed=False, reason=decision.reason or "risk_rejected")
 
+    # Direction Switch Close: close opposite positions before placing new trade
+    if policy.close_opposite_on_trade:
+        closed_ids = close_opposite_positions(adapter, profile, side, log_dir)
+        if closed_ids:
+            print(f"[{profile.profile_name}] kt_cg_hybrid: closed {len(closed_ids)} opposite position(s) before {side.upper()}")
+
     # Place the order
     res = adapter.order_send_market(
         symbol=profile.symbol,
@@ -2474,11 +2554,11 @@ def execute_kt_cg_hybrid_policy_demo_only(
         volume_lots=candidate.size_lots,
         sl=candidate.stop_price,
         tp=candidate.target_price,
-        comment=f"kt_cg_hybrid:{policy.id}",
+        comment=f"kt_cg_hybrid:{policy.id}:{trigger_type}",
     )
 
     placed = res.retcode in (0, 10008, 10009)
-    reason = "order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
+    reason = f"{trigger_type}:order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
 
     if placed:
         pos = adapter.get_open_positions(profile.symbol)
@@ -2524,16 +2604,20 @@ def evaluate_kt_cg_ctp_conditions(
     policy: ExecutionPolicyKtCgCounterTrendPullback,
     data_by_tf: dict[Timeframe, pd.DataFrame],
     temp_overrides: Optional[dict] = None,
-) -> tuple[bool, Optional[str], list[str]]:
-    """Evaluate KT/CG Counter-Trend Pullback conditions.
+) -> tuple[bool, Optional[str], list[str], str]:
+    """Evaluate KT/CG Counter-Trend Pullback (Trial #3) conditions.
 
-    Logic:
-    1. M5 Trend: EMA fast > EMA slow = BULL, else BEAR
-    2. M1 Zone Entry: BULL + M1 EMA9 > M1 EMA(zone_slow), or BEAR + M1 EMA9 < M1 EMA(zone_slow)
-    3. M1 Pullback Cross: BULL + EMA9 crosses BELOW EMA(pullback_slow) -> BUY signal
-                          BEAR + EMA9 crosses ABOVE EMA(pullback_slow) -> SELL signal
+    Two INDEPENDENT entry triggers:
+    1. Zone Entry (continuous state, respects cooldown):
+       - M5 BULL + M1 EMA9 > M1 EMA(zone_slow) -> BUY
+       - M5 BEAR + M1 EMA9 < M1 EMA(zone_slow) -> SELL
 
-    Returns: (passed, side, reasons)
+    2. Pullback Cross (discrete event, OVERRIDES cooldown):
+       - M5 BULL + M1 EMA9 crosses BELOW EMA(pullback_slow) -> BUY
+       - M5 BEAR + M1 EMA9 crosses ABOVE EMA(pullback_slow) -> SELL
+
+    Returns: (passed, side, reasons, trigger_type)
+    trigger_type: "zone_entry" or "pullback_cross" (for cooldown handling)
     """
     reasons: list[str] = []
 
@@ -2546,19 +2630,19 @@ def evaluate_kt_cg_ctp_conditions(
     # Get M5 data for trend
     m5_df = data_by_tf.get("M5")
     if m5_df is None or m5_df.empty:
-        return False, None, ["kt_cg_ctp: no M5 data"]
+        return False, None, ["kt_cg_ctp: no M5 data"], ""
     m5_df = drop_incomplete_last_bar(m5_df.copy(), "M5")
     if len(m5_df) < m5_ema_slow + 1:
-        return False, None, [f"kt_cg_ctp: need at least {m5_ema_slow + 1} M5 bars"]
+        return False, None, [f"kt_cg_ctp: need at least {m5_ema_slow + 1} M5 bars"], ""
 
     # Get M1 data for zone entry and pullback cross
     m1_df = data_by_tf.get("M1")
     if m1_df is None or m1_df.empty:
-        return False, None, ["kt_cg_ctp: no M1 data"]
+        return False, None, ["kt_cg_ctp: no M1 data"], ""
     m1_df = drop_incomplete_last_bar(m1_df.copy(), "M1")
     min_m1_bars = max(m1_zone_ema_slow, m1_pullback_ema_slow) + policy.confirm_bars + 2
     if len(m1_df) < min_m1_bars:
-        return False, None, [f"kt_cg_ctp: need at least {min_m1_bars} M1 bars"]
+        return False, None, [f"kt_cg_ctp: need at least {min_m1_bars} M1 bars"], ""
 
     # Step 1: M5 Trend
     m5_close = m5_df["close"]
@@ -2570,57 +2654,57 @@ def evaluate_kt_cg_ctp_conditions(
     trend = "BULL" if is_bull else "BEAR"
     reasons.append(f"M5 trend: {trend} (EMA{m5_ema_fast}={m5_ema_fast_val:.3f} vs EMA{m5_ema_slow}={m5_ema_slow_val:.3f})")
 
-    # Step 2: M1 Zone Entry
+    # Compute M1 EMAs
     m1_close = m1_df["close"]
     m1_ema9 = ema_fn(m1_close, 9)
     m1_ema_zone = ema_fn(m1_close, m1_zone_ema_slow)
+    m1_ema_pullback = ema_fn(m1_close, m1_pullback_ema_slow)
     m1_ema9_val = float(m1_ema9.iloc[-1])
     m1_zone_val = float(m1_ema_zone.iloc[-1])
 
-    zone_ok = False
-    if is_bull and m1_ema9_val > m1_zone_val:
-        zone_ok = True
-        reasons.append(f"Zone OK: BULL + M1 EMA9 ({m1_ema9_val:.3f}) > EMA{m1_zone_ema_slow} ({m1_zone_val:.3f})")
-    elif not is_bull and m1_ema9_val < m1_zone_val:
-        zone_ok = True
-        reasons.append(f"Zone OK: BEAR + M1 EMA9 ({m1_ema9_val:.3f}) < EMA{m1_zone_ema_slow} ({m1_zone_val:.3f})")
-    else:
-        if is_bull:
-            reasons.append(f"Zone FAIL: BULL but M1 EMA9 ({m1_ema9_val:.3f}) <= EMA{m1_zone_ema_slow} ({m1_zone_val:.3f})")
-        else:
-            reasons.append(f"Zone FAIL: BEAR but M1 EMA9 ({m1_ema9_val:.3f}) >= EMA{m1_zone_ema_slow} ({m1_zone_val:.3f})")
-        return False, None, ["kt_cg_ctp: " + "; ".join(reasons)]
-
-    # Step 3: M1 Pullback Cross
-    m1_ema_pullback = ema_fn(m1_close, m1_pullback_ema_slow)
+    # Check Pullback Cross FIRST (it overrides cooldown, so prioritize it)
     diff = m1_ema9 - m1_ema_pullback
     cb = max(int(policy.confirm_bars), 1)
-    if len(diff) < cb + 1:
-        return False, None, [f"kt_cg_ctp: insufficient bars for confirm_bars={cb}"]
+    pullback_cross_triggered = False
+    pullback_side: Optional[str] = None
 
-    now_diff = float(diff.iloc[-1])
-    prev_diff = float(diff.iloc[-cb - 1])
+    if len(diff) >= cb + 1:
+        now_diff = float(diff.iloc[-1])
+        prev_diff = float(diff.iloc[-cb - 1])
+        cross_below = prev_diff >= 0 > now_diff
+        cross_above = prev_diff <= 0 < now_diff
 
-    cross_below = prev_diff >= 0 > now_diff  # EMA9 crossed below EMA pullback
-    cross_above = prev_diff <= 0 < now_diff  # EMA9 crossed above EMA pullback
+        if is_bull and cross_below:
+            pullback_cross_triggered = True
+            pullback_side = "buy"
+            reasons.append(f"PULLBACK CROSS: BULL + EMA9 crossed BELOW EMA{m1_pullback_ema_slow} -> BUY (overrides cooldown)")
+        elif not is_bull and cross_above:
+            pullback_cross_triggered = True
+            pullback_side = "sell"
+            reasons.append(f"PULLBACK CROSS: BEAR + EMA9 crossed ABOVE EMA{m1_pullback_ema_slow} -> SELL (overrides cooldown)")
 
-    side: Optional[str] = None
-    if is_bull and cross_below:
-        # BULL trend + EMA9 crosses below pullback EMA -> BUY (counter-trend pullback entry)
-        side = "buy"
-        reasons.append(f"Pullback Cross: BULL + EMA9 crossed BELOW EMA{m1_pullback_ema_slow} -> BUY")
-    elif not is_bull and cross_above:
-        # BEAR trend + EMA9 crosses above pullback EMA -> SELL (counter-trend pullback entry)
-        side = "sell"
-        reasons.append(f"Pullback Cross: BEAR + EMA9 crossed ABOVE EMA{m1_pullback_ema_slow} -> SELL")
-    else:
-        if is_bull:
-            reasons.append(f"No pullback cross: BULL needs EMA9 cross below EMA{m1_pullback_ema_slow} (prev_diff={prev_diff:.5f}, now_diff={now_diff:.5f})")
-        else:
-            reasons.append(f"No pullback cross: BEAR needs EMA9 cross above EMA{m1_pullback_ema_slow} (prev_diff={prev_diff:.5f}, now_diff={now_diff:.5f})")
-        return False, None, ["kt_cg_ctp: " + "; ".join(reasons)]
+    if pullback_cross_triggered and pullback_side:
+        return True, pullback_side, reasons, "pullback_cross"
 
-    return True, side, reasons
+    # Check Zone Entry (respects cooldown)
+    zone_entry_triggered = False
+    zone_side: Optional[str] = None
+
+    if is_bull and m1_ema9_val > m1_zone_val:
+        zone_entry_triggered = True
+        zone_side = "buy"
+        reasons.append(f"ZONE ENTRY: BULL + M1 EMA9 ({m1_ema9_val:.3f}) > EMA{m1_zone_ema_slow} ({m1_zone_val:.3f}) -> BUY")
+    elif not is_bull and m1_ema9_val < m1_zone_val:
+        zone_entry_triggered = True
+        zone_side = "sell"
+        reasons.append(f"ZONE ENTRY: BEAR + M1 EMA9 ({m1_ema9_val:.3f}) < EMA{m1_zone_ema_slow} ({m1_zone_val:.3f}) -> SELL")
+
+    if zone_entry_triggered and zone_side:
+        return True, zone_side, reasons, "zone_entry"
+
+    # Neither trigger fired
+    reasons.append(f"No trigger: Zone={m1_ema9_val:.3f} vs EMA{m1_zone_ema_slow}={m1_zone_val:.3f}, no pullback cross")
+    return False, None, reasons, ""
 
 
 def close_opposite_positions(
@@ -2714,6 +2798,43 @@ def _kt_cg_ctp_candidate(
     )
 
 
+def _check_kt_cg_ctp_cooldown(
+    store: SqliteStore,
+    profile_name: str,
+    policy_id: str,
+    cooldown_minutes: float,
+) -> tuple[bool, Optional[str]]:
+    """Check if cooldown has elapsed since last kt_cg_ctp trade.
+
+    Returns: (cooldown_ok, reason)
+    """
+    if cooldown_minutes <= 0:
+        return True, None
+
+    try:
+        execs = store.read_executions_df(profile_name)
+        if execs is None or execs.empty:
+            return True, None
+
+        kt_cg_execs = execs[
+            (execs["rule_id"].str.contains(f"kt_cg_ctp:{policy_id}", na=False)) &
+            (execs["placed"] == 1)
+        ]
+        if kt_cg_execs.empty:
+            return True, None
+
+        last_exec = kt_cg_execs.iloc[-1]
+        last_time = pd.to_datetime(last_exec["timestamp_utc"])
+        now = pd.Timestamp.now(tz="UTC")
+        elapsed = (now - last_time).total_seconds() / 60.0
+
+        if elapsed < cooldown_minutes:
+            return False, f"cooldown: {elapsed:.1f}m < {cooldown_minutes}m since last trade"
+        return True, None
+    except Exception:
+        return True, None
+
+
 def execute_kt_cg_ctp_policy_demo_only(
     *,
     adapter,
@@ -2728,7 +2849,12 @@ def execute_kt_cg_ctp_policy_demo_only(
     bar_time_utc: str,
     temp_overrides: Optional[dict] = None,
 ) -> ExecutionDecision:
-    """Evaluate KT/CG Counter-Trend Pullback policy and optionally place a market order."""
+    """Evaluate KT/CG Counter-Trend Pullback (Trial #3) policy and optionally place a market order.
+
+    Two independent triggers:
+    1. Zone Entry (respects cooldown)
+    2. Pullback Cross (overrides cooldown)
+    """
     if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
         return ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed")
     if not adapter.is_demo_account():
@@ -2740,7 +2866,8 @@ def execute_kt_cg_ctp_policy_demo_only(
     if store.has_recent_price_level_placement(profile.profile_name, rule_id, within):
         return ExecutionDecision(attempted=False, placed=False, reason="kt_cg_ctp: recent placement (idempotent)")
 
-    passed, side, eval_reasons = evaluate_kt_cg_ctp_conditions(profile, policy, data_by_tf, temp_overrides)
+    # Evaluate conditions - returns (passed, side, reasons, trigger_type)
+    passed, side, eval_reasons, trigger_type = evaluate_kt_cg_ctp_conditions(profile, policy, data_by_tf, temp_overrides)
     if not passed or side is None:
         store.insert_execution(
             {
@@ -2759,6 +2886,30 @@ def execute_kt_cg_ctp_policy_demo_only(
             }
         )
         return ExecutionDecision(attempted=True, placed=False, reason="; ".join(eval_reasons))
+
+    # Check cooldown for Zone Entry (Pullback Cross overrides cooldown)
+    if trigger_type == "zone_entry":
+        cooldown_ok, cooldown_reason = _check_kt_cg_ctp_cooldown(
+            store, profile.profile_name, policy.id, policy.cooldown_minutes
+        )
+        if not cooldown_ok:
+            store.insert_execution(
+                {
+                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "profile": profile.profile_name,
+                    "symbol": profile.symbol,
+                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                    "rule_id": rule_id,
+                    "mode": mode,
+                    "attempted": 1,
+                    "placed": 0,
+                    "reason": cooldown_reason or "zone_entry_cooldown",
+                    "mt5_retcode": None,
+                    "mt5_order_id": None,
+                    "mt5_deal_id": None,
+                }
+            )
+            return ExecutionDecision(attempted=True, placed=False, reason=cooldown_reason or "zone_entry_cooldown")
 
     # Strategy filters: session, ATR
     now_utc = datetime.now(timezone.utc)
@@ -2847,11 +2998,11 @@ def execute_kt_cg_ctp_policy_demo_only(
         )
         return ExecutionDecision(attempted=True, placed=False, reason="manual confirm required")
 
-    # Close opposite positions if enabled
+    # Close opposite positions if enabled (Direction Switch Close)
     if policy.close_opposite_on_trade:
         closed = close_opposite_positions(adapter, profile, side, log_dir)
         if closed:
-            print(f"[{profile.profile_name}] PASSED: kt_cg_ctp closed {len(closed)} opposite position(s)")
+            print(f"[{profile.profile_name}] kt_cg_ctp: closed {len(closed)} opposite position(s) before {side.upper()}")
 
     res = adapter.order_send_market(
         symbol=profile.symbol,
@@ -2859,10 +3010,10 @@ def execute_kt_cg_ctp_policy_demo_only(
         volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
         sl=candidate.stop_price,
         tp=candidate.target_price,
-        comment=f"kt_cg_ctp:{policy.id}",
+        comment=f"kt_cg_ctp:{policy.id}:{trigger_type}",
     )
     placed = res.retcode in (0, 10008, 10009)
-    reason = "order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
+    reason = f"{trigger_type}:order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
     sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
     store.insert_execution(
         {
@@ -2882,7 +3033,7 @@ def execute_kt_cg_ctp_policy_demo_only(
     )
 
     if placed:
-        print(f"[{profile.profile_name}] PASSED: kt_cg_ctp | {'; '.join(eval_reasons)}")
+        print(f"[{profile.profile_name}] TRADE PLACED: kt_cg_ctp:{trigger_type} | {'; '.join(eval_reasons)}")
 
     return ExecutionDecision(
         attempted=True,

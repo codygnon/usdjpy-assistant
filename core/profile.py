@@ -324,11 +324,17 @@ class ExecutionPolicyEmaBbScalp(BaseModel):
 class ExecutionPolicyKtCgHybrid(BaseModel):
     """KT/CG Hybrid strategy (Trial #2).
 
-    Logic:
-    - M5 Trend: EMA fast > EMA slow = BULL, else BEAR
-    - M1 Zone Entry: BULL + M1 EMA9 > M1 EMA(zone_slow), or BEAR + M1 EMA9 < M1 EMA(zone_slow)
-    - M1 Pullback Cross: BULL + EMA9 crosses below EMA(pullback_slow) -> BUY
-                         BEAR + EMA9 crosses above EMA(pullback_slow) -> SELL
+    Two INDEPENDENT entry triggers:
+
+    1. Zone Entry (continuous state, respects cooldown):
+       - If M5 BULL AND M1 EMA9 > M1 EMA(zone_slow) AND cooldown elapsed -> BUY
+       - If M5 BEAR AND M1 EMA9 < M1 EMA(zone_slow) AND cooldown elapsed -> SELL
+
+    2. Pullback Cross (discrete event, OVERRIDES cooldown):
+       - If M5 BULL AND M1 EMA9 crosses BELOW EMA(pullback_slow) -> BUY (ignore cooldown)
+       - If M5 BEAR AND M1 EMA9 crosses ABOVE EMA(pullback_slow) -> SELL (ignore cooldown)
+
+    Either condition can trigger a trade independently.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -347,6 +353,12 @@ class ExecutionPolicyKtCgHybrid(BaseModel):
     # M1 Pullback Cross - EMA 9 crosses slow EMA (default 13 for Trial #2)
     m1_pullback_cross_ema_slow: int = 13
 
+    # Close opposite trades before placing new trade
+    close_opposite_on_trade: bool = True
+
+    # Cooldown after trade (Zone Entry respects this, Pullback Cross overrides it)
+    cooldown_minutes: float = 3.0
+
     tp_pips: float = 15.0
     sl_pips: Optional[float] = 10.0
     confirm_bars: int = 1
@@ -361,11 +373,18 @@ class ExecutionPolicyKtCgHybrid(BaseModel):
 class ExecutionPolicyKtCgCounterTrendPullback(BaseModel):
     """KT/CG Counter-Trend Pullback strategy (Trial #3).
 
-    Logic:
-    - M5 Trend: EMA fast > EMA slow = BULL, else BEAR
-    - M1 Zone Entry: BULL + M1 EMA9 > M1 EMA slow, or BEAR + M1 EMA9 < M1 EMA slow
-    - M1 Pullback Cross: BULL + EMA9 crosses below EMA slow -> BUY; BEAR + EMA9 crosses above EMA slow -> SELL
-    - Auto-close opposite direction trades before placing new trade
+    Two INDEPENDENT entry triggers:
+
+    1. Zone Entry (continuous state, respects cooldown):
+       - If M5 BULL AND M1 EMA9 > M1 EMA(zone_slow) AND cooldown elapsed -> BUY
+       - If M5 BEAR AND M1 EMA9 < M1 EMA(zone_slow) AND cooldown elapsed -> SELL
+
+    2. Pullback Cross (discrete event, OVERRIDES cooldown):
+       - If M5 BULL AND M1 EMA9 crosses BELOW EMA(pullback_slow) -> BUY (ignore cooldown)
+       - If M5 BEAR AND M1 EMA9 crosses ABOVE EMA(pullback_slow) -> SELL (ignore cooldown)
+
+    Either condition can trigger a trade independently.
+    Direction switch close: auto-close opposite direction trades before placing new trade.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -386,6 +405,9 @@ class ExecutionPolicyKtCgCounterTrendPullback(BaseModel):
 
     # Close opposite trades before placing new trade
     close_opposite_on_trade: bool = True
+
+    # Cooldown after trade (Zone Entry respects this, Pullback Cross overrides it)
+    cooldown_minutes: float = 3.0
 
     tp_pips: float = 15.0
     sl_pips: Optional[float] = 10.0
