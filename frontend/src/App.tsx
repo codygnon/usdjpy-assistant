@@ -454,78 +454,16 @@ function RunPage({ profile }: { profile: Profile }) {
   const [log, setLog] = useState<string>('');
   const [loading, setLoading] = useState(false);
 
-  // Temporary EMA settings for KT/CG CTP
-  const [tempSettings, setTempSettings] = useState<api.TempSettings | null>(null);
-  const [tempM5Fast, setTempM5Fast] = useState<string>('');
-  const [tempM5Slow, setTempM5Slow] = useState<string>('');
-  const [tempM1Zone, setTempM1Zone] = useState<string>('');
-  const [tempM1Pullback, setTempM1Pullback] = useState<string>('');
-  const [tempSaving, setTempSaving] = useState(false);
-  const [tempMessage, setTempMessage] = useState<string | null>(null);
-
   const fetchState = () => {
     api.getRuntimeState(profile.name).then(setState).catch(console.error);
     api.getLoopLog(profile.name, 50).then((r) => setLog(r.content)).catch(console.error);
   };
 
-  const fetchTempSettings = () => {
-    api.getTempSettings(profile.name).then((s) => {
-      setTempSettings(s);
-      setTempM5Fast(s.temp_m5_trend_ema_fast?.toString() || '');
-      setTempM5Slow(s.temp_m5_trend_ema_slow?.toString() || '');
-      setTempM1Zone(s.temp_m1_zone_entry_ema_slow?.toString() || '');
-      setTempM1Pullback(s.temp_m1_pullback_cross_ema_slow?.toString() || '');
-    }).catch(console.error);
-  };
-
   useEffect(() => {
     fetchState();
-    fetchTempSettings();
     const interval = setInterval(fetchState, 3000);
     return () => clearInterval(interval);
   }, [profile.name]);
-
-  const handleApplyTempSettings = async () => {
-    setTempSaving(true);
-    setTempMessage(null);
-    try {
-      await api.updateTempSettings(profile.name, {
-        temp_m5_trend_ema_fast: tempM5Fast ? parseInt(tempM5Fast, 10) : null,
-        temp_m5_trend_ema_slow: tempM5Slow ? parseInt(tempM5Slow, 10) : null,
-        temp_m1_zone_entry_ema_slow: tempM1Zone ? parseInt(tempM1Zone, 10) : null,
-        temp_m1_pullback_cross_ema_slow: tempM1Pullback ? parseInt(tempM1Pullback, 10) : null,
-      });
-      setTempMessage('Settings applied! Will be used on next trade evaluation.');
-      fetchTempSettings();
-    } catch (e) {
-      setTempMessage(`Error: ${(e as Error).message}`);
-    } finally {
-      setTempSaving(false);
-    }
-  };
-
-  const handleClearTempSettings = async () => {
-    setTempSaving(true);
-    setTempMessage(null);
-    try {
-      await api.updateTempSettings(profile.name, {
-        temp_m5_trend_ema_fast: null,
-        temp_m5_trend_ema_slow: null,
-        temp_m1_zone_entry_ema_slow: null,
-        temp_m1_pullback_cross_ema_slow: null,
-      });
-      setTempM5Fast('');
-      setTempM5Slow('');
-      setTempM1Zone('');
-      setTempM1Pullback('');
-      setTempMessage('Settings cleared. Using preset defaults.');
-      fetchTempSettings();
-    } catch (e) {
-      setTempMessage(`Error: ${(e as Error).message}`);
-    } finally {
-      setTempSaving(false);
-    }
-  };
 
   const handleModeChange = async (mode: string) => {
     if (!state) return;
@@ -627,100 +565,6 @@ function RunPage({ profile }: { profile: Profile }) {
             </label>
           </div>
         </div>
-      </div>
-
-      <div className="card mt-4">
-        <h3 className="card-title">Temporary EMA Settings (KT/CG CTP)</h3>
-        <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
-          Override EMA periods for KT/CG Counter-Trend Pullback strategy. Leave blank to use preset defaults.
-        </p>
-
-        <div className="grid-2" style={{ gap: 12 }}>
-          <div className="form-group" style={{ marginBottom: 8 }}>
-            <label>M5 Trend - Fast EMA (default: 9)</label>
-            <input
-              type="number"
-              value={tempM5Fast}
-              onChange={(e) => setTempM5Fast(e.target.value)}
-              placeholder="9"
-              min={1}
-              max={200}
-            />
-          </div>
-          <div className="form-group" style={{ marginBottom: 8 }}>
-            <label>M5 Trend - Slow EMA (default: 21)</label>
-            <input
-              type="number"
-              value={tempM5Slow}
-              onChange={(e) => setTempM5Slow(e.target.value)}
-              placeholder="21"
-              min={1}
-              max={200}
-            />
-          </div>
-          <div className="form-group" style={{ marginBottom: 8 }}>
-            <label>M1 Zone Entry - Slow EMA (default: 13)</label>
-            <input
-              type="number"
-              value={tempM1Zone}
-              onChange={(e) => setTempM1Zone(e.target.value)}
-              placeholder="13"
-              min={1}
-              max={200}
-            />
-          </div>
-          <div className="form-group" style={{ marginBottom: 8 }}>
-            <label>M1 Pullback Cross - Slow EMA (default: 15)</label>
-            <input
-              type="number"
-              value={tempM1Pullback}
-              onChange={(e) => setTempM1Pullback(e.target.value)}
-              placeholder="15"
-              min={1}
-              max={200}
-            />
-          </div>
-        </div>
-
-        {tempMessage && (
-          <p style={{
-            fontSize: '0.85rem',
-            marginTop: 8,
-            color: tempMessage.startsWith('Error') ? 'var(--danger)' : 'var(--success)'
-          }}>
-            {tempMessage}
-          </p>
-        )}
-
-        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-          <button
-            className="btn btn-primary"
-            onClick={handleApplyTempSettings}
-            disabled={tempSaving}
-          >
-            {tempSaving ? 'Applying...' : 'Apply Temporary Settings'}
-          </button>
-          <button
-            className="btn btn-secondary"
-            onClick={handleClearTempSettings}
-            disabled={tempSaving}
-          >
-            Clear (Use Defaults)
-          </button>
-        </div>
-
-        {tempSettings && (tempSettings.temp_m5_trend_ema_fast || tempSettings.temp_m5_trend_ema_slow ||
-          tempSettings.temp_m1_zone_entry_ema_slow || tempSettings.temp_m1_pullback_cross_ema_slow) && (
-          <div style={{ marginTop: 12, padding: 8, background: 'var(--bg-tertiary)', borderRadius: 4, fontSize: '0.8rem' }}>
-            <strong>Currently Active Overrides:</strong>
-            <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
-              {tempSettings.temp_m5_trend_ema_fast && <li>M5 Fast EMA: {tempSettings.temp_m5_trend_ema_fast}</li>}
-              {tempSettings.temp_m5_trend_ema_slow && <li>M5 Slow EMA: {tempSettings.temp_m5_trend_ema_slow}</li>}
-              {tempSettings.temp_m1_zone_entry_ema_slow && <li>M1 Zone Slow EMA: {tempSettings.temp_m1_zone_entry_ema_slow}</li>}
-              {tempSettings.temp_m1_pullback_cross_ema_slow && <li>M1 Pullback Slow EMA: {tempSettings.temp_m1_pullback_cross_ema_slow}</li>}
-            </ul>
-          </div>
-        )}
       </div>
 
       <div className="card mt-4">
@@ -2883,9 +2727,28 @@ function PresetsPage({ profile }: { profile: Profile }) {
   const [showActiveSettings, setShowActiveSettings] = useState(false);
   const [vwapSessionFilterOn, setVwapSessionFilterOn] = useState(true);
 
+  // Temporary EMA settings for KT/CG CTP
+  const [tempSettings, setTempSettings] = useState<api.TempSettings | null>(null);
+  const [tempM5Fast, setTempM5Fast] = useState<string>('');
+  const [tempM5Slow, setTempM5Slow] = useState<string>('');
+  const [tempM1Zone, setTempM1Zone] = useState<string>('');
+  const [tempM1Pullback, setTempM1Pullback] = useState<string>('');
+  const [tempSaving, setTempSaving] = useState(false);
+  const [tempMessage, setTempMessage] = useState<string | null>(null);
+
   // Fetch current profile to get active preset
   const fetchProfile = () => {
     api.getProfile(profile.path).then(setCurrentProfile).catch(console.error);
+  };
+
+  const fetchTempSettings = () => {
+    api.getTempSettings(profile.name).then((s) => {
+      setTempSettings(s);
+      setTempM5Fast(s.temp_m5_trend_ema_fast?.toString() || '');
+      setTempM5Slow(s.temp_m5_trend_ema_slow?.toString() || '');
+      setTempM1Zone(s.temp_m1_zone_entry_ema_slow?.toString() || '');
+      setTempM1Pullback(s.temp_m1_pullback_cross_ema_slow?.toString() || '');
+    }).catch(console.error);
   };
 
   useEffect(() => {
@@ -2893,6 +2756,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
       setPresets(p);
     }).catch(console.error);
     fetchProfile();
+    fetchTempSettings();
   }, [profile.path]);
 
   useEffect(() => {
@@ -2926,6 +2790,48 @@ function PresetsPage({ profile }: { profile: Profile }) {
   const toggleProscons = (presetId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setExpandedProscons(expandedProscons === presetId ? null : presetId);
+  };
+
+  const handleApplyTempSettings = async () => {
+    setTempSaving(true);
+    setTempMessage(null);
+    try {
+      await api.updateTempSettings(profile.name, {
+        temp_m5_trend_ema_fast: tempM5Fast ? parseInt(tempM5Fast, 10) : null,
+        temp_m5_trend_ema_slow: tempM5Slow ? parseInt(tempM5Slow, 10) : null,
+        temp_m1_zone_entry_ema_slow: tempM1Zone ? parseInt(tempM1Zone, 10) : null,
+        temp_m1_pullback_cross_ema_slow: tempM1Pullback ? parseInt(tempM1Pullback, 10) : null,
+      });
+      setTempMessage('Settings applied! Will be used on next trade evaluation.');
+      fetchTempSettings();
+    } catch (e) {
+      setTempMessage(`Error: ${(e as Error).message}`);
+    } finally {
+      setTempSaving(false);
+    }
+  };
+
+  const handleClearTempSettings = async () => {
+    setTempSaving(true);
+    setTempMessage(null);
+    try {
+      await api.updateTempSettings(profile.name, {
+        temp_m5_trend_ema_fast: null,
+        temp_m5_trend_ema_slow: null,
+        temp_m1_zone_entry_ema_slow: null,
+        temp_m1_pullback_cross_ema_slow: null,
+      });
+      setTempM5Fast('');
+      setTempM5Slow('');
+      setTempM1Zone('');
+      setTempM1Pullback('');
+      setTempMessage('Settings cleared. Using preset defaults.');
+      fetchTempSettings();
+    } catch (e) {
+      setTempMessage(`Error: ${(e as Error).message}`);
+    } finally {
+      setTempSaving(false);
+    }
   };
 
   const selectedPreset = presets.find((p) => p.id === selected);
@@ -3015,9 +2921,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>Active Policies:</div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                     {(execution?.policies as Record<string, unknown>[])?.map((pol, i) => (
-                      <span key={i} style={{ 
-                        padding: '4px 8px', 
-                        background: 'var(--bg-tertiary)', 
+                      <span key={i} style={{
+                        padding: '4px 8px',
+                        background: 'var(--bg-tertiary)',
                         borderRadius: 4,
                         fontSize: '0.75rem',
                         fontWeight: 600
@@ -3028,6 +2934,117 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   </div>
                 </div>
               )}
+
+              {/* Temporary EMA Settings for KT/CG CTP */}
+              <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                <div style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 8 }}>
+                  Apply Temporary Settings (KT/CG CTP)
+                </div>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
+                  Override EMA periods for KT/CG Counter-Trend Pullback strategy. Leave blank to use preset defaults.
+                </p>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 8 }}>
+                  <div style={{ marginBottom: 4 }}>
+                    <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 2 }}>
+                      M5 Trend - Fast EMA (default: 9)
+                    </label>
+                    <input
+                      type="number"
+                      value={tempM5Fast}
+                      onChange={(e) => setTempM5Fast(e.target.value)}
+                      placeholder="9"
+                      min={1}
+                      max={200}
+                      style={{ padding: '4px 8px', fontSize: '0.8rem', width: '100%' }}
+                    />
+                  </div>
+                  <div style={{ marginBottom: 4 }}>
+                    <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 2 }}>
+                      M5 Trend - Slow EMA (default: 21)
+                    </label>
+                    <input
+                      type="number"
+                      value={tempM5Slow}
+                      onChange={(e) => setTempM5Slow(e.target.value)}
+                      placeholder="21"
+                      min={1}
+                      max={200}
+                      style={{ padding: '4px 8px', fontSize: '0.8rem', width: '100%' }}
+                    />
+                  </div>
+                  <div style={{ marginBottom: 4 }}>
+                    <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 2 }}>
+                      M1 Zone Entry - Slow EMA (default: 13)
+                    </label>
+                    <input
+                      type="number"
+                      value={tempM1Zone}
+                      onChange={(e) => setTempM1Zone(e.target.value)}
+                      placeholder="13"
+                      min={1}
+                      max={200}
+                      style={{ padding: '4px 8px', fontSize: '0.8rem', width: '100%' }}
+                    />
+                  </div>
+                  <div style={{ marginBottom: 4 }}>
+                    <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 2 }}>
+                      M1 Pullback Cross - Slow EMA (default: 15)
+                    </label>
+                    <input
+                      type="number"
+                      value={tempM1Pullback}
+                      onChange={(e) => setTempM1Pullback(e.target.value)}
+                      placeholder="15"
+                      min={1}
+                      max={200}
+                      style={{ padding: '4px 8px', fontSize: '0.8rem', width: '100%' }}
+                    />
+                  </div>
+                </div>
+
+                {tempMessage && (
+                  <p style={{
+                    fontSize: '0.75rem',
+                    marginTop: 8,
+                    color: tempMessage.startsWith('Error') ? 'var(--danger)' : 'var(--success)'
+                  }}>
+                    {tempMessage}
+                  </p>
+                )}
+
+                <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleApplyTempSettings}
+                    disabled={tempSaving}
+                    style={{ fontSize: '0.75rem', padding: '6px 12px' }}
+                  >
+                    {tempSaving ? 'Applying...' : 'Apply Temporary Settings'}
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={handleClearTempSettings}
+                    disabled={tempSaving}
+                    style={{ fontSize: '0.75rem', padding: '6px 12px' }}
+                  >
+                    Clear (Use Defaults)
+                  </button>
+                </div>
+
+                {tempSettings && (tempSettings.temp_m5_trend_ema_fast || tempSettings.temp_m5_trend_ema_slow ||
+                  tempSettings.temp_m1_zone_entry_ema_slow || tempSettings.temp_m1_pullback_cross_ema_slow) && (
+                  <div style={{ marginTop: 12, padding: 8, background: 'var(--bg-tertiary)', borderRadius: 4, fontSize: '0.75rem' }}>
+                    <strong>Currently Active Overrides:</strong>
+                    <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                      {tempSettings.temp_m5_trend_ema_fast && <li>M5 Fast EMA: {tempSettings.temp_m5_trend_ema_fast}</li>}
+                      {tempSettings.temp_m5_trend_ema_slow && <li>M5 Slow EMA: {tempSettings.temp_m5_trend_ema_slow}</li>}
+                      {tempSettings.temp_m1_zone_entry_ema_slow && <li>M1 Zone Slow EMA: {tempSettings.temp_m1_zone_entry_ema_slow}</li>}
+                      {tempSettings.temp_m1_pullback_cross_ema_slow && <li>M1 Pullback Slow EMA: {tempSettings.temp_m1_pullback_cross_ema_slow}</li>}
+                    </ul>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
