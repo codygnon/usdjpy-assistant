@@ -988,6 +988,11 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "tp_pips": 15.0,
                     "sl_pips": 10.0,
                     "confirm_bars": 1,
+                    # Swing level proximity filter (same as Trial #2)
+                    "swing_level_filter_enabled": True,
+                    "swing_lookback_bars": 100,
+                    "swing_confirmation_bars": 5,
+                    "swing_danger_zone_pct": 0.15,
                 },
             ],
         },

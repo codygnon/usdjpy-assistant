@@ -2736,9 +2736,17 @@ function PresetsPage({ profile }: { profile: Profile }) {
   const [tempSaving, setTempSaving] = useState(false);
   const [tempMessage, setTempMessage] = useState<string | null>(null);
 
+  // Editable risk/effective_risk settings
+  const [editedProfile, setEditedProfile] = useState<Record<string, unknown> | null>(null);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSaveMessage, setProfileSaveMessage] = useState<string | null>(null);
+
   // Fetch current profile to get active preset
   const fetchProfile = () => {
-    api.getProfile(profile.path).then(setCurrentProfile).catch(console.error);
+    api.getProfile(profile.path).then((p) => {
+      setCurrentProfile(p);
+      setEditedProfile(JSON.parse(JSON.stringify(p))); // Deep copy for editing
+    }).catch(console.error);
   };
 
   const fetchTempSettings = () => {
@@ -2749,6 +2757,63 @@ function PresetsPage({ profile }: { profile: Profile }) {
       setTempM1Zone(s.temp_m1_zone_entry_ema_slow?.toString() || '');
       setTempM1Pullback(s.temp_m1_pullback_cross_ema_slow?.toString() || '');
     }).catch(console.error);
+  };
+
+  // Update nested value in editedProfile (e.g., risk.max_lots or execution.policies[0].swing_danger_zone_pct)
+  const updateEditedValue = (path: string[], value: unknown) => {
+    if (!editedProfile) return;
+    const newProfile = JSON.parse(JSON.stringify(editedProfile));
+    let obj = newProfile;
+    for (let i = 0; i < path.length - 1; i++) {
+      const key = path[i];
+      if (obj[key] === undefined) obj[key] = {};
+      obj = obj[key];
+    }
+    obj[path[path.length - 1]] = value;
+    setEditedProfile(newProfile);
+  };
+
+  // Update policy field in editedProfile
+  const updatePolicyField = (policyIndex: number, field: string, value: unknown) => {
+    if (!editedProfile) return;
+    const newProfile = JSON.parse(JSON.stringify(editedProfile));
+    const exec = newProfile.execution as Record<string, unknown> || {};
+    const policies = (exec.policies as Record<string, unknown>[]) || [];
+    if (policies[policyIndex]) {
+      policies[policyIndex][field] = value;
+      newProfile.execution = { ...exec, policies };
+      setEditedProfile(newProfile);
+    }
+  };
+
+  // Save edited profile
+  const handleSaveProfile = async () => {
+    if (!editedProfile) return;
+    setProfileSaving(true);
+    setProfileSaveMessage(null);
+    try {
+      await api.saveProfile(profile.path, editedProfile);
+      setProfileSaveMessage('Settings saved!');
+      setCurrentProfile(editedProfile);
+      setTimeout(() => setProfileSaveMessage(null), 3000);
+    } catch (e) {
+      setProfileSaveMessage(`Error: ${(e as Error).message}`);
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  // Helper for adjusting numeric values
+  const adjustEditedValue = (path: string[], delta: number, min: number, max: number, step: number = 1) => {
+    if (!editedProfile) return;
+    let obj: unknown = editedProfile;
+    for (const key of path.slice(0, -1)) {
+      obj = (obj as Record<string, unknown>)[key];
+      if (!obj) return;
+    }
+    const current = (obj as Record<string, unknown>)[path[path.length - 1]] as number ?? 0;
+    const newValue = Math.max(min, Math.min(max, current + delta * step));
+    updateEditedValue(path, step < 1 ? Math.round(newValue * 100) / 100 : Math.round(newValue));
   };
 
   useEffect(() => {
@@ -2837,11 +2902,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
   const selectedPreset = presets.find((p) => p.id === selected);
 
   const activePresetName = currentProfile?.active_preset_name as string | undefined;
-  const risk = currentProfile?.risk as Record<string, unknown> | undefined;
-  const effectiveRisk = currentProfile?.effective_risk as Record<string, unknown> | undefined;
-  const execution = currentProfile?.execution as Record<string, unknown> | undefined;
-  const tradeManagement = currentProfile?.trade_management as Record<string, unknown> | undefined;
-  const targetSettings = tradeManagement?.target as Record<string, unknown> | undefined;
 
   return (
     <div>
@@ -2875,178 +2935,302 @@ function PresetsPage({ profile }: { profile: Profile }) {
             </button>
           </div>
           
-          {showActiveSettings && risk && (
+          {showActiveSettings && editedProfile && (() => {
+            const editedRisk = editedProfile.risk as Record<string, unknown> || {};
+            const editedEffective = editedProfile.effective_risk as Record<string, unknown> || {};
+            const editedExecution = editedProfile.execution as Record<string, unknown> || {};
+            const editedPolicies = (editedExecution.policies as Record<string, unknown>[]) || [];
+            const editedTM = editedProfile.trade_management as Record<string, unknown> || {};
+            const editedTarget = editedTM.target as Record<string, unknown> || {};
+            const isKtCgTrial2 = activePresetName === 'kt_cg_trial_2';
+            const isKtCgTrial3 = activePresetName === 'kt_cg_counter_trend_pullback';
+            const isKtCgPreset = isKtCgTrial2 || isKtCgTrial3;
+            const ktCgPolicy = editedPolicies.find(p =>
+              p.type === 'kt_cg_hybrid' || p.type === 'kt_cg_counter_trend_pullback'
+            );
+            const ktCgPolicyIndex = editedPolicies.findIndex(p =>
+              p.type === 'kt_cg_hybrid' || p.type === 'kt_cg_counter_trend_pullback'
+            );
+
+            return (
             <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-              {effectiveRisk && (
-                <div style={{ marginBottom: 12, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                  Effective (used when running): preset risk capped by Profile Editor limits.
-                </div>
-              )}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
-                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Max Lots {effectiveRisk ? '(effective)' : ''}</div>
-                  <div style={{ fontWeight: 600 }}>{(effectiveRisk?.max_lots ?? risk.max_lots) as number}</div>
-                </div>
-                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Min Stop Pips</div>
-                  <div style={{ fontWeight: 600 }}>{(effectiveRisk?.min_stop_pips ?? risk.min_stop_pips) as number}</div>
-                </div>
-                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Max Spread</div>
-                  <div style={{ fontWeight: 600 }}>{(effectiveRisk?.max_spread_pips ?? risk.max_spread_pips) as number} pips</div>
-                </div>
-                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Max Trades/Day</div>
-                  <div style={{ fontWeight: 600 }}>{(effectiveRisk?.max_trades_per_day ?? risk.max_trades_per_day) as number}</div>
-                </div>
-                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Max Open Trades</div>
-                  <div style={{ fontWeight: 600 }}>{(effectiveRisk?.max_open_trades ?? risk.max_open_trades) as number ?? '-'}</div>
-                </div>
-                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Cooldown After Loss</div>
-                  <div style={{ fontWeight: 600 }}>{(effectiveRisk?.cooldown_minutes_after_loss ?? risk.cooldown_minutes_after_loss ?? 0) as number} min</div>
-                </div>
-                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Target Pips</div>
-                  <div style={{ fontWeight: 600 }}>{targetSettings?.pips_default as number || '-'}</div>
-                </div>
-                <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Poll Interval</div>
-                  <div style={{ fontWeight: 600 }}>{execution?.loop_poll_seconds as number || 5}s</div>
-                </div>
+              <div style={{ marginBottom: 12, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                Adjust settings below. Changes are saved when you click "Save Settings".
               </div>
-              {(execution?.policies as Record<string, unknown>[])?.length > 0 && (
-                <div style={{ marginTop: 12 }}>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>Active Policies:</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                    {(execution?.policies as Record<string, unknown>[])?.map((pol, i) => (
-                      <span key={i} style={{
-                        padding: '4px 8px',
-                        background: 'var(--bg-tertiary)',
-                        borderRadius: 4,
-                        fontSize: '0.75rem',
-                        fontWeight: 600
-                      }}>
-                        {pol.type as string}: {pol.id as string}
-                      </span>
-                    ))}
+
+              {/* Basic Risk Settings - All presets */}
+              <div style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 8 }}>Risk Settings</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8, marginBottom: 16 }}>
+                <SettingControl
+                  label="Max Lots"
+                  value={(editedEffective.max_lots ?? editedRisk.max_lots) as number}
+                  onAdjust={(d) => adjustEditedValue(['effective_risk', 'max_lots'], d, 0.01, 10, 0.01)}
+                  onChange={(v) => updateEditedValue(['effective_risk', 'max_lots'], v)}
+                  step={0.01}
+                  min={0.01}
+                  max={10}
+                />
+                <SettingControl
+                  label="Min Stop Pips"
+                  value={(editedEffective.min_stop_pips ?? editedRisk.min_stop_pips) as number}
+                  onAdjust={(d) => adjustEditedValue(['effective_risk', 'min_stop_pips'], d, 1, 100, 1)}
+                  onChange={(v) => updateEditedValue(['effective_risk', 'min_stop_pips'], v)}
+                  step={1}
+                  min={1}
+                  max={100}
+                />
+                <SettingControl
+                  label="Max Spread Pips"
+                  value={(editedEffective.max_spread_pips ?? editedRisk.max_spread_pips) as number}
+                  onAdjust={(d) => adjustEditedValue(['effective_risk', 'max_spread_pips'], d, 0.1, 20, 0.1)}
+                  onChange={(v) => updateEditedValue(['effective_risk', 'max_spread_pips'], v)}
+                  step={0.1}
+                  min={0.1}
+                  max={20}
+                />
+                <SettingControl
+                  label="Max Trades/Day"
+                  value={(editedEffective.max_trades_per_day ?? editedRisk.max_trades_per_day) as number}
+                  onAdjust={(d) => adjustEditedValue(['effective_risk', 'max_trades_per_day'], d, 1, 200, 1)}
+                  onChange={(v) => updateEditedValue(['effective_risk', 'max_trades_per_day'], v)}
+                  step={1}
+                  min={1}
+                  max={200}
+                />
+                <SettingControl
+                  label="Max Open Trades"
+                  value={(editedEffective.max_open_trades ?? editedRisk.max_open_trades) as number}
+                  onAdjust={(d) => adjustEditedValue(['effective_risk', 'max_open_trades'], d, 1, 50, 1)}
+                  onChange={(v) => updateEditedValue(['effective_risk', 'max_open_trades'], v)}
+                  step={1}
+                  min={1}
+                  max={50}
+                />
+                <SettingControl
+                  label="Cooldown (min)"
+                  value={(editedEffective.cooldown_minutes_after_loss ?? editedRisk.cooldown_minutes_after_loss ?? 0) as number}
+                  onAdjust={(d) => adjustEditedValue(['effective_risk', 'cooldown_minutes_after_loss'], d, 0, 120, 1)}
+                  onChange={(v) => updateEditedValue(['effective_risk', 'cooldown_minutes_after_loss'], v)}
+                  step={1}
+                  min={0}
+                  max={120}
+                />
+                <SettingControl
+                  label="Target Pips"
+                  value={editedTarget.pips_default as number}
+                  onAdjust={(d) => adjustEditedValue(['trade_management', 'target', 'pips_default'], d, 0.5, 100, 0.5)}
+                  onChange={(v) => updateEditedValue(['trade_management', 'target', 'pips_default'], v)}
+                  step={0.5}
+                  min={0.5}
+                  max={100}
+                />
+                <SettingControl
+                  label="Poll Interval (s)"
+                  value={editedExecution.loop_poll_seconds as number}
+                  onAdjust={(d) => adjustEditedValue(['execution', 'loop_poll_seconds'], d, 0.5, 60, 0.5)}
+                  onChange={(v) => updateEditedValue(['execution', 'loop_poll_seconds'], v)}
+                  step={0.5}
+                  min={0.5}
+                  max={60}
+                />
+              </div>
+
+              {/* Swing Level Settings - KT/CG Trial #2 and Trial #3 only */}
+              {isKtCgPreset && ktCgPolicy && (
+                <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 8 }}>
+                    Swing Level Danger Zone Settings
                   </div>
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.85rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={(ktCgPolicy.swing_level_filter_enabled as boolean) ?? false}
+                        onChange={(e) => updatePolicyField(ktCgPolicyIndex, 'swing_level_filter_enabled', e.target.checked)}
+                        style={{ width: 'auto' }}
+                      />
+                      Enable Swing High/Low Danger Zone Filter
+                    </label>
+                  </div>
+                  {(ktCgPolicy.swing_level_filter_enabled as boolean) && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
+                      <SettingControl
+                        label="Danger Zone %"
+                        value={(ktCgPolicy.swing_danger_zone_pct as number ?? 0.15) * 100}
+                        onAdjust={(d) => {
+                          const current = (ktCgPolicy.swing_danger_zone_pct as number ?? 0.15) * 100;
+                          const newVal = Math.max(1, Math.min(50, current + d));
+                          updatePolicyField(ktCgPolicyIndex, 'swing_danger_zone_pct', newVal / 100);
+                        }}
+                        onChange={(v) => updatePolicyField(ktCgPolicyIndex, 'swing_danger_zone_pct', Math.max(0.01, Math.min(0.5, v / 100)))}
+                        step={1}
+                        min={1}
+                        max={50}
+                      />
+                      <SettingControl
+                        label="Lookback Bars"
+                        value={ktCgPolicy.swing_lookback_bars as number ?? 100}
+                        onAdjust={(d) => {
+                          const current = ktCgPolicy.swing_lookback_bars as number ?? 100;
+                          updatePolicyField(ktCgPolicyIndex, 'swing_lookback_bars', Math.max(10, Math.min(500, current + d * 10)));
+                        }}
+                        onChange={(v) => updatePolicyField(ktCgPolicyIndex, 'swing_lookback_bars', Math.max(10, Math.min(500, v)))}
+                        step={10}
+                        min={10}
+                        max={500}
+                      />
+                      <SettingControl
+                        label="Confirmation Bars"
+                        value={ktCgPolicy.swing_confirmation_bars as number ?? 5}
+                        onAdjust={(d) => {
+                          const current = ktCgPolicy.swing_confirmation_bars as number ?? 5;
+                          updatePolicyField(ktCgPolicyIndex, 'swing_confirmation_bars', Math.max(1, Math.min(20, current + d)));
+                        }}
+                        onChange={(v) => updatePolicyField(ktCgPolicyIndex, 'swing_confirmation_bars', Math.max(1, Math.min(20, v)))}
+                        step={1}
+                        min={1}
+                        max={20}
+                      />
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Temporary EMA Settings for KT/CG CTP */}
-              <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-                <div style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 8 }}>
-                  Apply Temporary Settings (KT/CG CTP)
-                </div>
-                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
-                  Override EMA periods for KT/CG Counter-Trend Pullback strategy. Leave blank to use preset defaults.
-                </p>
-
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 8 }}>
-                  <div style={{ marginBottom: 4 }}>
-                    <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 2 }}>
-                      M5 Trend - Fast EMA (default: 9)
-                    </label>
-                    <input
-                      type="number"
-                      value={tempM5Fast}
-                      onChange={(e) => setTempM5Fast(e.target.value)}
-                      placeholder="9"
-                      min={1}
-                      max={200}
-                      style={{ padding: '4px 8px', fontSize: '0.8rem', width: '100%' }}
-                    />
+              {/* EMA Override Settings - KT/CG Trial #3 ONLY */}
+              {isKtCgTrial3 && (
+                <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 8 }}>
+                    EMA Override Settings (Trial #3)
                   </div>
-                  <div style={{ marginBottom: 4 }}>
-                    <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 2 }}>
-                      M5 Trend - Slow EMA (default: 21)
-                    </label>
-                    <input
-                      type="number"
-                      value={tempM5Slow}
-                      onChange={(e) => setTempM5Slow(e.target.value)}
-                      placeholder="21"
-                      min={1}
-                      max={200}
-                      style={{ padding: '4px 8px', fontSize: '0.8rem', width: '100%' }}
-                    />
-                  </div>
-                  <div style={{ marginBottom: 4 }}>
-                    <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 2 }}>
-                      M1 Zone Entry - Slow EMA (default: 13)
-                    </label>
-                    <input
-                      type="number"
-                      value={tempM1Zone}
-                      onChange={(e) => setTempM1Zone(e.target.value)}
-                      placeholder="13"
-                      min={1}
-                      max={200}
-                      style={{ padding: '4px 8px', fontSize: '0.8rem', width: '100%' }}
-                    />
-                  </div>
-                  <div style={{ marginBottom: 4 }}>
-                    <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 2 }}>
-                      M1 Pullback Cross - Slow EMA (default: 15)
-                    </label>
-                    <input
-                      type="number"
-                      value={tempM1Pullback}
-                      onChange={(e) => setTempM1Pullback(e.target.value)}
-                      placeholder="15"
-                      min={1}
-                      max={200}
-                      style={{ padding: '4px 8px', fontSize: '0.8rem', width: '100%' }}
-                    />
-                  </div>
-                </div>
-
-                {tempMessage && (
-                  <p style={{
-                    fontSize: '0.75rem',
-                    marginTop: 8,
-                    color: tempMessage.startsWith('Error') ? 'var(--danger)' : 'var(--success)'
-                  }}>
-                    {tempMessage}
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
+                    Override EMA periods for KT/CG Counter-Trend Pullback. Leave blank to use preset defaults.
                   </p>
-                )}
 
-                <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                  <button
-                    className="btn btn-primary"
-                    onClick={handleApplyTempSettings}
-                    disabled={tempSaving}
-                    style={{ fontSize: '0.75rem', padding: '6px 12px' }}
-                  >
-                    {tempSaving ? 'Applying...' : 'Apply Temporary Settings'}
-                  </button>
-                  <button
-                    className="btn btn-secondary"
-                    onClick={handleClearTempSettings}
-                    disabled={tempSaving}
-                    style={{ fontSize: '0.75rem', padding: '6px 12px' }}
-                  >
-                    Clear (Use Defaults)
-                  </button>
-                </div>
-
-                {tempSettings && (tempSettings.temp_m5_trend_ema_fast || tempSettings.temp_m5_trend_ema_slow ||
-                  tempSettings.temp_m1_zone_entry_ema_slow || tempSettings.temp_m1_pullback_cross_ema_slow) && (
-                  <div style={{ marginTop: 12, padding: 8, background: 'var(--bg-tertiary)', borderRadius: 4, fontSize: '0.75rem' }}>
-                    <strong>Currently Active Overrides:</strong>
-                    <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
-                      {tempSettings.temp_m5_trend_ema_fast && <li>M5 Fast EMA: {tempSettings.temp_m5_trend_ema_fast}</li>}
-                      {tempSettings.temp_m5_trend_ema_slow && <li>M5 Slow EMA: {tempSettings.temp_m5_trend_ema_slow}</li>}
-                      {tempSettings.temp_m1_zone_entry_ema_slow && <li>M1 Zone Slow EMA: {tempSettings.temp_m1_zone_entry_ema_slow}</li>}
-                      {tempSettings.temp_m1_pullback_cross_ema_slow && <li>M1 Pullback Slow EMA: {tempSettings.temp_m1_pullback_cross_ema_slow}</li>}
-                    </ul>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 8 }}>
+                    <div style={{ marginBottom: 4 }}>
+                      <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 2 }}>
+                        M5 Trend - Fast EMA (default: 9)
+                      </label>
+                      <input
+                        type="number"
+                        value={tempM5Fast}
+                        onChange={(e) => setTempM5Fast(e.target.value)}
+                        placeholder="9"
+                        min={1}
+                        max={200}
+                        style={{ padding: '4px 8px', fontSize: '0.8rem', width: '100%' }}
+                      />
+                    </div>
+                    <div style={{ marginBottom: 4 }}>
+                      <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 2 }}>
+                        M5 Trend - Slow EMA (default: 21)
+                      </label>
+                      <input
+                        type="number"
+                        value={tempM5Slow}
+                        onChange={(e) => setTempM5Slow(e.target.value)}
+                        placeholder="21"
+                        min={1}
+                        max={200}
+                        style={{ padding: '4px 8px', fontSize: '0.8rem', width: '100%' }}
+                      />
+                    </div>
+                    <div style={{ marginBottom: 4 }}>
+                      <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 2 }}>
+                        M1 Zone Entry - Slow EMA (default: 13)
+                      </label>
+                      <input
+                        type="number"
+                        value={tempM1Zone}
+                        onChange={(e) => setTempM1Zone(e.target.value)}
+                        placeholder="13"
+                        min={1}
+                        max={200}
+                        style={{ padding: '4px 8px', fontSize: '0.8rem', width: '100%' }}
+                      />
+                    </div>
+                    <div style={{ marginBottom: 4 }}>
+                      <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 2 }}>
+                        M1 Pullback Cross - Slow EMA (default: 15)
+                      </label>
+                      <input
+                        type="number"
+                        value={tempM1Pullback}
+                        onChange={(e) => setTempM1Pullback(e.target.value)}
+                        placeholder="15"
+                        min={1}
+                        max={200}
+                        style={{ padding: '4px 8px', fontSize: '0.8rem', width: '100%' }}
+                      />
+                    </div>
                   </div>
+
+                  {tempMessage && (
+                    <p style={{
+                      fontSize: '0.75rem',
+                      marginTop: 8,
+                      color: tempMessage.startsWith('Error') ? 'var(--danger)' : 'var(--success)'
+                    }}>
+                      {tempMessage}
+                    </p>
+                  )}
+
+                  <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                    <button
+                      className="btn btn-primary"
+                      onClick={handleApplyTempSettings}
+                      disabled={tempSaving}
+                      style={{ fontSize: '0.75rem', padding: '6px 12px' }}
+                    >
+                      {tempSaving ? 'Applying...' : 'Apply EMA Overrides'}
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={handleClearTempSettings}
+                      disabled={tempSaving}
+                      style={{ fontSize: '0.75rem', padding: '6px 12px' }}
+                    >
+                      Clear (Use Defaults)
+                    </button>
+                  </div>
+
+                  {tempSettings && (tempSettings.temp_m5_trend_ema_fast || tempSettings.temp_m5_trend_ema_slow ||
+                    tempSettings.temp_m1_zone_entry_ema_slow || tempSettings.temp_m1_pullback_cross_ema_slow) && (
+                    <div style={{ marginTop: 12, padding: 8, background: 'var(--bg-tertiary)', borderRadius: 4, fontSize: '0.75rem' }}>
+                      <strong>Currently Active EMA Overrides:</strong>
+                      <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                        {tempSettings.temp_m5_trend_ema_fast && <li>M5 Fast EMA: {tempSettings.temp_m5_trend_ema_fast}</li>}
+                        {tempSettings.temp_m5_trend_ema_slow && <li>M5 Slow EMA: {tempSettings.temp_m5_trend_ema_slow}</li>}
+                        {tempSettings.temp_m1_zone_entry_ema_slow && <li>M1 Zone Slow EMA: {tempSettings.temp_m1_zone_entry_ema_slow}</li>}
+                        {tempSettings.temp_m1_pullback_cross_ema_slow && <li>M1 Pullback Slow EMA: {tempSettings.temp_m1_pullback_cross_ema_slow}</li>}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Save Profile Button */}
+              <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button
+                  className="btn btn-success"
+                  onClick={handleSaveProfile}
+                  disabled={profileSaving}
+                  style={{ fontSize: '0.85rem' }}
+                >
+                  {profileSaving ? 'Saving...' : 'Save Settings'}
+                </button>
+                {profileSaveMessage && (
+                  <span style={{
+                    fontSize: '0.8rem',
+                    color: profileSaveMessage.startsWith('Error') ? 'var(--danger)' : 'var(--success)'
+                  }}>
+                    {profileSaveMessage}
+                  </span>
                 )}
               </div>
             </div>
-          )}
+          );
+          })()}
         </div>
       )}
 
@@ -3583,6 +3767,21 @@ function ProfilePage({ profile, authStatus, onAuthChange }: { profile: Profile; 
               value={(risk.max_open_trades as number) ?? 2}
               onChange={(e) => updateNested('risk', 'max_open_trades', parseInt(e.target.value) || 1)}
             />
+          </div>
+
+          <div className="form-group">
+            <label>Min Stop Loss (pips)</label>
+            <input
+              type="number"
+              step="0.1"
+              min={1}
+              max={100}
+              value={(risk.min_stop_pips as number) ?? 10}
+              onChange={(e) => updateNested('risk', 'min_stop_pips', parseFloat(e.target.value) || 10)}
+            />
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+              Minimum stop loss distance. Presets may use higher values but never lower.
+            </p>
           </div>
 
           <div className="form-group">
