@@ -1008,8 +1008,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
     # entries near swing highs/lows.
     # -----------------------------------------------------------------------
     PresetId.KT_CG_TRIAL_2: {
-        "name": "KT/CG Trial #2 (Counter-Trend Pullback)",
-        "description": "Counter-trend pullback strategy. M5 EMA determines trend. M1 EMA 9/13 cross opposite to M5 trend triggers entry in M5 trend direction. Swing level filter blocks entries near M15 swing highs/lows.",
+        "name": "KT/CG Trial #2 (Zone Entry + Pullback Cross)",
+        "description": "M5 EMA trend determines direction. Zone Entry: M1 EMA 9 vs EMA 21. Pullback Cross: M1 EMA 9 crosses EMA 13. Swing level filter blocks entries near M15 swing highs/lows.",
         "pros": [
             "Enters on pullback completion (counter-trend cross)",
             "Trades in direction of higher timeframe trend",
@@ -1055,19 +1055,16 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "type": "kt_cg_hybrid",
                     "id": "kt_cg_trial_2",
                     "enabled": True,
-                    "trend_timeframe": "M5",
-                    "entry_timeframe": "M1",
-                    "ema_fast": 9,
-                    "ema_slow": 13,
+                    # M5 Trend EMAs
+                    "m5_trend_ema_fast": 9,
+                    "m5_trend_ema_slow": 21,
+                    # M1 Zone Entry - EMA 9 vs EMA 21
+                    "m1_zone_entry_ema_slow": 21,
+                    # M1 Pullback Cross - EMA 9 crosses EMA 13
+                    "m1_pullback_cross_ema_slow": 13,
                     "tp_pips": 0.5,
                     "sl_pips": 20.0,
-                    "cooldown_minutes": 3.0,
-                    # Pullback override - counter-trend mode
-                    "enable_pullback_override": True,
-                    "require_m15_trend_aligned": False,
-                    "require_counter_trend_cross": True,
-                    "require_engulfing_on_weak_momentum": False,
-                    "require_rejection_candle": False,
+                    "confirm_bars": 1,
                     # Swing level proximity filter
                     "swing_level_filter_enabled": True,
                     "swing_lookback_bars": 100,

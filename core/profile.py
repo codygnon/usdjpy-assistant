@@ -322,17 +322,40 @@ class ExecutionPolicyEmaBbScalp(BaseModel):
 
 
 class ExecutionPolicyKtCgHybrid(BaseModel):
-    """KT/CG Hybrid strategy: Custom hybrid policy with flexible parameters."""
+    """KT/CG Hybrid strategy (Trial #2).
 
-    model_config = ConfigDict(extra="allow")  # Allow additional custom fields
+    Logic:
+    - M5 Trend: EMA fast > EMA slow = BULL, else BEAR
+    - M1 Zone Entry: BULL + M1 EMA9 > M1 EMA(zone_slow), or BEAR + M1 EMA9 < M1 EMA(zone_slow)
+    - M1 Pullback Cross: BULL + EMA9 crosses below EMA(pullback_slow) -> BUY
+                         BEAR + EMA9 crosses above EMA(pullback_slow) -> SELL
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     type: Literal["kt_cg_hybrid"] = "kt_cg_hybrid"
     id: str = "kt_cg_hybrid_default"
     enabled: bool = False
-    timeframe: Literal["M1", "M3", "M5", "M15", "M30", "H1", "H4"] = "M5"
+
+    # M5 Trend EMAs
+    m5_trend_ema_fast: int = 9
+    m5_trend_ema_slow: int = 21
+
+    # M1 Zone Entry - EMA 9 vs slow EMA (default 21 for Trial #2)
+    m1_zone_entry_ema_slow: int = 21
+
+    # M1 Pullback Cross - EMA 9 crosses slow EMA (default 13 for Trial #2)
+    m1_pullback_cross_ema_slow: int = 13
+
     tp_pips: float = 15.0
     sl_pips: Optional[float] = 10.0
-    # Additional fields are allowed via extra="allow"
+    confirm_bars: int = 1
+
+    # Swing level proximity filter
+    swing_level_filter_enabled: bool = False
+    swing_lookback_bars: int = 100
+    swing_confirmation_bars: int = 5
+    swing_danger_zone_pct: float = 0.15
 
 
 class ExecutionPolicyKtCgCounterTrendPullback(BaseModel):
