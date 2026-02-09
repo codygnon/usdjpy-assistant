@@ -456,7 +456,7 @@ function RunPage({ profile }: { profile: Profile }) {
 
   const fetchState = () => {
     api.getRuntimeState(profile.name).then(setState).catch(console.error);
-    api.getLoopLog(profile.name, 50).then((r) => setLog(r.content)).catch(console.error);
+    api.getLoopLog(profile.name, 200).then((r) => setLog(r.content)).catch(console.error);
   };
 
   useEffect(() => {
@@ -568,7 +568,7 @@ function RunPage({ profile }: { profile: Profile }) {
       </div>
 
       <div className="card mt-4">
-        <h3 className="card-title">Loop Log (last 50 lines)</h3>
+        <h3 className="card-title">Loop Log (last 200 lines)</h3>
         <div className="log-viewer">{log || '(no log yet)'}</div>
       </div>
     </div>
@@ -833,7 +833,7 @@ function AnalysisPage({ profile }: { profile: Profile }) {
     try {
       const [taData, allTradesData] = await Promise.all([
         api.getTechnicalAnalysis(profile.name, profile.path),
-        api.getTrades(profile.name, 50).then((r) => r.trades).catch(() => []),
+        api.getTrades(profile.name, 250).then((r) => r.trades).catch(() => []),
       ]);
       setTa(taData);
       // Build chart trades: open + recently closed (with entry/exit times for markers)
@@ -4281,7 +4281,7 @@ function LogsPage({ profile }: { profile: Profile }) {
   const fetchData = () => {
     api.getQuickStats(profile.name, profile.path).then(setStats).catch(console.error);
     api.getRejectionBreakdown(profile.name).then(setBreakdown).catch(console.error);
-    api.getTrades(profile.name, 20, profile.path).then((data) => {
+    api.getTrades(profile.name, 250, profile.path).then((data) => {
       setTrades(data.trades);
       setTradesDisplayCurrency(data.display_currency);
     }).catch(console.error);
