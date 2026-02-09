@@ -2625,7 +2625,9 @@ def execute_kt_cg_hybrid_policy_demo_only(
                 confirmation_bars=policy.swing_confirmation_bars,
             )
             entry_price_check = tick.ask if side == "buy" else tick.bid
-            print(f"[{profile.profile_name}] kt_cg_hybrid swing filter: price={entry_price_check:.3f} side={side} swing_high={swing_high:.3f if swing_high else 'None'} swing_low={swing_low:.3f if swing_low else 'None'} danger_zone={policy.swing_danger_zone_pct*100:.0f}%")
+            sh_str = f"{swing_high:.3f}" if swing_high else "None"
+            sl_str = f"{swing_low:.3f}" if swing_low else "None"
+            print(f"[{profile.profile_name}] kt_cg_hybrid swing filter: price={entry_price_check:.3f} side={side} swing_high={sh_str} swing_low={sl_str} danger_zone={policy.swing_danger_zone_pct*100:.0f}%")
             swing_ok, swing_reason = check_swing_level_filter(
                 current_price=entry_price_check,
                 side=side,
@@ -3100,7 +3102,9 @@ def execute_kt_cg_ctp_policy_demo_only(
                 confirmation_bars=policy.swing_confirmation_bars,
             )
             entry_price_check = tick.ask if side == "buy" else tick.bid
-            print(f"[{profile.profile_name}] kt_cg_ctp swing filter: price={entry_price_check:.3f} side={side} swing_high={swing_high:.3f if swing_high else 'None'} swing_low={swing_low:.3f if swing_low else 'None'} danger_zone={policy.swing_danger_zone_pct*100:.0f}%")
+            sh_str = f"{swing_high:.3f}" if swing_high else "None"
+            sl_str = f"{swing_low:.3f}" if swing_low else "None"
+            print(f"[{profile.profile_name}] kt_cg_ctp swing filter: price={entry_price_check:.3f} side={side} swing_high={sh_str} swing_low={sl_str} danger_zone={policy.swing_danger_zone_pct*100:.0f}%")
             swing_ok, swing_reason = check_swing_level_filter(
                 current_price=entry_price_check,
                 side=side,
