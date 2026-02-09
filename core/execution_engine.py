@@ -2224,6 +2224,103 @@ def execute_signal_demo_only(
 
 
 # ---------------------------------------------------------------------------
+# Swing Level Filter (for KT/CG policies)
+# ---------------------------------------------------------------------------
+
+
+def detect_swing_levels(
+    df: pd.DataFrame,
+    lookback_bars: int = 100,
+    confirmation_bars: int = 5,
+) -> tuple[Optional[float], Optional[float]]:
+    """Detect the most recent swing high and swing low within lookback window.
+
+    A swing high is a bar whose high is higher than the `confirmation_bars` bars before AND after it.
+    A swing low is a bar whose low is lower than the `confirmation_bars` bars before AND after it.
+
+    Returns: (swing_high, swing_low) - the most recent of each, or None if not found.
+    """
+    if df is None or df.empty or len(df) < lookback_bars:
+        return None, None
+
+    # Use only the last `lookback_bars` bars
+    df_window = df.tail(lookback_bars).copy()
+    highs = df_window["high"].values
+    lows = df_window["low"].values
+    n = len(highs)
+
+    swing_high: Optional[float] = None
+    swing_low: Optional[float] = None
+
+    # Search from newest to oldest to find the most recent swing points
+    # We need at least `confirmation_bars` bars on each side
+    for i in range(n - confirmation_bars - 1, confirmation_bars - 1, -1):
+        if swing_high is None:
+            # Check if this is a swing high
+            is_swing_high = True
+            for j in range(1, confirmation_bars + 1):
+                if highs[i] <= highs[i - j] or highs[i] <= highs[i + j]:
+                    is_swing_high = False
+                    break
+            if is_swing_high:
+                swing_high = float(highs[i])
+
+        if swing_low is None:
+            # Check if this is a swing low
+            is_swing_low = True
+            for j in range(1, confirmation_bars + 1):
+                if lows[i] >= lows[i - j] or lows[i] >= lows[i + j]:
+                    is_swing_low = False
+                    break
+            if is_swing_low:
+                swing_low = float(lows[i])
+
+        if swing_high is not None and swing_low is not None:
+            break
+
+    return swing_high, swing_low
+
+
+def check_swing_level_filter(
+    current_price: float,
+    side: str,
+    swing_high: Optional[float],
+    swing_low: Optional[float],
+    danger_zone_pct: float = 0.15,
+) -> tuple[bool, Optional[str]]:
+    """Check if current price is in the danger zone near swing levels.
+
+    For BUY: blocks if price is within danger_zone_pct of swing_high (buying near resistance)
+    For SELL: blocks if price is within danger_zone_pct of swing_low (selling near support)
+
+    The danger zone is a band around the swing level (both above and below).
+
+    Returns: (ok, reason) - ok=True means trade is allowed, ok=False means blocked
+    """
+    if swing_high is None or swing_low is None:
+        return True, None  # Can't determine swings, allow trade
+
+    swing_range = swing_high - swing_low
+    if swing_range <= 0:
+        return True, None  # Invalid range
+
+    danger_distance = swing_range * danger_zone_pct
+
+    if side == "buy":
+        # For BUY: check if price is near swing high (resistance) - either side
+        distance_from_high = abs(swing_high - current_price)
+        if distance_from_high <= danger_distance:
+            return False, f"swing_filter: BUY blocked - price {current_price:.3f} is {distance_from_high:.3f} from swing high {swing_high:.3f} (danger zone {danger_zone_pct*100:.0f}% = {danger_distance:.3f})"
+    elif side == "sell":
+        # For SELL: check if price is near swing low (support) - either side
+        distance_from_low = abs(current_price - swing_low)
+        if distance_from_low <= danger_distance:
+            return False, f"swing_filter: SELL blocked - price {current_price:.3f} is {distance_from_low:.3f} from swing low {swing_low:.3f} (danger zone {danger_zone_pct*100:.0f}% = {danger_distance:.3f})"
+
+    return True, None
+
+
+# ---------------------------------------------------------------------------
 # KT/CG Hybrid Policy (Trial #2)
 # ---------------------------------------------------------------------------
 
@@ -2517,6 +2614,44 @@ def execute_kt_cg_hybrid_policy_demo_only(
                 }
             )
             return ExecutionDecision(attempted=True, placed=False, reason=reason or "atr_filter")
+
+    # Swing level filter: block trades near M15 swing highs/lows
+    if policy.swing_level_filter_enabled:
+        m15_df = data_by_tf.get("M15")
+        if m15_df is not None and not m15_df.empty:
+            swing_high, swing_low = detect_swing_levels(
+                m15_df,
+                lookback_bars=policy.swing_lookback_bars,
+                confirmation_bars=policy.swing_confirmation_bars,
+            )
+            entry_price_check = tick.ask if side == "buy" else tick.bid
+            print(f"[{profile.profile_name}] kt_cg_hybrid swing filter: price={entry_price_check:.3f} side={side} swing_high={swing_high:.3f if swing_high else 'None'} swing_low={swing_low:.3f if swing_low else 'None'} danger_zone={policy.swing_danger_zone_pct*100:.0f}%")
+            swing_ok, swing_reason = check_swing_level_filter(
+                current_price=entry_price_check,
+                side=side,
+                swing_high=swing_high,
+                swing_low=swing_low,
+                danger_zone_pct=policy.swing_danger_zone_pct,
+            )
+            if not swing_ok:
+                print(f"[{profile.profile_name}] kt_cg_hybrid BLOCKED by swing filter: {swing_reason}")
+                store.insert_execution(
+                    {
+                        "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                        "profile": profile.profile_name,
+                        "symbol": profile.symbol,
+                        "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                        "rule_id": rule_id,
+                        "mode": mode,
+                        "attempted": 1,
+                        "placed": 0,
+                        "reason": swing_reason or "swing_filter",
+                        "mt5_retcode": None,
+                        "mt5_order_id": None,
+                        "mt5_deal_id": None,
+                    }
+                )
+                return ExecutionDecision(attempted=True, placed=False, reason=swing_reason or "swing_filter")
 
     entry_price = tick.ask if side == "buy" else tick.bid
     candidate = _kt_cg_hybrid_candidate(profile, policy, entry_price, side)
@@ -2954,6 +3089,44 @@ def execute_kt_cg_ctp_policy_demo_only(
                 }
             )
             return ExecutionDecision(attempted=True, placed=False, reason=reason or "atr_filter")
+
+    # Swing level filter: block trades near M15 swing highs/lows
+    if policy.swing_level_filter_enabled:
+        m15_df = data_by_tf.get("M15")
+        if m15_df is not None and not m15_df.empty:
+            swing_high, swing_low = detect_swing_levels(
+                m15_df,
+                lookback_bars=policy.swing_lookback_bars,
+                confirmation_bars=policy.swing_confirmation_bars,
+            )
+            entry_price_check = tick.ask if side == "buy" else tick.bid
+            print(f"[{profile.profile_name}] kt_cg_ctp swing filter: price={entry_price_check:.3f} side={side} swing_high={swing_high:.3f if swing_high else 'None'} swing_low={swing_low:.3f if swing_low else 'None'} danger_zone={policy.swing_danger_zone_pct*100:.0f}%")
+            swing_ok, swing_reason = check_swing_level_filter(
+                current_price=entry_price_check,
+                side=side,
+                swing_high=swing_high,
+                swing_low=swing_low,
+                danger_zone_pct=policy.swing_danger_zone_pct,
+            )
+            if not swing_ok:
+                print(f"[{profile.profile_name}] kt_cg_ctp BLOCKED by swing filter: {swing_reason}")
+                store.insert_execution(
+                    {
+                        "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                        "profile": profile.profile_name,
+                        "symbol": profile.symbol,
+                        "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                        "rule_id": rule_id,
+                        "mode": mode,
+                        "attempted": 1,
+                        "placed": 0,
+                        "reason": swing_reason or "swing_filter",
+                        "mt5_retcode": None,
+                        "mt5_order_id": None,
+                        "mt5_deal_id": None,
+                    }
+                )
+                return ExecutionDecision(attempted=True, placed=False, reason=swing_reason or "swing_filter")
 
     entry_price = tick.ask if side == "buy" else tick.bid
     candidate = _kt_cg_ctp_candidate(profile, policy, entry_price, side)
