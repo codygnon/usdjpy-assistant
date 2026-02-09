@@ -500,7 +500,7 @@ def stop_loop(profile_name: str) -> dict[str, str]:
 
 
 @app.get("/api/loop/{profile_name}/log")
-def get_loop_log(profile_name: str, lines: int = 100) -> dict[str, Any]:
+def get_loop_log(profile_name: str, lines: int = 200) -> dict[str, Any]:
     """Get the tail of the loop log."""
     log_path = LOGS_DIR / profile_name / "loop.log"
     if not log_path.exists():
@@ -531,7 +531,7 @@ def get_snapshots(profile_name: str, limit: int = 20) -> list[dict[str, Any]]:
 @app.get("/api/data/{profile_name}/trades")
 def get_trades(
     profile_name: str,
-    limit: int = 50,
+    limit: int = 250,
     profile_path: Optional[str] = None,
 ) -> list[dict[str, Any]] | dict[str, Any]:
     """Get recent trades. If profile_path is provided, returns an object with
