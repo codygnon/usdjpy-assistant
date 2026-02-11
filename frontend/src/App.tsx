@@ -3106,8 +3106,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
         if ('sl_pips' in pol) {
           updates.sl_pips = Math.max(1, editedSettings.policy_sl_pips);
         }
-        // Update swing filter settings for kt_cg_hybrid and kt_cg_counter_trend_pullback policies
-        if (pol.type === 'kt_cg_hybrid' || pol.type === 'kt_cg_counter_trend_pullback') {
+        // Update swing filter settings for kt_cg_hybrid, kt_cg_counter_trend_pullback, and kt_cg_trial_4 policies
+        if (pol.type === 'kt_cg_hybrid' || pol.type === 'kt_cg_counter_trend_pullback' || pol.type === 'kt_cg_trial_4') {
           updates.swing_level_filter_enabled = editedSettings.swing_level_filter_enabled;
           updates.swing_danger_zone_pct = Math.max(0.05, Math.min(0.50, editedSettings.swing_danger_zone_pct));
           updates.swing_confirmation_bars = Math.max(2, Math.min(20, editedSettings.swing_confirmation_bars));
@@ -3373,8 +3373,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   </div>
                 </div>
               )}
-              {/* Swing Level Filter Settings (for kt_cg_hybrid and kt_cg_counter_trend_pullback policies) */}
-              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_hybrid' || pol.type === 'kt_cg_counter_trend_pullback') && (
+              {/* Swing Level Filter Settings (for kt_cg_hybrid, kt_cg_counter_trend_pullback, and kt_cg_trial_4 policies) */}
+              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_hybrid' || pol.type === 'kt_cg_counter_trend_pullback' || pol.type === 'kt_cg_trial_4') && (
                 <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
                     Swing Level Filter (blocks trades near M15 swing highs/lows)
