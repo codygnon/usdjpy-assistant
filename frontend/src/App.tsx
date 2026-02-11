@@ -3162,7 +3162,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
       }
 
       setMessage('Temporary settings applied successfully!');
-      fetchProfile();
+      await fetchProfile();
       setTimeout(() => setMessage(null), 3000);
     } catch (e: unknown) {
       setMessage(`Error: ${(e as Error).message}`);
@@ -3252,6 +3252,41 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   Effective (used when running): preset risk capped by Profile Editor limits.
                 </div>
               )}
+
+              {/* Display Current Temp Overrides */}
+              {tempSettings && (
+                <div style={{ marginBottom: 16, padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6, border: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--success)', marginBottom: 8, fontWeight: 600 }}>
+                    ✓ Current Temporary Overrides Saved:
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8, fontSize: '0.75rem' }}>
+                    {tempSettings.m5_trend_ema_fast && (
+                      <div style={{ color: 'var(--text-secondary)' }}>Trial #3: M5 Trend EMA: {tempSettings.m5_trend_ema_fast}/{tempSettings.m5_trend_ema_slow}</div>
+                    )}
+                    {tempSettings.m1_zone_entry_ema_slow && (
+                      <div style={{ color: 'var(--text-secondary)' }}>Trial #3: M1 Zone EMA: 9/{tempSettings.m1_zone_entry_ema_slow}</div>
+                    )}
+                    {tempSettings.m1_pullback_cross_ema_slow && (
+                      <div style={{ color: 'var(--text-secondary)' }}>Trial #3: M1 Pullback EMA: 9/{tempSettings.m1_pullback_cross_ema_slow}</div>
+                    )}
+                    {tempSettings.m3_trend_ema_fast && (
+                      <div style={{ color: 'var(--text-secondary)' }}>Trial #4: M3 Trend EMA: {tempSettings.m3_trend_ema_fast}/{tempSettings.m3_trend_ema_slow}</div>
+                    )}
+                    {tempSettings.m1_t4_zone_entry_ema_fast && (
+                      <div style={{ color: 'var(--text-secondary)' }}>Trial #4: M1 Zone EMA: {tempSettings.m1_t4_zone_entry_ema_fast}/{tempSettings.m1_t4_zone_entry_ema_slow}</div>
+                    )}
+                    {tempSettings.m1_t4_pullback_cross_ema_fast && (
+                      <div style={{ color: 'var(--text-secondary)' }}>Trial #4: M1 Pullback EMA: {tempSettings.m1_t4_pullback_cross_ema_fast}/{tempSettings.m1_t4_pullback_cross_ema_slow}</div>
+                    )}
+                  </div>
+                  {!tempSettings.m5_trend_ema_fast && !tempSettings.m3_trend_ema_fast && (
+                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
+                      (No temp overrides currently saved)
+                    </div>
+                  )}
+                </div>
+              )}
+
               {editedSettings && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
                   <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>

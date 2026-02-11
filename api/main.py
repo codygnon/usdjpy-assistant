@@ -434,6 +434,12 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
         "m5_trend_ema_slow": state.temp_m5_trend_ema_slow,
         "m1_zone_entry_ema_slow": state.temp_m1_zone_entry_ema_slow,
         "m1_pullback_cross_ema_slow": state.temp_m1_pullback_cross_ema_slow,
+        "m3_trend_ema_fast": state.temp_m3_trend_ema_fast,
+        "m3_trend_ema_slow": state.temp_m3_trend_ema_slow,
+        "m1_t4_zone_entry_ema_fast": state.temp_m1_t4_zone_entry_ema_fast,
+        "m1_t4_zone_entry_ema_slow": state.temp_m1_t4_zone_entry_ema_slow,
+        "m1_t4_pullback_cross_ema_fast": state.temp_m1_t4_pullback_cross_ema_fast,
+        "m1_t4_pullback_cross_ema_slow": state.temp_m1_t4_pullback_cross_ema_slow,
     }
 
 

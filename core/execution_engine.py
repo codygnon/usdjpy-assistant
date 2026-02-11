@@ -2290,10 +2290,10 @@ def check_swing_level_filter(
 ) -> tuple[bool, Optional[str]]:
     """Check if current price is in the danger zone near swing levels.
 
-    For BUY: blocks if price is within danger_zone_pct of swing_high (buying near resistance)
-    For SELL: blocks if price is within danger_zone_pct of swing_low (selling near support)
+    For BUY: blocks if price is in/above upper danger zone (near/above swing_high resistance)
+    For SELL: blocks if price is in/below lower danger zone (near/below swing_low support)
 
-    The danger zone is a band around the swing level (both above and below).
+    The danger zone extends inward from the swing level by danger_zone_pct of the range.
 
     Returns: (ok, reason) - ok=True means trade is allowed, ok=False means blocked
     """
@@ -2307,15 +2307,17 @@ def check_swing_level_filter(
     danger_distance = swing_range * danger_zone_pct
 
     if side == "buy":
-        # For BUY: check if price is near swing high (resistance) - either side
-        distance_from_high = abs(swing_high - current_price)
-        if distance_from_high <= danger_distance:
-            return False, f"swing_filter: BUY blocked - price {current_price:.3f} is {distance_from_high:.3f} from swing high {swing_high:.3f} (danger zone {danger_zone_pct*100:.0f}% = {danger_distance:.3f})"
+        # For BUY: block if price is in upper danger zone (at or above swing_high minus danger distance)
+        # This blocks: above swing high, at swing high, or within danger zone below swing high
+        upper_danger_zone_threshold = swing_high - danger_distance
+        if current_price >= upper_danger_zone_threshold:
+            return False, f"swing_filter: BUY blocked - price {current_price:.3f} >= {upper_danger_zone_threshold:.3f} (swing high {swing_high:.3f} - danger zone {danger_zone_pct*100:.0f}% = {danger_distance:.3f})"
     elif side == "sell":
-        # For SELL: check if price is near swing low (support) - either side
-        distance_from_low = abs(current_price - swing_low)
-        if distance_from_low <= danger_distance:
-            return False, f"swing_filter: SELL blocked - price {current_price:.3f} is {distance_from_low:.3f} from swing low {swing_low:.3f} (danger zone {danger_zone_pct*100:.0f}% = {danger_distance:.3f})"
+        # For SELL: block if price is in lower danger zone (at or below swing_low plus danger distance)
+        # This blocks: below swing low, at swing low, or within danger zone above swing low
+        lower_danger_zone_threshold = swing_low + danger_distance
+        if current_price <= lower_danger_zone_threshold:
+            return False, f"swing_filter: SELL blocked - price {current_price:.3f} <= {lower_danger_zone_threshold:.3f} (swing low {swing_low:.3f} + danger zone {danger_zone_pct*100:.0f}% = {danger_distance:.3f})"
 
     return True, None
 
@@ -3319,6 +3321,10 @@ def evaluate_kt_cg_trial_4_conditions(
     m1_zone_ema_slow = temp_overrides.get("m1_zone_entry_ema_slow", policy.m1_zone_entry_ema_slow) if temp_overrides else policy.m1_zone_entry_ema_slow
     m1_pullback_ema_fast = temp_overrides.get("m1_pullback_cross_ema_fast", policy.m1_pullback_cross_ema_fast) if temp_overrides else policy.m1_pullback_cross_ema_fast
     m1_pullback_ema_slow = temp_overrides.get("m1_pullback_cross_ema_slow", policy.m1_pullback_cross_ema_slow) if temp_overrides else policy.m1_pullback_cross_ema_slow
+
+    # Debug: log which EMAs are being used
+    override_status = "WITH OVERRIDES" if temp_overrides else "using defaults"
+    reasons.append(f"[DEBUG] Trial #4 {override_status}: M3({m3_ema_fast}/{m3_ema_slow}) M1-Zone({m1_zone_ema_fast}/{m1_zone_ema_slow}) M1-PB({m1_pullback_ema_fast}/{m1_pullback_ema_slow})")
 
     # Get M3 data for trend
     m3_df = data_by_tf.get("M3")

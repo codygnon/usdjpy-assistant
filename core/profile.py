@@ -444,8 +444,8 @@ class ExecutionPolicyKtCgTrial4(BaseModel):
     enabled: bool = False
 
     # M3 Trend EMAs
-    m3_trend_ema_fast: int = 9
-    m3_trend_ema_slow: int = 21
+    m3_trend_ema_fast: int = 5
+    m3_trend_ema_slow: int = 9
 
     # M1 Zone Entry - EMA5 vs EMA9
     m1_zone_entry_ema_fast: int = 5

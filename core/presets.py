@@ -1212,9 +1212,9 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "type": "kt_cg_trial_4",
                     "id": "kt_cg_trial_4",
                     "enabled": True,
-                    # M3 Trend EMAs (default 9/21)
-                    "m3_trend_ema_fast": 9,
-                    "m3_trend_ema_slow": 21,
+                    # M3 Trend EMAs (default 5/9)
+                    "m3_trend_ema_fast": 5,
+                    "m3_trend_ema_slow": 9,
                     # M1 Zone Entry - EMA5 vs EMA9 (respects cooldown)
                     "m1_zone_entry_ema_fast": 5,
                     "m1_zone_entry_ema_slow": 9,

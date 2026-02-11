@@ -907,6 +907,8 @@ def main() -> None:
                             temp_overrides[mapped_key] = int(val)
                     if not temp_overrides:
                         temp_overrides = None
+                    elif temp_overrides:
+                        print(f"[{profile.profile_name}] Trial #3 TEMP OVERRIDES ACTIVE: {temp_overrides}")
                 except Exception:
                     temp_overrides = None
 
@@ -978,6 +980,8 @@ def main() -> None:
                             temp_overrides[mapped_key] = int(val)
                     if not temp_overrides:
                         temp_overrides = None
+                    elif temp_overrides:
+                        print(f"[{profile.profile_name}] Trial #4 TEMP OVERRIDES ACTIVE: {temp_overrides}")
                 except Exception:
                     temp_overrides = None
 
