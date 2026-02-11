@@ -139,6 +139,13 @@ class TempEmaSettingsUpdate(BaseModel):
     m5_trend_ema_slow: Optional[int] = None
     m1_zone_entry_ema_slow: Optional[int] = None
     m1_pullback_cross_ema_slow: Optional[int] = None
+    # Trial #4 fields
+    m3_trend_ema_fast: Optional[int] = None
+    m3_trend_ema_slow: Optional[int] = None
+    m1_t4_zone_entry_ema_fast: Optional[int] = None
+    m1_t4_zone_entry_ema_slow: Optional[int] = None
+    m1_t4_pullback_cross_ema_fast: Optional[int] = None
+    m1_t4_pullback_cross_ema_slow: Optional[int] = None
 
 
 class ApplyPresetRequest(BaseModel):
@@ -443,6 +450,12 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
         temp_m5_trend_ema_slow=req.m5_trend_ema_slow,
         temp_m1_zone_entry_ema_slow=req.m1_zone_entry_ema_slow,
         temp_m1_pullback_cross_ema_slow=req.m1_pullback_cross_ema_slow,
+        temp_m3_trend_ema_fast=req.m3_trend_ema_fast,
+        temp_m3_trend_ema_slow=req.m3_trend_ema_slow,
+        temp_m1_t4_zone_entry_ema_fast=req.m1_t4_zone_entry_ema_fast,
+        temp_m1_t4_zone_entry_ema_slow=req.m1_t4_zone_entry_ema_slow,
+        temp_m1_t4_pullback_cross_ema_fast=req.m1_t4_pullback_cross_ema_fast,
+        temp_m1_t4_pullback_cross_ema_slow=req.m1_t4_pullback_cross_ema_slow,
     )
     save_state(state_path, new_state)
     return {"status": "saved"}

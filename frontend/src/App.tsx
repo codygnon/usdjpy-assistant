@@ -2946,6 +2946,13 @@ interface EditedSettings {
   m5_trend_ema_slow: number | null;
   m1_zone_entry_ema_slow: number | null;
   m1_pullback_cross_ema_slow: number | null;
+  // Trial #4 EMA overrides
+  m3_trend_ema_fast: number | null;
+  m3_trend_ema_slow: number | null;
+  m1_t4_zone_entry_ema_fast: number | null;
+  m1_t4_zone_entry_ema_slow: number | null;
+  m1_t4_pullback_cross_ema_fast: number | null;
+  m1_t4_pullback_cross_ema_slow: number | null;
 }
 
 function PresetsPage({ profile }: { profile: Profile }) {
@@ -3040,6 +3047,13 @@ function PresetsPage({ profile }: { profile: Profile }) {
         m5_trend_ema_slow: tempSettings?.m5_trend_ema_slow ?? null,
         m1_zone_entry_ema_slow: tempSettings?.m1_zone_entry_ema_slow ?? null,
         m1_pullback_cross_ema_slow: tempSettings?.m1_pullback_cross_ema_slow ?? null,
+        // Trial #4 EMA overrides from temp settings
+        m3_trend_ema_fast: tempSettings?.m3_trend_ema_fast ?? null,
+        m3_trend_ema_slow: tempSettings?.m3_trend_ema_slow ?? null,
+        m1_t4_zone_entry_ema_fast: tempSettings?.m1_t4_zone_entry_ema_fast ?? null,
+        m1_t4_zone_entry_ema_slow: tempSettings?.m1_t4_zone_entry_ema_slow ?? null,
+        m1_t4_pullback_cross_ema_fast: tempSettings?.m1_t4_pullback_cross_ema_fast ?? null,
+        m1_t4_pullback_cross_ema_slow: tempSettings?.m1_t4_pullback_cross_ema_slow ?? null,
       });
     }
   }, [showActiveSettings, currentProfile, tempSettings]);
@@ -3125,15 +3139,26 @@ function PresetsPage({ profile }: { profile: Profile }) {
 
       await api.saveProfile(profile.path, newProfile);
 
-      // Save temp EMA settings if using Trial #3
+      // Save temp EMA settings if using Trial #3 or Trial #4
       const hasKtCgCtp = policies.some(p => p.type === 'kt_cg_counter_trend_pullback');
-      if (hasKtCgCtp) {
-        await api.updateTempSettings(profile.name, {
-          m5_trend_ema_fast: editedSettings.m5_trend_ema_fast,
-          m5_trend_ema_slow: editedSettings.m5_trend_ema_slow,
-          m1_zone_entry_ema_slow: editedSettings.m1_zone_entry_ema_slow,
-          m1_pullback_cross_ema_slow: editedSettings.m1_pullback_cross_ema_slow,
-        });
+      const hasKtCgTrial4 = policies.some(p => p.type === 'kt_cg_trial_4');
+      if (hasKtCgCtp || hasKtCgTrial4) {
+        const settings: any = {};
+        if (hasKtCgCtp) {
+          settings.m5_trend_ema_fast = editedSettings.m5_trend_ema_fast;
+          settings.m5_trend_ema_slow = editedSettings.m5_trend_ema_slow;
+          settings.m1_zone_entry_ema_slow = editedSettings.m1_zone_entry_ema_slow;
+          settings.m1_pullback_cross_ema_slow = editedSettings.m1_pullback_cross_ema_slow;
+        }
+        if (hasKtCgTrial4) {
+          settings.m3_trend_ema_fast = editedSettings.m3_trend_ema_fast;
+          settings.m3_trend_ema_slow = editedSettings.m3_trend_ema_slow;
+          settings.m1_t4_zone_entry_ema_fast = editedSettings.m1_t4_zone_entry_ema_fast;
+          settings.m1_t4_zone_entry_ema_slow = editedSettings.m1_t4_zone_entry_ema_slow;
+          settings.m1_t4_pullback_cross_ema_fast = editedSettings.m1_t4_pullback_cross_ema_fast;
+          settings.m1_t4_pullback_cross_ema_slow = editedSettings.m1_t4_pullback_cross_ema_slow;
+        }
+        await api.updateTempSettings(profile.name, settings);
       }
 
       setMessage('Temporary settings applied successfully!');
@@ -3494,6 +3519,118 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     style={{ fontSize: '0.8rem' }}
                   >
                     Reset EMAs to Defaults
+                  </button>
+                </div>
+              )}
+              {/* EMA Override Settings (for kt_cg_trial_4 / Trial #4) */}
+              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4') && (
+                <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
+                    EMA Override Settings (Trial #4)
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
+                    <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                        M3 Trend – fast / slow EMAs (default 9 / 21)
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <input
+                          type="number"
+                          step="1"
+                          min="1"
+                          placeholder="9"
+                          value={editedSettings.m3_trend_ema_fast ?? ''}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, m3_trend_ema_fast: e.target.value ? parseInt(e.target.value) : null })}
+                          style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        />
+                        <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>/</span>
+                        <input
+                          type="number"
+                          step="1"
+                          min="1"
+                          placeholder="21"
+                          value={editedSettings.m3_trend_ema_slow ?? ''}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, m3_trend_ema_slow: e.target.value ? parseInt(e.target.value) : null })}
+                          style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        />
+                      </div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                        M3 Trend: fast {'>'} slow = BULL
+                      </div>
+                    </div>
+                    <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                        M1 Zone Entry – fast / slow EMAs (default 5 / 9)
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <input
+                          type="number"
+                          step="1"
+                          min="1"
+                          placeholder="5"
+                          value={editedSettings.m1_t4_zone_entry_ema_fast ?? ''}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, m1_t4_zone_entry_ema_fast: e.target.value ? parseInt(e.target.value) : null })}
+                          style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        />
+                        <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>/</span>
+                        <input
+                          type="number"
+                          step="1"
+                          min="1"
+                          placeholder="9"
+                          value={editedSettings.m1_t4_zone_entry_ema_slow ?? ''}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, m1_t4_zone_entry_ema_slow: e.target.value ? parseInt(e.target.value) : null })}
+                          style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        />
+                      </div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                        Zone Entry: fast {'>'} slow = BUY
+                      </div>
+                    </div>
+                    <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                        M1 Pullback Cross – fast / slow EMAs (default 5 / 9)
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <input
+                          type="number"
+                          step="1"
+                          min="1"
+                          placeholder="5"
+                          value={editedSettings.m1_t4_pullback_cross_ema_fast ?? ''}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, m1_t4_pullback_cross_ema_fast: e.target.value ? parseInt(e.target.value) : null })}
+                          style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        />
+                        <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>/</span>
+                        <input
+                          type="number"
+                          step="1"
+                          min="1"
+                          placeholder="9"
+                          value={editedSettings.m1_t4_pullback_cross_ema_slow ?? ''}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, m1_t4_pullback_cross_ema_slow: e.target.value ? parseInt(e.target.value) : null })}
+                          style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        />
+                      </div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                        Pullback: fast crosses slow = BUY
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn-secondary mt-3"
+                    onClick={() => setEditedSettings({
+                      ...editedSettings,
+                      m3_trend_ema_fast: null,
+                      m3_trend_ema_slow: null,
+                      m1_t4_zone_entry_ema_fast: null,
+                      m1_t4_zone_entry_ema_slow: null,
+                      m1_t4_pullback_cross_ema_fast: null,
+                      m1_t4_pullback_cross_ema_slow: null,
+                    })}
+                    style={{ fontSize: '0.8rem' }}
+                  >
+                    Reset Trial #4 EMAs to Defaults
                   </button>
                 </div>
               )}

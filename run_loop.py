@@ -24,6 +24,7 @@ from core.execution_engine import (
     execute_indicator_policy_demo_only,
     execute_kt_cg_ctp_policy_demo_only,
     execute_kt_cg_hybrid_policy_demo_only,
+    execute_kt_cg_trial_4_policy_demo_only,
     execute_price_level_policy_demo_only,
     execute_session_momentum_policy_demo_only,
     execute_signal_demo_only,
@@ -258,6 +259,10 @@ def main() -> None:
             getattr(p, "type", None) == "kt_cg_hybrid" and getattr(p, "enabled", True)
             for p in profile.execution.policies
         )
+        has_kt_cg_trial_4 = any(
+            getattr(p, "type", None) == "kt_cg_trial_4" and getattr(p, "enabled", True)
+            for p in profile.execution.policies
+        )
         # Confirmed-cross setups can now use M5; detect if any do so we fetch M5 bars.
         m5_cross_setup_ids = {
             sid
@@ -314,6 +319,9 @@ def main() -> None:
                     # Fetch M5 data when needed by ema_pullback, kt_cg_ctp, kt_cg_hybrid, or M5 confirmed-cross setups.
                     if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid:
                         data_by_tf["M5"] = adapter.get_bars(profile.symbol, "M5", 2000)
+                    # Fetch M3 data when needed by kt_cg_trial_4 (Trial #4 trend detection).
+                    if has_kt_cg_trial_4:
+                        data_by_tf["M3"] = adapter.get_bars(profile.symbol, "M3", 3000)
                     tick = adapter.get_tick(profile.symbol)
                     break
                 except Exception as _fetch_err:
@@ -951,6 +959,77 @@ def main() -> None:
                             )
                         else:
                             print(f"[{profile.profile_name}] kt_cg_ctp {pol.id} mode={mode} -> {dec.reason}")
+
+            # Trial #4 execution
+            if has_kt_cg_trial_4 and mkt is not None:
+                trades_df = store.read_trades_df(profile.profile_name)
+                # Load temp overrides from runtime state if present
+                temp_overrides = None
+                try:
+                    state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                    temp_overrides = {}
+                    for key in ("temp_m3_trend_ema_fast", "temp_m3_trend_ema_slow",
+                                "temp_m1_t4_zone_entry_ema_fast", "temp_m1_t4_zone_entry_ema_slow",
+                                "temp_m1_t4_pullback_cross_ema_fast", "temp_m1_t4_pullback_cross_ema_slow"):
+                        val = state_data.get(key)
+                        if val is not None:
+                            # Map temp_ fields to policy field names
+                            mapped_key = key.replace("temp_", "").replace("_t4_", "_")
+                            temp_overrides[mapped_key] = int(val)
+                    if not temp_overrides:
+                        temp_overrides = None
+                except Exception:
+                    temp_overrides = None
+
+                for pol in profile.execution.policies:
+                    if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "kt_cg_trial_4":
+                        continue
+                    m1_df = data_by_tf.get("M1")
+                    if m1_df is None or m1_df.empty:
+                        continue
+                    bar_time_utc = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
+                    dec = execute_kt_cg_trial_4_policy_demo_only(
+                        adapter=adapter,
+                        profile=profile,
+                        log_dir=log_dir,
+                        policy=pol,
+                        context=mkt,
+                        data_by_tf=data_by_tf,
+                        tick=tick,
+                        trades_df=trades_df,
+                        mode=mode,
+                        bar_time_utc=bar_time_utc,
+                        temp_overrides=temp_overrides,
+                    )
+                    if dec.attempted:
+                        if dec.placed:
+                            side = dec.side or "buy"
+                            entry_price = tick.ask if side == "buy" else tick.bid
+                            pip = float(profile.pip_size)
+                            sl_pips = getattr(pol, "sl_pips", None)
+                            if sl_pips is None:
+                                sl_pips = float(get_effective_risk(profile).min_stop_pips)
+                            if side == "buy":
+                                tp_price = entry_price + pol.tp_pips * pip
+                                sl_price = entry_price - sl_pips * pip
+                            else:
+                                tp_price = entry_price - pol.tp_pips * pip
+                                sl_price = entry_price + sl_pips * pip
+                            print(f"[{profile.profile_name}] TRADE PLACED: kt_cg_trial_4:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
+                            _insert_trade_for_policy(
+                                profile=profile,
+                                adapter=adapter,
+                                store=store,
+                                policy_type="kt_cg_trial_4",
+                                policy_id=pol.id,
+                                side=side,
+                                entry_price=entry_price,
+                                dec=dec,
+                                stop_price=sl_price,
+                                target_price=tp_price,
+                            )
+                        else:
+                            print(f"[{profile.profile_name}] kt_cg_trial_4 {pol.id} mode={mode} -> {dec.reason}")
 
             if args.once:
                 break

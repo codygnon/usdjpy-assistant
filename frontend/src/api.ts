@@ -175,6 +175,13 @@ export interface TempEmaSettings {
   m5_trend_ema_slow: number | null;
   m1_zone_entry_ema_slow: number | null;
   m1_pullback_cross_ema_slow: number | null;
+  // Trial #4 fields
+  m3_trend_ema_fast: number | null;
+  m3_trend_ema_slow: number | null;
+  m1_t4_zone_entry_ema_fast: number | null;
+  m1_t4_zone_entry_ema_slow: number | null;
+  m1_t4_pullback_cross_ema_fast: number | null;
+  m1_t4_pullback_cross_ema_slow: number | null;
 }
 
 export async function getTempSettings(profileName: string): Promise<TempEmaSettings> {

@@ -3221,3 +3221,432 @@ def execute_kt_cg_ctp_policy_demo_only(
         deal_id=res.deal,
         side=side,
     )
+
+
+# ==============================================================================
+# KT/CG Trial #4 (M3 Trend + M1 EMA 5/9)
+# ==============================================================================
+
+
+def _kt_cg_trial_4_candidate(
+    profile: ProfileV1,
+    policy,  # ExecutionPolicyKtCgTrial4
+    entry_price: float,
+    side: str,
+) -> TradeCandidate:
+    pip = float(profile.pip_size)
+    sl_pips = float(policy.sl_pips or get_effective_risk(profile).min_stop_pips)
+    tp_pips = float(policy.tp_pips)
+    if side == "buy":
+        stop = entry_price - sl_pips * pip
+        target = entry_price + tp_pips * pip
+    else:
+        stop = entry_price + sl_pips * pip
+        target = entry_price - tp_pips * pip
+    return TradeCandidate(
+        symbol=profile.symbol,
+        side=side,
+        entry_price=entry_price,
+        stop_price=stop,
+        target_price=target,
+        size_lots=float(get_effective_risk(profile).max_lots),
+    )
+
+
+def _check_kt_cg_trial_4_cooldown(
+    store: SqliteStore,
+    profile_name: str,
+    policy_id: str,
+    cooldown_minutes: float,
+) -> tuple[bool, Optional[str]]:
+    """Check if cooldown has elapsed since last kt_cg_trial_4 trade.
+
+    Returns: (cooldown_ok, reason)
+    """
+    if cooldown_minutes <= 0:
+        return True, None
+
+    try:
+        execs = store.read_executions_df(profile_name)
+        if execs is None or execs.empty:
+            return True, None
+
+        kt_cg_execs = execs[
+            (execs["rule_id"].str.contains(f"kt_cg_trial_4:{policy_id}", na=False)) &
+            (execs["placed"] == 1)
+        ]
+        if kt_cg_execs.empty:
+            return True, None
+
+        last_exec = kt_cg_execs.iloc[-1]
+        last_time = pd.to_datetime(last_exec["timestamp_utc"])
+        now = pd.Timestamp.now(tz="UTC")
+        elapsed = (now - last_time).total_seconds() / 60.0
+
+        if elapsed < cooldown_minutes:
+            return False, f"cooldown: {elapsed:.1f}m < {cooldown_minutes}m since last trade"
+        return True, None
+    except Exception:
+        return True, None
+
+
+def evaluate_kt_cg_trial_4_conditions(
+    profile: ProfileV1,
+    policy,  # ExecutionPolicyKtCgTrial4
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+    temp_overrides: Optional[dict] = None,
+) -> tuple[bool, Optional[str], list[str], str]:
+    """Evaluate KT/CG Trial #4 (M3 Trend + M1 EMA 5/9) conditions.
+
+    Two INDEPENDENT entry triggers:
+    1. Zone Entry (continuous state, respects cooldown):
+       - M3 BULL + M1 EMA5 > M1 EMA9 -> BUY
+       - M3 BEAR + M1 EMA5 < M1 EMA9 -> SELL
+
+    2. Pullback Cross (discrete event, OVERRIDES cooldown):
+       - M3 BULL + M1 EMA5 crosses BELOW EMA9 -> BUY
+       - M3 BEAR + M1 EMA5 crosses ABOVE EMA9 -> SELL
+
+    Returns: (passed, side, reasons, trigger_type)
+    trigger_type: "zone_entry" or "pullback_cross" (for cooldown handling)
+    """
+    reasons: list[str] = []
+
+    # Apply temporary overrides if provided
+    m3_ema_fast = temp_overrides.get("m3_trend_ema_fast", policy.m3_trend_ema_fast) if temp_overrides else policy.m3_trend_ema_fast
+    m3_ema_slow = temp_overrides.get("m3_trend_ema_slow", policy.m3_trend_ema_slow) if temp_overrides else policy.m3_trend_ema_slow
+    m1_zone_ema_fast = temp_overrides.get("m1_zone_entry_ema_fast", policy.m1_zone_entry_ema_fast) if temp_overrides else policy.m1_zone_entry_ema_fast
+    m1_zone_ema_slow = temp_overrides.get("m1_zone_entry_ema_slow", policy.m1_zone_entry_ema_slow) if temp_overrides else policy.m1_zone_entry_ema_slow
+    m1_pullback_ema_fast = temp_overrides.get("m1_pullback_cross_ema_fast", policy.m1_pullback_cross_ema_fast) if temp_overrides else policy.m1_pullback_cross_ema_fast
+    m1_pullback_ema_slow = temp_overrides.get("m1_pullback_cross_ema_slow", policy.m1_pullback_cross_ema_slow) if temp_overrides else policy.m1_pullback_cross_ema_slow
+
+    # Get M3 data for trend
+    m3_df = data_by_tf.get("M3")
+    if m3_df is None or m3_df.empty:
+        return False, None, ["kt_cg_trial_4: no M3 data"], ""
+    m3_df = drop_incomplete_last_bar(m3_df.copy(), "M3")
+    if len(m3_df) < m3_ema_slow + 1:
+        return False, None, [f"kt_cg_trial_4: need at least {m3_ema_slow + 1} M3 bars"], ""
+
+    # Get M1 data for zone entry and pullback cross
+    m1_df = data_by_tf.get("M1")
+    if m1_df is None or m1_df.empty:
+        return False, None, ["kt_cg_trial_4: no M1 data"], ""
+    m1_df = drop_incomplete_last_bar(m1_df.copy(), "M1")
+    min_m1_bars = max(m1_zone_ema_slow, m1_pullback_ema_slow) + policy.confirm_bars + 2
+    if len(m1_df) < min_m1_bars:
+        return False, None, [f"kt_cg_trial_4: need at least {min_m1_bars} M1 bars"], ""
+
+    # Step 1: M3 Trend
+    m3_close = m3_df["close"]
+    m3_ema_fast_series = ema_fn(m3_close, m3_ema_fast)
+    m3_ema_slow_series = ema_fn(m3_close, m3_ema_slow)
+    m3_ema_fast_val = float(m3_ema_fast_series.iloc[-1])
+    m3_ema_slow_val = float(m3_ema_slow_series.iloc[-1])
+    is_bull = m3_ema_fast_val > m3_ema_slow_val
+    trend = "BULL" if is_bull else "BEAR"
+    reasons.append(f"M3 trend: {trend} (EMA{m3_ema_fast}={m3_ema_fast_val:.3f} vs EMA{m3_ema_slow}={m3_ema_slow_val:.3f})")
+
+    # Compute M1 EMAs
+    m1_close = m1_df["close"]
+    m1_ema_zone_fast = ema_fn(m1_close, m1_zone_ema_fast)
+    m1_ema_zone_slow = ema_fn(m1_close, m1_zone_ema_slow)
+    m1_ema_pullback_fast = ema_fn(m1_close, m1_pullback_ema_fast)
+    m1_ema_pullback_slow = ema_fn(m1_close, m1_pullback_ema_slow)
+
+    m1_zone_fast_val = float(m1_ema_zone_fast.iloc[-1])
+    m1_zone_slow_val = float(m1_ema_zone_slow.iloc[-1])
+
+    # Check Pullback Cross FIRST (it overrides cooldown, so prioritize it)
+    diff = m1_ema_pullback_fast - m1_ema_pullback_slow
+    cb = max(int(policy.confirm_bars), 1)
+    pullback_cross_triggered = False
+    pullback_side: Optional[str] = None
+
+    if len(diff) >= cb + 1:
+        now_diff = float(diff.iloc[-1])
+        prev_diff = float(diff.iloc[-cb - 1])
+        cross_below = prev_diff >= 0 > now_diff
+        cross_above = prev_diff <= 0 < now_diff
+
+        if is_bull and cross_below:
+            pullback_cross_triggered = True
+            pullback_side = "buy"
+            reasons.append(f"PULLBACK CROSS: BULL + EMA{m1_pullback_ema_fast} crossed BELOW EMA{m1_pullback_ema_slow} -> BUY (overrides cooldown)")
+        elif not is_bull and cross_above:
+            pullback_cross_triggered = True
+            pullback_side = "sell"
+            reasons.append(f"PULLBACK CROSS: BEAR + EMA{m1_pullback_ema_fast} crossed ABOVE EMA{m1_pullback_ema_slow} -> SELL (overrides cooldown)")
+
+    if pullback_cross_triggered and pullback_side:
+        return True, pullback_side, reasons, "pullback_cross"
+
+    # Check Zone Entry (respects cooldown)
+    zone_entry_triggered = False
+    zone_side: Optional[str] = None
+
+    if is_bull and m1_zone_fast_val > m1_zone_slow_val:
+        zone_entry_triggered = True
+        zone_side = "buy"
+        reasons.append(f"ZONE ENTRY: BULL + M1 EMA{m1_zone_ema_fast} ({m1_zone_fast_val:.3f}) > EMA{m1_zone_ema_slow} ({m1_zone_slow_val:.3f}) -> BUY")
+    elif not is_bull and m1_zone_fast_val < m1_zone_slow_val:
+        zone_entry_triggered = True
+        zone_side = "sell"
+        reasons.append(f"ZONE ENTRY: BEAR + M1 EMA{m1_zone_ema_fast} ({m1_zone_fast_val:.3f}) < EMA{m1_zone_ema_slow} ({m1_zone_slow_val:.3f}) -> SELL")
+
+    if zone_entry_triggered and zone_side:
+        return True, zone_side, reasons, "zone_entry"
+
+    # Neither trigger fired
+    reasons.append(f"No trigger: Zone={m1_zone_fast_val:.3f} vs EMA{m1_zone_ema_slow}={m1_zone_slow_val:.3f}, no pullback cross")
+    return False, None, reasons, ""
+
+
+def execute_kt_cg_trial_4_policy_demo_only(
+    *,
+    adapter,
+    profile: ProfileV1,
+    log_dir: Path,
+    policy,  # ExecutionPolicyKtCgTrial4
+    context: MarketContext,
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+    tick: Tick,
+    trades_df: Optional[pd.DataFrame],
+    mode: str,
+    bar_time_utc: str,
+    temp_overrides: Optional[dict] = None,
+) -> ExecutionDecision:
+    """Evaluate KT/CG Trial #4 (M3 Trend + M1 EMA 5/9) policy and optionally place a market order.
+
+    Two independent triggers:
+    1. Zone Entry (respects cooldown)
+    2. Pullback Cross (overrides cooldown)
+    """
+    if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
+        return ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed")
+    if not adapter.is_demo_account():
+        return ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)")
+
+    store = _store(log_dir)
+    rule_id = f"kt_cg_trial_4:{policy.id}:M1:{bar_time_utc}"
+    within = 2  # M1 cadence
+    if store.has_recent_price_level_placement(profile.profile_name, rule_id, within):
+        return ExecutionDecision(attempted=False, placed=False, reason="kt_cg_trial_4: recent placement (idempotent)")
+
+    # Evaluate conditions - returns (passed, side, reasons, trigger_type)
+    passed, side, eval_reasons, trigger_type = evaluate_kt_cg_trial_4_conditions(profile, policy, data_by_tf, temp_overrides)
+    if not passed or side is None:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": "; ".join(eval_reasons),
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason="; ".join(eval_reasons))
+
+    # Check cooldown for Zone Entry (Pullback Cross overrides cooldown)
+    if trigger_type == "zone_entry":
+        cooldown_ok, cooldown_reason = _check_kt_cg_trial_4_cooldown(
+            store, profile.profile_name, policy.id, policy.cooldown_minutes
+        )
+        if not cooldown_ok:
+            store.insert_execution(
+                {
+                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "profile": profile.profile_name,
+                    "symbol": profile.symbol,
+                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                    "rule_id": rule_id,
+                    "mode": mode,
+                    "attempted": 1,
+                    "placed": 0,
+                    "reason": cooldown_reason or "zone_entry_cooldown",
+                    "mt5_retcode": None,
+                    "mt5_order_id": None,
+                    "mt5_deal_id": None,
+                }
+            )
+            return ExecutionDecision(attempted=True, placed=False, reason=cooldown_reason or "zone_entry_cooldown")
+
+    # Strategy filters: session, ATR
+    now_utc = datetime.now(timezone.utc)
+    ok, reason = passes_session_filter(profile, now_utc)
+    if not ok:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": reason or "session_filter",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter")
+
+    m1_df = data_by_tf.get("M1")
+    if m1_df is not None:
+        ok, reason = passes_atr_filter(profile, m1_df, "M1")
+        if not ok:
+            store.insert_execution(
+                {
+                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "profile": profile.profile_name,
+                    "symbol": profile.symbol,
+                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                    "rule_id": rule_id,
+                    "mode": mode,
+                    "attempted": 1,
+                    "placed": 0,
+                    "reason": reason or "atr_filter",
+                    "mt5_retcode": None,
+                    "mt5_order_id": None,
+                    "mt5_deal_id": None,
+                }
+            )
+            return ExecutionDecision(attempted=True, placed=False, reason=reason or "atr_filter")
+
+    # Swing level filter: block trades near M15 swing highs/lows
+    if policy.swing_level_filter_enabled:
+        m15_df = data_by_tf.get("M15")
+        if m15_df is not None and not m15_df.empty:
+            swing_high, swing_low = detect_swing_levels(
+                m15_df,
+                lookback_bars=policy.swing_lookback_bars,
+                confirmation_bars=policy.swing_confirmation_bars,
+            )
+            entry_price_check = tick.ask if side == "buy" else tick.bid
+            sh_str = f"{swing_high:.3f}" if swing_high else "None"
+            sl_str = f"{swing_low:.3f}" if swing_low else "None"
+            print(f"[{profile.profile_name}] kt_cg_trial_4 swing filter: price={entry_price_check:.3f} side={side} swing_high={sh_str} swing_low={sl_str} danger_zone={policy.swing_danger_zone_pct*100:.0f}%")
+            swing_ok, swing_reason = check_swing_level_filter(
+                current_price=entry_price_check,
+                side=side,
+                swing_high=swing_high,
+                swing_low=swing_low,
+                danger_zone_pct=policy.swing_danger_zone_pct,
+            )
+            if not swing_ok:
+                print(f"[{profile.profile_name}] kt_cg_trial_4 BLOCKED by swing filter: {swing_reason}")
+                store.insert_execution(
+                    {
+                        "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                        "profile": profile.profile_name,
+                        "symbol": profile.symbol,
+                        "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                        "rule_id": rule_id,
+                        "mode": mode,
+                        "attempted": 1,
+                        "placed": 0,
+                        "reason": swing_reason or "swing_filter",
+                        "mt5_retcode": None,
+                        "mt5_order_id": None,
+                        "mt5_deal_id": None,
+                    }
+                )
+                return ExecutionDecision(attempted=True, placed=False, reason=swing_reason or "swing_filter")
+
+    entry_price = tick.ask if side == "buy" else tick.bid
+    candidate = _kt_cg_trial_4_candidate(profile, policy, entry_price, side)
+    decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
+    if not decision.allow:
+        sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": sig_id,
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": "risk_reject: " + "; ".join(decision.hard_reasons),
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons))
+
+    if mode == "ARMED_MANUAL_CONFIRM":
+        sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": sig_id,
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": "manual_confirm_required",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason="manual_confirm_required")
+
+    # ARMED_AUTO_DEMO: place the trade
+    # First, close opposite positions
+    closed_ids = close_opposite_positions(adapter, profile, side, log_dir) if policy.close_opposite_on_trade else []
+
+    # Place the trade
+    res = adapter.place_market_order(
+        symbol=profile.symbol,
+        side=side,
+        volume=candidate.size_lots,
+        sl=candidate.stop_price,
+        tp=candidate.target_price,
+    )
+    placed = res.retcode == 10009 if hasattr(res, "retcode") else (res.deal > 0 if hasattr(res, "deal") else False)
+    sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+    reason = "placed" if placed else (getattr(res, "comment", "unknown") if hasattr(res, "comment") else "failed")
+
+    store.insert_execution(
+        {
+            "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+            "profile": profile.profile_name,
+            "symbol": profile.symbol,
+            "signal_id": sig_id,
+            "rule_id": rule_id,
+            "mode": mode,
+            "attempted": 1,
+            "placed": 1 if placed else 0,
+            "reason": reason,
+            "mt5_retcode": getattr(res, "retcode", None),
+            "mt5_order_id": getattr(res, "order", None),
+            "mt5_deal_id": getattr(res, "deal", None),
+        }
+    )
+
+    if placed:
+        print(f"[{profile.profile_name}] TRADE PLACED: kt_cg_trial_4:{trigger_type} | {'; '.join(eval_reasons)}")
+
+    return ExecutionDecision(
+        attempted=True,
+        placed=placed,
+        reason=reason,
+        order_retcode=res.retcode,
+        order_id=res.order,
+        deal_id=res.deal,
+        side=side,
+    )

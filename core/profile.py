@@ -420,6 +420,58 @@ class ExecutionPolicyKtCgCounterTrendPullback(BaseModel):
     swing_danger_zone_pct: float = 0.15
 
 
+class ExecutionPolicyKtCgTrial4(BaseModel):
+    """KT/CG Trial #4 (M3 Trend + M1 EMA 5/9).
+
+    Two INDEPENDENT entry triggers:
+
+    1. Zone Entry (continuous state, respects cooldown):
+       - If M3 BULL AND M1 EMA5 > M1 EMA9 AND cooldown elapsed -> BUY
+       - If M3 BEAR AND M1 EMA5 < M1 EMA9 AND cooldown elapsed -> SELL
+
+    2. Pullback Cross (discrete event, OVERRIDES cooldown):
+       - If M3 BULL AND M1 EMA5 crosses BELOW EMA9 -> BUY (ignore cooldown)
+       - If M3 BEAR AND M1 EMA5 crosses ABOVE EMA9 -> SELL (ignore cooldown)
+
+    Either condition can trigger a trade independently.
+    Direction switch close: auto-close opposite direction trades before placing new trade.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["kt_cg_trial_4"] = "kt_cg_trial_4"
+    id: str = "kt_cg_trial_4_default"
+    enabled: bool = False
+
+    # M3 Trend EMAs
+    m3_trend_ema_fast: int = 9
+    m3_trend_ema_slow: int = 21
+
+    # M1 Zone Entry - EMA5 vs EMA9
+    m1_zone_entry_ema_fast: int = 5
+    m1_zone_entry_ema_slow: int = 9
+
+    # M1 Pullback Cross - EMA5 crosses EMA9
+    m1_pullback_cross_ema_fast: int = 5
+    m1_pullback_cross_ema_slow: int = 9
+
+    # Close opposite trades before placing new trade
+    close_opposite_on_trade: bool = True
+
+    # Cooldown after trade (Zone Entry respects this, Pullback Cross overrides it)
+    cooldown_minutes: float = 3.0
+
+    tp_pips: float = 15.0
+    sl_pips: Optional[float] = 10.0
+    confirm_bars: int = 1
+
+    # Swing level proximity filter (from Trial #2)
+    swing_level_filter_enabled: bool = False
+    swing_lookback_bars: int = 100
+    swing_confirmation_bars: int = 5
+    swing_danger_zone_pct: float = 0.15
+
+
 ExecutionPolicy = Annotated[
     Union[
         ExecutionPolicyConfirmedCross,
@@ -433,6 +485,7 @@ ExecutionPolicy = Annotated[
         ExecutionPolicyEmaBbScalp,
         ExecutionPolicyKtCgHybrid,
         ExecutionPolicyKtCgCounterTrendPullback,
+        ExecutionPolicyKtCgTrial4,
     ],
     Field(discriminator="type"),
 ]

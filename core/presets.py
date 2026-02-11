@@ -36,6 +36,7 @@ class PresetId(str, Enum):
     KT_CG_TRIAL_BLOW_ACCOUNT = "kt_cg_trial_blow_account"
     KT_CG_TRIAL_2 = "kt_cg_trial_2"
     KT_CG_TRIAL_3 = "kt_cg_trial_3"
+    KT_CG_TRIAL_4 = "kt_cg_trial_4"
     M5_M1_EMA_CROSS_9_21 = "m5_m1_ema_cross_9_21"
 
 
@@ -1141,6 +1142,85 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "m1_zone_entry_ema_slow": 13,
                     # M1 Pullback Cross - EMA 9 crosses EMA 15 (overrides cooldown)
                     "m1_pullback_cross_ema_slow": 15,
+                    # Close opposite trades before placing new trade
+                    "close_opposite_on_trade": True,
+                    # Cooldown (Zone Entry respects, Pullback Cross overrides)
+                    "cooldown_minutes": 3.0,
+                    "tp_pips": 0.5,
+                    "sl_pips": 20.0,
+                    "confirm_bars": 1,
+                    # Swing level proximity filter
+                    "swing_level_filter_enabled": True,
+                    "swing_lookback_bars": 100,
+                    "swing_confirmation_bars": 5,
+                    "swing_danger_zone_pct": 0.15,
+                },
+            ],
+        },
+    },
+    # -----------------------------------------------------------------------
+    # KT/CG Trial #4 (M3 Trend + M1 EMA 5/9)
+    # Uses M3 for trend detection (faster updates) and M1 EMA5/9 for entries.
+    # More aggressive: higher trade frequency, faster entries, higher whipsaw risk.
+    # -----------------------------------------------------------------------
+    PresetId.KT_CG_TRIAL_4: {
+        "name": "KT/CG Trial #4 (M3 Trend + M1 EMA 5/9)",
+        "description": "M3-based trend detection with M1 EMA5/9 entries. Two independent triggers: Zone Entry (respects 3-min cooldown) and Pullback Cross (overrides cooldown). More aggressive than Trial #3.",
+        "pros": [
+            "M3 updates every 3 minutes (faster than M5's 5 minutes)",
+            "EMA5/9 more responsive than EMA9/13 or EMA9/15",
+            "Catches counter-trend pullbacks faster",
+            "Faster trend reversals detected",
+        ],
+        "cons": [
+            "Higher trade frequency = more spread costs",
+            "More whipsaw risk in choppy markets",
+            "False signals in consolidation zones",
+            "Testing preset - expect significant drawdowns",
+        ],
+        "risk": {
+            "max_lots": 0.1,
+            "require_stop": True,
+            "min_stop_pips": 20.0,
+            "max_spread_pips": 6.0,
+            "max_trades_per_day": 100,
+            "max_open_trades": 20,
+            "cooldown_minutes_after_loss": 0,
+        },
+        "strategy": {
+            "filters": {
+                "alignment": {"enabled": False},
+                "ema_stack_filter": {"enabled": False},
+                "atr_filter": {"enabled": False},
+                "session_filter": {"enabled": False},
+            },
+            "setups": {},
+        },
+        "trade_management": {
+            "target": {
+                "mode": "fixed_pips",
+                "pips_default": 0.5,
+            },
+            "stop_loss": None,
+            "breakeven": {"enabled": False},
+        },
+        "execution": {
+            "loop_poll_seconds": 1.0,
+            "loop_poll_seconds_fast": 0.5,
+            "policies": [
+                {
+                    "type": "kt_cg_trial_4",
+                    "id": "kt_cg_trial_4",
+                    "enabled": True,
+                    # M3 Trend EMAs (default 9/21)
+                    "m3_trend_ema_fast": 9,
+                    "m3_trend_ema_slow": 21,
+                    # M1 Zone Entry - EMA5 vs EMA9 (respects cooldown)
+                    "m1_zone_entry_ema_fast": 5,
+                    "m1_zone_entry_ema_slow": 9,
+                    # M1 Pullback Cross - EMA5 crosses EMA9 (overrides cooldown)
+                    "m1_pullback_cross_ema_fast": 5,
+                    "m1_pullback_cross_ema_slow": 9,
                     # Close opposite trades before placing new trade
                     "close_opposite_on_trade": True,
                     # Cooldown (Zone Entry respects, Pullback Cross overrides)

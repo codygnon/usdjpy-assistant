@@ -23,6 +23,14 @@ class RuntimeState:
     temp_m1_zone_entry_ema_slow: Optional[int] = None
     temp_m1_pullback_cross_ema_slow: Optional[int] = None
 
+    # Temporary EMA overrides for Trial #4 (Apply Temporary Settings)
+    temp_m3_trend_ema_fast: Optional[int] = None
+    temp_m3_trend_ema_slow: Optional[int] = None
+    temp_m1_t4_zone_entry_ema_fast: Optional[int] = None
+    temp_m1_t4_zone_entry_ema_slow: Optional[int] = None
+    temp_m1_t4_pullback_cross_ema_fast: Optional[int] = None
+    temp_m1_t4_pullback_cross_ema_slow: Optional[int] = None
+
 
 def load_state(path: str | Path) -> RuntimeState:
     p = Path(path)
@@ -37,6 +45,12 @@ def load_state(path: str | Path) -> RuntimeState:
         temp_m5_trend_ema_slow=data.get("temp_m5_trend_ema_slow"),
         temp_m1_zone_entry_ema_slow=data.get("temp_m1_zone_entry_ema_slow"),
         temp_m1_pullback_cross_ema_slow=data.get("temp_m1_pullback_cross_ema_slow"),
+        temp_m3_trend_ema_fast=data.get("temp_m3_trend_ema_fast"),
+        temp_m3_trend_ema_slow=data.get("temp_m3_trend_ema_slow"),
+        temp_m1_t4_zone_entry_ema_fast=data.get("temp_m1_t4_zone_entry_ema_fast"),
+        temp_m1_t4_zone_entry_ema_slow=data.get("temp_m1_t4_zone_entry_ema_slow"),
+        temp_m1_t4_pullback_cross_ema_fast=data.get("temp_m1_t4_pullback_cross_ema_fast"),
+        temp_m1_t4_pullback_cross_ema_slow=data.get("temp_m1_t4_pullback_cross_ema_slow"),
     )
 
 
@@ -53,6 +67,12 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "temp_m5_trend_ema_slow": state.temp_m5_trend_ema_slow,
                 "temp_m1_zone_entry_ema_slow": state.temp_m1_zone_entry_ema_slow,
                 "temp_m1_pullback_cross_ema_slow": state.temp_m1_pullback_cross_ema_slow,
+                "temp_m3_trend_ema_fast": state.temp_m3_trend_ema_fast,
+                "temp_m3_trend_ema_slow": state.temp_m3_trend_ema_slow,
+                "temp_m1_t4_zone_entry_ema_fast": state.temp_m1_t4_zone_entry_ema_fast,
+                "temp_m1_t4_zone_entry_ema_slow": state.temp_m1_t4_zone_entry_ema_slow,
+                "temp_m1_t4_pullback_cross_ema_fast": state.temp_m1_t4_pullback_cross_ema_fast,
+                "temp_m1_t4_pullback_cross_ema_slow": state.temp_m1_t4_pullback_cross_ema_slow,
             },
             indent=2,
             sort_keys=False,
