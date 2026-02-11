@@ -3606,21 +3606,23 @@ def execute_kt_cg_trial_4_policy_demo_only(
         return ExecutionDecision(attempted=True, placed=False, reason="manual_confirm_required")
 
     # ARMED_AUTO_DEMO: place the trade
-    # First, close opposite positions
-    closed_ids = close_opposite_positions(adapter, profile, side, log_dir) if policy.close_opposite_on_trade else []
+    # First, close opposite positions if enabled (Direction Switch Close)
+    if policy.close_opposite_on_trade:
+        closed = close_opposite_positions(adapter, profile, side, log_dir)
+        if closed:
+            print(f"[{profile.profile_name}] kt_cg_trial_4: closed {len(closed)} opposite position(s) before {side.upper()}")
 
-    # Place the trade
-    res = adapter.place_market_order(
+    res = adapter.order_send_market(
         symbol=profile.symbol,
         side=side,
-        volume=candidate.size_lots,
+        volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
         sl=candidate.stop_price,
         tp=candidate.target_price,
+        comment=f"kt_cg_trial_4:{policy.id}:{trigger_type}",
     )
-    placed = res.retcode == 10009 if hasattr(res, "retcode") else (res.deal > 0 if hasattr(res, "deal") else False)
+    placed = res.retcode in (0, 10008, 10009)
+    reason = f"{trigger_type}:order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
     sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
-    reason = "placed" if placed else (getattr(res, "comment", "unknown") if hasattr(res, "comment") else "failed")
-
     store.insert_execution(
         {
             "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
@@ -3632,9 +3634,9 @@ def execute_kt_cg_trial_4_policy_demo_only(
             "attempted": 1,
             "placed": 1 if placed else 0,
             "reason": reason,
-            "mt5_retcode": getattr(res, "retcode", None),
-            "mt5_order_id": getattr(res, "order", None),
-            "mt5_deal_id": getattr(res, "deal", None),
+            "mt5_retcode": res.retcode,
+            "mt5_order_id": res.order,
+            "mt5_deal_id": res.deal,
         }
     )
 
