@@ -612,6 +612,15 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
         ap = d.get("active_preset_name")
         if ap in ("mean_reversion_dip_buy", "mean_reversion_dip_sell"):
             d = {**d, "active_preset_name": "mean_reversion_dip"}
+        # Migrate Trial #4 policies: remove old pullback cross EMA fields (now uses tiered pullback)
+        execution = d.get("execution")
+        if isinstance(execution, dict):
+            policies = execution.get("policies")
+            if isinstance(policies, list):
+                for pol in policies:
+                    if isinstance(pol, dict) and pol.get("type") == "kt_cg_trial_4":
+                        pol.pop("m1_pullback_cross_ema_fast", None)
+                        pol.pop("m1_pullback_cross_ema_slow", None)
         return d
 
     profile_name = d.get("profile_name") or d.get("name") or "default"
