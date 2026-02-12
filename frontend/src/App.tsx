@@ -3123,6 +3123,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
         if ('sl_pips' in pol) {
           updates.sl_pips = Math.max(1, editedSettings.policy_sl_pips);
         }
+        // Update tp_pips in policy (execution engine uses policy.tp_pips, not trade_management.target.pips_default)
+        if ('tp_pips' in pol) {
+          updates.tp_pips = Math.max(0.1, editedSettings.target_pips);
+        }
         // Update swing filter settings for kt_cg_hybrid and kt_cg_counter_trend_pullback (Trial #2 and #3)
         if (pol.type === 'kt_cg_hybrid' || pol.type === 'kt_cg_counter_trend_pullback') {
           updates.swing_level_filter_enabled = editedSettings.swing_level_filter_enabled;
