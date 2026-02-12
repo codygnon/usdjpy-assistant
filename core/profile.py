@@ -469,11 +469,11 @@ class ExecutionPolicyKtCgTrial4(BaseModel):
     sl_pips: Optional[float] = 10.0
     confirm_bars: int = 1
 
-    # Swing level proximity filter (from Trial #2)
-    swing_level_filter_enabled: bool = False
-    swing_lookback_bars: int = 100
-    swing_confirmation_bars: int = 5
-    swing_danger_zone_pct: float = 0.15
+    # Rolling Danger Zone Filter (M1-based)
+    # Calculates rolling high/low over X M1 bars, blocks entries near extremes
+    rolling_danger_zone_enabled: bool = True
+    rolling_danger_lookback_bars: int = 100  # X bars to calculate high/low
+    rolling_danger_zone_pct: float = 0.15  # Y% of range at top/bottom
 
 
 ExecutionPolicy = Annotated[
@@ -612,15 +612,24 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
         ap = d.get("active_preset_name")
         if ap in ("mean_reversion_dip_buy", "mean_reversion_dip_sell"):
             d = {**d, "active_preset_name": "mean_reversion_dip"}
-        # Migrate Trial #4 policies: remove old pullback cross EMA fields (now uses tiered pullback)
+        # Migrate Trial #4 policies: remove old fields, convert swing filter to rolling danger zone
         execution = d.get("execution")
         if isinstance(execution, dict):
             policies = execution.get("policies")
             if isinstance(policies, list):
                 for pol in policies:
                     if isinstance(pol, dict) and pol.get("type") == "kt_cg_trial_4":
+                        # Remove old pullback cross EMA fields (now uses tiered pullback)
                         pol.pop("m1_pullback_cross_ema_fast", None)
                         pol.pop("m1_pullback_cross_ema_slow", None)
+                        # Migrate swing filter to rolling danger zone
+                        if "swing_level_filter_enabled" in pol:
+                            pol["rolling_danger_zone_enabled"] = pol.pop("swing_level_filter_enabled")
+                        if "swing_lookback_bars" in pol:
+                            pol["rolling_danger_lookback_bars"] = pol.pop("swing_lookback_bars")
+                        if "swing_danger_zone_pct" in pol:
+                            pol["rolling_danger_zone_pct"] = pol.pop("swing_danger_zone_pct")
+                        pol.pop("swing_confirmation_bars", None)  # No longer needed
         return d
 
     profile_name = d.get("profile_name") or d.get("name") or "default"

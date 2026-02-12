@@ -3605,45 +3605,59 @@ def execute_kt_cg_trial_4_policy_demo_only(
             )
             return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "atr_filter"), "tier_updates": tier_updates}
 
-    # Swing level filter: block trades near M15 swing highs/lows
-    if policy.swing_level_filter_enabled:
-        m15_df = data_by_tf.get("M15")
-        if m15_df is not None and not m15_df.empty:
-            swing_high, swing_low = detect_swing_levels(
-                m15_df,
-                lookback_bars=policy.swing_lookback_bars,
-                confirmation_bars=policy.swing_confirmation_bars,
-            )
-            entry_price_check = tick.ask if side == "buy" else tick.bid
-            sh_str = f"{swing_high:.3f}" if swing_high else "None"
-            sl_str = f"{swing_low:.3f}" if swing_low else "None"
-            print(f"[{profile.profile_name}] kt_cg_trial_4 swing filter: price={entry_price_check:.3f} side={side} swing_high={sh_str} swing_low={sl_str} danger_zone={policy.swing_danger_zone_pct*100:.0f}%")
-            swing_ok, swing_reason = check_swing_level_filter(
-                current_price=entry_price_check,
-                side=side,
-                swing_high=swing_high,
-                swing_low=swing_low,
-                danger_zone_pct=policy.swing_danger_zone_pct,
-            )
-            if not swing_ok:
-                print(f"[{profile.profile_name}] kt_cg_trial_4 BLOCKED by swing filter: {swing_reason}")
-                store.insert_execution(
-                    {
-                        "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
-                        "profile": profile.profile_name,
-                        "symbol": profile.symbol,
-                        "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
-                        "rule_id": rule_id,
-                        "mode": mode,
-                        "attempted": 1,
-                        "placed": 0,
-                        "reason": swing_reason or "swing_filter",
-                        "mt5_retcode": None,
-                        "mt5_order_id": None,
-                        "mt5_deal_id": None,
-                    }
-                )
-                return {"decision": ExecutionDecision(attempted=True, placed=False, reason=swing_reason or "swing_filter"), "tier_updates": tier_updates}
+    # Rolling Danger Zone filter: block entries near M1 rolling high/low extremes
+    rolling_danger_enabled = getattr(policy, "rolling_danger_zone_enabled", False)
+    if rolling_danger_enabled:
+        m1_df = data_by_tf.get("M1")
+        if m1_df is not None and not m1_df.empty:
+            lookback = getattr(policy, "rolling_danger_lookback_bars", 100)
+            danger_pct = getattr(policy, "rolling_danger_zone_pct", 0.15)
+
+            # Get last X bars for rolling high/low calculation
+            bars_to_use = m1_df.tail(lookback)
+            if len(bars_to_use) >= 10:  # Need minimum bars for meaningful calculation
+                rolling_high = float(bars_to_use["high"].max())
+                rolling_low = float(bars_to_use["low"].min())
+                price_range = rolling_high - rolling_low
+
+                if price_range > 0:
+                    # Upper danger zone = top Y% of range (blocks BUY)
+                    upper_danger_threshold = rolling_high - (price_range * danger_pct)
+                    # Lower danger zone = bottom Y% of range (blocks SELL)
+                    lower_danger_threshold = rolling_low + (price_range * danger_pct)
+
+                    entry_price_check = tick.ask if side == "buy" else tick.bid
+                    print(f"[{profile.profile_name}] kt_cg_trial_4 danger zone: price={entry_price_check:.3f} side={side} high={rolling_high:.3f} low={rolling_low:.3f} upper_danger={upper_danger_threshold:.3f} lower_danger={lower_danger_threshold:.3f}")
+
+                    danger_blocked = False
+                    danger_reason = None
+
+                    if side == "buy" and entry_price_check >= upper_danger_threshold:
+                        danger_blocked = True
+                        danger_reason = f"rolling_danger_zone: BUY blocked, price {entry_price_check:.3f} >= upper threshold {upper_danger_threshold:.3f} (top {danger_pct*100:.0f}% of {lookback}-bar range)"
+                    elif side == "sell" and entry_price_check <= lower_danger_threshold:
+                        danger_blocked = True
+                        danger_reason = f"rolling_danger_zone: SELL blocked, price {entry_price_check:.3f} <= lower threshold {lower_danger_threshold:.3f} (bottom {danger_pct*100:.0f}% of {lookback}-bar range)"
+
+                    if danger_blocked:
+                        print(f"[{profile.profile_name}] kt_cg_trial_4 BLOCKED by danger zone: {danger_reason}")
+                        store.insert_execution(
+                            {
+                                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                                "profile": profile.profile_name,
+                                "symbol": profile.symbol,
+                                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                                "rule_id": rule_id,
+                                "mode": mode,
+                                "attempted": 1,
+                                "placed": 0,
+                                "reason": danger_reason or "rolling_danger_zone",
+                                "mt5_retcode": None,
+                                "mt5_order_id": None,
+                                "mt5_deal_id": None,
+                            }
+                        )
+                        return {"decision": ExecutionDecision(attempted=True, placed=False, reason=danger_reason or "rolling_danger_zone"), "tier_updates": tier_updates}
 
     entry_price = tick.ask if side == "buy" else tick.bid
     candidate = _kt_cg_trial_4_candidate(profile, policy, entry_price, side)

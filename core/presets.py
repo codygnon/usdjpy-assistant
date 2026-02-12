@@ -1229,11 +1229,10 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "tp_pips": 0.5,
                     "sl_pips": 20.0,
                     "confirm_bars": 1,
-                    # Swing level proximity filter
-                    "swing_level_filter_enabled": True,
-                    "swing_lookback_bars": 100,
-                    "swing_confirmation_bars": 5,
-                    "swing_danger_zone_pct": 0.15,
+                    # Rolling Danger Zone Filter (M1-based)
+                    "rolling_danger_zone_enabled": True,
+                    "rolling_danger_lookback_bars": 100,
+                    "rolling_danger_zone_pct": 0.15,
                 },
             ],
         },
