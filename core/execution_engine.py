@@ -3296,52 +3296,66 @@ def evaluate_kt_cg_trial_4_conditions(
     profile: ProfileV1,
     policy,  # ExecutionPolicyKtCgTrial4
     data_by_tf: dict[Timeframe, pd.DataFrame],
+    current_bid: float,
+    current_ask: float,
+    tier_state: dict[int, bool],
     temp_overrides: Optional[dict] = None,
-) -> tuple[bool, Optional[str], list[str], str]:
-    """Evaluate KT/CG Trial #4 (M3 Trend + M1 EMA 5/9) conditions.
+) -> dict:
+    """Evaluate KT/CG Trial #4 (M3 Trend + Tiered Pullback System) conditions.
 
     Two INDEPENDENT entry triggers:
     1. Zone Entry (continuous state, respects cooldown):
        - M3 BULL + M1 EMA5 > M1 EMA9 -> BUY
        - M3 BEAR + M1 EMA5 < M1 EMA9 -> SELL
 
-    2. Pullback Cross (discrete event, OVERRIDES cooldown):
-       - M3 BULL + M1 EMA5 crosses BELOW EMA9 -> BUY
-       - M3 BEAR + M1 EMA5 crosses ABOVE EMA9 -> SELL
+    2. Tiered Pullback (discrete event, NO cooldown):
+       - 5 tiers: M1 EMA 9, 11, 13, 15, 17
+       - M3 BULL + bid touches/goes below tier EMA -> BUY (each tier fires once)
+       - M3 BEAR + ask touches/goes above tier EMA -> SELL (each tier fires once)
+       - Tier resets when price moves away from EMA by reset_buffer
 
-    Returns: (passed, side, reasons, trigger_type)
-    trigger_type: "zone_entry" or "pullback_cross" (for cooldown handling)
+    Returns: dict with keys:
+        - passed: bool
+        - side: Optional[str]
+        - reasons: list[str]
+        - trigger_type: str ("zone_entry" or "tiered_pullback")
+        - tiered_pullback_tier: Optional[int]
+        - tier_updates: dict[int, bool] (new state for tiers)
+        - m3_trend: str ("bull" or "bear")
     """
     reasons: list[str] = []
+    tier_updates: dict[int, bool] = {}
 
     # Apply temporary overrides if provided
     m3_ema_fast = temp_overrides.get("m3_trend_ema_fast", policy.m3_trend_ema_fast) if temp_overrides else policy.m3_trend_ema_fast
     m3_ema_slow = temp_overrides.get("m3_trend_ema_slow", policy.m3_trend_ema_slow) if temp_overrides else policy.m3_trend_ema_slow
     m1_zone_ema_fast = temp_overrides.get("m1_zone_entry_ema_fast", policy.m1_zone_entry_ema_fast) if temp_overrides else policy.m1_zone_entry_ema_fast
     m1_zone_ema_slow = temp_overrides.get("m1_zone_entry_ema_slow", policy.m1_zone_entry_ema_slow) if temp_overrides else policy.m1_zone_entry_ema_slow
-    m1_pullback_ema_fast = temp_overrides.get("m1_pullback_cross_ema_fast", policy.m1_pullback_cross_ema_fast) if temp_overrides else policy.m1_pullback_cross_ema_fast
-    m1_pullback_ema_slow = temp_overrides.get("m1_pullback_cross_ema_slow", policy.m1_pullback_cross_ema_slow) if temp_overrides else policy.m1_pullback_cross_ema_slow
 
     # Debug: log which EMAs are being used
     override_status = "WITH OVERRIDES" if temp_overrides else "using defaults"
-    reasons.append(f"[DEBUG] Trial #4 {override_status}: M3({m3_ema_fast}/{m3_ema_slow}) M1-Zone({m1_zone_ema_fast}/{m1_zone_ema_slow}) M1-PB({m1_pullback_ema_fast}/{m1_pullback_ema_slow})")
+    reasons.append(f"[DEBUG] Trial #4 {override_status}: M3({m3_ema_fast}/{m3_ema_slow}) M1-Zone({m1_zone_ema_fast}/{m1_zone_ema_slow})")
 
     # Get M3 data for trend
     m3_df = data_by_tf.get("M3")
     if m3_df is None or m3_df.empty:
-        return False, None, ["kt_cg_trial_4: no M3 data"], ""
+        return {"passed": False, "side": None, "reasons": ["kt_cg_trial_4: no M3 data"], "trigger_type": "", "tiered_pullback_tier": None, "tier_updates": {}, "m3_trend": ""}
     m3_df = drop_incomplete_last_bar(m3_df.copy(), "M3")
     if len(m3_df) < m3_ema_slow + 1:
-        return False, None, [f"kt_cg_trial_4: need at least {m3_ema_slow + 1} M3 bars"], ""
+        return {"passed": False, "side": None, "reasons": [f"kt_cg_trial_4: need at least {m3_ema_slow + 1} M3 bars"], "trigger_type": "", "tiered_pullback_tier": None, "tier_updates": {}, "m3_trend": ""}
 
-    # Get M1 data for zone entry and pullback cross
+    # Get M1 data for zone entry and tiered pullback EMAs
     m1_df = data_by_tf.get("M1")
     if m1_df is None or m1_df.empty:
-        return False, None, ["kt_cg_trial_4: no M1 data"], ""
+        return {"passed": False, "side": None, "reasons": ["kt_cg_trial_4: no M1 data"], "trigger_type": "", "tiered_pullback_tier": None, "tier_updates": {}, "m3_trend": ""}
     m1_df = drop_incomplete_last_bar(m1_df.copy(), "M1")
-    min_m1_bars = max(m1_zone_ema_slow, m1_pullback_ema_slow) + policy.confirm_bars + 2
+
+    # Get tier periods from policy
+    tier_periods = list(getattr(policy, "tier_ema_periods", (9, 11, 13, 15, 17)))
+    max_tier_period = max(tier_periods) if tier_periods else 17
+    min_m1_bars = max(m1_zone_ema_slow, max_tier_period) + 2
     if len(m1_df) < min_m1_bars:
-        return False, None, [f"kt_cg_trial_4: need at least {min_m1_bars} M1 bars"], ""
+        return {"passed": False, "side": None, "reasons": [f"kt_cg_trial_4: need at least {min_m1_bars} M1 bars"], "trigger_type": "", "tiered_pullback_tier": None, "tier_updates": {}, "m3_trend": ""}
 
     # Step 1: M3 Trend
     m3_close = m3_df["close"]
@@ -3350,42 +3364,81 @@ def evaluate_kt_cg_trial_4_conditions(
     m3_ema_fast_val = float(m3_ema_fast_series.iloc[-1])
     m3_ema_slow_val = float(m3_ema_slow_series.iloc[-1])
     is_bull = m3_ema_fast_val > m3_ema_slow_val
-    trend = "BULL" if is_bull else "BEAR"
-    reasons.append(f"M3 trend: {trend} (EMA{m3_ema_fast}={m3_ema_fast_val:.3f} vs EMA{m3_ema_slow}={m3_ema_slow_val:.3f})")
+    trend = "bull" if is_bull else "bear"
+    reasons.append(f"M3 trend: {trend.upper()} (EMA{m3_ema_fast}={m3_ema_fast_val:.3f} vs EMA{m3_ema_slow}={m3_ema_slow_val:.3f})")
 
-    # Compute M1 EMAs
+    # Compute M1 EMAs for zone entry
     m1_close = m1_df["close"]
     m1_ema_zone_fast = ema_fn(m1_close, m1_zone_ema_fast)
     m1_ema_zone_slow = ema_fn(m1_close, m1_zone_ema_slow)
-    m1_ema_pullback_fast = ema_fn(m1_close, m1_pullback_ema_fast)
-    m1_ema_pullback_slow = ema_fn(m1_close, m1_pullback_ema_slow)
-
     m1_zone_fast_val = float(m1_ema_zone_fast.iloc[-1])
     m1_zone_slow_val = float(m1_ema_zone_slow.iloc[-1])
 
-    # Check Pullback Cross FIRST (it overrides cooldown, so prioritize it)
-    diff = m1_ema_pullback_fast - m1_ema_pullback_slow
-    cb = max(int(policy.confirm_bars), 1)
-    pullback_cross_triggered = False
-    pullback_side: Optional[str] = None
+    # Check Tiered Pullback FIRST (no cooldown, so prioritize it)
+    tiered_pullback_enabled = getattr(policy, "tiered_pullback_enabled", True)
+    tiered_pullback_triggered = False
+    tiered_pullback_tier: Optional[int] = None
+    tiered_pullback_side: Optional[str] = None
 
-    if len(diff) >= cb + 1:
-        now_diff = float(diff.iloc[-1])
-        prev_diff = float(diff.iloc[-cb - 1])
-        cross_below = prev_diff >= 0 > now_diff
-        cross_above = prev_diff <= 0 < now_diff
+    if tiered_pullback_enabled:
+        # Calculate all tier EMAs
+        tier_emas: dict[int, float] = {}
+        for period in tier_periods:
+            tier_emas[period] = float(ema_fn(m1_close, period).iloc[-1])
 
-        if is_bull and cross_below:
-            pullback_cross_triggered = True
-            pullback_side = "buy"
-            reasons.append(f"PULLBACK CROSS: BULL + EMA{m1_pullback_ema_fast} crossed BELOW EMA{m1_pullback_ema_slow} -> BUY (overrides cooldown)")
-        elif not is_bull and cross_above:
-            pullback_cross_triggered = True
-            pullback_side = "sell"
-            reasons.append(f"PULLBACK CROSS: BEAR + EMA{m1_pullback_ema_fast} crossed ABOVE EMA{m1_pullback_ema_slow} -> SELL (overrides cooldown)")
+        # Reset buffer in price units (1 pip = 0.01 for JPY pairs)
+        reset_buffer = getattr(policy, "tier_reset_buffer_pips", 1.0) * float(profile.pip_size)
 
-    if pullback_cross_triggered and pullback_side:
-        return True, pullback_side, reasons, "pullback_cross"
+        # Check each tier for touch and reset
+        for tier in tier_periods:
+            ema_value = tier_emas[tier]
+            tier_fired = tier_state.get(tier, False)
+
+            if is_bull:
+                # BULL: BUY when bid touches or goes below EMA
+                is_touching = current_bid <= ema_value
+                has_moved_away = current_bid > ema_value + reset_buffer
+
+                if is_touching and not tier_fired:
+                    # Tier touch detected - fire trade!
+                    tiered_pullback_triggered = True
+                    tiered_pullback_tier = tier
+                    tiered_pullback_side = "buy"
+                    tier_updates[tier] = True
+                    reasons.append(f"TIERED PULLBACK: BULL + bid ({current_bid:.3f}) touched EMA{tier} ({ema_value:.3f}) -> BUY (tier {tier})")
+                    break  # Only fire one tier per tick
+                elif has_moved_away and tier_fired:
+                    # Price moved away - reset tier
+                    tier_updates[tier] = False
+                    reasons.append(f"Tier {tier} RESET: bid ({current_bid:.3f}) > EMA{tier} ({ema_value:.3f}) + buffer")
+            else:
+                # BEAR: SELL when ask touches or goes above EMA
+                is_touching = current_ask >= ema_value
+                has_moved_away = current_ask < ema_value - reset_buffer
+
+                if is_touching and not tier_fired:
+                    # Tier touch detected - fire trade!
+                    tiered_pullback_triggered = True
+                    tiered_pullback_tier = tier
+                    tiered_pullback_side = "sell"
+                    tier_updates[tier] = True
+                    reasons.append(f"TIERED PULLBACK: BEAR + ask ({current_ask:.3f}) touched EMA{tier} ({ema_value:.3f}) -> SELL (tier {tier})")
+                    break  # Only fire one tier per tick
+                elif has_moved_away and tier_fired:
+                    # Price moved away - reset tier
+                    tier_updates[tier] = False
+                    reasons.append(f"Tier {tier} RESET: ask ({current_ask:.3f}) < EMA{tier} ({ema_value:.3f}) - buffer")
+
+    if tiered_pullback_triggered and tiered_pullback_side:
+        return {
+            "passed": True,
+            "side": tiered_pullback_side,
+            "reasons": reasons,
+            "trigger_type": "tiered_pullback",
+            "tiered_pullback_tier": tiered_pullback_tier,
+            "tier_updates": tier_updates,
+            "m3_trend": trend,
+        }
 
     # Check Zone Entry (respects cooldown)
     zone_entry_triggered = False
@@ -3401,11 +3454,27 @@ def evaluate_kt_cg_trial_4_conditions(
         reasons.append(f"ZONE ENTRY: BEAR + M1 EMA{m1_zone_ema_fast} ({m1_zone_fast_val:.3f}) < EMA{m1_zone_ema_slow} ({m1_zone_slow_val:.3f}) -> SELL")
 
     if zone_entry_triggered and zone_side:
-        return True, zone_side, reasons, "zone_entry"
+        return {
+            "passed": True,
+            "side": zone_side,
+            "reasons": reasons,
+            "trigger_type": "zone_entry",
+            "tiered_pullback_tier": None,
+            "tier_updates": tier_updates,
+            "m3_trend": trend,
+        }
 
     # Neither trigger fired
-    reasons.append(f"No trigger: Zone={m1_zone_fast_val:.3f} vs EMA{m1_zone_ema_slow}={m1_zone_slow_val:.3f}, no pullback cross")
-    return False, None, reasons, ""
+    reasons.append(f"No trigger: Zone={m1_zone_fast_val:.3f} vs EMA{m1_zone_ema_slow}={m1_zone_slow_val:.3f}, no tier touch")
+    return {
+        "passed": False,
+        "side": None,
+        "reasons": reasons,
+        "trigger_type": "",
+        "tiered_pullback_tier": None,
+        "tier_updates": tier_updates,
+        "m3_trend": trend,
+    }
 
 
 def execute_kt_cg_trial_4_policy_demo_only(
@@ -3420,47 +3489,55 @@ def execute_kt_cg_trial_4_policy_demo_only(
     trades_df: Optional[pd.DataFrame],
     mode: str,
     bar_time_utc: str,
+    tier_state: dict[int, bool],
     temp_overrides: Optional[dict] = None,
-) -> ExecutionDecision:
-    """Evaluate KT/CG Trial #4 (M3 Trend + M1 EMA 5/9) policy and optionally place a market order.
+) -> dict:
+    """Evaluate KT/CG Trial #4 (M3 Trend + Tiered Pullback System) policy and optionally place a market order.
 
     Two independent triggers:
     1. Zone Entry (respects cooldown)
-    2. Pullback Cross (overrides cooldown)
+    2. Tiered Pullback (NO cooldown - each tier independent)
+
+    Returns a dict with:
+        - decision: ExecutionDecision
+        - tier_updates: dict[int, bool] (new state for tiers to persist)
     """
     if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
-        return ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed")
+        return {"decision": ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed"), "tier_updates": {}}
     if not adapter.is_demo_account():
-        return ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)")
+        return {"decision": ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)"), "tier_updates": {}}
 
     store = _store(log_dir)
     rule_id = f"kt_cg_trial_4:{policy.id}:M1:{bar_time_utc}"
+
+    # Evaluate conditions - returns dict with passed, side, reasons, trigger_type, tier_updates, etc.
+    result = evaluate_kt_cg_trial_4_conditions(
+        profile, policy, data_by_tf,
+        current_bid=tick.bid,
+        current_ask=tick.ask,
+        tier_state=tier_state,
+        temp_overrides=temp_overrides,
+    )
+    passed = result["passed"]
+    side = result["side"]
+    eval_reasons = result["reasons"]
+    trigger_type = result["trigger_type"]
+    tier_updates = result.get("tier_updates", {})
+    tiered_pullback_tier = result.get("tiered_pullback_tier")
+
+    if not passed or side is None:
+        # Still return tier_updates so resets can be persisted even when no trade fires
+        return {"decision": ExecutionDecision(attempted=False, placed=False, reason="; ".join(eval_reasons)), "tier_updates": tier_updates}
+
+    # For tiered pullback, use tier-specific rule_id to track idempotency per tier
+    if trigger_type == "tiered_pullback" and tiered_pullback_tier:
+        rule_id = f"kt_cg_trial_4:{policy.id}:tier_{tiered_pullback_tier}:{bar_time_utc}"
+
     within = 2  # M1 cadence
     if store.has_recent_price_level_placement(profile.profile_name, rule_id, within):
-        return ExecutionDecision(attempted=False, placed=False, reason="kt_cg_trial_4: recent placement (idempotent)")
+        return {"decision": ExecutionDecision(attempted=False, placed=False, reason="kt_cg_trial_4: recent placement (idempotent)"), "tier_updates": tier_updates}
 
-    # Evaluate conditions - returns (passed, side, reasons, trigger_type)
-    passed, side, eval_reasons, trigger_type = evaluate_kt_cg_trial_4_conditions(profile, policy, data_by_tf, temp_overrides)
-    if not passed or side is None:
-        store.insert_execution(
-            {
-                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
-                "profile": profile.profile_name,
-                "symbol": profile.symbol,
-                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
-                "rule_id": rule_id,
-                "mode": mode,
-                "attempted": 1,
-                "placed": 0,
-                "reason": "; ".join(eval_reasons),
-                "mt5_retcode": None,
-                "mt5_order_id": None,
-                "mt5_deal_id": None,
-            }
-        )
-        return ExecutionDecision(attempted=True, placed=False, reason="; ".join(eval_reasons))
-
-    # Check cooldown for Zone Entry (Pullback Cross overrides cooldown)
+    # Check cooldown for Zone Entry only (Tiered Pullback has NO cooldown)
     if trigger_type == "zone_entry":
         cooldown_ok, cooldown_reason = _check_kt_cg_trial_4_cooldown(
             store, profile.profile_name, policy.id, policy.cooldown_minutes
@@ -3482,7 +3559,7 @@ def execute_kt_cg_trial_4_policy_demo_only(
                     "mt5_deal_id": None,
                 }
             )
-            return ExecutionDecision(attempted=True, placed=False, reason=cooldown_reason or "zone_entry_cooldown")
+            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=cooldown_reason or "zone_entry_cooldown"), "tier_updates": tier_updates}
 
     # Strategy filters: session, ATR
     now_utc = datetime.now(timezone.utc)
@@ -3504,7 +3581,7 @@ def execute_kt_cg_trial_4_policy_demo_only(
                 "mt5_deal_id": None,
             }
         )
-        return ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter")
+        return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter"), "tier_updates": tier_updates}
 
     m1_df = data_by_tf.get("M1")
     if m1_df is not None:
@@ -3526,7 +3603,7 @@ def execute_kt_cg_trial_4_policy_demo_only(
                     "mt5_deal_id": None,
                 }
             )
-            return ExecutionDecision(attempted=True, placed=False, reason=reason or "atr_filter")
+            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "atr_filter"), "tier_updates": tier_updates}
 
     # Swing level filter: block trades near M15 swing highs/lows
     if policy.swing_level_filter_enabled:
@@ -3566,7 +3643,7 @@ def execute_kt_cg_trial_4_policy_demo_only(
                         "mt5_deal_id": None,
                     }
                 )
-                return ExecutionDecision(attempted=True, placed=False, reason=swing_reason or "swing_filter")
+                return {"decision": ExecutionDecision(attempted=True, placed=False, reason=swing_reason or "swing_filter"), "tier_updates": tier_updates}
 
     entry_price = tick.ask if side == "buy" else tick.bid
     candidate = _kt_cg_trial_4_candidate(profile, policy, entry_price, side)
@@ -3589,7 +3666,7 @@ def execute_kt_cg_trial_4_policy_demo_only(
                 "mt5_deal_id": None,
             }
         )
-        return ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons))
+        return {"decision": ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons)), "tier_updates": tier_updates}
 
     if mode == "ARMED_MANUAL_CONFIRM":
         sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
@@ -3609,7 +3686,7 @@ def execute_kt_cg_trial_4_policy_demo_only(
                 "mt5_deal_id": None,
             }
         )
-        return ExecutionDecision(attempted=True, placed=False, reason="manual_confirm_required")
+        return {"decision": ExecutionDecision(attempted=True, placed=False, reason="manual_confirm_required"), "tier_updates": tier_updates}
 
     # ARMED_AUTO_DEMO: place the trade
     # First, close opposite positions if enabled (Direction Switch Close)
@@ -3618,16 +3695,23 @@ def execute_kt_cg_trial_4_policy_demo_only(
         if closed:
             print(f"[{profile.profile_name}] kt_cg_trial_4: closed {len(closed)} opposite position(s) before {side.upper()}")
 
+    # Build comment with tier info for tiered pullback
+    comment = f"kt_cg_trial_4:{policy.id}:{trigger_type}"
+    if trigger_type == "tiered_pullback" and tiered_pullback_tier:
+        comment = f"kt_cg_trial_4:{policy.id}:tier_{tiered_pullback_tier}"
+
     res = adapter.order_send_market(
         symbol=profile.symbol,
         side=side,
         volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
         sl=candidate.stop_price,
         tp=candidate.target_price,
-        comment=f"kt_cg_trial_4:{policy.id}:{trigger_type}",
+        comment=comment,
     )
     placed = res.retcode in (0, 10008, 10009)
     reason = f"{trigger_type}:order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
+    if trigger_type == "tiered_pullback" and tiered_pullback_tier:
+        reason = f"tier_{tiered_pullback_tier}:order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
     sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
     store.insert_execution(
         {
@@ -3647,14 +3731,18 @@ def execute_kt_cg_trial_4_policy_demo_only(
     )
 
     if placed:
-        print(f"[{profile.profile_name}] TRADE PLACED: kt_cg_trial_4:{trigger_type} | {'; '.join(eval_reasons)}")
+        tier_info = f" tier_{tiered_pullback_tier}" if tiered_pullback_tier else ""
+        print(f"[{profile.profile_name}] TRADE PLACED: kt_cg_trial_4:{trigger_type}{tier_info} | {'; '.join(eval_reasons)}")
 
-    return ExecutionDecision(
-        attempted=True,
-        placed=placed,
-        reason=reason,
-        order_retcode=res.retcode,
-        order_id=res.order,
-        deal_id=res.deal,
-        side=side,
-    )
+    return {
+        "decision": ExecutionDecision(
+            attempted=True,
+            placed=placed,
+            reason=reason,
+            order_retcode=res.retcode,
+            order_id=res.order,
+            deal_id=res.deal,
+            side=side,
+        ),
+        "tier_updates": tier_updates,
+    }

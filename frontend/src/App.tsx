@@ -2946,13 +2946,11 @@ interface EditedSettings {
   m5_trend_ema_slow: number | null;
   m1_zone_entry_ema_slow: number | null;
   m1_pullback_cross_ema_slow: number | null;
-  // Trial #4 EMA overrides
+  // Trial #4 EMA overrides (Zone Entry only - Tiered Pullback uses fixed tiers)
   m3_trend_ema_fast: number | null;
   m3_trend_ema_slow: number | null;
   m1_t4_zone_entry_ema_fast: number | null;
   m1_t4_zone_entry_ema_slow: number | null;
-  m1_t4_pullback_cross_ema_fast: number | null;
-  m1_t4_pullback_cross_ema_slow: number | null;
 }
 
 function PresetsPage({ profile }: { profile: Profile }) {
@@ -3047,13 +3045,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
         m5_trend_ema_slow: tempSettings?.m5_trend_ema_slow ?? null,
         m1_zone_entry_ema_slow: tempSettings?.m1_zone_entry_ema_slow ?? null,
         m1_pullback_cross_ema_slow: tempSettings?.m1_pullback_cross_ema_slow ?? null,
-        // Trial #4 EMA overrides from temp settings
+        // Trial #4 EMA overrides from temp settings (Zone Entry only)
         m3_trend_ema_fast: tempSettings?.m3_trend_ema_fast ?? null,
         m3_trend_ema_slow: tempSettings?.m3_trend_ema_slow ?? null,
         m1_t4_zone_entry_ema_fast: tempSettings?.m1_t4_zone_entry_ema_fast ?? null,
         m1_t4_zone_entry_ema_slow: tempSettings?.m1_t4_zone_entry_ema_slow ?? null,
-        m1_t4_pullback_cross_ema_fast: tempSettings?.m1_t4_pullback_cross_ema_fast ?? null,
-        m1_t4_pullback_cross_ema_slow: tempSettings?.m1_t4_pullback_cross_ema_slow ?? null,
       });
     }
   }, [showActiveSettings, currentProfile, tempSettings]);
@@ -3155,8 +3151,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
           settings.m3_trend_ema_slow = editedSettings.m3_trend_ema_slow;
           settings.m1_t4_zone_entry_ema_fast = editedSettings.m1_t4_zone_entry_ema_fast;
           settings.m1_t4_zone_entry_ema_slow = editedSettings.m1_t4_zone_entry_ema_slow;
-          settings.m1_t4_pullback_cross_ema_fast = editedSettings.m1_t4_pullback_cross_ema_fast;
-          settings.m1_t4_pullback_cross_ema_slow = editedSettings.m1_t4_pullback_cross_ema_slow;
         }
         await api.updateTempSettings(profile.name, settings);
       }
@@ -3274,9 +3268,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     )}
                     {tempSettings.m1_t4_zone_entry_ema_fast && (
                       <div style={{ color: 'var(--text-secondary)' }}>Trial #4: M1 Zone EMA: {tempSettings.m1_t4_zone_entry_ema_fast}/{tempSettings.m1_t4_zone_entry_ema_slow}</div>
-                    )}
-                    {tempSettings.m1_t4_pullback_cross_ema_fast && (
-                      <div style={{ color: 'var(--text-secondary)' }}>Trial #4: M1 Pullback EMA: {tempSettings.m1_t4_pullback_cross_ema_fast}/{tempSettings.m1_t4_pullback_cross_ema_slow}</div>
                     )}
                   </div>
                   {!tempSettings.m5_trend_ema_fast && !tempSettings.m3_trend_ema_fast && (
@@ -3624,31 +3615,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     </div>
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                        M1 Pullback Cross – fast / slow EMAs (default 5 / 9)
+                        Tiered Pullback (fixed tiers: 9, 11, 13, 15, 17)
                       </div>
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                        <input
-                          type="number"
-                          step="1"
-                          min="1"
-                          placeholder="5"
-                          value={editedSettings.m1_t4_pullback_cross_ema_fast ?? ''}
-                          onChange={(e) => setEditedSettings({ ...editedSettings, m1_t4_pullback_cross_ema_fast: e.target.value ? parseInt(e.target.value) : null })}
-                          style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                        />
-                        <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>/</span>
-                        <input
-                          type="number"
-                          step="1"
-                          min="1"
-                          placeholder="9"
-                          value={editedSettings.m1_t4_pullback_cross_ema_slow ?? ''}
-                          onChange={(e) => setEditedSettings({ ...editedSettings, m1_t4_pullback_cross_ema_slow: e.target.value ? parseInt(e.target.value) : null })}
-                          style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                        />
-                      </div>
-                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
-                        Pullback: fast crosses slow = BUY
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                        When price touches M1 EMA tiers, triggers entry. Each tier fires once per touch and resets when price moves away.
                       </div>
                     </div>
                   </div>
@@ -3660,8 +3630,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       m3_trend_ema_slow: null,
                       m1_t4_zone_entry_ema_fast: null,
                       m1_t4_zone_entry_ema_slow: null,
-                      m1_t4_pullback_cross_ema_fast: null,
-                      m1_t4_pullback_cross_ema_slow: null,
                     })}
                     style={{ fontSize: '0.8rem' }}
                   >

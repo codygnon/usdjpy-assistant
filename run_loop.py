@@ -965,14 +965,14 @@ def main() -> None:
             # Trial #4 execution
             if has_kt_cg_trial_4 and mkt is not None:
                 trades_df = store.read_trades_df(profile.profile_name)
-                # Load temp overrides from runtime state if present
+                # Load temp overrides and tier state from runtime state if present
                 temp_overrides = None
+                tier_state: dict[int, bool] = {}
                 try:
                     state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
                     temp_overrides = {}
                     for key in ("temp_m3_trend_ema_fast", "temp_m3_trend_ema_slow",
-                                "temp_m1_t4_zone_entry_ema_fast", "temp_m1_t4_zone_entry_ema_slow",
-                                "temp_m1_t4_pullback_cross_ema_fast", "temp_m1_t4_pullback_cross_ema_slow"):
+                                "temp_m1_t4_zone_entry_ema_fast", "temp_m1_t4_zone_entry_ema_slow"):
                         val = state_data.get(key)
                         if val is not None:
                             # Map temp_ fields to policy field names
@@ -982,8 +982,17 @@ def main() -> None:
                         temp_overrides = None
                     elif temp_overrides:
                         print(f"[{profile.profile_name}] Trial #4 TEMP OVERRIDES ACTIVE: {temp_overrides}")
+                    # Load tier state for tiered pullback
+                    tier_state = {
+                        9: bool(state_data.get("tier_9_fired", False)),
+                        11: bool(state_data.get("tier_11_fired", False)),
+                        13: bool(state_data.get("tier_13_fired", False)),
+                        15: bool(state_data.get("tier_15_fired", False)),
+                        17: bool(state_data.get("tier_17_fired", False)),
+                    }
                 except Exception:
                     temp_overrides = None
+                    tier_state = {9: False, 11: False, 13: False, 15: False, 17: False}
 
                 for pol in profile.execution.policies:
                     if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "kt_cg_trial_4":
@@ -992,7 +1001,7 @@ def main() -> None:
                     if m1_df is None or m1_df.empty:
                         continue
                     bar_time_utc = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
-                    dec = execute_kt_cg_trial_4_policy_demo_only(
+                    exec_result = execute_kt_cg_trial_4_policy_demo_only(
                         adapter=adapter,
                         profile=profile,
                         log_dir=log_dir,
@@ -1003,8 +1012,23 @@ def main() -> None:
                         trades_df=trades_df,
                         mode=mode,
                         bar_time_utc=bar_time_utc,
+                        tier_state=tier_state,
                         temp_overrides=temp_overrides,
                     )
+                    dec = exec_result["decision"]
+                    tier_updates = exec_result.get("tier_updates", {})
+
+                    # Persist tier state updates to runtime_state.json
+                    if tier_updates:
+                        try:
+                            current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                            for tier, new_state in tier_updates.items():
+                                current_state_data[f"tier_{tier}_fired"] = new_state
+                                tier_state[tier] = new_state  # Update local state too
+                            state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
+                        except Exception as e:
+                            print(f"[{profile.profile_name}] Failed to persist tier state: {e}")
+
                     if dec.attempted:
                         if dec.placed:
                             side = dec.side or "buy"

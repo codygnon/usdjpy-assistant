@@ -421,7 +421,7 @@ class ExecutionPolicyKtCgCounterTrendPullback(BaseModel):
 
 
 class ExecutionPolicyKtCgTrial4(BaseModel):
-    """KT/CG Trial #4 (M3 Trend + M1 EMA 5/9).
+    """KT/CG Trial #4 (M3 Trend + Tiered Pullback System).
 
     Two INDEPENDENT entry triggers:
 
@@ -429,9 +429,12 @@ class ExecutionPolicyKtCgTrial4(BaseModel):
        - If M3 BULL AND M1 EMA5 > M1 EMA9 AND cooldown elapsed -> BUY
        - If M3 BEAR AND M1 EMA5 < M1 EMA9 AND cooldown elapsed -> SELL
 
-    2. Pullback Cross (discrete event, OVERRIDES cooldown):
-       - If M3 BULL AND M1 EMA5 crosses BELOW EMA9 -> BUY (ignore cooldown)
-       - If M3 BEAR AND M1 EMA5 crosses ABOVE EMA9 -> SELL (ignore cooldown)
+    2. Tiered Pullback (discrete event, NO cooldown):
+       - 5 tiers: M1 EMA 9, 11, 13, 15, 17
+       - If M3 BULL AND live bid touches/goes below any tier EMA -> BUY
+       - If M3 BEAR AND live ask touches/goes above any tier EMA -> SELL
+       - Each tier fires only once per touch (state tracking)
+       - Tier resets when price moves away from the EMA by reset_buffer
 
     Either condition can trigger a trade independently.
     Direction switch close: auto-close opposite direction trades before placing new trade.
@@ -451,14 +454,15 @@ class ExecutionPolicyKtCgTrial4(BaseModel):
     m1_zone_entry_ema_fast: int = 5
     m1_zone_entry_ema_slow: int = 9
 
-    # M1 Pullback Cross - EMA5 crosses EMA9
-    m1_pullback_cross_ema_fast: int = 5
-    m1_pullback_cross_ema_slow: int = 9
+    # Tiered Pullback Configuration
+    tiered_pullback_enabled: bool = True
+    tier_ema_periods: tuple[int, ...] = (9, 11, 13, 15, 17)
+    tier_reset_buffer_pips: float = 1.0  # Distance from EMA to reset tier
 
     # Close opposite trades before placing new trade
     close_opposite_on_trade: bool = True
 
-    # Cooldown after trade (Zone Entry respects this, Pullback Cross overrides it)
+    # Cooldown after trade (Zone Entry respects this, Tiered Pullback has NO cooldown)
     cooldown_minutes: float = 3.0
 
     tp_pips: float = 15.0

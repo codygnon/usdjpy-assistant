@@ -139,13 +139,11 @@ class TempEmaSettingsUpdate(BaseModel):
     m5_trend_ema_slow: Optional[int] = None
     m1_zone_entry_ema_slow: Optional[int] = None
     m1_pullback_cross_ema_slow: Optional[int] = None
-    # Trial #4 fields
+    # Trial #4 fields (Zone Entry only - Tiered Pullback uses fixed tiers)
     m3_trend_ema_fast: Optional[int] = None
     m3_trend_ema_slow: Optional[int] = None
     m1_t4_zone_entry_ema_fast: Optional[int] = None
     m1_t4_zone_entry_ema_slow: Optional[int] = None
-    m1_t4_pullback_cross_ema_fast: Optional[int] = None
-    m1_t4_pullback_cross_ema_slow: Optional[int] = None
 
 
 class ApplyPresetRequest(BaseModel):
@@ -438,8 +436,6 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
         "m3_trend_ema_slow": state.temp_m3_trend_ema_slow,
         "m1_t4_zone_entry_ema_fast": state.temp_m1_t4_zone_entry_ema_fast,
         "m1_t4_zone_entry_ema_slow": state.temp_m1_t4_zone_entry_ema_slow,
-        "m1_t4_pullback_cross_ema_fast": state.temp_m1_t4_pullback_cross_ema_fast,
-        "m1_t4_pullback_cross_ema_slow": state.temp_m1_t4_pullback_cross_ema_slow,
     }
 
 
@@ -460,8 +456,12 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
         temp_m3_trend_ema_slow=req.m3_trend_ema_slow,
         temp_m1_t4_zone_entry_ema_fast=req.m1_t4_zone_entry_ema_fast,
         temp_m1_t4_zone_entry_ema_slow=req.m1_t4_zone_entry_ema_slow,
-        temp_m1_t4_pullback_cross_ema_fast=req.m1_t4_pullback_cross_ema_fast,
-        temp_m1_t4_pullback_cross_ema_slow=req.m1_t4_pullback_cross_ema_slow,
+        # Preserve tier state (not modified through temp settings API)
+        tier_9_fired=old.tier_9_fired,
+        tier_11_fired=old.tier_11_fired,
+        tier_13_fired=old.tier_13_fired,
+        tier_15_fired=old.tier_15_fired,
+        tier_17_fired=old.tier_17_fired,
     )
     save_state(state_path, new_state)
     return {"status": "saved"}

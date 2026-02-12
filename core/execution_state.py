@@ -28,8 +28,13 @@ class RuntimeState:
     temp_m3_trend_ema_slow: Optional[int] = None
     temp_m1_t4_zone_entry_ema_fast: Optional[int] = None
     temp_m1_t4_zone_entry_ema_slow: Optional[int] = None
-    temp_m1_t4_pullback_cross_ema_fast: Optional[int] = None
-    temp_m1_t4_pullback_cross_ema_slow: Optional[int] = None
+
+    # Trial #4 Tiered Pullback State (5 tiers: 9, 11, 13, 15, 17)
+    tier_9_fired: bool = False
+    tier_11_fired: bool = False
+    tier_13_fired: bool = False
+    tier_15_fired: bool = False
+    tier_17_fired: bool = False
 
 
 def load_state(path: str | Path) -> RuntimeState:
@@ -49,8 +54,11 @@ def load_state(path: str | Path) -> RuntimeState:
         temp_m3_trend_ema_slow=data.get("temp_m3_trend_ema_slow"),
         temp_m1_t4_zone_entry_ema_fast=data.get("temp_m1_t4_zone_entry_ema_fast"),
         temp_m1_t4_zone_entry_ema_slow=data.get("temp_m1_t4_zone_entry_ema_slow"),
-        temp_m1_t4_pullback_cross_ema_fast=data.get("temp_m1_t4_pullback_cross_ema_fast"),
-        temp_m1_t4_pullback_cross_ema_slow=data.get("temp_m1_t4_pullback_cross_ema_slow"),
+        tier_9_fired=bool(data.get("tier_9_fired", False)),
+        tier_11_fired=bool(data.get("tier_11_fired", False)),
+        tier_13_fired=bool(data.get("tier_13_fired", False)),
+        tier_15_fired=bool(data.get("tier_15_fired", False)),
+        tier_17_fired=bool(data.get("tier_17_fired", False)),
     )
 
 
@@ -71,8 +79,11 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "temp_m3_trend_ema_slow": state.temp_m3_trend_ema_slow,
                 "temp_m1_t4_zone_entry_ema_fast": state.temp_m1_t4_zone_entry_ema_fast,
                 "temp_m1_t4_zone_entry_ema_slow": state.temp_m1_t4_zone_entry_ema_slow,
-                "temp_m1_t4_pullback_cross_ema_fast": state.temp_m1_t4_pullback_cross_ema_fast,
-                "temp_m1_t4_pullback_cross_ema_slow": state.temp_m1_t4_pullback_cross_ema_slow,
+                "tier_9_fired": state.tier_9_fired,
+                "tier_11_fired": state.tier_11_fired,
+                "tier_13_fired": state.tier_13_fired,
+                "tier_15_fired": state.tier_15_fired,
+                "tier_17_fired": state.tier_17_fired,
             },
             indent=2,
             sort_keys=False,

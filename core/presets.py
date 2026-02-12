@@ -1159,18 +1159,18 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         },
     },
     # -----------------------------------------------------------------------
-    # KT/CG Trial #4 (M3 Trend + M1 EMA 5/9)
-    # Uses M3 for trend detection (faster updates) and M1 EMA5/9 for entries.
-    # More aggressive: higher trade frequency, faster entries, higher whipsaw risk.
+    # KT/CG Trial #4 (M3 Trend + Tiered Pullback System)
+    # Uses M3 for trend detection (faster updates) and tiered pullback entries.
+    # Tiered Pullback: price touches M1 EMA 9/11/13/15/17 triggers entry.
     # -----------------------------------------------------------------------
     PresetId.KT_CG_TRIAL_4: {
-        "name": "KT/CG Trial #4 (M3 Trend + M1 EMA 5/9)",
-        "description": "M3-based trend detection with M1 EMA5/9 entries. Two independent triggers: Zone Entry (respects 3-min cooldown) and Pullback Cross (overrides cooldown). More aggressive than Trial #3.",
+        "name": "KT/CG Trial #4 (M3 Trend + Tiered Pullback)",
+        "description": "Tiered Pullback: When M3 BULL and live price touches M1 EMA 9/11/13/15/17, triggers BUY. When M3 BEAR and price touches tier EMAs, triggers SELL. Each tier fires once per touch and resets when price moves away.",
         "pros": [
             "M3 updates every 3 minutes (faster than M5's 5 minutes)",
-            "EMA5/9 more responsive than EMA9/13 or EMA9/15",
-            "Catches counter-trend pullbacks faster",
-            "Faster trend reversals detected",
+            "5 tiered pullback levels = multiple entry opportunities per pullback",
+            "Each tier fires independently (no cooldown for tiered entries)",
+            "Tier resets when price moves away - allows re-entry on deep pullbacks",
         ],
         "cons": [
             "Higher trade frequency = more spread costs",
@@ -1218,12 +1218,13 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     # M1 Zone Entry - EMA5 vs EMA9 (respects cooldown)
                     "m1_zone_entry_ema_fast": 5,
                     "m1_zone_entry_ema_slow": 9,
-                    # M1 Pullback Cross - EMA5 crosses EMA9 (overrides cooldown)
-                    "m1_pullback_cross_ema_fast": 5,
-                    "m1_pullback_cross_ema_slow": 9,
+                    # Tiered Pullback Configuration
+                    "tiered_pullback_enabled": True,
+                    "tier_ema_periods": [9, 11, 13, 15, 17],
+                    "tier_reset_buffer_pips": 1.0,
                     # Close opposite trades before placing new trade
                     "close_opposite_on_trade": True,
-                    # Cooldown (Zone Entry respects, Pullback Cross overrides)
+                    # Cooldown (Zone Entry respects this, Tiered Pullback has NO cooldown)
                     "cooldown_minutes": 3.0,
                     "tp_pips": 0.5,
                     "sl_pips": 20.0,
