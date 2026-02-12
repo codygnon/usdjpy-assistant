@@ -2937,10 +2937,15 @@ interface EditedSettings {
   loop_poll_seconds: number;
   policy_cooldown_minutes: number;
   policy_sl_pips: number;
+  // Trial #2 and #3: Swing Level Filter (M15-based)
   swing_level_filter_enabled: boolean;
   swing_danger_zone_pct: number;
   swing_confirmation_bars: number;
   swing_lookback_bars: number;
+  // Trial #4: Rolling Danger Zone (M1-based)
+  rolling_danger_zone_enabled: boolean;
+  rolling_danger_lookback_bars: number;
+  rolling_danger_zone_pct: number;
   // Trial #3 EMA overrides
   m5_trend_ema_fast: number | null;
   m5_trend_ema_slow: number | null;
@@ -3000,13 +3005,18 @@ function PresetsPage({ profile }: { profile: Profile }) {
       const targetSettings = tradeManagement?.target as Record<string, unknown> | undefined;
       const policies = execution?.policies as Record<string, unknown>[] | undefined;
 
-      // Find cooldown_minutes, sl_pips, and swing filter settings from policies
+      // Find cooldown_minutes, sl_pips, and filter settings from policies
       let policyCooldown = 0;
       let policySlPips = 20;
+      // Trial #2/#3: Swing filter
       let swingFilterEnabled = false;
       let swingDangerZonePct = 0.15;
       let swingConfirmationBars = 5;
       let swingLookbackBars = 100;
+      // Trial #4: Rolling danger zone
+      let rollingDangerZoneEnabled = false;
+      let rollingDangerLookbackBars = 100;
+      let rollingDangerZonePct = 0.15;
       if (policies) {
         for (const pol of policies) {
           if ('cooldown_minutes' in pol) {
@@ -3015,11 +3025,18 @@ function PresetsPage({ profile }: { profile: Profile }) {
           if ('sl_pips' in pol) {
             policySlPips = pol.sl_pips as number;
           }
+          // Trial #2/#3 swing filter
           if ('swing_level_filter_enabled' in pol) {
             swingFilterEnabled = pol.swing_level_filter_enabled as boolean;
             swingDangerZonePct = (pol.swing_danger_zone_pct as number) ?? 0.15;
             swingConfirmationBars = (pol.swing_confirmation_bars as number) ?? 5;
             swingLookbackBars = (pol.swing_lookback_bars as number) ?? 100;
+          }
+          // Trial #4 rolling danger zone
+          if ('rolling_danger_zone_enabled' in pol) {
+            rollingDangerZoneEnabled = pol.rolling_danger_zone_enabled as boolean;
+            rollingDangerLookbackBars = (pol.rolling_danger_lookback_bars as number) ?? 100;
+            rollingDangerZonePct = (pol.rolling_danger_zone_pct as number) ?? 0.15;
           }
           if (policyCooldown > 0 || policySlPips !== 20) break;
         }
@@ -3040,6 +3057,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
         swing_danger_zone_pct: swingDangerZonePct,
         swing_confirmation_bars: swingConfirmationBars,
         swing_lookback_bars: swingLookbackBars,
+        // Trial #4: Rolling danger zone
+        rolling_danger_zone_enabled: rollingDangerZoneEnabled,
+        rolling_danger_lookback_bars: rollingDangerLookbackBars,
+        rolling_danger_zone_pct: rollingDangerZonePct,
         // Trial #3 EMA overrides from temp settings
         m5_trend_ema_fast: tempSettings?.m5_trend_ema_fast ?? null,
         m5_trend_ema_slow: tempSettings?.m5_trend_ema_slow ?? null,
@@ -3102,12 +3123,18 @@ function PresetsPage({ profile }: { profile: Profile }) {
         if ('sl_pips' in pol) {
           updates.sl_pips = Math.max(1, editedSettings.policy_sl_pips);
         }
-        // Update swing filter settings for kt_cg_hybrid, kt_cg_counter_trend_pullback, and kt_cg_trial_4 policies
-        if (pol.type === 'kt_cg_hybrid' || pol.type === 'kt_cg_counter_trend_pullback' || pol.type === 'kt_cg_trial_4') {
+        // Update swing filter settings for kt_cg_hybrid and kt_cg_counter_trend_pullback (Trial #2 and #3)
+        if (pol.type === 'kt_cg_hybrid' || pol.type === 'kt_cg_counter_trend_pullback') {
           updates.swing_level_filter_enabled = editedSettings.swing_level_filter_enabled;
           updates.swing_danger_zone_pct = Math.max(0.05, Math.min(0.50, editedSettings.swing_danger_zone_pct));
           updates.swing_confirmation_bars = Math.max(2, Math.min(20, editedSettings.swing_confirmation_bars));
           updates.swing_lookback_bars = Math.max(20, Math.min(500, editedSettings.swing_lookback_bars));
+        }
+        // Update rolling danger zone settings for kt_cg_trial_4 (Trial #4)
+        if (pol.type === 'kt_cg_trial_4') {
+          updates.rolling_danger_zone_enabled = editedSettings.rolling_danger_zone_enabled;
+          updates.rolling_danger_lookback_bars = Math.max(20, Math.min(500, editedSettings.rolling_danger_lookback_bars));
+          updates.rolling_danger_zone_pct = Math.max(0.05, Math.min(0.50, editedSettings.rolling_danger_zone_pct));
         }
         return Object.keys(updates).length > 0 ? { ...pol, ...updates } : pol;
       }) || [];
@@ -3399,8 +3426,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   </div>
                 </div>
               )}
-              {/* Swing Level Filter Settings (for kt_cg_hybrid, kt_cg_counter_trend_pullback, and kt_cg_trial_4 policies) */}
-              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_hybrid' || pol.type === 'kt_cg_counter_trend_pullback' || pol.type === 'kt_cg_trial_4') && (
+              {/* Swing Level Filter Settings (for kt_cg_hybrid and kt_cg_counter_trend_pullback - Trial #2 and #3) */}
+              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_hybrid' || pol.type === 'kt_cg_counter_trend_pullback') && (
                 <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
                     Swing Level Filter (blocks trades near M15 swing highs/lows)
@@ -3459,6 +3486,59 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       />
                       <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>M15 bars to scan</div>
                     </div>
+                  </div>
+                </div>
+              )}
+              {/* Rolling Danger Zone Settings (for kt_cg_trial_4 - Trial #4) */}
+              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4') && (
+                <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
+                    Rolling Danger Zone (blocks trades near M1 rolling high/low extremes)
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Danger Zone Enabled</div>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={editedSettings.rolling_danger_zone_enabled}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, rolling_danger_zone_enabled: e.target.checked })}
+                          style={{ width: 18, height: 18, cursor: 'pointer' }}
+                        />
+                        <span style={{ fontWeight: 600, color: editedSettings.rolling_danger_zone_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                          {editedSettings.rolling_danger_zone_enabled ? 'ON' : 'OFF'}
+                        </span>
+                      </label>
+                    </div>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Danger Zone %</div>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0.05"
+                        max="0.50"
+                        value={editedSettings.rolling_danger_zone_pct}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, rolling_danger_zone_pct: parseFloat(e.target.value) || 0.15 })}
+                        style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                      />
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>0.15 = top/bottom 15%</div>
+                    </div>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Lookback Bars</div>
+                      <input
+                        type="number"
+                        step="10"
+                        min="20"
+                        max="500"
+                        value={editedSettings.rolling_danger_lookback_bars}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, rolling_danger_lookback_bars: parseInt(e.target.value) || 100 })}
+                        style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                      />
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>M1 bars for high/low</div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
+                    Upper zone (top {(editedSettings.rolling_danger_zone_pct * 100).toFixed(0)}%) blocks BUY • Lower zone (bottom {(editedSettings.rolling_danger_zone_pct * 100).toFixed(0)}%) blocks SELL
                   </div>
                 </div>
               )}
