@@ -639,6 +639,8 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
                         if "swing_danger_zone_pct" in pol:
                             pol["rolling_danger_zone_pct"] = pol.pop("swing_danger_zone_pct")
                         pol.pop("swing_confirmation_bars", None)  # No longer needed
+                        # Remove old RSI divergence swing window (now uses rolling window comparison)
+                        pol.pop("rsi_divergence_swing_window", None)
         return d
 
     profile_name = d.get("profile_name") or d.get("name") or "default"
