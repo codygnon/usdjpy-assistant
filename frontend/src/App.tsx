@@ -2946,11 +2946,10 @@ interface EditedSettings {
   rolling_danger_zone_enabled: boolean;
   rolling_danger_lookback_bars: number;
   rolling_danger_zone_pct: number;
-  // Trial #4: RSI Divergence Detection (M3-based)
+  // Trial #4: RSI Divergence Detection (M3-based, rolling window)
   rsi_divergence_enabled: boolean;
   rsi_divergence_period: number;
   rsi_divergence_lookback_bars: number;
-  rsi_divergence_swing_window: number;
   rsi_divergence_block_minutes: number;
   // Trial #3 EMA overrides
   m5_trend_ema_fast: number | null;
@@ -3023,11 +3022,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let rollingDangerZoneEnabled = false;
       let rollingDangerLookbackBars = 100;
       let rollingDangerZonePct = 0.15;
-      // Trial #4: RSI Divergence
+      // Trial #4: RSI Divergence (rolling window comparison)
       let rsiDivergenceEnabled = false;
       let rsiDivergencePeriod = 14;
       let rsiDivergenceLookbackBars = 50;
-      let rsiDivergenceSwingWindow = 5;
       let rsiDivergenceBlockMinutes = 5.0;
       if (policies) {
         for (const pol of policies) {
@@ -3050,12 +3048,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
             rollingDangerLookbackBars = (pol.rolling_danger_lookback_bars as number) ?? 100;
             rollingDangerZonePct = (pol.rolling_danger_zone_pct as number) ?? 0.15;
           }
-          // Trial #4 RSI divergence
+          // Trial #4 RSI divergence (rolling window comparison)
           if ('rsi_divergence_enabled' in pol) {
             rsiDivergenceEnabled = pol.rsi_divergence_enabled as boolean;
             rsiDivergencePeriod = (pol.rsi_divergence_period as number) ?? 14;
             rsiDivergenceLookbackBars = (pol.rsi_divergence_lookback_bars as number) ?? 50;
-            rsiDivergenceSwingWindow = (pol.rsi_divergence_swing_window as number) ?? 5;
             rsiDivergenceBlockMinutes = (pol.rsi_divergence_block_minutes as number) ?? 5.0;
           }
           if (policyCooldown > 0 || policySlPips !== 20) break;
@@ -3081,11 +3078,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
         rolling_danger_zone_enabled: rollingDangerZoneEnabled,
         rolling_danger_lookback_bars: rollingDangerLookbackBars,
         rolling_danger_zone_pct: rollingDangerZonePct,
-        // Trial #4: RSI divergence
+        // Trial #4: RSI divergence (rolling window comparison)
         rsi_divergence_enabled: rsiDivergenceEnabled,
         rsi_divergence_period: rsiDivergencePeriod,
         rsi_divergence_lookback_bars: rsiDivergenceLookbackBars,
-        rsi_divergence_swing_window: rsiDivergenceSwingWindow,
         rsi_divergence_block_minutes: rsiDivergenceBlockMinutes,
         // Trial #3 EMA overrides from temp settings
         m5_trend_ema_fast: tempSettings?.m5_trend_ema_fast ?? null,
@@ -3165,11 +3161,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.rolling_danger_zone_enabled = editedSettings.rolling_danger_zone_enabled;
           updates.rolling_danger_lookback_bars = Math.max(20, Math.min(500, editedSettings.rolling_danger_lookback_bars));
           updates.rolling_danger_zone_pct = Math.max(0.05, Math.min(0.50, editedSettings.rolling_danger_zone_pct));
-          // RSI divergence settings
+          // RSI divergence settings (rolling window comparison)
           updates.rsi_divergence_enabled = editedSettings.rsi_divergence_enabled;
           updates.rsi_divergence_period = Math.max(5, Math.min(50, editedSettings.rsi_divergence_period));
           updates.rsi_divergence_lookback_bars = Math.max(20, Math.min(200, editedSettings.rsi_divergence_lookback_bars));
-          updates.rsi_divergence_swing_window = Math.max(2, Math.min(15, editedSettings.rsi_divergence_swing_window));
           updates.rsi_divergence_block_minutes = Math.max(1, Math.min(30, editedSettings.rsi_divergence_block_minutes));
         }
         return Object.keys(updates).length > 0 ? { ...pol, ...updates } : pol;
@@ -3579,7 +3574,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   {/* RSI Divergence Detection */}
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                      RSI Divergence Detection (blocks entries when divergence detected against trend)
+                      RSI Divergence Detection (rolling window, blocks entries when divergence detected)
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
@@ -3620,20 +3615,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                           onChange={(e) => setEditedSettings({ ...editedSettings, rsi_divergence_lookback_bars: parseInt(e.target.value) || 50 })}
                           style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
                         />
-                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>M3 bars to analyze</div>
-                      </div>
-                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Swing Window</div>
-                        <input
-                          type="number"
-                          step="1"
-                          min="2"
-                          max="15"
-                          value={editedSettings.rsi_divergence_swing_window}
-                          onChange={(e) => setEditedSettings({ ...editedSettings, rsi_divergence_swing_window: parseInt(e.target.value) || 5 })}
-                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                        />
-                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Bars for swing detection</div>
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>M3 bars (split into ref/recent halves)</div>
                       </div>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Block Minutes</div>

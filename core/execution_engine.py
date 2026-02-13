@@ -3672,7 +3672,6 @@ def execute_kt_cg_trial_4_policy_demo_only(
         if m3_df is not None and not m3_df.empty:
             rsi_period = getattr(policy, "rsi_divergence_period", 14)
             lookback_bars = getattr(policy, "rsi_divergence_lookback_bars", 50)
-            swing_window = getattr(policy, "rsi_divergence_swing_window", 5)
             block_minutes = getattr(policy, "rsi_divergence_block_minutes", 5.0)
 
             # Get trend from evaluate result
@@ -3736,9 +3735,9 @@ def execute_kt_cg_trial_4_policy_demo_only(
                     except (ValueError, TypeError):
                         pass
 
-            # Detect new divergence
+            # Detect new divergence using rolling window comparison
             has_bearish, has_bullish, divergence_details = detect_rsi_divergence(
-                m3_df, rsi_period=rsi_period, lookback_bars=lookback_bars, swing_window=swing_window
+                m3_df, rsi_period=rsi_period, lookback_bars=lookback_bars
             )
 
             # BULL trend + bearish divergence + trying to BUY -> set block_buy_until and reject
