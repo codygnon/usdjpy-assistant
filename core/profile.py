@@ -475,7 +475,7 @@ class ExecutionPolicyKtCgTrial4(BaseModel):
     rolling_danger_lookback_bars: int = 100  # X bars to calculate high/low
     rolling_danger_zone_pct: float = 0.15  # Y% of range at top/bottom
 
-    # RSI Divergence Detection (M3-based, rolling window comparison)
+    # RSI Divergence Detection (M5-based, rolling window comparison)
     # Detects price-RSI divergence and blocks entries against the divergence
     # BULL trend + bearish divergence -> block BUY for X minutes
     # BEAR trend + bullish divergence -> block SELL for X minutes

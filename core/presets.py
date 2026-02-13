@@ -1233,7 +1233,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "rolling_danger_zone_enabled": True,
                     "rolling_danger_lookback_bars": 100,
                     "rolling_danger_zone_pct": 0.15,
-                    # RSI Divergence Detection (M3-based, rolling window) - disabled by default
+                    # RSI Divergence Detection (M5-based, rolling window) - disabled by default
                     "rsi_divergence_enabled": False,
                     "rsi_divergence_period": 14,
                     "rsi_divergence_lookback_bars": 50,

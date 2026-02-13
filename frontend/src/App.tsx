@@ -2946,7 +2946,7 @@ interface EditedSettings {
   rolling_danger_zone_enabled: boolean;
   rolling_danger_lookback_bars: number;
   rolling_danger_zone_pct: number;
-  // Trial #4: RSI Divergence Detection (M3-based, rolling window)
+  // Trial #4: RSI Divergence Detection (M5-based, rolling window)
   rsi_divergence_enabled: boolean;
   rsi_divergence_period: number;
   rsi_divergence_lookback_bars: number;
@@ -3048,7 +3048,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
             rollingDangerLookbackBars = (pol.rolling_danger_lookback_bars as number) ?? 100;
             rollingDangerZonePct = (pol.rolling_danger_zone_pct as number) ?? 0.15;
           }
-          // Trial #4 RSI divergence (rolling window comparison)
+          // Trial #4 RSI divergence (M5, rolling window comparison)
           if ('rsi_divergence_enabled' in pol) {
             rsiDivergenceEnabled = pol.rsi_divergence_enabled as boolean;
             rsiDivergencePeriod = (pol.rsi_divergence_period as number) ?? 14;
@@ -3078,7 +3078,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         rolling_danger_zone_enabled: rollingDangerZoneEnabled,
         rolling_danger_lookback_bars: rollingDangerLookbackBars,
         rolling_danger_zone_pct: rollingDangerZonePct,
-        // Trial #4: RSI divergence (rolling window comparison)
+        // Trial #4: RSI divergence (M5, rolling window comparison)
         rsi_divergence_enabled: rsiDivergenceEnabled,
         rsi_divergence_period: rsiDivergencePeriod,
         rsi_divergence_lookback_bars: rsiDivergenceLookbackBars,
@@ -3161,7 +3161,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.rolling_danger_zone_enabled = editedSettings.rolling_danger_zone_enabled;
           updates.rolling_danger_lookback_bars = Math.max(20, Math.min(500, editedSettings.rolling_danger_lookback_bars));
           updates.rolling_danger_zone_pct = Math.max(0.05, Math.min(0.50, editedSettings.rolling_danger_zone_pct));
-          // RSI divergence settings (rolling window comparison)
+          // RSI divergence settings (M5, rolling window comparison)
           updates.rsi_divergence_enabled = editedSettings.rsi_divergence_enabled;
           updates.rsi_divergence_period = Math.max(5, Math.min(50, editedSettings.rsi_divergence_period));
           updates.rsi_divergence_lookback_bars = Math.max(20, Math.min(200, editedSettings.rsi_divergence_lookback_bars));
@@ -3571,10 +3571,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
                     Upper zone (top {(editedSettings.rolling_danger_zone_pct * 100).toFixed(0)}%) blocks BUY • Lower zone (bottom {(editedSettings.rolling_danger_zone_pct * 100).toFixed(0)}%) blocks SELL
                   </div>
-                  {/* RSI Divergence Detection */}
+                  {/* RSI Divergence Detection (M5) */}
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                      RSI Divergence Detection (rolling window, blocks entries when divergence detected)
+                      RSI Divergence Detection (M5, rolling window)
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
@@ -3615,7 +3615,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                           onChange={(e) => setEditedSettings({ ...editedSettings, rsi_divergence_lookback_bars: parseInt(e.target.value) || 50 })}
                           style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
                         />
-                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>M3 bars (split into ref/recent halves)</div>
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>M5 bars (split into ref/recent halves)</div>
                       </div>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Block Minutes</div>

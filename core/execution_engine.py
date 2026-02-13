@@ -3662,14 +3662,14 @@ def execute_kt_cg_trial_4_policy_demo_only(
                         )
                         return {"decision": ExecutionDecision(attempted=True, placed=False, reason=danger_reason or "rolling_danger_zone"), "tier_updates": tier_updates, "divergence_updates": {}}
 
-    # RSI Divergence Detection and Blocking (M3-based)
+    # RSI Divergence Detection and Blocking (M5-based)
     # BULL trend + bearish divergence detected -> block BUY entries for X minutes
     # BEAR trend + bullish divergence detected -> block SELL entries for X minutes
     divergence_updates: dict[str, str] = {}
     rsi_divergence_enabled = getattr(policy, "rsi_divergence_enabled", False)
     if rsi_divergence_enabled:
-        m3_df = data_by_tf.get("M3")
-        if m3_df is not None and not m3_df.empty:
+        m5_df = data_by_tf.get("M5")
+        if m5_df is not None and not m5_df.empty:
             rsi_period = getattr(policy, "rsi_divergence_period", 14)
             lookback_bars = getattr(policy, "rsi_divergence_lookback_bars", 50)
             block_minutes = getattr(policy, "rsi_divergence_block_minutes", 5.0)
@@ -3735,9 +3735,9 @@ def execute_kt_cg_trial_4_policy_demo_only(
                     except (ValueError, TypeError):
                         pass
 
-            # Detect new divergence using rolling window comparison
+            # Detect new divergence using rolling window comparison (M5 data)
             has_bearish, has_bullish, divergence_details = detect_rsi_divergence(
-                m3_df, rsi_period=rsi_period, lookback_bars=lookback_bars
+                m5_df, rsi_period=rsi_period, lookback_bars=lookback_bars
             )
 
             # BULL trend + bearish divergence + trying to BUY -> set block_buy_until and reject
