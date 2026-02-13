@@ -3176,12 +3176,12 @@ function PresetsPage({ profile }: { profile: Profile }) {
         // Update rolling danger zone settings for kt_cg_trial_4 (Trial #4)
         if (pol.type === 'kt_cg_trial_4') {
           updates.rolling_danger_zone_enabled = editedSettings.rolling_danger_zone_enabled;
-          updates.rolling_danger_lookback_bars = Math.max(20, Math.min(500, editedSettings.rolling_danger_lookback_bars));
+          updates.rolling_danger_lookback_bars = Math.max(20, Math.min(1500, editedSettings.rolling_danger_lookback_bars));
           updates.rolling_danger_zone_pct = Math.max(0.05, Math.min(0.50, editedSettings.rolling_danger_zone_pct));
           // RSI divergence settings (M5, rolling window comparison)
           updates.rsi_divergence_enabled = editedSettings.rsi_divergence_enabled;
           updates.rsi_divergence_period = Math.max(5, Math.min(50, editedSettings.rsi_divergence_period));
-          updates.rsi_divergence_lookback_bars = Math.max(20, Math.min(200, editedSettings.rsi_divergence_lookback_bars));
+          updates.rsi_divergence_lookback_bars = Math.max(20, Math.min(1500, editedSettings.rsi_divergence_lookback_bars));
           updates.rsi_divergence_block_minutes = Math.max(1, Math.min(30, editedSettings.rsi_divergence_block_minutes));
           // EMA Zone Entry Filter settings
           updates.ema_zone_filter_enabled = editedSettings.ema_zone_filter_enabled;
@@ -3581,7 +3581,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         type="number"
                         step="10"
                         min="20"
-                        max="500"
+                        max="1500"
                         value={editedSettings.rolling_danger_lookback_bars}
                         onChange={(e) => setEditedSettings({ ...editedSettings, rolling_danger_lookback_bars: parseInt(e.target.value) || 100 })}
                         style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
@@ -3631,7 +3631,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                           type="number"
                           step="10"
                           min="20"
-                          max="200"
+                          max="1500"
                           value={editedSettings.rsi_divergence_lookback_bars}
                           onChange={(e) => setEditedSettings({ ...editedSettings, rsi_divergence_lookback_bars: parseInt(e.target.value) || 50 })}
                           style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
