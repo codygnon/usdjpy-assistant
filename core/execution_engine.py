@@ -3593,13 +3593,18 @@ def execute_kt_cg_trial_4_policy_demo_only(
         # Still return tier_updates so resets can be persisted even when no trade fires
         return {"decision": ExecutionDecision(attempted=False, placed=False, reason="; ".join(eval_reasons)), "tier_updates": tier_updates, "divergence_updates": {}}
 
-    # For tiered pullback, use tier-specific rule_id to track idempotency per tier
+    # For tiered pullback, use tier-specific rule_id (no bar_time_utc — tier_state
+    # already guarantees fire-once semantics, and we need re-fire after reset within
+    # the same M1 bar)
     if trigger_type == "tiered_pullback" and tiered_pullback_tier:
-        rule_id = f"kt_cg_trial_4:{policy.id}:tier_{tiered_pullback_tier}:{bar_time_utc}"
+        rule_id = f"kt_cg_trial_4:{policy.id}:tier_{tiered_pullback_tier}"
 
-    within = 2  # M1 cadence
-    if store.has_recent_price_level_placement(profile.profile_name, rule_id, within):
-        return {"decision": ExecutionDecision(attempted=False, placed=False, reason="kt_cg_trial_4: recent placement (idempotent)"), "tier_updates": tier_updates, "divergence_updates": {}}
+    # Idempotency check for zone_entry only — tiered pullback relies on tier_state
+    # (tier_X_fired) to prevent double-firing, not on bar_time_utc-based rule_id
+    if trigger_type == "zone_entry":
+        within = 2  # M1 cadence
+        if store.has_recent_price_level_placement(profile.profile_name, rule_id, within):
+            return {"decision": ExecutionDecision(attempted=False, placed=False, reason="kt_cg_trial_4: recent placement (idempotent)"), "tier_updates": tier_updates, "divergence_updates": {}}
 
     # Check cooldown for Zone Entry only (Tiered Pullback has NO cooldown)
     if trigger_type == "zone_entry":

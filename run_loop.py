@@ -962,8 +962,14 @@ def main() -> None:
                         else:
                             print(f"[{profile.profile_name}] kt_cg_ctp {pol.id} mode={mode} -> {dec.reason}")
 
-            # Trial #4 execution
-            if has_kt_cg_trial_4 and mkt is not None:
+            # Trial #4 execution — runs EVERY poll cycle (not just on M1 bar close)
+            # so tiered pullback can detect live price touches between bar closes
+            if has_kt_cg_trial_4:
+                # Use existing mkt if available (on bar close), otherwise compute minimal context
+                t4_mkt = mkt
+                if t4_mkt is None:
+                    spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
+                    t4_mkt = MarketContext(spread_pips=float(spread_pips), alignment_score=0)
                 trades_df = store.read_trades_df(profile.profile_name)
                 # Load temp overrides and tier state from runtime state if present
                 temp_overrides = None
@@ -1015,7 +1021,7 @@ def main() -> None:
                         profile=profile,
                         log_dir=log_dir,
                         policy=pol,
-                        context=mkt,
+                        context=t4_mkt,
                         data_by_tf=data_by_tf,
                         tick=tick,
                         trades_df=trades_df,
