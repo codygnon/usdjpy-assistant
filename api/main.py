@@ -462,6 +462,9 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
         tier_13_fired=old.tier_13_fired,
         tier_15_fired=old.tier_15_fired,
         tier_17_fired=old.tier_17_fired,
+        # Preserve divergence block state (not modified through temp settings API)
+        divergence_block_buy_until=old.divergence_block_buy_until,
+        divergence_block_sell_until=old.divergence_block_sell_until,
     )
     save_state(state_path, new_state)
     return {"status": "saved"}

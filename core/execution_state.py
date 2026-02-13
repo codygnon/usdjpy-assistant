@@ -36,6 +36,11 @@ class RuntimeState:
     tier_15_fired: bool = False
     tier_17_fired: bool = False
 
+    # RSI Divergence Block State (Trial #4)
+    # ISO timestamps indicating when the block expires
+    divergence_block_buy_until: Optional[str] = None
+    divergence_block_sell_until: Optional[str] = None
+
 
 def load_state(path: str | Path) -> RuntimeState:
     p = Path(path)
@@ -59,6 +64,8 @@ def load_state(path: str | Path) -> RuntimeState:
         tier_13_fired=bool(data.get("tier_13_fired", False)),
         tier_15_fired=bool(data.get("tier_15_fired", False)),
         tier_17_fired=bool(data.get("tier_17_fired", False)),
+        divergence_block_buy_until=data.get("divergence_block_buy_until"),
+        divergence_block_sell_until=data.get("divergence_block_sell_until"),
     )
 
 
@@ -84,6 +91,8 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "tier_13_fired": state.tier_13_fired,
                 "tier_15_fired": state.tier_15_fired,
                 "tier_17_fired": state.tier_17_fired,
+                "divergence_block_buy_until": state.divergence_block_buy_until,
+                "divergence_block_sell_until": state.divergence_block_sell_until,
             },
             indent=2,
             sort_keys=False,

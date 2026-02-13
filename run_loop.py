@@ -990,9 +990,18 @@ def main() -> None:
                         15: bool(state_data.get("tier_15_fired", False)),
                         17: bool(state_data.get("tier_17_fired", False)),
                     }
+                    # Load divergence block state for RSI divergence detection
+                    divergence_state: dict[str, str] = {}
+                    block_buy_until = state_data.get("divergence_block_buy_until")
+                    block_sell_until = state_data.get("divergence_block_sell_until")
+                    if block_buy_until:
+                        divergence_state["block_buy_until"] = block_buy_until
+                    if block_sell_until:
+                        divergence_state["block_sell_until"] = block_sell_until
                 except Exception:
                     temp_overrides = None
                     tier_state = {9: False, 11: False, 13: False, 15: False, 17: False}
+                    divergence_state = {}
 
                 for pol in profile.execution.policies:
                     if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "kt_cg_trial_4":
@@ -1014,9 +1023,11 @@ def main() -> None:
                         bar_time_utc=bar_time_utc,
                         tier_state=tier_state,
                         temp_overrides=temp_overrides,
+                        divergence_state=divergence_state,
                     )
                     dec = exec_result["decision"]
                     tier_updates = exec_result.get("tier_updates", {})
+                    divergence_updates = exec_result.get("divergence_updates", {})
 
                     # Persist tier state updates to runtime_state.json
                     if tier_updates:
@@ -1028,6 +1039,18 @@ def main() -> None:
                             state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
                         except Exception as e:
                             print(f"[{profile.profile_name}] Failed to persist tier state: {e}")
+
+                    # Persist divergence state updates to runtime_state.json
+                    if divergence_updates:
+                        try:
+                            current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                            for key, value in divergence_updates.items():
+                                state_key = f"divergence_{key}"  # e.g., "divergence_block_buy_until"
+                                current_state_data[state_key] = value
+                                divergence_state[key] = value  # Update local state too
+                            state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
+                        except Exception as e:
+                            print(f"[{profile.profile_name}] Failed to persist divergence state: {e}")
 
                     if dec.attempted:
                         if dec.placed:

@@ -12,6 +12,7 @@ from adapters.mt5_adapter import Tick
 from core.context_engine import compute_tf_context
 from core.indicators import atr as atr_fn
 from core.indicators import bollinger_bands as bollinger_bands_fn
+from core.indicators import detect_rsi_divergence
 from core.indicators import ema as ema_fn
 from core.indicators import macd as macd_fn
 from core.indicators import rsi as rsi_fn
@@ -3491,6 +3492,7 @@ def execute_kt_cg_trial_4_policy_demo_only(
     bar_time_utc: str,
     tier_state: dict[int, bool],
     temp_overrides: Optional[dict] = None,
+    divergence_state: Optional[dict[str, str]] = None,
 ) -> dict:
     """Evaluate KT/CG Trial #4 (M3 Trend + Tiered Pullback System) policy and optionally place a market order.
 
@@ -3501,11 +3503,12 @@ def execute_kt_cg_trial_4_policy_demo_only(
     Returns a dict with:
         - decision: ExecutionDecision
         - tier_updates: dict[int, bool] (new state for tiers to persist)
+        - divergence_updates: dict[str, str] (new divergence block timestamps)
     """
     if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
-        return {"decision": ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed"), "tier_updates": {}}
+        return {"decision": ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed"), "tier_updates": {}, "divergence_updates": {}}
     if not adapter.is_demo_account():
-        return {"decision": ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)"), "tier_updates": {}}
+        return {"decision": ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)"), "tier_updates": {}, "divergence_updates": {}}
 
     store = _store(log_dir)
     rule_id = f"kt_cg_trial_4:{policy.id}:M1:{bar_time_utc}"
@@ -3527,7 +3530,7 @@ def execute_kt_cg_trial_4_policy_demo_only(
 
     if not passed or side is None:
         # Still return tier_updates so resets can be persisted even when no trade fires
-        return {"decision": ExecutionDecision(attempted=False, placed=False, reason="; ".join(eval_reasons)), "tier_updates": tier_updates}
+        return {"decision": ExecutionDecision(attempted=False, placed=False, reason="; ".join(eval_reasons)), "tier_updates": tier_updates, "divergence_updates": {}}
 
     # For tiered pullback, use tier-specific rule_id to track idempotency per tier
     if trigger_type == "tiered_pullback" and tiered_pullback_tier:
@@ -3535,7 +3538,7 @@ def execute_kt_cg_trial_4_policy_demo_only(
 
     within = 2  # M1 cadence
     if store.has_recent_price_level_placement(profile.profile_name, rule_id, within):
-        return {"decision": ExecutionDecision(attempted=False, placed=False, reason="kt_cg_trial_4: recent placement (idempotent)"), "tier_updates": tier_updates}
+        return {"decision": ExecutionDecision(attempted=False, placed=False, reason="kt_cg_trial_4: recent placement (idempotent)"), "tier_updates": tier_updates, "divergence_updates": {}}
 
     # Check cooldown for Zone Entry only (Tiered Pullback has NO cooldown)
     if trigger_type == "zone_entry":
@@ -3559,7 +3562,7 @@ def execute_kt_cg_trial_4_policy_demo_only(
                     "mt5_deal_id": None,
                 }
             )
-            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=cooldown_reason or "zone_entry_cooldown"), "tier_updates": tier_updates}
+            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=cooldown_reason or "zone_entry_cooldown"), "tier_updates": tier_updates, "divergence_updates": {}}
 
     # Strategy filters: session, ATR
     now_utc = datetime.now(timezone.utc)
@@ -3581,7 +3584,7 @@ def execute_kt_cg_trial_4_policy_demo_only(
                 "mt5_deal_id": None,
             }
         )
-        return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter"), "tier_updates": tier_updates}
+        return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter"), "tier_updates": tier_updates, "divergence_updates": {}}
 
     m1_df = data_by_tf.get("M1")
     if m1_df is not None:
@@ -3603,7 +3606,7 @@ def execute_kt_cg_trial_4_policy_demo_only(
                     "mt5_deal_id": None,
                 }
             )
-            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "atr_filter"), "tier_updates": tier_updates}
+            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "atr_filter"), "tier_updates": tier_updates, "divergence_updates": {}}
 
     # Rolling Danger Zone filter: block entries near M1 rolling high/low extremes
     rolling_danger_enabled = getattr(policy, "rolling_danger_zone_enabled", False)
@@ -3657,7 +3660,140 @@ def execute_kt_cg_trial_4_policy_demo_only(
                                 "mt5_deal_id": None,
                             }
                         )
-                        return {"decision": ExecutionDecision(attempted=True, placed=False, reason=danger_reason or "rolling_danger_zone"), "tier_updates": tier_updates}
+                        return {"decision": ExecutionDecision(attempted=True, placed=False, reason=danger_reason or "rolling_danger_zone"), "tier_updates": tier_updates, "divergence_updates": {}}
+
+    # RSI Divergence Detection and Blocking (M3-based)
+    # BULL trend + bearish divergence detected -> block BUY entries for X minutes
+    # BEAR trend + bullish divergence detected -> block SELL entries for X minutes
+    divergence_updates: dict[str, str] = {}
+    rsi_divergence_enabled = getattr(policy, "rsi_divergence_enabled", False)
+    if rsi_divergence_enabled:
+        m3_df = data_by_tf.get("M3")
+        if m3_df is not None and not m3_df.empty:
+            rsi_period = getattr(policy, "rsi_divergence_period", 14)
+            lookback_bars = getattr(policy, "rsi_divergence_lookback_bars", 50)
+            swing_window = getattr(policy, "rsi_divergence_swing_window", 5)
+            block_minutes = getattr(policy, "rsi_divergence_block_minutes", 5.0)
+
+            # Get trend from evaluate result
+            m3_trend = result.get("m3_trend", "NEUTRAL")
+
+            # Check if existing block is still active
+            now_utc = datetime.now(timezone.utc)
+            if divergence_state:
+                block_buy_until_str = divergence_state.get("block_buy_until")
+                block_sell_until_str = divergence_state.get("block_sell_until")
+
+                if side == "buy" and block_buy_until_str:
+                    try:
+                        block_until = datetime.fromisoformat(block_buy_until_str.replace("Z", "+00:00"))
+                        if now_utc < block_until:
+                            block_reason = f"rsi_divergence: BUY blocked until {block_buy_until_str} (bearish divergence detected)"
+                            print(f"[{profile.profile_name}] kt_cg_trial_4 BLOCKED by RSI divergence: {block_reason}")
+                            store.insert_execution(
+                                {
+                                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                                    "profile": profile.profile_name,
+                                    "symbol": profile.symbol,
+                                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                                    "rule_id": rule_id,
+                                    "mode": mode,
+                                    "attempted": 1,
+                                    "placed": 0,
+                                    "reason": block_reason,
+                                    "mt5_retcode": None,
+                                    "mt5_order_id": None,
+                                    "mt5_deal_id": None,
+                                }
+                            )
+                            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=block_reason), "tier_updates": tier_updates, "divergence_updates": {}}
+                    except (ValueError, TypeError):
+                        pass
+
+                if side == "sell" and block_sell_until_str:
+                    try:
+                        block_until = datetime.fromisoformat(block_sell_until_str.replace("Z", "+00:00"))
+                        if now_utc < block_until:
+                            block_reason = f"rsi_divergence: SELL blocked until {block_sell_until_str} (bullish divergence detected)"
+                            print(f"[{profile.profile_name}] kt_cg_trial_4 BLOCKED by RSI divergence: {block_reason}")
+                            store.insert_execution(
+                                {
+                                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                                    "profile": profile.profile_name,
+                                    "symbol": profile.symbol,
+                                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                                    "rule_id": rule_id,
+                                    "mode": mode,
+                                    "attempted": 1,
+                                    "placed": 0,
+                                    "reason": block_reason,
+                                    "mt5_retcode": None,
+                                    "mt5_order_id": None,
+                                    "mt5_deal_id": None,
+                                }
+                            )
+                            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=block_reason), "tier_updates": tier_updates, "divergence_updates": {}}
+                    except (ValueError, TypeError):
+                        pass
+
+            # Detect new divergence
+            has_bearish, has_bullish, divergence_details = detect_rsi_divergence(
+                m3_df, rsi_period=rsi_period, lookback_bars=lookback_bars, swing_window=swing_window
+            )
+
+            # BULL trend + bearish divergence + trying to BUY -> set block_buy_until and reject
+            if m3_trend == "BULL" and has_bearish and side == "buy":
+                from datetime import timedelta
+                block_until = now_utc + timedelta(minutes=block_minutes)
+                block_until_str = block_until.isoformat()
+                divergence_updates["block_buy_until"] = block_until_str
+
+                block_reason = f"rsi_divergence: bearish divergence detected in BULL trend, BUY blocked for {block_minutes:.1f} min (price HH {divergence_details.get('bearish_divergence', {}).get('recent_price', 'N/A'):.3f} vs RSI LH {divergence_details.get('bearish_divergence', {}).get('recent_rsi', 'N/A'):.1f})"
+                print(f"[{profile.profile_name}] kt_cg_trial_4 NEW DIVERGENCE BLOCK: {block_reason}")
+                store.insert_execution(
+                    {
+                        "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                        "profile": profile.profile_name,
+                        "symbol": profile.symbol,
+                        "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                        "rule_id": rule_id,
+                        "mode": mode,
+                        "attempted": 1,
+                        "placed": 0,
+                        "reason": block_reason,
+                        "mt5_retcode": None,
+                        "mt5_order_id": None,
+                        "mt5_deal_id": None,
+                    }
+                )
+                return {"decision": ExecutionDecision(attempted=True, placed=False, reason=block_reason), "tier_updates": tier_updates, "divergence_updates": divergence_updates}
+
+            # BEAR trend + bullish divergence + trying to SELL -> set block_sell_until and reject
+            if m3_trend == "BEAR" and has_bullish and side == "sell":
+                from datetime import timedelta
+                block_until = now_utc + timedelta(minutes=block_minutes)
+                block_until_str = block_until.isoformat()
+                divergence_updates["block_sell_until"] = block_until_str
+
+                block_reason = f"rsi_divergence: bullish divergence detected in BEAR trend, SELL blocked for {block_minutes:.1f} min (price LL {divergence_details.get('bullish_divergence', {}).get('recent_price', 'N/A'):.3f} vs RSI HL {divergence_details.get('bullish_divergence', {}).get('recent_rsi', 'N/A'):.1f})"
+                print(f"[{profile.profile_name}] kt_cg_trial_4 NEW DIVERGENCE BLOCK: {block_reason}")
+                store.insert_execution(
+                    {
+                        "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                        "profile": profile.profile_name,
+                        "symbol": profile.symbol,
+                        "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                        "rule_id": rule_id,
+                        "mode": mode,
+                        "attempted": 1,
+                        "placed": 0,
+                        "reason": block_reason,
+                        "mt5_retcode": None,
+                        "mt5_order_id": None,
+                        "mt5_deal_id": None,
+                    }
+                )
+                return {"decision": ExecutionDecision(attempted=True, placed=False, reason=block_reason), "tier_updates": tier_updates, "divergence_updates": divergence_updates}
 
     entry_price = tick.ask if side == "buy" else tick.bid
     candidate = _kt_cg_trial_4_candidate(profile, policy, entry_price, side)
@@ -3680,7 +3816,7 @@ def execute_kt_cg_trial_4_policy_demo_only(
                 "mt5_deal_id": None,
             }
         )
-        return {"decision": ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons)), "tier_updates": tier_updates}
+        return {"decision": ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons)), "tier_updates": tier_updates, "divergence_updates": divergence_updates}
 
     if mode == "ARMED_MANUAL_CONFIRM":
         sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
@@ -3700,7 +3836,7 @@ def execute_kt_cg_trial_4_policy_demo_only(
                 "mt5_deal_id": None,
             }
         )
-        return {"decision": ExecutionDecision(attempted=True, placed=False, reason="manual_confirm_required"), "tier_updates": tier_updates}
+        return {"decision": ExecutionDecision(attempted=True, placed=False, reason="manual_confirm_required"), "tier_updates": tier_updates, "divergence_updates": divergence_updates}
 
     # ARMED_AUTO_DEMO: place the trade
     # First, close opposite positions if enabled (Direction Switch Close)
@@ -3759,4 +3895,5 @@ def execute_kt_cg_trial_4_policy_demo_only(
             side=side,
         ),
         "tier_updates": tier_updates,
+        "divergence_updates": divergence_updates,
     }
