@@ -1238,6 +1238,10 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "rsi_divergence_period": 14,
                     "rsi_divergence_lookback_bars": 50,
                     "rsi_divergence_block_minutes": 5.0,
+                    # EMA Zone Entry Filter (blocks zone entries during EMA compression)
+                    "ema_zone_filter_enabled": True,
+                    "ema_zone_filter_lookback_bars": 3,
+                    "ema_zone_filter_block_threshold": 0.35,
                 },
             ],
         },

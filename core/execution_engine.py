@@ -3293,6 +3293,67 @@ def _check_kt_cg_trial_4_cooldown(
         return True, None
 
 
+def _compute_ema_zone_filter_score(
+    m1_df: pd.DataFrame,
+    pip_size: float,
+    is_bull: bool,
+    lookback_bars: int,
+) -> tuple[float, dict]:
+    """Compute weighted EMA zone filter score for Trial #4 zone entries.
+
+    Uses M1 EMA 9 vs EMA 17 to detect compression/fading momentum.
+    Returns (weighted_score, details_dict).
+    """
+    close = m1_df["close"].astype(float)
+    ema9 = close.ewm(span=9, adjust=False).mean()
+    ema17 = close.ewm(span=17, adjust=False).mean()
+
+    # Need at least lookback+1 complete bars
+    if len(ema9) < lookback_bars + 1 or len(ema17) < lookback_bars + 1:
+        return 1.0, {"error": "insufficient_bars"}
+
+    ema9_now = float(ema9.iloc[-1])
+    ema17_now = float(ema17.iloc[-1])
+    ema9_prev = float(ema9.iloc[-(lookback_bars + 1)])
+    ema17_prev = float(ema17.iloc[-(lookback_bars + 1)])
+
+    # Direction-aware spread (positive = healthy trend)
+    if is_bull:
+        spread_pips = (ema9_now - ema17_now) / pip_size
+        slope_pips = (ema9_now - ema9_prev) / pip_size
+    else:
+        spread_pips = (ema17_now - ema9_now) / pip_size
+        slope_pips = (ema9_prev - ema9_now) / pip_size
+
+    # Spread direction: how spread has changed over lookback
+    if is_bull:
+        spread_prev = (ema9_prev - ema17_prev) / pip_size
+    else:
+        spread_prev = (ema17_prev - ema9_prev) / pip_size
+    spread_dir_pips = spread_pips - spread_prev
+
+    # Score each metric: linearly interpolate, clamp to [0, 1]
+    # Spread size: 0 pips -> 0.0, 5 pips -> 1.0
+    spread_score = max(0.0, min(1.0, spread_pips / 5.0))
+    # Slope: -1 pip -> 0.0, +3 pips -> 1.0
+    slope_score = max(0.0, min(1.0, (slope_pips + 1.0) / 4.0))
+    # Spread direction: -3 pips -> 0.0, +3 pips -> 1.0
+    dir_score = max(0.0, min(1.0, (spread_dir_pips + 3.0) / 6.0))
+
+    weighted = 0.45 * spread_score + 0.40 * slope_score + 0.15 * dir_score
+
+    details = {
+        "spread_pips": round(spread_pips, 2),
+        "slope_pips": round(slope_pips, 2),
+        "spread_dir_pips": round(spread_dir_pips, 2),
+        "spread_score": round(spread_score, 3),
+        "slope_score": round(slope_score, 3),
+        "dir_score": round(dir_score, 3),
+        "weighted_score": round(weighted, 3),
+    }
+    return weighted, details
+
+
 def evaluate_kt_cg_trial_4_conditions(
     profile: ProfileV1,
     policy,  # ExecutionPolicyKtCgTrial4
@@ -3563,6 +3624,46 @@ def execute_kt_cg_trial_4_policy_demo_only(
                 }
             )
             return {"decision": ExecutionDecision(attempted=True, placed=False, reason=cooldown_reason or "zone_entry_cooldown"), "tier_updates": tier_updates, "divergence_updates": {}}
+
+    # EMA Zone Entry Filter: block zone entries during EMA compression
+    if trigger_type == "zone_entry":
+        ema_zone_filter_enabled = getattr(policy, "ema_zone_filter_enabled", False)
+        if ema_zone_filter_enabled:
+            m1_df_zone = data_by_tf.get("M1")
+            if m1_df_zone is not None and not m1_df_zone.empty:
+                is_bull = side == "buy"
+                zf_lookback = getattr(policy, "ema_zone_filter_lookback_bars", 3)
+                zf_threshold = getattr(policy, "ema_zone_filter_block_threshold", 0.35)
+                pip_size = float(profile.pip_size)
+                zf_score, zf_details = _compute_ema_zone_filter_score(
+                    m1_df_zone, pip_size, is_bull, zf_lookback
+                )
+                if "error" not in zf_details and zf_score < zf_threshold:
+                    zf_reason = (
+                        f"ema_zone_filter: BLOCKED score={zf_score:.2f}"
+                        f" (spread={zf_details['spread_pips']:.1f}p"
+                        f" slope={zf_details['slope_pips']:.1f}p"
+                        f" dir={zf_details['spread_dir_pips']:.1f}p)"
+                        f" threshold={zf_threshold}"
+                    )
+                    print(f"[{profile.profile_name}] kt_cg_trial_4 {zf_reason}")
+                    store.insert_execution(
+                        {
+                            "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                            "profile": profile.profile_name,
+                            "symbol": profile.symbol,
+                            "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                            "rule_id": rule_id,
+                            "mode": mode,
+                            "attempted": 1,
+                            "placed": 0,
+                            "reason": zf_reason,
+                            "mt5_retcode": None,
+                            "mt5_order_id": None,
+                            "mt5_deal_id": None,
+                        }
+                    )
+                    return {"decision": ExecutionDecision(attempted=True, placed=False, reason=zf_reason), "tier_updates": tier_updates, "divergence_updates": {}}
 
     # Strategy filters: session, ATR
     now_utc = datetime.now(timezone.utc)

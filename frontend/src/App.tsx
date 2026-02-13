@@ -2951,6 +2951,10 @@ interface EditedSettings {
   rsi_divergence_period: number;
   rsi_divergence_lookback_bars: number;
   rsi_divergence_block_minutes: number;
+  // Trial #4: EMA Zone Entry Filter (blocks zone entries during EMA compression)
+  ema_zone_filter_enabled: boolean;
+  ema_zone_filter_lookback_bars: number;
+  ema_zone_filter_block_threshold: number;
   // Trial #3 EMA overrides
   m5_trend_ema_fast: number | null;
   m5_trend_ema_slow: number | null;
@@ -3027,6 +3031,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let rsiDivergencePeriod = 14;
       let rsiDivergenceLookbackBars = 50;
       let rsiDivergenceBlockMinutes = 5.0;
+      // Trial #4: EMA Zone Entry Filter
+      let emaZoneFilterEnabled = true;
+      let emaZoneFilterLookbackBars = 3;
+      let emaZoneFilterBlockThreshold = 0.35;
       if (policies) {
         for (const pol of policies) {
           if ('cooldown_minutes' in pol) {
@@ -3054,6 +3062,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
             rsiDivergencePeriod = (pol.rsi_divergence_period as number) ?? 14;
             rsiDivergenceLookbackBars = (pol.rsi_divergence_lookback_bars as number) ?? 50;
             rsiDivergenceBlockMinutes = (pol.rsi_divergence_block_minutes as number) ?? 5.0;
+          }
+          if ('ema_zone_filter_enabled' in pol) {
+            emaZoneFilterEnabled = pol.ema_zone_filter_enabled as boolean;
+            emaZoneFilterLookbackBars = (pol.ema_zone_filter_lookback_bars as number) ?? 3;
+            emaZoneFilterBlockThreshold = (pol.ema_zone_filter_block_threshold as number) ?? 0.35;
           }
           if (policyCooldown > 0 || policySlPips !== 20) break;
         }
@@ -3083,6 +3096,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
         rsi_divergence_period: rsiDivergencePeriod,
         rsi_divergence_lookback_bars: rsiDivergenceLookbackBars,
         rsi_divergence_block_minutes: rsiDivergenceBlockMinutes,
+        // Trial #4: EMA Zone Entry Filter
+        ema_zone_filter_enabled: emaZoneFilterEnabled,
+        ema_zone_filter_lookback_bars: emaZoneFilterLookbackBars,
+        ema_zone_filter_block_threshold: emaZoneFilterBlockThreshold,
         // Trial #3 EMA overrides from temp settings
         m5_trend_ema_fast: tempSettings?.m5_trend_ema_fast ?? null,
         m5_trend_ema_slow: tempSettings?.m5_trend_ema_slow ?? null,
@@ -3166,6 +3183,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.rsi_divergence_period = Math.max(5, Math.min(50, editedSettings.rsi_divergence_period));
           updates.rsi_divergence_lookback_bars = Math.max(20, Math.min(200, editedSettings.rsi_divergence_lookback_bars));
           updates.rsi_divergence_block_minutes = Math.max(1, Math.min(30, editedSettings.rsi_divergence_block_minutes));
+          // EMA Zone Entry Filter settings
+          updates.ema_zone_filter_enabled = editedSettings.ema_zone_filter_enabled;
+          updates.ema_zone_filter_lookback_bars = Math.max(2, Math.min(10, editedSettings.ema_zone_filter_lookback_bars));
+          updates.ema_zone_filter_block_threshold = Math.max(0.1, Math.min(0.8, editedSettings.ema_zone_filter_block_threshold));
         }
         return Object.keys(updates).length > 0 ? { ...pol, ...updates } : pol;
       }) || [];
@@ -3633,6 +3654,56 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     </div>
                     <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
                       BULL + bearish divergence → blocks BUY • BEAR + bullish divergence → blocks SELL
+                    </div>
+                  </div>
+                  {/* EMA Zone Entry Filter */}
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      EMA Zone Entry Filter (M1 EMA 9 vs 17)
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={editedSettings.ema_zone_filter_enabled}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, ema_zone_filter_enabled: e.target.checked })}
+                            style={{ width: 18, height: 18, cursor: 'pointer' }}
+                          />
+                          <span style={{ fontWeight: 600, color: editedSettings.ema_zone_filter_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                            {editedSettings.ema_zone_filter_enabled ? 'ON' : 'OFF'}
+                          </span>
+                        </label>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Lookback Bars</div>
+                        <input
+                          type="number"
+                          step="1"
+                          min="2"
+                          max="10"
+                          value={editedSettings.ema_zone_filter_lookback_bars}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, ema_zone_filter_lookback_bars: parseInt(e.target.value) || 3 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        />
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Bars for slope/direction</div>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Block Threshold</div>
+                        <input
+                          type="number"
+                          step="0.05"
+                          min="0.1"
+                          max="0.8"
+                          value={editedSettings.ema_zone_filter_block_threshold}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, ema_zone_filter_block_threshold: parseFloat(e.target.value) || 0.35 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        />
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Block if score below</div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
+                      Blocks zone entries during EMA compression. Tiered pullback unaffected.
                     </div>
                   </div>
                 </div>

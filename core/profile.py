@@ -484,6 +484,13 @@ class ExecutionPolicyKtCgTrial4(BaseModel):
     rsi_divergence_lookback_bars: int = 50  # Bars to analyze (split into reference/recent halves)
     rsi_divergence_block_minutes: float = 5.0  # How long to block entries after divergence
 
+    # EMA Zone Entry Filter (scoring system: blocks zone entries during EMA compression)
+    # Uses weighted score of M1 EMA 9 vs EMA 17 spread, slope, and spread direction
+    # Only affects zone entries; tiered pullback entries are NOT filtered
+    ema_zone_filter_enabled: bool = True
+    ema_zone_filter_lookback_bars: int = 3      # Bars back for slope/direction calculation
+    ema_zone_filter_block_threshold: float = 0.35  # Block if weighted score below this
+
 
 ExecutionPolicy = Annotated[
     Union[
