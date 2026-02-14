@@ -448,9 +448,8 @@ export interface TaTimeframe {
   price: TaPrice;
   summary: string;
   ohlc: OhlcBar[];
-  ema_fast?: { time: number; value: number }[];
-  ema_slow?: { time: number; value: number }[];
-  ema_stack?: Record<string, { time: number; value: number }[]>;
+  all_emas?: Record<string, { time: number; value: number }[]>;
+  bollinger_series?: { upper: { time: number; value: number }[]; middle: { time: number; value: number }[]; lower: { time: number; value: number }[] };
   error?: string;
 }
 

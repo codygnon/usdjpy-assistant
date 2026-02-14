@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { createChart, createSeriesMarkers, IChartApi, ISeriesApi, CandlestickData, Time, CandlestickSeries, LineSeries } from 'lightweight-charts';
+import { createChart, IChartApi, ISeriesApi, CandlestickData, Time, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import { ComposedChart, Area, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import * as api from './api';
 
@@ -586,22 +586,19 @@ interface ChartTrade {
   stop_price: number | null;
   target_price: number | null;
   side: string;
-  entry_time?: number;  // Unix seconds for chart
-  exit_time?: number;   // Unix seconds for chart
+  entry_time?: number;
+  exit_time?: number;
   exit_price?: number;
 }
 
 interface CandlestickChartProps {
   ohlc: api.OhlcBar[];
-  trades: ChartTrade[];
-  emaFast?: { time: number; value: number }[];
-  emaSlow?: { time: number; value: number }[];
   emaStack?: Record<string, { time: number; value: number }[]>;
+  bollingerSeries?: { upper: { time: number; value: number }[]; middle: { time: number; value: number }[]; lower: { time: number; value: number }[] };
   height?: number;
-  onCloseTrade?: (trade: ChartTrade) => void;
 }
 
-function CandlestickChart({ ohlc, trades, emaFast, emaSlow, emaStack, height = 300, onCloseTrade }: CandlestickChartProps) {
+function CandlestickChart({ ohlc, emaStack, bollingerSeries, height = 300 }: CandlestickChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -659,17 +656,13 @@ function CandlestickChart({ ohlc, trades, emaFast, emaSlow, emaStack, height = 3
 
     candlestickSeries.setData(chartData);
 
-    // Add EMA lines (no value labels or price lines on the right - lines only)
+    // Add EMA lines
     const emaSeriesOptions = { lastValueVisible: false, priceLineVisible: false };
-    const emaColors: Record<string, string> = { ema8: '#f59e0b', ema13: '#3b82f6', ema21: '#8b5cf6', ema34: '#06b6d4', ema50: '#10b981', ema89: '#6366f1', ema200: '#a855f7' };
-    if (emaFast && emaFast.length > 0) {
-      const emaSeries = chart.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 2, title: 'EMA Fast', ...emaSeriesOptions });
-      emaSeries.setData(emaFast.map(d => ({ time: d.time as Time, value: d.value })));
-    }
-    if (emaSlow && emaSlow.length > 0) {
-      const emaSeries = chart.addSeries(LineSeries, { color: '#10b981', lineWidth: 2, title: 'SMA Slow', ...emaSeriesOptions });
-      emaSeries.setData(emaSlow.map(d => ({ time: d.time as Time, value: d.value })));
-    }
+    const emaColors: Record<string, string> = {
+      ema5: '#ec4899', ema7: '#f97316', ema9: '#f59e0b', ema11: '#eab308',
+      ema13: '#3b82f6', ema15: '#14b8a6', ema17: '#8b5cf6', ema21: '#6366f1',
+      ema50: '#10b981', ema200: '#a855f7',
+    };
     if (emaStack) {
       Object.entries(emaStack).forEach(([key, arr]) => {
         if (arr && arr.length > 0) {
@@ -680,35 +673,21 @@ function CandlestickChart({ ohlc, trades, emaFast, emaSlow, emaStack, height = 3
       });
     }
 
-    // Markers: blue arrow for buy, red arrow for sell; no text
-    const markers: { time: Time; position: 'aboveBar' | 'belowBar'; color: string; shape: 'arrowUp' | 'arrowDown' | 'circle'; text: string }[] = [];
-    trades.forEach((t) => {
-      const isBuy = t.side.toLowerCase() === 'buy';
-      const buyColor = '#3b82f6';
-      const sellColor = '#ef4444';
-      const color = isBuy ? buyColor : sellColor;
-      if (t.entry_time != null) {
-        markers.push({
-          time: t.entry_time as Time,
-          position: isBuy ? 'belowBar' : 'aboveBar',
-          color,
-          shape: isBuy ? 'arrowUp' : 'arrowDown',
-          text: '',
-        });
+    // Add Bollinger Bands
+    if (bollingerSeries) {
+      const bbColor = '#6b7280';
+      if (bollingerSeries.upper && bollingerSeries.upper.length > 0) {
+        const upper = chart.addSeries(LineSeries, { color: bbColor, lineWidth: 1, lineStyle: 2, title: 'BB Upper', ...emaSeriesOptions });
+        upper.setData(bollingerSeries.upper.map(d => ({ time: d.time as Time, value: d.value })));
       }
-      if (t.exit_time != null) {
-        markers.push({
-          time: t.exit_time as Time,
-          position: isBuy ? 'aboveBar' : 'belowBar',
-          color,
-          shape: 'circle',
-          text: '',
-        });
+      if (bollingerSeries.middle && bollingerSeries.middle.length > 0) {
+        const middle = chart.addSeries(LineSeries, { color: bbColor, lineWidth: 1, title: 'BB Mid', ...emaSeriesOptions });
+        middle.setData(bollingerSeries.middle.map(d => ({ time: d.time as Time, value: d.value })));
       }
-    });
-    if (markers.length > 0) {
-      const seriesMarkers = createSeriesMarkers(candlestickSeries);
-      seriesMarkers.setMarkers(markers);
+      if (bollingerSeries.lower && bollingerSeries.lower.length > 0) {
+        const lower = chart.addSeries(LineSeries, { color: bbColor, lineWidth: 1, lineStyle: 2, title: 'BB Lower', ...emaSeriesOptions });
+        lower.setData(bollingerSeries.lower.map(d => ({ time: d.time as Time, value: d.value })));
+      }
     }
 
     // Fit content
@@ -729,7 +708,7 @@ function CandlestickChart({ ohlc, trades, emaFast, emaSlow, emaStack, height = 3
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [ohlc, trades, emaFast, emaSlow, emaStack, height]);
+  }, [ohlc, emaStack, bollingerSeries, height]);
 
   if (ohlc.length === 0) {
     return (
@@ -747,70 +726,16 @@ function CandlestickChart({ ohlc, trades, emaFast, emaSlow, emaStack, height = 3
     );
   }
 
-  const activeTrades = trades.filter(t => !t.exit_time && !t.exit_price);
-
   return (
-    <div style={{ position: 'relative', width: '100%', height: height }}>
-      <div
-        ref={chartContainerRef}
-        style={{
-          width: '100%',
-          height: height,
-          borderRadius: 6,
-          overflow: 'hidden'
-        }}
-      />
-      {/* Trade legend overlay */}
-      {onCloseTrade && activeTrades.length > 0 && (
-        <div style={{
-          position: 'absolute',
-          top: 8,
-          right: 8,
-          background: 'rgba(26, 26, 46, 0.9)',
-          border: '1px solid var(--border)',
-          borderRadius: 6,
-          padding: 8,
-          fontSize: '0.75rem',
-          maxWidth: 180,
-          zIndex: 10,
-        }}>
-          <div style={{ fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)' }}>
-            Active Trades
-          </div>
-          {activeTrades.map(t => (
-            <div key={t.trade_id} style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 8,
-              padding: '4px 0',
-              borderTop: '1px solid var(--border)'
-            }}>
-              <span style={{
-                color: t.side.toLowerCase() === 'buy' ? '#3b82f6' : '#ef4444',
-                fontWeight: 500
-              }}>
-                {t.side.toUpperCase()} @ {t.entry_price.toFixed(3)}
-              </span>
-              <button
-                onClick={() => onCloseTrade(t)}
-                style={{
-                  background: 'var(--danger)',
-                  border: 'none',
-                  borderRadius: 3,
-                  color: 'white',
-                  padding: '2px 6px',
-                  fontSize: '0.65rem',
-                  cursor: 'pointer',
-                }}
-              >
-                Close
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    <div
+      ref={chartContainerRef}
+      style={{
+        width: '100%',
+        height: height,
+        borderRadius: 6,
+        overflow: 'hidden'
+      }}
+    />
   );
 }
 
@@ -829,6 +754,27 @@ function AnalysisPage({ profile }: { profile: Profile }) {
   const [fullscreenTf, setFullscreenTf] = useState<string | null>(null);
   const [confirmCloseTrade, setConfirmCloseTrade] = useState<ChartTrade | null>(null);
   const [closingTrade, setClosingTrade] = useState(false);
+  const [emaToggles, setEmaToggles] = useState<Record<string, boolean>>({});
+  const [bbToggle, setBbToggle] = useState(false);
+  const [tradesMinimized, setTradesMinimized] = useState(false);
+
+  const EMA_PERIODS = [5, 7, 9, 11, 13, 15, 17, 21, 50, 200] as const;
+  const EMA_COLORS: Record<string, string> = {
+    ema5: '#ec4899', ema7: '#f97316', ema9: '#f59e0b', ema11: '#eab308',
+    ema13: '#3b82f6', ema15: '#14b8a6', ema17: '#8b5cf6', ema21: '#6366f1',
+    ema50: '#10b981', ema200: '#a855f7',
+  };
+
+  const getFilteredEmas = (allEmas?: Record<string, { time: number; value: number }[]>) => {
+    if (!allEmas) return undefined;
+    const filtered: Record<string, { time: number; value: number }[]> = {};
+    for (const [key, arr] of Object.entries(allEmas)) {
+      if (emaToggles[key] && arr && arr.length > 0) {
+        filtered[key] = arr;
+      }
+    }
+    return Object.keys(filtered).length > 0 ? filtered : undefined;
+  };
 
   const fetchTa = async () => {
     try {
@@ -997,20 +943,11 @@ function AnalysisPage({ profile }: { profile: Profile }) {
   };
 
   // Build EMA legend text from API data (e.g. "EMA 8/13/21" or "EMA 13, SMA 30")
-  const getEmaLegend = (tfData: api.TaTimeframe): string => {
+  const getActiveEmaLegend = (): string => {
+    const active = EMA_PERIODS.filter(p => emaToggles[`ema${p}`]);
     const parts: string[] = [];
-    if (tfData.ema_stack && Object.keys(tfData.ema_stack).length > 0) {
-      const periods = Object.keys(tfData.ema_stack)
-        .map((k) => k.replace(/^ema/i, ''))
-        .filter(Boolean)
-        .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
-      if (periods.length > 0) {
-        parts.push(`EMA ${periods.join('/')}`);
-      }
-    }
-    if (tfData.ema_fast && tfData.ema_fast.length > 0 && tfData.ema_slow && tfData.ema_slow.length > 0) {
-      parts.push('SMA slow');
-    }
+    if (active.length > 0) parts.push(`EMA ${active.join('/')}`);
+    if (bbToggle) parts.push('BB');
     return parts.length > 0 ? parts.join(' · ') : '';
   };
 
@@ -1132,18 +1069,13 @@ function AnalysisPage({ profile }: { profile: Profile }) {
               <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }} onClick={(e) => e.stopPropagation()}>
                 {/* Candlestick Chart */}
                 <div style={{ marginBottom: 16 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
                     <h4 style={{ margin: 0, color: 'var(--accent)', fontSize: '0.9rem' }}>
                       {tf} Chart ({timeframeLabel[tf] || tf})
                     </h4>
-                    {getEmaLegend(tfData) && (
+                    {getActiveEmaLegend() && (
                       <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                        {getEmaLegend(tfData)}
-                      </span>
-                    )}
-                    {chartTrades.length > 0 && (
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                        ({chartTrades.filter(t => !t.exit_time).length} open, {chartTrades.length} total)
+                        {getActiveEmaLegend()}
                       </span>
                     )}
                     <button
@@ -1163,15 +1095,114 @@ function AnalysisPage({ profile }: { profile: Profile }) {
                       Fullscreen
                     </button>
                   </div>
-                  <CandlestickChart
-                    ohlc={tfData.ohlc || []}
-                    trades={chartTrades}
-                    emaFast={tfData.ema_fast}
-                    emaSlow={tfData.ema_slow}
-                    emaStack={tfData.ema_stack}
-                    height={enlargedTf === tf ? 520 : 280}
-                    onCloseTrade={(trade) => setConfirmCloseTrade(trade)}
-                  />
+                  {/* EMA & BB Toggle Pills */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
+                    {EMA_PERIODS.map(p => {
+                      const key = `ema${p}`;
+                      const active = !!emaToggles[key];
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setEmaToggles(prev => ({ ...prev, [key]: !prev[key] }))}
+                          style={{
+                            background: active ? EMA_COLORS[key] : '#374151',
+                            color: active ? '#fff' : '#9ca3af',
+                            border: 'none',
+                            borderRadius: 12,
+                            padding: '2px 8px',
+                            fontSize: '0.65rem',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {p}
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => setBbToggle(prev => !prev)}
+                      style={{
+                        background: bbToggle ? '#6b7280' : '#374151',
+                        color: bbToggle ? '#fff' : '#9ca3af',
+                        border: 'none',
+                        borderRadius: 12,
+                        padding: '2px 8px',
+                        fontSize: '0.65rem',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      BB
+                    </button>
+                  </div>
+                  <div style={{ position: 'relative' }}>
+                    <CandlestickChart
+                      ohlc={tfData.ohlc || []}
+                      emaStack={getFilteredEmas(tfData.all_emas)}
+                      bollingerSeries={bbToggle ? tfData.bollinger_series : undefined}
+                      height={enlargedTf === tf ? 520 : 280}
+                    />
+                    {/* Active Trades Overlay */}
+                    {(() => {
+                      const activeTrades = chartTrades.filter(t => !t.exit_time && !t.exit_price);
+                      if (activeTrades.length === 0) return null;
+                      return (
+                        <div style={{
+                          position: 'absolute',
+                          top: 8,
+                          right: 8,
+                          background: 'rgba(26, 26, 46, 0.9)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 6,
+                          padding: 8,
+                          fontSize: '0.75rem',
+                          maxWidth: 200,
+                          zIndex: 10,
+                        }}>
+                          <div
+                            style={{ fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                            onClick={() => setTradesMinimized(prev => !prev)}
+                          >
+                            <span>Active Trades ({activeTrades.length})</span>
+                            <span style={{ fontSize: '0.6rem', marginLeft: 6 }}>{tradesMinimized ? '\u25B6' : '\u25BC'}</span>
+                          </div>
+                          {!tradesMinimized && activeTrades.map(t => (
+                            <div key={t.trade_id} style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: 8,
+                              padding: '4px 0',
+                              borderTop: '1px solid var(--border)'
+                            }}>
+                              <span style={{
+                                color: t.side.toLowerCase() === 'buy' ? '#3b82f6' : '#ef4444',
+                                fontWeight: 500
+                              }}>
+                                {t.side.toUpperCase()} @ {t.entry_price.toFixed(3)}
+                              </span>
+                              <button
+                                onClick={() => setConfirmCloseTrade(t)}
+                                style={{
+                                  background: 'var(--danger)',
+                                  border: 'none',
+                                  borderRadius: 3,
+                                  color: 'white',
+                                  padding: '2px 6px',
+                                  fontSize: '0.65rem',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                Close
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
                 </div>
 
                 {/* Plain English Summary */}
@@ -1305,7 +1336,7 @@ function AnalysisPage({ profile }: { profile: Profile }) {
 
                   {/* Price Levels */}
                   <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                    <h4 style={{ margin: '0 0 12px 0', color: 'var(--accent)', fontSize: '0.9rem' }}>Price Levels (100-bar)</h4>
+                    <h4 style={{ margin: '0 0 12px 0', color: 'var(--accent)', fontSize: '0.9rem' }}>Price Levels (500-bar)</h4>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                       <div>
                         <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Current:</span>
@@ -1385,16 +1416,56 @@ function AnalysisPage({ profile }: { profile: Profile }) {
               </button>
             </div>
 
+            {/* EMA & BB Toggle Pills */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '0 16px' }}>
+              {EMA_PERIODS.map(p => {
+                const key = `ema${p}`;
+                const active = !!emaToggles[key];
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setEmaToggles(prev => ({ ...prev, [key]: !prev[key] }))}
+                    style={{
+                      background: active ? EMA_COLORS[key] : '#374151',
+                      color: active ? '#fff' : '#9ca3af',
+                      border: 'none',
+                      borderRadius: 12,
+                      padding: '2px 8px',
+                      fontSize: '0.65rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {p}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => setBbToggle(prev => !prev)}
+                style={{
+                  background: bbToggle ? '#6b7280' : '#374151',
+                  color: bbToggle ? '#fff' : '#9ca3af',
+                  border: 'none',
+                  borderRadius: 12,
+                  padding: '2px 8px',
+                  fontSize: '0.65rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                BB
+              </button>
+            </div>
+
             {/* Chart */}
             <div style={{ flex: 1, padding: 16, overflow: 'hidden' }}>
               <CandlestickChart
                 ohlc={tfData.ohlc || []}
-                trades={chartTrades}
-                emaFast={tfData.ema_fast}
-                emaSlow={tfData.ema_slow}
-                emaStack={tfData.ema_stack}
+                emaStack={getFilteredEmas(tfData.all_emas)}
+                bollingerSeries={bbToggle ? tfData.bollinger_series : undefined}
                 height={chartHeight}
-                onCloseTrade={(trade) => setConfirmCloseTrade(trade)}
               />
             </div>
 

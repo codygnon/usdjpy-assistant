@@ -1267,9 +1267,8 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
     Returns per-timeframe: regime, RSI value/zone, MACD line/signal/histogram, 
     ATR value/state, price info, and a plain-English summary.
     """
-    from core.indicators import ema, sma
+    from core.indicators import ema
     from core.ta_analysis import compute_ta_for_tf
-    from core.context_engine import _get_tf_config
     from core.timeframes import Timeframe
     
     path = _resolve_profile_path(profile_path)
@@ -1299,7 +1298,7 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
             for tf in timeframes:
                 try:
                     # Fetch OHLC data from broker (MT5 or OANDA)
-                    df = adapter.get_bars(profile.symbol, tf, count=200)
+                    df = adapter.get_bars(profile.symbol, tf, count=700)
                     if df is None or df.empty:
                         result["timeframes"][tf] = {
                             "error": f"No data available for {tf}",
@@ -1312,9 +1311,8 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
                             "vwap": None,
                             "summary": f"{tf}: No data available.",
                             "ohlc": [],
-                            "ema_fast": [],
-                            "ema_slow": [],
-                            "ema_stack": {},
+                            "all_emas": {},
+                            "bollinger_series": {"upper": [], "middle": [], "lower": []},
                         }
                         continue
                     # Compute TA for this timeframe
@@ -1326,8 +1324,8 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
                             macd_direction = "positive"
                         elif ta.macd_hist < 0:
                             macd_direction = "negative"
-                    # Build OHLC array for chart (last 100 bars)
-                    df_tail = df.tail(100)
+                    # Build OHLC array for chart (last 500 bars)
+                    df_tail = df.tail(500)
                     ohlc_data = []
                     for _, row in df_tail.iterrows():
                         ohlc_data.append({
@@ -1337,18 +1335,23 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
                             "low": round(float(row["low"]), 3),
                             "close": round(float(row["close"]), 3),
                         })
-                    # Build EMA/SMA series for chart (timeframe-appropriate)
-                    tf_cfg = _get_tf_config(profile, tf)
+                    # Build all 10 EMA series for chart overlay
                     close = df["close"]
-                    ema_fast_s = ema(close, tf_cfg.ema_fast)
-                    ema_slow_s = sma(close, tf_cfg.sma_slow)
-                    ema_fast_arr = [{"time": int(row["time"].timestamp()), "value": round(float(ema_fast_s.loc[row.name]), 3)} for _, row in df_tail.iterrows() if row.name in ema_fast_s.index and not pd.isna(ema_fast_s.loc[row.name])]
-                    ema_slow_arr = [{"time": int(row["time"].timestamp()), "value": round(float(ema_slow_s.loc[row.name]), 3)} for _, row in df_tail.iterrows() if row.name in ema_slow_s.index and not pd.isna(ema_slow_s.loc[row.name])]
-                    ema_stack_arrs: dict[str, list[dict[str, Any]]] = {}
-                    if tf_cfg.ema_stack:
-                        for p in tf_cfg.ema_stack:
-                            s = ema(close, p)
-                            ema_stack_arrs[f"ema{p}"] = [{"time": int(row["time"].timestamp()), "value": round(float(s.loc[row.name]), 3)} for _, row in df_tail.iterrows() if row.name in s.index and not pd.isna(s.loc[row.name])]
+                    all_emas_arrs: dict[str, list[dict[str, Any]]] = {}
+                    for p in [5, 7, 9, 11, 13, 15, 17, 21, 50, 200]:
+                        s = ema(close, p)
+                        all_emas_arrs[f"ema{p}"] = [{"time": int(row["time"].timestamp()), "value": round(float(s.loc[row.name]), 3)} for _, row in df_tail.iterrows() if row.name in s.index and not pd.isna(s.loc[row.name])]
+                    # Build Bollinger Bands series for chart overlay
+                    from core.indicators import bollinger_bands
+                    bb_upper, bb_middle, bb_lower = bollinger_bands(close, 20, 2.0)
+                    bb_series: dict[str, list[dict[str, Any]]] = {"upper": [], "middle": [], "lower": []}
+                    for _, row in df_tail.iterrows():
+                        ts = int(row["time"].timestamp())
+                        idx = row.name
+                        if idx in bb_upper.index and not pd.isna(bb_upper.loc[idx]):
+                            bb_series["upper"].append({"time": ts, "value": round(float(bb_upper.loc[idx]), 3)})
+                            bb_series["middle"].append({"time": ts, "value": round(float(bb_middle.loc[idx]), 3)})
+                            bb_series["lower"].append({"time": ts, "value": round(float(bb_lower.loc[idx]), 3)})
                     result["timeframes"][tf] = {
                         "regime": ta.regime,
                         "rsi": {
@@ -1380,9 +1383,8 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
                         "vwap": round(ta.vwap_value, 5) if ta.vwap_value is not None else None,
                         "summary": ta.summary,
                         "ohlc": ohlc_data,
-                        "ema_fast": ema_fast_arr,
-                        "ema_slow": ema_slow_arr,
-                        "ema_stack": ema_stack_arrs,
+                        "all_emas": all_emas_arrs,
+                        "bollinger_series": bb_series,
                     }
                 except Exception as tf_error:
                     # Handle errors for individual timeframes gracefully
@@ -1397,9 +1399,8 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
                         "vwap": None,
                         "summary": f"{tf}: Error fetching data.",
                         "ohlc": [],
-                        "ema_fast": [],
-                        "ema_slow": [],
-                        "ema_stack": {},
+                        "all_emas": {},
+                        "bollinger_series": {"upper": [], "middle": [], "lower": []},
                     }
 
             # Get current tick for spread info
