@@ -1421,6 +1421,182 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
 
 
 # ---------------------------------------------------------------------------
+# Endpoints: Advanced Analytics
+# ---------------------------------------------------------------------------
+
+
+def _backfill_mae_mfe(profile, store: SqliteStore, profile_name: str) -> int:
+    """Lazily estimate MAE/MFE from M1 candle data for closed trades that have NULL values.
+
+    Returns count of trades backfilled. Writes estimated values with mae_mfe_estimated=1.
+    """
+    from adapters.broker import get_adapter
+
+    df = store.read_trades_df(profile_name)
+    if df.empty or "exit_price" not in df.columns:
+        return 0
+    closed = df[pd.to_numeric(df["exit_price"], errors="coerce").notna()].copy()
+    if closed.empty:
+        return 0
+
+    # Find trades missing MAE/MFE
+    needs_backfill = closed[
+        pd.to_numeric(closed.get("max_adverse_pips"), errors="coerce").isna()
+        & pd.to_numeric(closed.get("max_favorable_pips"), errors="coerce").isna()
+    ]
+    if needs_backfill.empty:
+        return 0
+
+    # Fetch M1 candles from broker
+    try:
+        adapter = get_adapter(profile)
+        adapter.initialize()
+        adapter.ensure_symbol(profile.symbol)
+        m1_df = adapter.get_bars(profile.symbol, "M1", 3000)
+        adapter.shutdown()
+    except Exception:
+        return 0
+
+    if m1_df is None or m1_df.empty:
+        return 0
+
+    pip_size = float(profile.pip_size)
+    m1_df["time_utc"] = pd.to_datetime(m1_df["time"], utc=True)
+    backfilled = 0
+
+    for _, row in needs_backfill.iterrows():
+        try:
+            entry_ts = pd.to_datetime(row.get("timestamp_utc"), utc=True)
+            exit_ts = pd.to_datetime(row.get("exit_timestamp_utc"), utc=True)
+            entry_price = float(row["entry_price"])
+            side = str(row.get("side") or "").lower()
+            if not side or pd.isna(entry_ts) or pd.isna(exit_ts):
+                continue
+
+            # Filter M1 bars within trade lifetime
+            mask = (m1_df["time_utc"] >= entry_ts) & (m1_df["time_utc"] <= exit_ts)
+            trade_bars = m1_df[mask]
+            if trade_bars.empty:
+                continue
+
+            min_low = float(trade_bars["low"].min())
+            max_high = float(trade_bars["high"].max())
+
+            if side == "buy":
+                mae = round((min_low - entry_price) / pip_size, 2)
+                mfe = round((max_high - entry_price) / pip_size, 2)
+            else:
+                mae = round((entry_price - max_high) / pip_size, 2)
+                mfe = round((entry_price - min_low) / pip_size, 2)
+
+            store.update_trade(str(row["trade_id"]), {
+                "max_adverse_pips": mae,
+                "max_favorable_pips": mfe,
+                "mae_mfe_estimated": 1,
+            })
+            backfilled += 1
+        except Exception:
+            continue
+
+    return backfilled
+
+
+@app.get("/api/data/{profile_name}/advanced-analytics")
+def get_advanced_analytics(
+    profile_name: str,
+    profile_path: Optional[str] = None,
+    days_back: int = 365,
+) -> dict[str, Any]:
+    """Get trade-level data for advanced analytics (MAE/MFE, rolling metrics,
+    R-distribution, drawdown, duration). All computation happens on the frontend."""
+    profile = None
+    if profile_path and _resolve_profile_path(profile_path).exists():
+        try:
+            profile = load_profile_v1(_resolve_profile_path(profile_path))
+        except Exception:
+            pass
+
+    curr, rate = ("USD", 1.0)
+    if profile:
+        curr, rate = _get_display_currency(profile)
+
+    store = _store_for(profile_name)
+
+    # Lazily backfill MAE/MFE from candle data for historical trades
+    if profile:
+        try:
+            _backfill_mae_mfe(profile, store, profile_name)
+        except Exception:
+            pass
+
+    df = store.read_trades_df(profile_name)
+    if df.empty or "exit_price" not in df.columns:
+        return {"trades": [], "display_currency": curr, "source": "database"}
+
+    closed = df[pd.to_numeric(df["exit_price"], errors="coerce").notna()].copy()
+    if closed.empty:
+        return {"trades": [], "display_currency": curr, "source": "database"}
+
+    # Filter by days_back
+    if "exit_timestamp_utc" in closed.columns:
+        closed["_exit_dt"] = pd.to_datetime(closed["exit_timestamp_utc"], errors="coerce", utc=True)
+        cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days_back)
+        closed = closed[closed["_exit_dt"] >= cutoff]
+
+    pip_size = float(profile.pip_size) if profile else 0.01
+    trades_list = []
+    for _, row in closed.iterrows():
+        side = str(row.get("side") or "").lower()
+        entry_price = float(row["entry_price"]) if pd.notna(row.get("entry_price")) else 0
+        exit_price = float(row["exit_price"]) if pd.notna(row.get("exit_price")) else 0
+
+        pips_val = float(row["pips"]) if pd.notna(row.get("pips")) else None
+        if pips_val is None and entry_price and exit_price and pip_size:
+            if side == "buy":
+                pips_val = round((exit_price - entry_price) / pip_size, 2)
+            elif side == "sell":
+                pips_val = round((entry_price - exit_price) / pip_size, 2)
+
+        r_multiple = float(row["r_multiple"]) if pd.notna(row.get("r_multiple")) else None
+        risk_pips = float(row["risk_pips"]) if pd.notna(row.get("risk_pips")) else None
+        profit_raw = float(row["profit"]) if pd.notna(row.get("profit")) else None
+        duration = float(row["duration_minutes"]) if pd.notna(row.get("duration_minutes")) else None
+
+        # Compute duration from timestamps if not stored
+        if duration is None:
+            try:
+                t0 = pd.to_datetime(row.get("timestamp_utc"), utc=True)
+                t1 = pd.to_datetime(row.get("exit_timestamp_utc"), utc=True)
+                if pd.notna(t0) and pd.notna(t1):
+                    duration = round((t1 - t0).total_seconds() / 60.0, 1)
+            except Exception:
+                pass
+
+        mae = float(row["max_adverse_pips"]) if pd.notna(row.get("max_adverse_pips")) else None
+        mfe = float(row["max_favorable_pips"]) if pd.notna(row.get("max_favorable_pips")) else None
+
+        trades_list.append({
+            "trade_id": str(row.get("trade_id") or ""),
+            "side": side,
+            "entry_time_utc": str(row.get("timestamp_utc") or ""),
+            "exit_time_utc": str(row.get("exit_timestamp_utc") or ""),
+            "entry_price": entry_price,
+            "exit_price": exit_price,
+            "pips": pips_val,
+            "r_multiple": r_multiple,
+            "risk_pips": risk_pips,
+            "profit": _convert_amount(profit_raw, rate) if profit_raw is not None else None,
+            "duration_minutes": duration,
+            "max_adverse_pips": mae,
+            "max_favorable_pips": mfe,
+            "preset_name": str(row.get("preset_name") or ""),
+            "exit_reason": str(row.get("exit_reason") or ""),
+        })
+
+    return {"trades": trades_list, "display_currency": curr, "source": "database"}
+
+
+# ---------------------------------------------------------------------------
 # Endpoints: Trade management (close, sync)
 # ---------------------------------------------------------------------------
 

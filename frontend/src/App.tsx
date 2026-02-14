@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { createChart, IChartApi, ISeriesApi, CandlestickData, Time, CandlestickSeries, LineSeries } from 'lightweight-charts';
-import { ComposedChart, Area, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
+import { ComposedChart, Area, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ScatterChart, Scatter, Cell, BarChart, LineChart, AreaChart } from 'recharts';
 import * as api from './api';
 
 type Page = 'run' | 'presets' | 'profile' | 'logs' | 'analysis' | 'guide';
@@ -5115,6 +5115,670 @@ function SpreadPerformance({ profileName, profilePath }: { profileName: string; 
 }
 
 // ---------------------------------------------------------------------------
+// Advanced Analytics Component
+// ---------------------------------------------------------------------------
+
+function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; profilePath: string }) {
+  const [trades, setTrades] = useState<api.AdvancedTrade[]>([]);
+  const [, setCurrency] = useState('USD');
+  const [loading, setLoading] = useState(true);
+  const [presetFilter, setPresetFilter] = useState('all');
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
+    mae_mfe: false,
+    rolling: false,
+    r_dist: false,
+    drawdown: false,
+    duration: false,
+  });
+  const [rollingWindow, setRollingWindow] = useState(20);
+  const [rollingMode, setRollingMode] = useState<'trades' | 'time'>('trades');
+  const [timeWindow, setTimeWindow] = useState(7);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getAdvancedAnalytics(profileName, profilePath, 365)
+      .then((data) => {
+        setTrades(data.trades);
+        setCurrency(data.display_currency || 'USD');
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [profileName, profilePath]);
+
+  const toggleSection = (key: string) => {
+    setExpandedSections(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  // Filter trades by preset
+  const presets = Array.from(new Set(trades.map(t => t.preset_name).filter(Boolean))) as string[];
+  const filtered = presetFilter === 'all' ? trades : trades.filter(t => t.preset_name === presetFilter);
+
+  // --- Computation utilities ---
+  const computeEquitySeries = (arr: api.AdvancedTrade[]) => {
+    let cum = 0;
+    return arr
+      .filter(t => t.pips != null)
+      .sort((a, b) => a.exit_time_utc.localeCompare(b.exit_time_utc))
+      .map((t, i) => {
+        cum += t.pips!;
+        return { idx: i + 1, cumPips: Math.round(cum * 100) / 100, date: t.exit_time_utc.slice(0, 10), pips: t.pips! };
+      });
+  };
+
+  const computeRollingMetrics = (arr: api.AdvancedTrade[], windowSize: number, mode: 'trades' | 'time', timeDays: number) => {
+    const sorted = arr
+      .filter(t => t.pips != null)
+      .sort((a, b) => a.exit_time_utc.localeCompare(b.exit_time_utc));
+    if (sorted.length === 0) return [];
+
+    return sorted.map((_, i) => {
+      let window: api.AdvancedTrade[];
+      if (mode === 'trades') {
+        const start = Math.max(0, i - windowSize + 1);
+        window = sorted.slice(start, i + 1);
+      } else {
+        const exitDate = new Date(sorted[i].exit_time_utc);
+        const cutoff = new Date(exitDate.getTime() - timeDays * 86400000);
+        window = sorted.filter(t => new Date(t.exit_time_utc) >= cutoff && new Date(t.exit_time_utc) <= exitDate);
+      }
+      if (window.length === 0) return null;
+
+      const wins = window.filter(t => (t.pips ?? 0) > 0).length;
+      const winRate = Math.round((wins / window.length) * 1000) / 10;
+      const avgPips = Math.round(window.reduce((s, t) => s + (t.pips ?? 0), 0) / window.length * 100) / 100;
+      const rTrades = window.filter(t => t.r_multiple != null);
+      const avgR = rTrades.length > 0
+        ? Math.round(rTrades.reduce((s, t) => s + t.r_multiple!, 0) / rTrades.length * 100) / 100
+        : null;
+      const winsR = rTrades.filter(t => t.r_multiple! > 0);
+      const lossesR = rTrades.filter(t => t.r_multiple! <= 0);
+      const avgWinR = winsR.length > 0 ? winsR.reduce((s, t) => s + t.r_multiple!, 0) / winsR.length : 0;
+      const avgLossR = lossesR.length > 0 ? Math.abs(lossesR.reduce((s, t) => s + t.r_multiple!, 0) / lossesR.length) : 0;
+      const wr = rTrades.length > 0 ? winsR.length / rTrades.length : 0;
+      const expectancy = rTrades.length > 0 ? Math.round((wr * avgWinR - (1 - wr) * avgLossR) * 100) / 100 : null;
+
+      return { idx: i + 1, winRate, avgPips, avgR, expectancy, date: sorted[i].exit_time_utc.slice(0, 10) };
+    }).filter(Boolean) as { idx: number; winRate: number; avgPips: number; avgR: number | null; expectancy: number | null; date: string }[];
+  };
+
+  const computeDrawdownSeries = (arr: api.AdvancedTrade[]) => {
+    const equity = computeEquitySeries(arr);
+    if (equity.length === 0) return { series: [], maxDdPips: 0, maxDdPct: 0, currentDd: 0, longestTrades: 0, longestTime: '', recoveryFactor: 0 };
+
+    let peak = 0;
+    let maxDd = 0;
+    let maxDdPct = 0;
+    let longestTrades = 0;
+    let longestTimeStart = '';
+    let longestTimeEnd = '';
+    let currentLongest = 0;
+    let currentLongestStart = '';
+
+    const series = equity.map(e => {
+      if (e.cumPips > peak) {
+        if (currentLongest > longestTrades) {
+          longestTrades = currentLongest;
+          longestTimeStart = currentLongestStart;
+          longestTimeEnd = e.date;
+        }
+        peak = e.cumPips;
+        currentLongest = 0;
+        currentLongestStart = e.date;
+      } else {
+        currentLongest++;
+        if (currentLongest === 1) currentLongestStart = e.date;
+      }
+      const dd = peak - e.cumPips;
+      if (dd > maxDd) {
+        maxDd = dd;
+        maxDdPct = peak > 0 ? (dd / peak) * 100 : 0;
+      }
+      return { idx: e.idx, dd: -dd, date: e.date };
+    });
+
+    if (currentLongest > longestTrades) {
+      longestTrades = currentLongest;
+      longestTimeStart = currentLongestStart;
+      longestTimeEnd = equity[equity.length - 1].date;
+    }
+
+    const currentDd = peak - equity[equity.length - 1].cumPips;
+    const totalProfit = equity[equity.length - 1].cumPips;
+    const recoveryFactor = maxDd > 0 ? Math.round((totalProfit / maxDd) * 100) / 100 : 0;
+
+    let longestTimeDays = '';
+    if (longestTimeStart && longestTimeEnd) {
+      const diff = Math.round((new Date(longestTimeEnd).getTime() - new Date(longestTimeStart).getTime()) / 86400000);
+      longestTimeDays = `${diff}d`;
+    }
+
+    return {
+      series,
+      maxDdPips: Math.round(maxDd * 100) / 100,
+      maxDdPct: Math.round(maxDdPct * 10) / 10,
+      currentDd: Math.round(currentDd * 100) / 100,
+      longestTrades,
+      longestTime: longestTimeDays,
+      recoveryFactor,
+    };
+  };
+
+  // --- Helper: histogram bins ---
+  const computeHistogramBins = (values: number[], binCount = 8): { bin: string; count: number; midValue: number }[] => {
+    if (values.length === 0) return [];
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    if (min === max) return [{ bin: min.toFixed(1), count: values.length, midValue: min }];
+    const binWidth = (max - min) / binCount;
+    const bins: { bin: string; count: number; midValue: number }[] = [];
+    for (let i = 0; i < binCount; i++) {
+      const lo = min + i * binWidth;
+      const hi = lo + binWidth;
+      const count = values.filter(v => v >= lo && (i === binCount - 1 ? v <= hi : v < hi)).length;
+      bins.push({ bin: `${lo.toFixed(1)}`, count, midValue: lo + binWidth / 2 });
+    }
+    return bins;
+  };
+
+  if (loading) {
+    return (
+      <div className="card mb-4" style={{ textAlign: 'center', padding: 24 }}>
+        <span style={{ color: 'var(--text-secondary)' }}>Loading advanced analytics...</span>
+      </div>
+    );
+  }
+
+  if (trades.length === 0) {
+    return null;
+  }
+
+  // Shared style helpers
+  const sectionHeaderStyle: React.CSSProperties = {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    cursor: 'pointer', padding: '12px 16px',
+    background: 'var(--bg-tertiary)', borderRadius: 6, border: '1px solid var(--border)',
+    marginBottom: 4,
+  };
+
+  const statBoxStyle: React.CSSProperties = {
+    textAlign: 'center', padding: 12, background: 'var(--bg-tertiary)',
+    borderRadius: 6, border: '1px solid var(--border)',
+  };
+
+  const chartColors = { green: '#22c55e', red: '#ef4444', blue: '#3b82f6', orange: '#f59e0b', purple: '#a855f7' };
+
+  // --- Section data ---
+  const maeTradesAll = filtered.filter(t => t.max_adverse_pips != null && t.pips != null);
+  const mfeTradesAll = filtered.filter(t => t.max_favorable_pips != null && t.pips != null);
+  const rTradesAll = filtered.filter(t => t.r_multiple != null);
+  const durationTradesAll = filtered.filter(t => t.duration_minutes != null && t.pips != null);
+
+  // --- R-Distribution computations ---
+  const rValues = rTradesAll.map(t => t.r_multiple!);
+  const rWins = rValues.filter(r => r > 0);
+  const rLosses = rValues.filter(r => r <= 0);
+  const avgWinR = rWins.length > 0 ? rWins.reduce((s, r) => s + r, 0) / rWins.length : 0;
+  const avgLossR = rLosses.length > 0 ? Math.abs(rLosses.reduce((s, r) => s + r, 0) / rLosses.length) : 0;
+  const winRateR = rTradesAll.length > 0 ? rWins.length / rTradesAll.length : 0;
+  const expectancy = rTradesAll.length > 0 ? winRateR * avgWinR - (1 - winRateR) * avgLossR : null;
+
+  // Drawdown
+  const ddData = computeDrawdownSeries(filtered);
+
+  // Duration
+  const durWinners = durationTradesAll.filter(t => (t.pips ?? 0) > 0);
+  const durLosers = durationTradesAll.filter(t => (t.pips ?? 0) <= 0);
+  const avgDurWin = durWinners.length > 0 ? durWinners.reduce((s, t) => s + t.duration_minutes!, 0) / durWinners.length : 0;
+  const avgDurLoss = durLosers.length > 0 ? durLosers.reduce((s, t) => s + t.duration_minutes!, 0) / durLosers.length : 0;
+  const durRatio = avgDurLoss > 0 ? avgDurWin / avgDurLoss : 0;
+  const totalPips = durationTradesAll.reduce((s, t) => s + Math.abs(t.pips ?? 0), 0);
+  const totalHours = durationTradesAll.reduce((s, t) => s + t.duration_minutes!, 0) / 60;
+  const pipsPerHour = totalHours > 0 ? totalPips / totalHours : 0;
+
+  const formatDuration = (mins: number) => {
+    if (mins < 60) return `${Math.round(mins)}m`;
+    if (mins < 1440) return `${(mins / 60).toFixed(1)}h`;
+    return `${(mins / 1440).toFixed(1)}d`;
+  };
+
+  return (
+    <div className="card mb-4">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+        <h3 className="card-title" style={{ margin: 0 }}>Advanced Analytics</h3>
+        {presets.length > 1 && (
+          <select
+            value={presetFilter}
+            onChange={e => setPresetFilter(e.target.value)}
+            style={{
+              background: 'var(--bg-tertiary)', color: 'var(--text-primary)',
+              border: '1px solid var(--border)', borderRadius: 4, padding: '4px 8px',
+              fontSize: '0.8rem',
+            }}
+          >
+            <option value="all">All Presets</option>
+            {presets.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        )}
+      </div>
+      <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
+        {filtered.length} closed trade{filtered.length !== 1 ? 's' : ''} analyzed
+      </p>
+
+      {/* Feature 1: MAE/MFE Analysis */}
+      <div style={sectionHeaderStyle} onClick={() => toggleSection('mae_mfe')}>
+        <strong>MAE / MFE Analysis</strong>
+        <span>{expandedSections.mae_mfe ? '▼' : '▶'}</span>
+      </div>
+      {expandedSections.mae_mfe && (
+        <div style={{ padding: '12px 0' }}>
+          {maeTradesAll.length === 0 ? (
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', padding: '0 16px' }}>
+              MAE/MFE tracking starts automatically for new trades. Historical trades will show N/A.
+            </p>
+          ) : (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
+                {/* MAE vs P&L Scatter */}
+                <div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>MAE vs P&L (pips)</div>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <ScatterChart margin={{ top: 5, right: 20, bottom: 20, left: 10 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <XAxis type="number" dataKey="mae" name="MAE" label={{ value: 'Adverse Excursion (pips)', position: 'bottom', offset: 0, style: { fill: 'var(--text-secondary)', fontSize: 11 } }} tick={{ fill: 'var(--text-secondary)', fontSize: 11 }} />
+                      <YAxis type="number" dataKey="pips" name="P&L" label={{ value: 'P&L (pips)', angle: -90, position: 'insideLeft', style: { fill: 'var(--text-secondary)', fontSize: 11 } }} tick={{ fill: 'var(--text-secondary)', fontSize: 11 }} />
+                      <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.8rem' }} formatter={(value: any, name: any) => [Number(value).toFixed(2), name]} />
+                      <Scatter
+                        data={maeTradesAll.map(t => ({ mae: Math.abs(t.max_adverse_pips!), pips: t.pips!, isWin: t.pips! > 0 }))}
+                      >
+                        {maeTradesAll.map((t, i) => (
+                          <Cell key={i} fill={t.pips! > 0 ? chartColors.green : chartColors.red} opacity={0.7} />
+                        ))}
+                      </Scatter>
+                    </ScatterChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* MFE vs P&L Scatter */}
+                <div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>MFE vs P&L (pips)</div>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <ScatterChart margin={{ top: 5, right: 20, bottom: 20, left: 10 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <XAxis type="number" dataKey="mfe" name="MFE" label={{ value: 'Favorable Excursion (pips)', position: 'bottom', offset: 0, style: { fill: 'var(--text-secondary)', fontSize: 11 } }} tick={{ fill: 'var(--text-secondary)', fontSize: 11 }} />
+                      <YAxis type="number" dataKey="pips" name="P&L" label={{ value: 'P&L (pips)', angle: -90, position: 'insideLeft', style: { fill: 'var(--text-secondary)', fontSize: 11 } }} tick={{ fill: 'var(--text-secondary)', fontSize: 11 }} />
+                      <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.8rem' }} formatter={(value: any, name: any) => [Number(value).toFixed(2), name]} />
+                      <Scatter
+                        data={mfeTradesAll.map(t => ({ mfe: t.max_favorable_pips!, pips: t.pips!, isWin: t.pips! > 0 }))}
+                      >
+                        {mfeTradesAll.map((t, i) => (
+                          <Cell key={i} fill={t.pips! > 0 ? chartColors.green : chartColors.red} opacity={0.7} />
+                        ))}
+                      </Scatter>
+                    </ScatterChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16, marginTop: 16 }}>
+                {/* Capture Ratio */}
+                <div style={statBoxStyle}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Capture Ratio (Winners)</div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--accent)' }}>
+                    {(() => {
+                      const winners = mfeTradesAll.filter(t => t.pips! > 0 && t.max_favorable_pips! > 0);
+                      if (winners.length === 0) return 'N/A';
+                      const ratio = winners.reduce((s, t) => s + (t.pips! / t.max_favorable_pips!), 0) / winners.length;
+                      return `${(ratio * 100).toFixed(0)}%`;
+                    })()}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                    Avg % of MFE captured on winning trades
+                  </div>
+                </div>
+
+                {/* MAE histogram for winners */}
+                <div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>MAE Distribution (Winners)</div>
+                  {(() => {
+                    const winnerMAEs = maeTradesAll.filter(t => t.pips! > 0).map(t => Math.abs(t.max_adverse_pips!));
+                    const bins = computeHistogramBins(winnerMAEs, 8);
+                    if (bins.length === 0) return <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>No data</p>;
+                    return (
+                      <ResponsiveContainer width="100%" height={200}>
+                        <BarChart data={bins} margin={{ top: 5, right: 20, bottom: 20, left: 10 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                          <XAxis dataKey="bin" tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} label={{ value: 'Adverse pips', position: 'bottom', offset: 0, style: { fill: 'var(--text-secondary)', fontSize: 11 } }} />
+                          <YAxis tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} />
+                          <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.8rem' }} />
+                          <Bar dataKey="count" fill={chartColors.blue} radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    );
+                  })()}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Feature 2: Rolling & Windowed Performance */}
+      <div style={sectionHeaderStyle} onClick={() => toggleSection('rolling')}>
+        <strong>Rolling Performance</strong>
+        <span>{expandedSections.rolling ? '▼' : '▶'}</span>
+      </div>
+      {expandedSections.rolling && (
+        <div style={{ padding: '12px 0' }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Window:</span>
+            {['trades', 'time'].map(m => (
+              <button key={m} onClick={() => setRollingMode(m as 'trades' | 'time')}
+                style={{
+                  padding: '4px 10px', fontSize: '0.75rem', borderRadius: 4, cursor: 'pointer',
+                  background: rollingMode === m ? 'var(--accent)' : 'var(--bg-tertiary)',
+                  color: rollingMode === m ? 'white' : 'var(--text-secondary)',
+                  border: '1px solid var(--border)',
+                }}
+              >{m === 'trades' ? 'By Trades' : 'By Time'}</button>
+            ))}
+            {rollingMode === 'trades' ? (
+              [20, 50, 100].map(n => (
+                <button key={n} onClick={() => setRollingWindow(n)}
+                  style={{
+                    padding: '4px 10px', fontSize: '0.75rem', borderRadius: 4, cursor: 'pointer',
+                    background: rollingWindow === n ? 'var(--accent)' : 'var(--bg-tertiary)',
+                    color: rollingWindow === n ? 'white' : 'var(--text-secondary)',
+                    border: '1px solid var(--border)',
+                  }}
+                >Last {n}</button>
+              ))
+            ) : (
+              [1, 7, 30].map(n => (
+                <button key={n} onClick={() => setTimeWindow(n)}
+                  style={{
+                    padding: '4px 10px', fontSize: '0.75rem', borderRadius: 4, cursor: 'pointer',
+                    background: timeWindow === n ? 'var(--accent)' : 'var(--bg-tertiary)',
+                    color: timeWindow === n ? 'white' : 'var(--text-secondary)',
+                    border: '1px solid var(--border)',
+                  }}
+                >{n}d</button>
+              ))
+            )}
+          </div>
+
+          {(() => {
+            const rolling = computeRollingMetrics(filtered, rollingWindow, rollingMode, timeWindow);
+            const minLen = rollingMode === 'trades' ? rollingWindow : 3;
+            if (rolling.length < minLen) {
+              return <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Need at least {minLen} trades for rolling metrics.</p>;
+            }
+
+            // Compute all-time averages for reference lines
+            const pipsArr = filtered.filter(t => t.pips != null);
+            const allWinRate = pipsArr.length > 0 ? (pipsArr.filter(t => t.pips! > 0).length / pipsArr.length) * 100 : 50;
+            const allAvgPips = pipsArr.length > 0 ? pipsArr.reduce((s, t) => s + t.pips!, 0) / pipsArr.length : 0;
+
+            const chartMargin = { top: 5, right: 20, bottom: 5, left: 10 };
+            const tooltipStyle = { background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.8rem' };
+
+            return (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
+                <div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>Rolling Win Rate (%)</div>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <LineChart data={rolling} margin={chartMargin}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <XAxis dataKey="idx" tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} />
+                      <YAxis domain={[0, 100]} tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} />
+                      <Tooltip contentStyle={tooltipStyle} />
+                      <ReferenceLine y={allWinRate} stroke="var(--text-secondary)" strokeDasharray="5 5" />
+                      <Line type="monotone" dataKey="winRate" stroke={chartColors.blue} dot={false} strokeWidth={2} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>Rolling Avg Pips</div>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <LineChart data={rolling} margin={chartMargin}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <XAxis dataKey="idx" tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} />
+                      <YAxis tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} />
+                      <Tooltip contentStyle={tooltipStyle} />
+                      <ReferenceLine y={allAvgPips} stroke="var(--text-secondary)" strokeDasharray="5 5" />
+                      <ReferenceLine y={0} stroke="var(--border)" />
+                      <Line type="monotone" dataKey="avgPips" stroke={chartColors.green} dot={false} strokeWidth={2} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>Rolling Expectancy (R)</div>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <LineChart data={rolling.filter(r => r.expectancy != null)} margin={chartMargin}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <XAxis dataKey="idx" tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} />
+                      <YAxis tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} />
+                      <Tooltip contentStyle={tooltipStyle} />
+                      <ReferenceLine y={0} stroke="var(--border)" />
+                      <Line type="monotone" dataKey="expectancy" stroke={chartColors.orange} dot={false} strokeWidth={2} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>Rolling Avg R</div>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <LineChart data={rolling.filter(r => r.avgR != null)} margin={chartMargin}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <XAxis dataKey="idx" tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} />
+                      <YAxis tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} />
+                      <Tooltip contentStyle={tooltipStyle} />
+                      <ReferenceLine y={0} stroke="var(--border)" />
+                      <Line type="monotone" dataKey="avgR" stroke={chartColors.purple} dot={false} strokeWidth={2} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* Feature 3: R-Multiple Distribution & Expectancy */}
+      <div style={sectionHeaderStyle} onClick={() => toggleSection('r_dist')}>
+        <strong>R-Multiple Distribution</strong>
+        <span>{expandedSections.r_dist ? '▼' : '▶'}</span>
+      </div>
+      {expandedSections.r_dist && (
+        <div style={{ padding: '12px 0' }}>
+          {rTradesAll.length === 0 ? (
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>No trades with R-multiple data. Ensure trades have stop loss for R calculation.</p>
+          ) : (
+            <>
+              {/* Expectancy hero */}
+              <div style={{ display: 'flex', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
+                <div style={{ ...statBoxStyle, flex: '1 1 200px' }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>System Expectancy</div>
+                  <div style={{
+                    fontSize: '2rem', fontWeight: 700,
+                    color: expectancy != null && expectancy > 0 ? 'var(--success)' : expectancy != null && expectancy < 0 ? 'var(--danger)' : 'var(--text-secondary)'
+                  }}>
+                    {expectancy != null ? `${expectancy >= 0 ? '+' : ''}${expectancy.toFixed(2)}R` : 'N/A'}
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                    {(winRateR * 100).toFixed(0)}% x {avgWinR.toFixed(2)}R - {((1 - winRateR) * 100).toFixed(0)}% x {avgLossR.toFixed(2)}R
+                  </div>
+                </div>
+                <div style={{ ...statBoxStyle, flex: '0 1 120px' }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Skew</div>
+                  <div style={{
+                    fontSize: '1rem', fontWeight: 600,
+                    color: expectancy != null && expectancy > 0 ? 'var(--success)' : 'var(--warning)'
+                  }}>
+                    {expectancy != null && expectancy > 0 && avgWinR > avgLossR ? 'Robust' : 'Fragile'}
+                  </div>
+                </div>
+              </div>
+
+              {/* R-multiple histogram */}
+              <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>R-Multiple Distribution</div>
+              {(() => {
+                const bins = computeHistogramBins(rValues, 10);
+                return (
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={bins} margin={{ top: 5, right: 20, bottom: 20, left: 10 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <XAxis dataKey="bin" tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} label={{ value: 'R-Multiple', position: 'bottom', offset: 0, style: { fill: 'var(--text-secondary)', fontSize: 11 } }} />
+                      <YAxis tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} />
+                      <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.8rem' }} />
+                      <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                        {bins.map((b, i) => (
+                          <Cell key={i} fill={b.midValue >= 0 ? chartColors.green : chartColors.red} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                );
+              })()}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Feature 4: Drawdown Analysis */}
+      <div style={sectionHeaderStyle} onClick={() => toggleSection('drawdown')}>
+        <strong>Drawdown Analysis</strong>
+        <span>{expandedSections.drawdown ? '▼' : '▶'}</span>
+      </div>
+      {expandedSections.drawdown && (
+        <div style={{ padding: '12px 0' }}>
+          {filtered.filter(t => t.pips != null).length < 2 ? (
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Need at least 2 trades for drawdown analysis.</p>
+          ) : (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 16 }}>
+                <div style={statBoxStyle}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Max DD (pips)</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--danger)' }}>{ddData.maxDdPips}</div>
+                </div>
+                <div style={statBoxStyle}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Max DD (%)</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--danger)' }}>{ddData.maxDdPct}%</div>
+                </div>
+                <div style={statBoxStyle}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Current DD</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: ddData.currentDd > 0 ? 'var(--danger)' : 'var(--success)' }}>{ddData.currentDd} pips</div>
+                </div>
+                <div style={statBoxStyle}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Longest DD</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--warning)' }}>{ddData.longestTrades} trades</div>
+                  {ddData.longestTime && <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>{ddData.longestTime}</div>}
+                </div>
+                <div style={statBoxStyle}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Recovery Factor</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: ddData.recoveryFactor > 1 ? 'var(--success)' : 'var(--warning)' }}>{ddData.recoveryFactor}</div>
+                </div>
+              </div>
+
+              {/* Underwater equity curve */}
+              <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>Underwater Equity Curve</div>
+              <ResponsiveContainer width="100%" height={200}>
+                <AreaChart data={ddData.series} margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="idx" tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} />
+                  <YAxis tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} />
+                  <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.8rem' }} formatter={(value: any) => [`${Number(value).toFixed(2)} pips`, 'Drawdown']} />
+                  <ReferenceLine y={0} stroke="var(--border)" />
+                  <defs>
+                    <linearGradient id="ddGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={chartColors.red} stopOpacity={0.1} />
+                      <stop offset="100%" stopColor={chartColors.red} stopOpacity={0.6} />
+                    </linearGradient>
+                  </defs>
+                  <Area type="monotone" dataKey="dd" stroke={chartColors.red} fill="url(#ddGradient)" strokeWidth={1.5} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Feature 5: Trade Duration Analysis */}
+      <div style={sectionHeaderStyle} onClick={() => toggleSection('duration')}>
+        <strong>Trade Duration Analysis</strong>
+        <span>{expandedSections.duration ? '▼' : '▶'}</span>
+      </div>
+      {expandedSections.duration && (
+        <div style={{ padding: '12px 0' }}>
+          {durationTradesAll.length === 0 ? (
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>No trades with duration data.</p>
+          ) : (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 16 }}>
+                <div style={statBoxStyle}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Avg Duration (W)</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--success)' }}>{formatDuration(avgDurWin)}</div>
+                </div>
+                <div style={statBoxStyle}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Avg Duration (L)</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--danger)' }}>{formatDuration(avgDurLoss)}</div>
+                </div>
+                <div style={statBoxStyle}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Duration Ratio (W/L)</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: durRatio < 1 ? 'var(--success)' : 'var(--warning)' }}>{durRatio.toFixed(2)}</div>
+                </div>
+                <div style={statBoxStyle}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Avg Pips/Hour</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--accent)' }}>{pipsPerHour.toFixed(2)}</div>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
+                {/* Duration vs P&L scatter */}
+                <div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>Duration vs P&L</div>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <ScatterChart margin={{ top: 5, right: 20, bottom: 20, left: 10 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <XAxis type="number" dataKey="dur" name="Duration" label={{ value: 'Duration (min)', position: 'bottom', offset: 0, style: { fill: 'var(--text-secondary)', fontSize: 11 } }} tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} />
+                      <YAxis type="number" dataKey="pips" name="P&L" label={{ value: 'P&L (pips)', angle: -90, position: 'insideLeft', style: { fill: 'var(--text-secondary)', fontSize: 11 } }} tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} />
+                      <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.8rem' }} formatter={(value: any, name: any) => [name === 'Duration' ? formatDuration(Number(value)) : Number(value).toFixed(2), name]} />
+                      <Scatter data={durationTradesAll.map(t => ({ dur: t.duration_minutes!, pips: t.pips! }))}>
+                        {durationTradesAll.map((t, i) => (
+                          <Cell key={i} fill={t.pips! > 0 ? chartColors.green : chartColors.red} opacity={0.7} />
+                        ))}
+                      </Scatter>
+                    </ScatterChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Duration histogram */}
+                <div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>Duration Distribution</div>
+                  {(() => {
+                    const bins = computeHistogramBins(durationTradesAll.map(t => t.duration_minutes!), 8);
+                    return (
+                      <ResponsiveContainer width="100%" height={250}>
+                        <BarChart data={bins} margin={{ top: 5, right: 20, bottom: 20, left: 10 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                          <XAxis dataKey="bin" tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} label={{ value: 'Duration (min)', position: 'bottom', offset: 0, style: { fill: 'var(--text-secondary)', fontSize: 11 } }} />
+                          <YAxis tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} />
+                          <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.8rem' }} />
+                          <Bar dataKey="count" fill={chartColors.blue} radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    );
+                  })()}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
 // Logs & Stats Page
 // ---------------------------------------------------------------------------
 
@@ -5367,6 +6031,9 @@ function LogsPage({ profile }: { profile: Profile }) {
       <SessionPerformance profileName={profile.name} profilePath={profile.path} />
       <LongShortPerformance profileName={profile.name} profilePath={profile.path} />
       <SpreadPerformance profileName={profile.name} profilePath={profile.path} />
+
+      {/* Advanced Analytics */}
+      <AdvancedAnalytics profileName={profile.name} profilePath={profile.path} />
 
       {/* MT5 Full Report */}
       {mt5Report && (

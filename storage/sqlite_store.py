@@ -160,6 +160,10 @@ class SqliteStore:
             # v1.6: ATR at snapshot time and slippage at trade entry
             self._ensure_column(conn, "snapshots", "atr_m1_14", "REAL")
             self._ensure_column(conn, "trades", "entry_slippage_pips", "REAL")
+            # v1.7: MAE/MFE tracking for advanced analytics
+            self._ensure_column(conn, "trades", "max_adverse_pips", "REAL")
+            self._ensure_column(conn, "trades", "max_favorable_pips", "REAL")
+            self._ensure_column(conn, "trades", "mae_mfe_estimated", "INTEGER")
             conn.commit()
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, col: str, col_type: str) -> None:

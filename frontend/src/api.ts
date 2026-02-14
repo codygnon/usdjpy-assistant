@@ -488,3 +488,28 @@ export async function getOpenTrades(profileName: string, profilePath?: string): 
   const params = profilePath ? `?profile_path=${encodeURIComponent(profilePath)}` : '';
   return fetchJson<OpenTrade[]>(`${API_BASE}/data/${profileName}/open-trades${params}`);
 }
+
+// Advanced Analytics
+export interface AdvancedTrade {
+  trade_id: string;
+  side: string;
+  entry_time_utc: string;
+  exit_time_utc: string;
+  entry_price: number;
+  exit_price: number;
+  pips: number | null;
+  r_multiple: number | null;
+  risk_pips: number | null;
+  profit: number | null;
+  duration_minutes: number | null;
+  max_adverse_pips: number | null;
+  max_favorable_pips: number | null;
+  preset_name: string | null;
+  exit_reason: string | null;
+}
+
+export async function getAdvancedAnalytics(
+  profileName: string, profilePath: string, daysBack = 365
+): Promise<{ trades: AdvancedTrade[]; display_currency: string }> {
+  return fetchJson(`${API_BASE}/data/${profileName}/advanced-analytics?profile_path=${encodeURIComponent(profilePath)}&days_back=${daysBack}`);
+}

@@ -199,6 +199,19 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                         )
                         store.update_trade(trade_id, {"tp1_partial_done": 1})
                         print(f"[{profile.profile_name}] TP1 partial close position {position_id} ({tp1_pct}%)")
+        # 3) Update MAE/MFE watermarks
+        current_pips = ((mid - entry) / pip) if side == "buy" else ((entry - mid) / pip)
+        prev_mae = trade_row.get("max_adverse_pips")
+        prev_mfe = trade_row.get("max_favorable_pips")
+        mae = min(current_pips, prev_mae if prev_mae is not None else current_pips)
+        mfe = max(current_pips, prev_mfe if prev_mfe is not None else current_pips)
+        mae_mfe_updates: dict = {}
+        if mae != prev_mae:
+            mae_mfe_updates["max_adverse_pips"] = round(mae, 2)
+        if mfe != prev_mfe:
+            mae_mfe_updates["max_favorable_pips"] = round(mfe, 2)
+        if mae_mfe_updates:
+            store.update_trade(trade_id, mae_mfe_updates)
 
 
 def main() -> None:
