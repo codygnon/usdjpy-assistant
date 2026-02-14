@@ -636,6 +636,117 @@ def get_trades(
     return {"trades": records, "display_currency": curr}
 
 
+@app.get("/api/data/{profile_name}/trade-history")
+def get_trade_history(
+    profile_name: str,
+    profile_path: Optional[str] = None,
+    days_back: int = 90,
+) -> dict[str, Any]:
+    """Get closed trade history from broker (OANDA/MT5) for equity curve chart.
+
+    Returns daily aggregated data: date, daily_profit, cumulative_profit, trade_count.
+    Falls back to local DB trades if broker is unavailable.
+    """
+    from adapters.broker import get_adapter
+
+    profile = None
+    if profile_path and _resolve_profile_path(profile_path).exists():
+        try:
+            profile = load_profile_v1(_resolve_profile_path(profile_path))
+        except Exception:
+            pass
+
+    curr, rate = ("USD", 1.0)
+    if profile:
+        curr, rate = _get_display_currency(profile)
+
+    # Try broker history first
+    if profile:
+        try:
+            adapter = get_adapter(profile)
+            adapter.initialize()
+            try:
+                closed = adapter.get_closed_positions_from_history(
+                    days_back=days_back,
+                    symbol=profile.symbol,
+                    pip_size=profile.pip_size,
+                )
+            finally:
+                try:
+                    adapter.shutdown()
+                except Exception:
+                    pass
+            if closed:
+                # Group by date
+                by_date: dict[str, dict[str, Any]] = {}
+                for pos in closed:
+                    exit_time = getattr(pos, "exit_time_utc", "") or ""
+                    date_str = exit_time[:10] if len(exit_time) >= 10 else ""
+                    if not date_str:
+                        continue
+                    profit = getattr(pos, "profit", 0.0) or 0.0
+                    profit_display = _convert_amount(profit, rate) or 0.0
+                    if date_str in by_date:
+                        by_date[date_str]["daily_profit"] += profit_display
+                        by_date[date_str]["trade_count"] += 1
+                    else:
+                        by_date[date_str] = {
+                            "date": date_str,
+                            "daily_profit": profit_display,
+                            "trade_count": 1,
+                        }
+                # Sort and compute cumulative
+                sorted_days = sorted(by_date.values(), key=lambda d: d["date"])
+                cum = 0.0
+                for day in sorted_days:
+                    day["daily_profit"] = round(day["daily_profit"], 2)
+                    cum += day["daily_profit"]
+                    day["cum_profit"] = round(cum, 2)
+                return {"days": sorted_days, "display_currency": curr, "source": "broker"}
+        except Exception as e:
+            print(f"[api] trade-history broker error: {e}")
+
+    # Fallback: local DB
+    store = _store_for(profile_name)
+    df = store.read_trades_df(profile_name)
+    if df.empty or "exit_price" not in df.columns:
+        return {"days": [], "display_currency": curr, "source": "database"}
+
+    closed_df = df[pd.to_numeric(df["exit_price"], errors="coerce").notna()].copy()
+    if closed_df.empty or "exit_timestamp_utc" not in closed_df.columns:
+        return {"days": [], "display_currency": curr, "source": "database"}
+
+    by_date_db: dict[str, dict[str, Any]] = {}
+    for _, row in closed_df.iterrows():
+        exit_ts = str(row.get("exit_timestamp_utc") or "")
+        date_str = exit_ts[:10] if len(exit_ts) >= 10 else ""
+        if not date_str:
+            continue
+        profit_raw = row.get("profit")
+        profit_val = 0.0
+        if profit_raw is not None and not (isinstance(profit_raw, float) and pd.isna(profit_raw)):
+            try:
+                profit_val = _convert_amount(float(profit_raw), rate) or 0.0
+            except (TypeError, ValueError):
+                pass
+        if date_str in by_date_db:
+            by_date_db[date_str]["daily_profit"] += profit_val
+            by_date_db[date_str]["trade_count"] += 1
+        else:
+            by_date_db[date_str] = {
+                "date": date_str,
+                "daily_profit": profit_val,
+                "trade_count": 1,
+            }
+    sorted_days_db = sorted(by_date_db.values(), key=lambda d: d["date"])
+    cum_db = 0.0
+    for day in sorted_days_db:
+        day["daily_profit"] = round(day["daily_profit"], 2)
+        cum_db += day["daily_profit"]
+        day["cum_profit"] = round(cum_db, 2)
+    return {"days": sorted_days_db, "display_currency": curr, "source": "database"}
+
+
 @app.get("/api/data/{profile_name}/executions")
 def get_executions(profile_name: str, limit: int = 50) -> list[dict[str, Any]]:
     """Get recent executions."""

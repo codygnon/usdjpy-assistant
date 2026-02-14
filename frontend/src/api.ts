@@ -240,6 +240,29 @@ export async function getTrades(
   return { trades: Array.isArray(data) ? data : [], display_currency: undefined };
 }
 
+export interface TradeHistoryDay {
+  date: string;
+  daily_profit: number;
+  cum_profit: number;
+  trade_count: number;
+}
+
+export interface TradeHistoryResponse {
+  days: TradeHistoryDay[];
+  display_currency?: string;
+  source?: string;
+}
+
+export async function getTradeHistory(
+  profileName: string,
+  profilePath?: string,
+  daysBack = 90
+): Promise<TradeHistoryResponse> {
+  const params = new URLSearchParams({ days_back: String(daysBack) });
+  if (profilePath) params.set('profile_path', profilePath);
+  return fetchJson<TradeHistoryResponse>(`${API_BASE}/data/${profileName}/trade-history?${params}`);
+}
+
 export async function getExecutions(profileName: string, limit = 50): Promise<Record<string, unknown>[]> {
   return fetchJson<Record<string, unknown>[]>(`${API_BASE}/data/${profileName}/executions?limit=${limit}`);
 }

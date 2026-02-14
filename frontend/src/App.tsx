@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { createChart, createSeriesMarkers, IChartApi, ISeriesApi, CandlestickData, Time, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import { ComposedChart, Area, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import * as api from './api';
@@ -4657,57 +4657,44 @@ interface EquityDataPoint {
   tradeCount: number;
 }
 
-function EquityCurveChart({ trades, displayCurrency }: { trades: Record<string, unknown>[]; displayCurrency?: string }) {
-  const data = useMemo<EquityDataPoint[]>(() => {
-    // Filter to closed trades with exit timestamps and profit
-    const closed = trades.filter(t =>
-      t.exit_price != null &&
-      t.exit_timestamp_utc != null &&
-      typeof t.profit_display === 'number'
-    );
-    if (closed.length < 2) return [];
+function EquityCurveChart({ profileName, profilePath }: { profileName: string; profilePath: string }) {
+  const [data, setData] = useState<EquityDataPoint[]>([]);
+  const [displayCurrency, setDisplayCurrency] = useState<string>('USD');
+  const [loading, setLoading] = useState(true);
 
-    // Group by date
-    const byDate = new Map<string, { profit: number; count: number }>();
-    for (const t of closed) {
-      const ts = String(t.exit_timestamp_utc);
-      const date = ts.slice(0, 10); // YYYY-MM-DD
-      if (!date || date.length !== 10) continue;
-      const existing = byDate.get(date);
-      if (existing) {
-        existing.profit += t.profit_display as number;
-        existing.count += 1;
-      } else {
-        byDate.set(date, { profit: t.profit_display as number, count: 1 });
-      }
-    }
+  useEffect(() => {
+    setLoading(true);
+    api.getTradeHistory(profileName, profilePath, 90)
+      .then((resp) => {
+        setDisplayCurrency(resp.display_currency || 'USD');
+        setData(resp.days.map((d) => ({
+          date: `${d.date.slice(5, 7)}/${d.date.slice(8, 10)}`,
+          dailyProfit: d.daily_profit,
+          cumProfit: d.cum_profit,
+          tradeCount: d.trade_count,
+        })));
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [profileName, profilePath]);
 
-    // Sort by date and compute cumulative
-    const sorted = Array.from(byDate.entries()).sort(([a], [b]) => a.localeCompare(b));
-    let cumProfit = 0;
-    return sorted.map(([date, { profit, count }]) => {
-      cumProfit += profit;
-      const mm = date.slice(5, 7);
-      const dd = date.slice(8, 10);
-      return {
-        date: `${mm}/${dd}`,
-        dailyProfit: Math.round(profit * 100) / 100,
-        cumProfit: Math.round(cumProfit * 100) / 100,
-        tradeCount: count,
-      };
-    });
-  }, [trades]);
+  if (loading) return (
+    <div className="card mb-4">
+      <h3 className="card-title" style={{ margin: 0, marginBottom: 8 }}>Equity Curve</h3>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>Loading chart data from broker...</p>
+    </div>
+  );
 
   if (data.length < 2) return (
     <div className="card mb-4">
       <h3 className="card-title" style={{ margin: 0, marginBottom: 8 }}>Equity Curve</h3>
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>
-        Chart will appear after 2+ closed trades with profit data.
+        Chart will appear after 2+ trading days with closed trades.
       </p>
     </div>
   );
 
-  const currency = displayCurrency || 'USD';
+  const currency = displayCurrency;
 
   const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number; dataKey: string }>; label?: string }) => {
     if (!active || !payload || !payload.length) return null;
@@ -5075,7 +5062,7 @@ function LogsPage({ profile }: { profile: Profile }) {
       </div>
 
       {/* Equity Curve Chart */}
-      <EquityCurveChart trades={trades} displayCurrency={tradesDisplayCurrency} />
+      <EquityCurveChart profileName={profile.name} profilePath={profile.path} />
 
       {/* MT5 Full Report */}
       {mt5Report && (
