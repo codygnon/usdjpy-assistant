@@ -1531,11 +1531,11 @@ def get_advanced_analytics(
 
     df = store.read_trades_df(profile_name)
     if df.empty or "exit_price" not in df.columns:
-        return {"trades": [], "display_currency": curr, "source": "database"}
+        return {"trades": [], "display_currency": curr, "source": "database", "starting_balance": None, "total_profit_currency": None}
 
     closed = df[pd.to_numeric(df["exit_price"], errors="coerce").notna()].copy()
     if closed.empty:
-        return {"trades": [], "display_currency": curr, "source": "database"}
+        return {"trades": [], "display_currency": curr, "source": "database", "starting_balance": None, "total_profit_currency": None}
 
     # Filter by days_back
     if "exit_timestamp_utc" in closed.columns:
@@ -1544,21 +1544,44 @@ def get_advanced_analytics(
         closed = closed[closed["_exit_dt"] >= cutoff]
 
     pip_size = float(profile.pip_size) if profile else 0.01
+    starting_balance = None
+    if profile and getattr(profile, "deposit_amount", None) is not None and float(profile.deposit_amount) > 0:
+        starting_balance = round(float(profile.deposit_amount), 2)
+
     trades_list = []
     for _, row in closed.iterrows():
         side = str(row.get("side") or "").lower()
         entry_price = float(row["entry_price"]) if pd.notna(row.get("entry_price")) else 0
         exit_price = float(row["exit_price"]) if pd.notna(row.get("exit_price")) else 0
+        stop_price = float(row["stop_price"]) if pd.notna(row.get("stop_price")) else None
 
-        pips_val = float(row["pips"]) if pd.notna(row.get("pips")) else None
-        if pips_val is None and entry_price and exit_price and pip_size:
+        # Recompute pips from entry/exit (canonical formula)
+        pips_val = None
+        if entry_price and exit_price and pip_size:
             if side == "buy":
                 pips_val = round((exit_price - entry_price) / pip_size, 2)
             elif side == "sell":
                 pips_val = round((entry_price - exit_price) / pip_size, 2)
 
-        r_multiple = float(row["r_multiple"]) if pd.notna(row.get("r_multiple")) else None
-        risk_pips = float(row["risk_pips"]) if pd.notna(row.get("risk_pips")) else None
+        # Recompute risk_pips and r_multiple when stop_price present (repairs corrupted DB values)
+        risk_pips = None
+        r_multiple = None
+        if stop_price is not None and entry_price and pip_size > 0:
+            risk_pips = abs(entry_price - stop_price) / pip_size
+            if risk_pips > 0 and pips_val is not None:
+                r_multiple = round(pips_val / risk_pips, 2)
+                risk_pips = round(risk_pips, 2)
+            elif risk_pips > 0:
+                risk_pips = round(risk_pips, 2)
+
+        # Fallback to stored values only when we could not recompute
+        if pips_val is None:
+            pips_val = float(row["pips"]) if pd.notna(row.get("pips")) else None
+        if risk_pips is None:
+            risk_pips = float(row["risk_pips"]) if pd.notna(row.get("risk_pips")) else None
+        if r_multiple is None:
+            r_multiple = float(row["r_multiple"]) if pd.notna(row.get("r_multiple")) else None
+
         profit_raw = float(row["profit"]) if pd.notna(row.get("profit")) else None
         duration = float(row["duration_minutes"]) if pd.notna(row.get("duration_minutes")) else None
 
@@ -1593,7 +1616,18 @@ def get_advanced_analytics(
             "exit_reason": str(row.get("exit_reason") or ""),
         })
 
-    return {"trades": trades_list, "display_currency": curr, "source": "database"}
+    total_profit_currency = None
+    profits = [t.get("profit") for t in trades_list if t.get("profit") is not None]
+    if profits:
+        total_profit_currency = round(sum(profits), 2)
+
+    return {
+        "trades": trades_list,
+        "display_currency": curr,
+        "source": "database",
+        "starting_balance": starting_balance,
+        "total_profit_currency": total_profit_currency,
+    }
 
 
 # ---------------------------------------------------------------------------

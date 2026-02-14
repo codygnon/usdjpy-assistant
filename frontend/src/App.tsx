@@ -5121,6 +5121,8 @@ function SpreadPerformance({ profileName, profilePath }: { profileName: string; 
 function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; profilePath: string }) {
   const [trades, setTrades] = useState<api.AdvancedTrade[]>([]);
   const [, setCurrency] = useState('USD');
+  const [startingBalance, setStartingBalance] = useState<number | null>(null);
+  const [totalProfitCurrency, setTotalProfitCurrency] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [presetFilter, setPresetFilter] = useState('all');
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
@@ -5140,6 +5142,8 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
       .then((data) => {
         setTrades(data.trades);
         setCurrency(data.display_currency || 'USD');
+        setStartingBalance(data.starting_balance ?? null);
+        setTotalProfitCurrency(data.total_profit_currency ?? null);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -5201,9 +5205,29 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
     }).filter(Boolean) as { idx: number; winRate: number; avgPips: number; avgR: number | null; expectancy: number | null; date: string }[];
   };
 
-  const computeDrawdownSeries = (arr: api.AdvancedTrade[]) => {
+  const computeDrawdownSeries = (
+    arr: api.AdvancedTrade[],
+    opts: { startingBalance?: number | null; totalProfitCurrency?: number | null } = {}
+  ) => {
+    const { startingBalance: sb = null, totalProfitCurrency: totalProfitCur = null } = opts;
+    const hasProfitData = arr.some(t => t.profit != null);
+    const useCurrency = sb != null && sb > 0 && hasProfitData;
+
     const equity = computeEquitySeries(arr);
-    if (equity.length === 0) return { series: [], maxDdPips: 0, maxDdPct: 0, currentDd: 0, longestTrades: 0, longestTime: '', recoveryFactor: 0 };
+    if (equity.length === 0) {
+      return {
+        series: [],
+        maxDdPips: 0,
+        maxDdPct: null as number | null,
+        maxDdPctNote: 'Requires starting balance (set in Profile or broker connection)',
+        currentDd: 0,
+        longestTrades: 0,
+        longestTime: '',
+        recoveryFactor: null as number | null,
+        recoveryFactorNote: null as string | null,
+        maxDdUsd: null as number | null,
+      };
+    }
 
     let peak = 0;
     let maxDd = 0;
@@ -5241,12 +5265,45 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
     }
 
     const currentDd = peak - equity[equity.length - 1].cumPips;
-    const totalProfit = equity[equity.length - 1].cumPips;
-    const recoveryFactor = maxDd > 0 ? Math.round((totalProfit / maxDd) * 100) / 100 : 0;
-    // DD% = max drawdown as percentage of total gross profit earned
-    // (meaningful ratio: how much of your gains did you give back at worst)
-    const grossProfit = equity.reduce((s, e) => s + (e.pips > 0 ? e.pips : 0), 0);
-    const maxDdPct = grossProfit > 0 ? Math.min((maxDd / grossProfit) * 100, 100) : 0;
+    const totalProfitPips = equity[equity.length - 1].cumPips;
+
+    let maxDdPct: number | null = null;
+    let maxDdPctNote: string | null = null;
+    let recoveryFactor: number | null = null;
+    let recoveryFactorNote: string | null = null;
+    let maxDdUsd: number | null = null;
+
+    if (useCurrency && totalProfitCur != null) {
+      const sortedByExit = arr
+        .filter(t => t.profit != null)
+        .sort((a, b) => a.exit_time_utc.localeCompare(b.exit_time_utc));
+      let cum = 0;
+      let peakUsd = sb;
+      let maxDdUsdVal = 0;
+      for (const t of sortedByExit) {
+        cum += t.profit!;
+        const equityUsd = sb + cum;
+        if (equityUsd > peakUsd) peakUsd = equityUsd;
+        const ddUsd = peakUsd - equityUsd;
+        if (ddUsd > maxDdUsdVal) maxDdUsdVal = ddUsd;
+      }
+      maxDdUsd = Math.round(maxDdUsdVal * 100) / 100;
+      maxDdPct = peakUsd > 0 ? Math.round((maxDdUsdVal / peakUsd) * 1000) / 10 : null;
+      recoveryFactor =
+        maxDdUsdVal > 0 && totalProfitCur > 0
+          ? Math.round((totalProfitCur / maxDdUsdVal) * 100) / 100
+          : null;
+      if (recoveryFactor == null && totalProfitCur != null && maxDdUsdVal > 0 && totalProfitCur <= 0) {
+        recoveryFactorNote = 'Requires profit data (sync from broker)';
+      }
+    } else {
+      maxDdPctNote = 'Requires starting balance (set in Profile or broker connection)';
+      if (totalProfitPips < 0 || maxDd <= 0) {
+        recoveryFactorNote = 'N/A (net pips negative or no drawdown; use profit-based view when broker connected)';
+      } else {
+        recoveryFactor = maxDd > 0 ? Math.round((totalProfitPips / maxDd) * 100) / 100 : null;
+      }
+    }
 
     let longestTimeDays = '';
     if (longestTimeStart && longestTimeEnd) {
@@ -5257,11 +5314,14 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
     return {
       series,
       maxDdPips: Math.round(maxDd * 100) / 100,
-      maxDdPct: Math.round(maxDdPct * 10) / 10,
+      maxDdPct,
+      maxDdPctNote,
       currentDd: Math.round(currentDd * 100) / 100,
       longestTrades,
       longestTime: longestTimeDays,
       recoveryFactor,
+      recoveryFactorNote,
+      maxDdUsd,
     };
   };
 
@@ -5325,7 +5385,10 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
   const expectancy = rTradesAll.length > 0 ? winRateR * avgWinR - (1 - winRateR) * avgLossR : null;
 
   // Drawdown
-  const ddData = computeDrawdownSeries(filtered);
+  const ddData = computeDrawdownSeries(filtered, {
+    startingBalance: startingBalance ?? undefined,
+    totalProfitCurrency: totalProfitCurrency ?? undefined,
+  });
 
   // Duration
   const durWinners = durationTradesAll.filter(t => (t.pips ?? 0) > 0);
@@ -5608,6 +5671,9 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
                   <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: 4 }}>
                     {(winRateR * 100).toFixed(0)}% x {avgWinR.toFixed(2)}R - {((1 - winRateR) * 100).toFixed(0)}% x {avgLossR.toFixed(2)}R
                   </div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 6 }}>
+                    Based on trades with stop loss ({rTradesAll.length} of {filtered.length} total).
+                  </div>
                 </div>
                 <div style={{ ...statBoxStyle, flex: '0 1 120px' }}>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Skew</div>
@@ -5661,9 +5727,19 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
                   <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Max DD (pips)</div>
                   <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--danger)' }}>{ddData.maxDdPips}</div>
                 </div>
+                {ddData.maxDdUsd != null && (
+                  <div style={statBoxStyle}>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Max DD (USD)</div>
+                    <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--danger)' }}>{ddData.maxDdUsd}</div>
+                  </div>
+                )}
                 <div style={statBoxStyle}>
                   <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Max DD (%)</div>
-                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--danger)' }}>{ddData.maxDdPct}%</div>
+                  {ddData.maxDdPct != null ? (
+                    <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--danger)' }}>{ddData.maxDdPct}%</div>
+                  ) : (
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{ddData.maxDdPctNote ?? '—'}</div>
+                  )}
                 </div>
                 <div style={statBoxStyle}>
                   <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Current DD</div>
@@ -5676,7 +5752,11 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
                 </div>
                 <div style={statBoxStyle}>
                   <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Recovery Factor</div>
-                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: ddData.recoveryFactor > 1 ? 'var(--success)' : 'var(--warning)' }}>{ddData.recoveryFactor}</div>
+                  {ddData.recoveryFactor != null ? (
+                    <div style={{ fontSize: '1.2rem', fontWeight: 700, color: ddData.recoveryFactor > 1 ? 'var(--success)' : 'var(--warning)' }}>{ddData.recoveryFactor}</div>
+                  ) : (
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{ddData.recoveryFactorNote ?? 'N/A'}</div>
+                  )}
                 </div>
               </div>
 

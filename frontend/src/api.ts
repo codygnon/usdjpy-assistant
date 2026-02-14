@@ -508,8 +508,15 @@ export interface AdvancedTrade {
   exit_reason: string | null;
 }
 
+export interface AdvancedAnalyticsResponse {
+  trades: AdvancedTrade[];
+  display_currency: string;
+  starting_balance?: number | null;
+  total_profit_currency?: number | null;
+}
+
 export async function getAdvancedAnalytics(
   profileName: string, profilePath: string, daysBack = 365
-): Promise<{ trades: AdvancedTrade[]; display_currency: string }> {
+): Promise<AdvancedAnalyticsResponse> {
   return fetchJson(`${API_BASE}/data/${profileName}/advanced-analytics?profile_path=${encodeURIComponent(profilePath)}&days_back=${daysBack}`);
 }
