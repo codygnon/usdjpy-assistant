@@ -642,10 +642,10 @@ def get_trade_history(
     profile_path: Optional[str] = None,
     days_back: int = 90,
 ) -> dict[str, Any]:
-    """Get closed trade history from broker (OANDA/MT5) for equity curve chart.
+    """Get closed trade history for equity curve chart.
 
     Returns daily aggregated data: date, daily_profit, cumulative_profit, trade_count.
-    Falls back to local DB trades if broker is unavailable.
+    Prefers local DB (complete data) over broker (may be paginated/incomplete).
     """
     from adapters.broker import get_adapter
 
@@ -660,7 +660,45 @@ def get_trade_history(
     if profile:
         curr, rate = _get_display_currency(profile)
 
-    # Try broker history first
+    # Primary: local DB (has complete trade history)
+    store = _store_for(profile_name)
+    df = store.read_trades_df(profile_name)
+    has_db_closed = False
+    if not df.empty and "exit_price" in df.columns:
+        closed_df = df[pd.to_numeric(df["exit_price"], errors="coerce").notna()].copy()
+        if not closed_df.empty and "exit_timestamp_utc" in closed_df.columns:
+            has_db_closed = True
+            by_date_db: dict[str, dict[str, Any]] = {}
+            for _, row in closed_df.iterrows():
+                exit_ts = str(row.get("exit_timestamp_utc") or "")
+                date_str = exit_ts[:10] if len(exit_ts) >= 10 else ""
+                if not date_str:
+                    continue
+                profit_raw = row.get("profit")
+                profit_val = 0.0
+                if profit_raw is not None and not (isinstance(profit_raw, float) and pd.isna(profit_raw)):
+                    try:
+                        profit_val = _convert_amount(float(profit_raw), rate) or 0.0
+                    except (TypeError, ValueError):
+                        pass
+                if date_str in by_date_db:
+                    by_date_db[date_str]["daily_profit"] += profit_val
+                    by_date_db[date_str]["trade_count"] += 1
+                else:
+                    by_date_db[date_str] = {
+                        "date": date_str,
+                        "daily_profit": profit_val,
+                        "trade_count": 1,
+                    }
+            sorted_days_db = sorted(by_date_db.values(), key=lambda d: d["date"])
+            cum_db = 0.0
+            for day in sorted_days_db:
+                day["daily_profit"] = round(day["daily_profit"], 2)
+                cum_db += day["daily_profit"]
+                day["cum_profit"] = round(cum_db, 2)
+            return {"days": sorted_days_db, "display_currency": curr, "source": "database"}
+
+    # Fallback: broker history (only when local DB has no closed trades)
     if profile:
         try:
             adapter = get_adapter(profile)
@@ -677,7 +715,6 @@ def get_trade_history(
                 except Exception:
                     pass
             if closed:
-                # Group by date
                 by_date: dict[str, dict[str, Any]] = {}
                 for pos in closed:
                     exit_time = getattr(pos, "exit_time_utc", "") or ""
@@ -695,7 +732,6 @@ def get_trade_history(
                             "daily_profit": profit_display,
                             "trade_count": 1,
                         }
-                # Sort and compute cumulative
                 sorted_days = sorted(by_date.values(), key=lambda d: d["date"])
                 cum = 0.0
                 for day in sorted_days:
@@ -706,45 +742,7 @@ def get_trade_history(
         except Exception as e:
             print(f"[api] trade-history broker error: {e}")
 
-    # Fallback: local DB
-    store = _store_for(profile_name)
-    df = store.read_trades_df(profile_name)
-    if df.empty or "exit_price" not in df.columns:
-        return {"days": [], "display_currency": curr, "source": "database"}
-
-    closed_df = df[pd.to_numeric(df["exit_price"], errors="coerce").notna()].copy()
-    if closed_df.empty or "exit_timestamp_utc" not in closed_df.columns:
-        return {"days": [], "display_currency": curr, "source": "database"}
-
-    by_date_db: dict[str, dict[str, Any]] = {}
-    for _, row in closed_df.iterrows():
-        exit_ts = str(row.get("exit_timestamp_utc") or "")
-        date_str = exit_ts[:10] if len(exit_ts) >= 10 else ""
-        if not date_str:
-            continue
-        profit_raw = row.get("profit")
-        profit_val = 0.0
-        if profit_raw is not None and not (isinstance(profit_raw, float) and pd.isna(profit_raw)):
-            try:
-                profit_val = _convert_amount(float(profit_raw), rate) or 0.0
-            except (TypeError, ValueError):
-                pass
-        if date_str in by_date_db:
-            by_date_db[date_str]["daily_profit"] += profit_val
-            by_date_db[date_str]["trade_count"] += 1
-        else:
-            by_date_db[date_str] = {
-                "date": date_str,
-                "daily_profit": profit_val,
-                "trade_count": 1,
-            }
-    sorted_days_db = sorted(by_date_db.values(), key=lambda d: d["date"])
-    cum_db = 0.0
-    for day in sorted_days_db:
-        day["daily_profit"] = round(day["daily_profit"], 2)
-        cum_db += day["daily_profit"]
-        day["cum_profit"] = round(cum_db, 2)
-    return {"days": sorted_days_db, "display_currency": curr, "source": "database"}
+    return {"days": [], "display_currency": curr, "source": "database"}
 
 
 @app.get("/api/data/{profile_name}/trade-history-detail")
@@ -753,11 +751,11 @@ def get_trade_history_detail(
     profile_path: Optional[str] = None,
     days_back: int = 90,
 ) -> dict[str, Any]:
-    """Get individual closed trade records from broker for analytics.
+    """Get individual closed trade records for analytics.
 
     Returns per-trade data (not daily aggregates) for session, long/short,
     and spread analysis on the frontend.
-    Falls back to local DB trades when broker is unavailable.
+    Prefers local DB (complete data) over broker (may be paginated/incomplete).
     """
     from adapters.broker import get_adapter
 
@@ -772,7 +770,59 @@ def get_trade_history_detail(
     if profile:
         curr, rate = _get_display_currency(profile)
 
-    # Try broker history first
+    # Primary: local DB (has complete trade history)
+    store = _store_for(profile_name)
+    df = store.read_trades_df(profile_name)
+    has_db_closed = False
+    if not df.empty and "exit_price" in df.columns:
+        closed_df = df[pd.to_numeric(df["exit_price"], errors="coerce").notna()].copy()
+        if not closed_df.empty:
+            has_db_closed = True
+
+            # Join with snapshots for spread_pips where snapshot_id is available
+            snap_spreads: dict[int, float] = {}
+            if "snapshot_id" in closed_df.columns:
+                snap_ids = closed_df["snapshot_id"].dropna().astype(int).unique().tolist()
+                if snap_ids:
+                    snap_df = store.read_snapshots_df(profile_name)
+                    if not snap_df.empty and "spread_pips" in snap_df.columns:
+                        for _, srow in snap_df[snap_df["id"].isin(snap_ids)].iterrows():
+                            if pd.notna(srow.get("spread_pips")):
+                                snap_spreads[int(srow["id"])] = float(srow["spread_pips"])
+
+            pip_size = float(profile.pip_size) if profile else 0.01
+            trades_list = []
+            for _, row in closed_df.iterrows():
+                side = str(row.get("side") or "").lower()
+                entry_price = float(row["entry_price"]) if pd.notna(row.get("entry_price")) else 0
+                exit_price = float(row["exit_price"]) if pd.notna(row.get("exit_price")) else 0
+                pips_val = float(row["pips"]) if pd.notna(row.get("pips")) else None
+                if pips_val is None and entry_price and exit_price and pip_size:
+                    if side == "buy":
+                        pips_val = round((exit_price - entry_price) / pip_size, 1)
+                    elif side == "sell":
+                        pips_val = round((entry_price - exit_price) / pip_size, 1)
+                profit_raw = float(row["profit"]) if pd.notna(row.get("profit")) else None
+
+                spread = None
+                snap_id = row.get("snapshot_id")
+                if snap_id is not None and pd.notna(snap_id):
+                    spread = snap_spreads.get(int(snap_id))
+
+                trades_list.append({
+                    "side": side,
+                    "entry_price": entry_price,
+                    "exit_price": exit_price,
+                    "entry_time_utc": str(row.get("timestamp_utc") or ""),
+                    "exit_time_utc": str(row.get("exit_timestamp_utc") or ""),
+                    "profit": _convert_amount(profit_raw, rate) if profit_raw is not None else None,
+                    "pips": pips_val,
+                    "volume": float(row.get("size_lots") or 0),
+                    "spread_pips": spread,
+                })
+            return {"trades": trades_list, "display_currency": curr, "source": "database"}
+
+    # Fallback: broker history (only when local DB has no closed trades)
     if profile:
         try:
             adapter = get_adapter(profile)
@@ -789,9 +839,9 @@ def get_trade_history_detail(
                 except Exception:
                     pass
             if closed:
-                trades_list = []
+                trades_list_broker = []
                 for pos in closed:
-                    trades_list.append({
+                    trades_list_broker.append({
                         "side": getattr(pos, "side", ""),
                         "entry_price": getattr(pos, "entry_price", 0),
                         "exit_price": getattr(pos, "exit_price", 0),
@@ -802,57 +852,11 @@ def get_trade_history_detail(
                         "volume": getattr(pos, "volume", 0),
                         "spread_pips": None,
                     })
-                return {"trades": trades_list, "display_currency": curr, "source": "broker"}
+                return {"trades": trades_list_broker, "display_currency": curr, "source": "broker"}
         except Exception as e:
             print(f"[api] trade-history-detail broker error: {e}")
 
-    # Fallback: local DB
-    store = _store_for(profile_name)
-    df = store.read_trades_df(profile_name)
-    if df.empty or "exit_price" not in df.columns:
-        return {"trades": [], "display_currency": curr, "source": "database"}
-
-    closed_df = df[pd.to_numeric(df["exit_price"], errors="coerce").notna()].copy()
-    if closed_df.empty:
-        return {"trades": [], "display_currency": curr, "source": "database"}
-
-    # Join with snapshots for spread_pips where snapshot_id is available
-    snap_spreads: dict[int, float] = {}
-    if "snapshot_id" in closed_df.columns:
-        snap_ids = closed_df["snapshot_id"].dropna().astype(int).unique().tolist()
-        if snap_ids:
-            snap_df = store.read_snapshots_df(profile_name)
-            if not snap_df.empty and "spread_pips" in snap_df.columns:
-                for _, row in snap_df[snap_df["id"].isin(snap_ids)].iterrows():
-                    if pd.notna(row.get("spread_pips")):
-                        snap_spreads[int(row["id"])] = float(row["spread_pips"])
-
-    pip_size = float(profile.pip_size) if profile else 0.01
-    trades_list = []
-    for _, row in closed_df.iterrows():
-        side = str(row.get("side") or "").lower()
-        entry_price = float(row["entry_price"]) if pd.notna(row.get("entry_price")) else 0
-        exit_price = float(row["exit_price"]) if pd.notna(row.get("exit_price")) else 0
-        pips_val = float(row["pips"]) if pd.notna(row.get("pips")) else None
-        profit_raw = float(row["profit"]) if pd.notna(row.get("profit")) else None
-
-        spread = None
-        snap_id = row.get("snapshot_id")
-        if snap_id is not None and pd.notna(snap_id):
-            spread = snap_spreads.get(int(snap_id))
-
-        trades_list.append({
-            "side": side,
-            "entry_price": entry_price,
-            "exit_price": exit_price,
-            "entry_time_utc": str(row.get("timestamp_utc") or ""),
-            "exit_time_utc": str(row.get("exit_timestamp_utc") or ""),
-            "profit": _convert_amount(profit_raw, rate) if profit_raw is not None else None,
-            "pips": pips_val,
-            "volume": float(row.get("size_lots") or 0),
-            "spread_pips": spread,
-        })
-    return {"trades": trades_list, "display_currency": curr, "source": "database"}
+    return {"trades": [], "display_currency": curr, "source": "database"}
 
 
 @app.get("/api/data/{profile_name}/executions")
