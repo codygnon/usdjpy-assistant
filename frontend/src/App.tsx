@@ -4698,7 +4698,14 @@ function EquityCurveChart({ trades, displayCurrency }: { trades: Record<string, 
     });
   }, [trades]);
 
-  if (data.length < 2) return null;
+  if (data.length < 2) return (
+    <div className="card mb-4">
+      <h3 className="card-title" style={{ margin: 0, marginBottom: 8 }}>Equity Curve</h3>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>
+        Chart will appear after 2+ closed trades with profit data.
+      </p>
+    </div>
+  );
 
   const currency = displayCurrency || 'USD';
 
