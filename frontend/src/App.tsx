@@ -5207,7 +5207,6 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
 
     let peak = 0;
     let maxDd = 0;
-    let maxDdPct = 0;
     let longestTrades = 0;
     let longestTimeStart = '';
     let longestTimeEnd = '';
@@ -5231,7 +5230,6 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
       const dd = peak - e.cumPips;
       if (dd > maxDd) {
         maxDd = dd;
-        maxDdPct = peak > 0 ? (dd / peak) * 100 : 0;
       }
       return { idx: e.idx, dd: -dd, date: e.date };
     });
@@ -5245,6 +5243,10 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
     const currentDd = peak - equity[equity.length - 1].cumPips;
     const totalProfit = equity[equity.length - 1].cumPips;
     const recoveryFactor = maxDd > 0 ? Math.round((totalProfit / maxDd) * 100) / 100 : 0;
+    // DD% = max drawdown as percentage of total gross profit earned
+    // (meaningful ratio: how much of your gains did you give back at worst)
+    const grossProfit = equity.reduce((s, e) => s + (e.pips > 0 ? e.pips : 0), 0);
+    const maxDdPct = grossProfit > 0 ? Math.min((maxDd / grossProfit) * 100, 100) : 0;
 
     let longestTimeDays = '';
     if (longestTimeStart && longestTimeEnd) {
@@ -5331,7 +5333,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
   const avgDurWin = durWinners.length > 0 ? durWinners.reduce((s, t) => s + t.duration_minutes!, 0) / durWinners.length : 0;
   const avgDurLoss = durLosers.length > 0 ? durLosers.reduce((s, t) => s + t.duration_minutes!, 0) / durLosers.length : 0;
   const durRatio = avgDurLoss > 0 ? avgDurWin / avgDurLoss : 0;
-  const totalPips = durationTradesAll.reduce((s, t) => s + Math.abs(t.pips ?? 0), 0);
+  const totalPips = durationTradesAll.reduce((s, t) => s + (t.pips ?? 0), 0);
   const totalHours = durationTradesAll.reduce((s, t) => s + t.duration_minutes!, 0) / 60;
   const pipsPerHour = totalHours > 0 ? totalPips / totalHours : 0;
 
