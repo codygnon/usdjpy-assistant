@@ -26,6 +26,7 @@ class OrderResult:
     request_id: int | None
     order: int | None
     deal: int | None
+    fill_price: float | None = None
 
 
 @dataclass(frozen=True)
@@ -288,12 +289,18 @@ class OandaAdapter:
                 trade_id = int(trade_id)
             else:
                 trade_id = None
+            fp = None
+            try:
+                fp = float(fill["price"]) if fill.get("price") else None
+            except (TypeError, ValueError):
+                pass
             return OrderResult(
                 retcode=0,
                 comment=fill.get("reason", "FILLED"),
                 request_id=None,
                 order=int(create["id"]) if create else None,
                 deal=trade_id,
+                fill_price=fp,
             )
         if data.get("orderRejectTransaction"):
             rej = data["orderRejectTransaction"]
@@ -462,7 +469,7 @@ class OandaAdapter:
         """
         aid = self._get_account_id()
         to_ts = datetime.now(timezone.utc)
-        from_ts = to_ts - timedelta(days=min(days_back, 90))
+        from_ts = to_ts - timedelta(days=days_back)
         from_param = from_ts.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
         to_param = to_ts.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
         try:

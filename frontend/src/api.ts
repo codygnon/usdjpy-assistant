@@ -263,6 +263,35 @@ export async function getTradeHistory(
   return fetchJson<TradeHistoryResponse>(`${API_BASE}/data/${profileName}/trade-history?${params}`);
 }
 
+// Trade history detail (per-trade, not daily aggregate) for analytics
+export interface TradeDetail {
+  side: string;
+  entry_price: number;
+  exit_price: number;
+  entry_time_utc: string;
+  exit_time_utc: string;
+  profit: number | null;
+  pips: number | null;
+  volume: number;
+  spread_pips: number | null;
+}
+
+export interface TradeHistoryDetailResponse {
+  trades: TradeDetail[];
+  display_currency?: string;
+  source?: string;
+}
+
+export async function getTradeHistoryDetail(
+  profileName: string,
+  profilePath?: string,
+  daysBack = 90
+): Promise<TradeHistoryDetailResponse> {
+  const params = new URLSearchParams({ days_back: String(daysBack) });
+  if (profilePath) params.set('profile_path', profilePath);
+  return fetchJson<TradeHistoryDetailResponse>(`${API_BASE}/data/${profileName}/trade-history-detail?${params}`);
+}
+
 export async function getExecutions(profileName: string, limit = 50): Promise<Record<string, unknown>[]> {
   return fetchJson<Record<string, unknown>[]>(`${API_BASE}/data/${profileName}/executions?limit=${limit}`);
 }

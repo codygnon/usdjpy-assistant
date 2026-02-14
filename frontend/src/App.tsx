@@ -4664,7 +4664,7 @@ function EquityCurveChart({ profileName, profilePath }: { profileName: string; p
 
   useEffect(() => {
     setLoading(true);
-    api.getTradeHistory(profileName, profilePath, 90)
+    api.getTradeHistory(profileName, profilePath, 365)
       .then((resp) => {
         setDisplayCurrency(resp.display_currency || 'USD');
         setData(resp.days.map((d) => ({
@@ -4810,6 +4810,234 @@ function EquityCurveChart({ profileName, profilePath }: { profileName: string; p
         <span><span style={{ display: 'inline-block', width: 12, height: 3, background: '#28a745', marginRight: 4, verticalAlign: 'middle' }}></span>Cumulative P/L</span>
         <span><span style={{ display: 'inline-block', width: 8, height: 8, background: '#28a745', marginRight: 4, verticalAlign: 'middle', opacity: 0.7 }}></span>Daily P/L</span>
         <span><span style={{ display: 'inline-block', width: 12, height: 3, background: '#4a90d9', marginRight: 4, verticalAlign: 'middle' }}></span>Trades/Day</span>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Analytics Components for Logs & Stats
+// ---------------------------------------------------------------------------
+
+function SessionPerformance({ profileName, profilePath }: { profileName: string; profilePath: string }) {
+  const [trades, setTrades] = useState<api.TradeDetail[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getTradeHistoryDetail(profileName, profilePath, 365)
+      .then((resp) => setTrades(resp.trades))
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [profileName, profilePath]);
+
+  if (loading) return (
+    <div className="card mb-4">
+      <h3 className="card-title" style={{ margin: 0, marginBottom: 8 }}>Session Performance</h3>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>Loading...</p>
+    </div>
+  );
+
+  if (trades.length === 0) return (
+    <div className="card mb-4">
+      <h3 className="card-title" style={{ margin: 0, marginBottom: 8 }}>Session Performance</h3>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>No closed trades yet.</p>
+    </div>
+  );
+
+  const sessions = [
+    { name: 'Tokyo', startHour: 0, endHour: 9 },
+    { name: 'London', startHour: 7, endHour: 16 },
+    { name: 'New York', startHour: 12, endHour: 21 },
+  ];
+
+  const sessionStats = sessions.map((session) => {
+    const sessionTrades = trades.filter((t) => {
+      const hour = new Date(t.entry_time_utc).getUTCHours();
+      return hour >= session.startHour && hour < session.endHour;
+    });
+    const wins = sessionTrades.filter((t) => t.pips !== null && t.pips > 0).length;
+    const totalPips = sessionTrades.reduce((sum, t) => sum + (t.pips || 0), 0);
+    const avgPips = sessionTrades.length > 0 ? totalPips / sessionTrades.length : 0;
+    return {
+      ...session,
+      count: sessionTrades.length,
+      winRate: sessionTrades.length > 0 ? wins / sessionTrades.length : 0,
+      totalPips,
+      avgPips,
+    };
+  });
+
+  return (
+    <div className="card mb-4">
+      <h3 className="card-title" style={{ margin: 0, marginBottom: 16 }}>Session Performance</h3>
+      <div className="grid-3">
+        {sessionStats.map((s) => (
+          <div key={s.name} className="stat-box">
+            <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: 4 }}>{s.name}</div>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+              {String(s.startHour).padStart(2, '0')}:00–{String(s.endHour).padStart(2, '0')}:00 UTC
+            </div>
+            <div style={{ fontSize: '0.85rem' }}>{s.count} trades</div>
+            <div style={{ fontSize: '0.85rem', color: s.winRate >= 0.5 ? 'var(--success)' : 'var(--warning)' }}>
+              {(s.winRate * 100).toFixed(0)}% win rate
+            </div>
+            <div style={{ fontSize: '0.85rem', color: s.totalPips >= 0 ? 'var(--success)' : 'var(--danger)' }}>
+              {s.totalPips >= 0 ? '+' : ''}{s.totalPips.toFixed(1)} pips
+            </div>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+              Avg: {s.avgPips >= 0 ? '+' : ''}{s.avgPips.toFixed(2)} pips
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LongShortPerformance({ profileName, profilePath }: { profileName: string; profilePath: string }) {
+  const [trades, setTrades] = useState<api.TradeDetail[]>([]);
+  const [displayCurrency, setDisplayCurrency] = useState<string>('USD');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getTradeHistoryDetail(profileName, profilePath, 365)
+      .then((resp) => {
+        setTrades(resp.trades);
+        setDisplayCurrency(resp.display_currency || 'USD');
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [profileName, profilePath]);
+
+  if (loading) return (
+    <div className="card mb-4">
+      <h3 className="card-title" style={{ margin: 0, marginBottom: 8 }}>Long vs Short</h3>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>Loading...</p>
+    </div>
+  );
+
+  if (trades.length === 0) return (
+    <div className="card mb-4">
+      <h3 className="card-title" style={{ margin: 0, marginBottom: 8 }}>Long vs Short</h3>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>No closed trades yet.</p>
+    </div>
+  );
+
+  const computeSide = (side: string) => {
+    const filtered = trades.filter((t) => t.side === side);
+    const wins = filtered.filter((t) => t.pips !== null && t.pips > 0).length;
+    const totalPips = filtered.reduce((sum, t) => sum + (t.pips || 0), 0);
+    const totalProfit = filtered.reduce((sum, t) => sum + (t.profit || 0), 0);
+    const avgPips = filtered.length > 0 ? totalPips / filtered.length : 0;
+    return {
+      count: filtered.length,
+      winRate: filtered.length > 0 ? wins / filtered.length : 0,
+      totalPips,
+      totalProfit,
+      avgPips,
+    };
+  };
+
+  const longStats = computeSide('buy');
+  const shortStats = computeSide('sell');
+
+  const SideBox = ({ label, stats, color }: { label: string; stats: typeof longStats; color: string }) => (
+    <div className="stat-box">
+      <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: 8, color }}>{label}</div>
+      <div style={{ fontSize: '0.85rem' }}>{stats.count} trades</div>
+      <div style={{ fontSize: '0.85rem', color: stats.winRate >= 0.5 ? 'var(--success)' : 'var(--warning)' }}>
+        {(stats.winRate * 100).toFixed(0)}% win rate
+      </div>
+      <div style={{ fontSize: '0.85rem', color: stats.totalPips >= 0 ? 'var(--success)' : 'var(--danger)' }}>
+        {stats.totalPips >= 0 ? '+' : ''}{stats.totalPips.toFixed(1)} pips
+      </div>
+      <div style={{ fontSize: '0.85rem', color: stats.totalProfit >= 0 ? 'var(--success)' : 'var(--danger)' }}>
+        {stats.totalProfit >= 0 ? '+' : ''}{stats.totalProfit.toFixed(2)} {displayCurrency}
+      </div>
+      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+        Avg: {stats.avgPips >= 0 ? '+' : ''}{stats.avgPips.toFixed(2)} pips
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="card mb-4">
+      <h3 className="card-title" style={{ margin: 0, marginBottom: 16 }}>Long vs Short</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <SideBox label="Long (Buy)" stats={longStats} color="var(--success)" />
+        <SideBox label="Short (Sell)" stats={shortStats} color="var(--danger)" />
+      </div>
+    </div>
+  );
+}
+
+function SpreadPerformance({ profileName, profilePath }: { profileName: string; profilePath: string }) {
+  const [trades, setTrades] = useState<api.TradeDetail[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getTradeHistoryDetail(profileName, profilePath, 365)
+      .then((resp) => setTrades(resp.trades))
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [profileName, profilePath]);
+
+  if (loading) return null;
+
+  const withSpread = trades.filter((t) => t.spread_pips !== null && t.spread_pips !== undefined);
+
+  if (withSpread.length === 0) return (
+    <div className="card mb-4">
+      <h3 className="card-title" style={{ margin: 0, marginBottom: 8 }}>Spread Analysis</h3>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>
+        Spread analysis available after bot-placed trades accumulate.
+      </p>
+    </div>
+  );
+
+  const categories = [
+    { name: 'Tight', label: '< 1.0 pip', filter: (s: number) => s < 1.0 },
+    { name: 'Normal', label: '1.0–2.0 pips', filter: (s: number) => s >= 1.0 && s <= 2.0 },
+    { name: 'Wide', label: '> 2.0 pips', filter: (s: number) => s > 2.0 },
+  ];
+
+  const catStats = categories.map((cat) => {
+    const filtered = withSpread.filter((t) => cat.filter(t.spread_pips!));
+    const wins = filtered.filter((t) => t.pips !== null && t.pips > 0).length;
+    const totalPips = filtered.reduce((sum, t) => sum + (t.pips || 0), 0);
+    const avgPips = filtered.length > 0 ? totalPips / filtered.length : 0;
+    return {
+      ...cat,
+      count: filtered.length,
+      winRate: filtered.length > 0 ? wins / filtered.length : 0,
+      avgPips,
+    };
+  });
+
+  return (
+    <div className="card mb-4">
+      <h3 className="card-title" style={{ margin: 0, marginBottom: 16 }}>Spread Analysis</h3>
+      <div className="grid-3">
+        {catStats.map((c) => (
+          <div key={c.name} className="stat-box">
+            <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: 4 }}>{c.name}</div>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 8 }}>{c.label}</div>
+            <div style={{ fontSize: '0.85rem' }}>{c.count} trades</div>
+            {c.count > 0 && (
+              <>
+                <div style={{ fontSize: '0.85rem', color: c.winRate >= 0.5 ? 'var(--success)' : 'var(--warning)' }}>
+                  {(c.winRate * 100).toFixed(0)}% win rate
+                </div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  Avg: {c.avgPips >= 0 ? '+' : ''}{c.avgPips.toFixed(2)} pips
+                </div>
+              </>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -5063,6 +5291,11 @@ function LogsPage({ profile }: { profile: Profile }) {
 
       {/* Equity Curve Chart */}
       <EquityCurveChart profileName={profile.name} profilePath={profile.path} />
+
+      {/* Analytics Sections */}
+      <SessionPerformance profileName={profile.name} profilePath={profile.path} />
+      <LongShortPerformance profileName={profile.name} profilePath={profile.path} />
+      <SpreadPerformance profileName={profile.name} profilePath={profile.path} />
 
       {/* MT5 Full Report */}
       {mt5Report && (

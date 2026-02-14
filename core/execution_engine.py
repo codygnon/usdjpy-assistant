@@ -54,6 +54,7 @@ class ExecutionDecision:
     order_id: Optional[int] = None
     deal_id: Optional[int] = None
     side: Optional[str] = None
+    fill_price: Optional[float] = None
 
 
 def _store(log_dir: Path) -> SqliteStore:
@@ -309,6 +310,7 @@ def execute_indicator_policy_demo_only(
         order_retcode=res.retcode,
         order_id=res.order,
         deal_id=res.deal,
+        fill_price=getattr(res, 'fill_price', None),
     )
 
 
@@ -523,6 +525,7 @@ def execute_price_level_policy_demo_only(
         order_retcode=res.retcode,
         order_id=res.order,
         deal_id=res.deal,
+        fill_price=getattr(res, 'fill_price', None),
         side=policy.side,
     )
 
@@ -736,6 +739,7 @@ def execute_breakout_policy_demo_only(
         order_retcode=res.retcode,
         order_id=res.order,
         deal_id=res.deal,
+        fill_price=getattr(res, 'fill_price', None),
         side=side,
     )
 
@@ -927,6 +931,7 @@ def execute_bollinger_policy_demo_only(
         order_retcode=res.retcode,
         order_id=res.order,
         deal_id=res.deal,
+        fill_price=getattr(res, 'fill_price', None),
         side=side,
     )
 
@@ -1162,6 +1167,7 @@ def execute_vwap_policy_demo_only(
         order_retcode=res.retcode,
         order_id=res.order,
         deal_id=res.deal,
+        fill_price=getattr(res, 'fill_price', None),
         side=side,
     )
 
@@ -1548,6 +1554,7 @@ def execute_ema_pullback_policy_demo_only(
         order_retcode=res.retcode,
         order_id=res.order,
         deal_id=res.deal,
+        fill_price=getattr(res, 'fill_price', None),
         side=side,
     )
 
@@ -1836,6 +1843,7 @@ def execute_ema_bb_scalp_policy_demo_only(
         order_retcode=res.retcode,
         order_id=res.order,
         deal_id=res.deal,
+        fill_price=getattr(res, 'fill_price', None),
         side=side,
     )
 
@@ -2106,6 +2114,7 @@ def execute_session_momentum_policy_demo_only(
         order_retcode=res.retcode,
         order_id=res.order,
         deal_id=res.deal,
+        fill_price=getattr(res, 'fill_price', None),
         side=side,
     )
 
@@ -2220,6 +2229,7 @@ def execute_signal_demo_only(
         order_retcode=res.retcode,
         order_id=res.order,
         deal_id=res.deal,
+        fill_price=getattr(res, 'fill_price', None),
         side=signal.side,
     )
 
@@ -2730,6 +2740,7 @@ def execute_kt_cg_hybrid_policy_demo_only(
         order_retcode=res.retcode,
         order_id=res.order,
         deal_id=res.deal,
+        fill_price=getattr(res, 'fill_price', None),
         side=side,
     )
 
@@ -3222,6 +3233,7 @@ def execute_kt_cg_ctp_policy_demo_only(
         order_retcode=res.retcode,
         order_id=res.order,
         deal_id=res.deal,
+        fill_price=getattr(res, 'fill_price', None),
         side=side,
     )
 
@@ -3997,6 +4009,7 @@ def execute_kt_cg_trial_4_policy_demo_only(
             order_retcode=res.retcode,
             order_id=res.order,
             deal_id=res.deal,
+            fill_price=getattr(res, 'fill_price', None),
             side=side,
         ),
         "tier_updates": tier_updates,

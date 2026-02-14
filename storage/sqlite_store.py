@@ -157,6 +157,9 @@ class SqliteStore:
             # v1.5: trade-management tracking (breakeven, TP1 partial close)
             self._ensure_column(conn, "trades", "breakeven_applied", "INTEGER")
             self._ensure_column(conn, "trades", "tp1_partial_done", "INTEGER")
+            # v1.6: ATR at snapshot time and slippage at trade entry
+            self._ensure_column(conn, "snapshots", "atr_m1_14", "REAL")
+            self._ensure_column(conn, "trades", "entry_slippage_pips", "REAL")
             conn.commit()
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, col: str, col_type: str) -> None:

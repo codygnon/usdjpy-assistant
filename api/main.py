@@ -747,6 +747,114 @@ def get_trade_history(
     return {"days": sorted_days_db, "display_currency": curr, "source": "database"}
 
 
+@app.get("/api/data/{profile_name}/trade-history-detail")
+def get_trade_history_detail(
+    profile_name: str,
+    profile_path: Optional[str] = None,
+    days_back: int = 90,
+) -> dict[str, Any]:
+    """Get individual closed trade records from broker for analytics.
+
+    Returns per-trade data (not daily aggregates) for session, long/short,
+    and spread analysis on the frontend.
+    Falls back to local DB trades when broker is unavailable.
+    """
+    from adapters.broker import get_adapter
+
+    profile = None
+    if profile_path and _resolve_profile_path(profile_path).exists():
+        try:
+            profile = load_profile_v1(_resolve_profile_path(profile_path))
+        except Exception:
+            pass
+
+    curr, rate = ("USD", 1.0)
+    if profile:
+        curr, rate = _get_display_currency(profile)
+
+    # Try broker history first
+    if profile:
+        try:
+            adapter = get_adapter(profile)
+            adapter.initialize()
+            try:
+                closed = adapter.get_closed_positions_from_history(
+                    days_back=days_back,
+                    symbol=profile.symbol,
+                    pip_size=profile.pip_size,
+                )
+            finally:
+                try:
+                    adapter.shutdown()
+                except Exception:
+                    pass
+            if closed:
+                trades_list = []
+                for pos in closed:
+                    trades_list.append({
+                        "side": getattr(pos, "side", ""),
+                        "entry_price": getattr(pos, "entry_price", 0),
+                        "exit_price": getattr(pos, "exit_price", 0),
+                        "entry_time_utc": getattr(pos, "entry_time_utc", ""),
+                        "exit_time_utc": getattr(pos, "exit_time_utc", ""),
+                        "profit": _convert_amount(getattr(pos, "profit", 0), rate),
+                        "pips": getattr(pos, "pips", None),
+                        "volume": getattr(pos, "volume", 0),
+                        "spread_pips": None,
+                    })
+                return {"trades": trades_list, "display_currency": curr, "source": "broker"}
+        except Exception as e:
+            print(f"[api] trade-history-detail broker error: {e}")
+
+    # Fallback: local DB
+    store = _store_for(profile_name)
+    df = store.read_trades_df(profile_name)
+    if df.empty or "exit_price" not in df.columns:
+        return {"trades": [], "display_currency": curr, "source": "database"}
+
+    closed_df = df[pd.to_numeric(df["exit_price"], errors="coerce").notna()].copy()
+    if closed_df.empty:
+        return {"trades": [], "display_currency": curr, "source": "database"}
+
+    # Join with snapshots for spread_pips where snapshot_id is available
+    snap_spreads: dict[int, float] = {}
+    if "snapshot_id" in closed_df.columns:
+        snap_ids = closed_df["snapshot_id"].dropna().astype(int).unique().tolist()
+        if snap_ids:
+            snap_df = store.read_snapshots_df(profile_name)
+            if not snap_df.empty and "spread_pips" in snap_df.columns:
+                for _, row in snap_df[snap_df["id"].isin(snap_ids)].iterrows():
+                    if pd.notna(row.get("spread_pips")):
+                        snap_spreads[int(row["id"])] = float(row["spread_pips"])
+
+    pip_size = float(profile.pip_size) if profile else 0.01
+    trades_list = []
+    for _, row in closed_df.iterrows():
+        side = str(row.get("side") or "").lower()
+        entry_price = float(row["entry_price"]) if pd.notna(row.get("entry_price")) else 0
+        exit_price = float(row["exit_price"]) if pd.notna(row.get("exit_price")) else 0
+        pips_val = float(row["pips"]) if pd.notna(row.get("pips")) else None
+        profit_raw = float(row["profit"]) if pd.notna(row.get("profit")) else None
+
+        spread = None
+        snap_id = row.get("snapshot_id")
+        if snap_id is not None and pd.notna(snap_id):
+            spread = snap_spreads.get(int(snap_id))
+
+        trades_list.append({
+            "side": side,
+            "entry_price": entry_price,
+            "exit_price": exit_price,
+            "entry_time_utc": str(row.get("timestamp_utc") or ""),
+            "exit_time_utc": str(row.get("exit_timestamp_utc") or ""),
+            "profit": _convert_amount(profit_raw, rate) if profit_raw is not None else None,
+            "pips": pips_val,
+            "volume": float(row.get("size_lots") or 0),
+            "spread_pips": spread,
+        })
+    return {"trades": trades_list, "display_currency": curr, "source": "database"}
+
+
 @app.get("/api/data/{profile_name}/executions")
 def get_executions(profile_name: str, limit: int = 50) -> list[dict[str, Any]]:
     """Get recent executions."""

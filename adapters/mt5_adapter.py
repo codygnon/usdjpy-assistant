@@ -34,6 +34,7 @@ class OrderResult:
     request_id: int | None
     order: int | None
     deal: int | None
+    fill_price: float | None = None
 
 
 def initialize() -> None:

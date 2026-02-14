@@ -112,6 +112,10 @@ def _insert_trade_for_policy(
         }
         row["breakeven_applied"] = 0
         row["tp1_partial_done"] = 0
+        # Capture entry slippage if fill_price available
+        if getattr(dec, 'fill_price', None) is not None:
+            slippage = abs(dec.fill_price - entry_price) / float(profile.pip_size)
+            row["entry_slippage_pips"] = round(slippage, 3)
         store.insert_trade(row)
     except Exception:
         pass
@@ -378,6 +382,15 @@ def main() -> None:
                     "m1_cross_price": m1c.last_cross_price,
                     "m1_trend_since": m1c.trend_since_cross,
                 }
+                # Capture M1 ATR-14 at snapshot time
+                try:
+                    from core.indicators import atr as atr_fn
+                    if "M1" in data_by_tf and not data_by_tf["M1"].empty:
+                        atr_series = atr_fn(data_by_tf["M1"], period=14)
+                        if not atr_series.empty and pd.notna(atr_series.iloc[-1]):
+                            snap_row["atr_m1_14"] = float(atr_series.iloc[-1])
+                except Exception:
+                    pass
                 snapshot_id = store.insert_snapshot(snap_row)
 
                 trades_df = store.read_trades_df(profile.profile_name)
@@ -529,6 +542,7 @@ def main() -> None:
                                     "preset_name": profile.active_preset_name or "Unknown",
                                     "breakeven_applied": 0,
                                     "tp1_partial_done": 0,
+                                    **({"entry_slippage_pips": round(abs(exec_dec.fill_price - float(sig.entry_price_hint)) / float(profile.pip_size), 3)} if getattr(exec_dec, 'fill_price', None) is not None else {}),
                                 }
                             )
                         except Exception:
