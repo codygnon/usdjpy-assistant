@@ -1,5 +1,6 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { createChart, createSeriesMarkers, IChartApi, ISeriesApi, CandlestickData, Time, CandlestickSeries, LineSeries } from 'lightweight-charts';
+import { ComposedChart, Area, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import * as api from './api';
 
 type Page = 'run' | 'presets' | 'profile' | 'logs' | 'analysis' | 'guide';
@@ -4646,6 +4647,181 @@ function ProfilePage({ profile, authStatus, onAuthChange }: { profile: Profile; 
 }
 
 // ---------------------------------------------------------------------------
+// Equity Curve Chart
+// ---------------------------------------------------------------------------
+
+interface EquityDataPoint {
+  date: string;
+  dailyProfit: number;
+  cumProfit: number;
+  tradeCount: number;
+}
+
+function EquityCurveChart({ trades, displayCurrency }: { trades: Record<string, unknown>[]; displayCurrency?: string }) {
+  const data = useMemo<EquityDataPoint[]>(() => {
+    // Filter to closed trades with exit timestamps and profit
+    const closed = trades.filter(t =>
+      t.exit_price != null &&
+      t.exit_timestamp_utc != null &&
+      typeof t.profit_display === 'number'
+    );
+    if (closed.length < 2) return [];
+
+    // Group by date
+    const byDate = new Map<string, { profit: number; count: number }>();
+    for (const t of closed) {
+      const ts = String(t.exit_timestamp_utc);
+      const date = ts.slice(0, 10); // YYYY-MM-DD
+      if (!date || date.length !== 10) continue;
+      const existing = byDate.get(date);
+      if (existing) {
+        existing.profit += t.profit_display as number;
+        existing.count += 1;
+      } else {
+        byDate.set(date, { profit: t.profit_display as number, count: 1 });
+      }
+    }
+
+    // Sort by date and compute cumulative
+    const sorted = Array.from(byDate.entries()).sort(([a], [b]) => a.localeCompare(b));
+    let cumProfit = 0;
+    return sorted.map(([date, { profit, count }]) => {
+      cumProfit += profit;
+      const mm = date.slice(5, 7);
+      const dd = date.slice(8, 10);
+      return {
+        date: `${mm}/${dd}`,
+        dailyProfit: Math.round(profit * 100) / 100,
+        cumProfit: Math.round(cumProfit * 100) / 100,
+        tradeCount: count,
+      };
+    });
+  }, [trades]);
+
+  if (data.length < 2) return null;
+
+  const currency = displayCurrency || 'USD';
+
+  const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number; dataKey: string }>; label?: string }) => {
+    if (!active || !payload || !payload.length) return null;
+    const cum = payload.find(p => p.dataKey === 'cumProfit');
+    const daily = payload.find(p => p.dataKey === 'dailyProfit');
+    const count = payload.find(p => p.dataKey === 'tradeCount');
+    return (
+      <div style={{
+        background: '#1a1d24',
+        border: '1px solid #3a3d45',
+        borderRadius: 6,
+        padding: '10px 14px',
+        fontSize: '0.8rem',
+        lineHeight: 1.6,
+      }}>
+        <div style={{ fontWeight: 600, marginBottom: 4, color: '#e0e0e0' }}>{label}</div>
+        {cum && (
+          <div style={{ color: cum.value >= 0 ? '#28a745' : '#dc3545' }}>
+            Cumulative: {cum.value >= 0 ? '+' : ''}{cum.value.toFixed(2)} {currency}
+          </div>
+        )}
+        {daily && (
+          <div style={{ color: daily.value >= 0 ? '#28a745' : '#dc3545' }}>
+            Daily P/L: {daily.value >= 0 ? '+' : ''}{daily.value.toFixed(2)} {currency}
+          </div>
+        )}
+        {count && (
+          <div style={{ color: '#4a90d9' }}>
+            Trades: {count.value}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="card mb-4">
+      <h3 className="card-title" style={{ margin: 0, marginBottom: 16 }}>Equity Curve</h3>
+      <div style={{ width: '100%', height: 300 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={data} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
+            <defs>
+              <linearGradient id="profitGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#28a745" stopOpacity={0.3} />
+                <stop offset="100%" stopColor="#28a745" stopOpacity={0.02} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="#3a3d45" vertical={false} />
+            <XAxis
+              dataKey="date"
+              tick={{ fontSize: 11, fill: '#a0a0a0' }}
+              tickLine={false}
+              axisLine={{ stroke: '#3a3d45' }}
+            />
+            <YAxis
+              yAxisId="left"
+              tick={{ fontSize: 11, fill: '#a0a0a0' }}
+              tickLine={false}
+              axisLine={false}
+              tickFormatter={(v: number) => `${v >= 0 ? '+' : ''}${v}`}
+            />
+            <YAxis
+              yAxisId="right"
+              orientation="right"
+              tick={{ fontSize: 11, fill: '#4a90d9' }}
+              tickLine={false}
+              axisLine={false}
+              allowDecimals={false}
+            />
+            <Tooltip content={<CustomTooltip />} />
+            <ReferenceLine yAxisId="left" y={0} stroke="#3a3d45" strokeDasharray="3 3" />
+            <Area
+              yAxisId="left"
+              type="monotone"
+              dataKey="cumProfit"
+              stroke="#28a745"
+              strokeWidth={2}
+              fill="url(#profitGradient)"
+            />
+            <Bar
+              yAxisId="left"
+              dataKey="dailyProfit"
+              barSize={data.length > 60 ? 4 : data.length > 30 ? 8 : 14}
+              fill="#28a745"
+              shape={(props: any) => {
+                const { x, y, width, height, payload } = props;
+                return (
+                  <rect
+                    x={x}
+                    y={height < 0 ? y + height : y}
+                    width={width}
+                    height={Math.abs(height)}
+                    fill={payload.dailyProfit >= 0 ? '#28a745' : '#dc3545'}
+                    opacity={0.7}
+                    rx={1}
+                  />
+                );
+              }}
+            />
+            <Line
+              yAxisId="right"
+              type="monotone"
+              dataKey="tradeCount"
+              stroke="#4a90d9"
+              strokeWidth={1.5}
+              dot={false}
+              opacity={0.7}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+      <div style={{ display: 'flex', gap: 16, marginTop: 8, fontSize: '0.7rem', color: '#a0a0a0', justifyContent: 'center' }}>
+        <span><span style={{ display: 'inline-block', width: 12, height: 3, background: '#28a745', marginRight: 4, verticalAlign: 'middle' }}></span>Cumulative P/L</span>
+        <span><span style={{ display: 'inline-block', width: 8, height: 8, background: '#28a745', marginRight: 4, verticalAlign: 'middle', opacity: 0.7 }}></span>Daily P/L</span>
+        <span><span style={{ display: 'inline-block', width: 12, height: 3, background: '#4a90d9', marginRight: 4, verticalAlign: 'middle' }}></span>Trades/Day</span>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Logs & Stats Page
 // ---------------------------------------------------------------------------
 
@@ -4890,6 +5066,9 @@ function LogsPage({ profile }: { profile: Profile }) {
           </p>
         )}
       </div>
+
+      {/* Equity Curve Chart */}
+      <EquityCurveChart trades={trades} displayCurrency={tradesDisplayCurrency} />
 
       {/* MT5 Full Report */}
       {mt5Report && (
