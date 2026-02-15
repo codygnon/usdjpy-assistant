@@ -164,6 +164,9 @@ class SqliteStore:
             self._ensure_column(conn, "trades", "max_adverse_pips", "REAL")
             self._ensure_column(conn, "trades", "max_favorable_pips", "REAL")
             self._ensure_column(conn, "trades", "mae_mfe_estimated", "INTEGER")
+            # v1.8: Spread-aware breakeven
+            self._ensure_column(conn, "trades", "entry_type", "TEXT")
+            self._ensure_column(conn, "trades", "breakeven_sl_price", "REAL")
             conn.commit()
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, col: str, col_type: str) -> None:

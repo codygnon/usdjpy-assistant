@@ -3048,6 +3048,23 @@ interface EditedSettings {
   ema_zone_filter_enabled: boolean;
   ema_zone_filter_lookback_bars: number;
   ema_zone_filter_block_threshold: number;
+  // Trial #4: Tiered ATR(14) Filter
+  tiered_atr_filter_enabled: boolean;
+  tiered_atr_block_below_pips: number;
+  tiered_atr_allow_all_max_pips: number;
+  tiered_atr_pullback_only_max_pips: number;
+  // Trial #4: Daily High/Low Filter
+  daily_hl_filter_enabled: boolean;
+  daily_hl_buffer_pips: number;
+  // Trial #4: Spread-Aware Breakeven
+  spread_aware_be_enabled: boolean;
+  spread_aware_be_trigger_mode: string;
+  spread_aware_be_fixed_trigger_pips: number;
+  spread_aware_be_spread_buffer_pips: number;
+  spread_aware_be_apply_to_zone_entry: boolean;
+  spread_aware_be_apply_to_tiered_pullback: boolean;
+  // Trial #4: Per-tier toggles
+  tier_ema_periods: number[];
   // Trial #3 EMA overrides
   m5_trend_ema_fast: number | null;
   m5_trend_ema_slow: number | null;
@@ -3128,6 +3145,23 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let emaZoneFilterEnabled = true;
       let emaZoneFilterLookbackBars = 3;
       let emaZoneFilterBlockThreshold = 0.35;
+      // Trial #4: Tiered ATR Filter
+      let tieredAtrFilterEnabled = true;
+      let tieredAtrBlockBelowPips = 4.0;
+      let tieredAtrAllowAllMaxPips = 12.0;
+      let tieredAtrPullbackOnlyMaxPips = 15.0;
+      // Trial #4: Daily H/L Filter
+      let dailyHlFilterEnabled = false;
+      let dailyHlBufferPips = 5.0;
+      // Trial #4: Spread-Aware BE
+      let spreadAwareBeEnabled = false;
+      let spreadAweareBeTriggerMode = 'fixed_pips';
+      let spreadAwareBeFixedTriggerPips = 5.0;
+      let spreadAwareBeSpreadBufferPips = 1.0;
+      let spreadAwareBeApplyToZoneEntry = true;
+      let spreadAwareBeApplyToTieredPullback = true;
+      // Trial #4: Tier EMA periods
+      let tierEmaPeriods: number[] = [9, 11, 12, 13, 14, 15, 16, 17];
       if (policies) {
         for (const pol of policies) {
           if ('cooldown_minutes' in pol) {
@@ -3161,6 +3195,27 @@ function PresetsPage({ profile }: { profile: Profile }) {
             emaZoneFilterLookbackBars = (pol.ema_zone_filter_lookback_bars as number) ?? 3;
             emaZoneFilterBlockThreshold = (pol.ema_zone_filter_block_threshold as number) ?? 0.35;
           }
+          if ('tiered_atr_filter_enabled' in pol) {
+            tieredAtrFilterEnabled = pol.tiered_atr_filter_enabled as boolean;
+            tieredAtrBlockBelowPips = (pol.tiered_atr_block_below_pips as number) ?? 4.0;
+            tieredAtrAllowAllMaxPips = (pol.tiered_atr_allow_all_max_pips as number) ?? 12.0;
+            tieredAtrPullbackOnlyMaxPips = (pol.tiered_atr_pullback_only_max_pips as number) ?? 15.0;
+          }
+          if ('daily_hl_filter_enabled' in pol) {
+            dailyHlFilterEnabled = pol.daily_hl_filter_enabled as boolean;
+            dailyHlBufferPips = (pol.daily_hl_buffer_pips as number) ?? 5.0;
+          }
+          if ('spread_aware_be_enabled' in pol) {
+            spreadAwareBeEnabled = pol.spread_aware_be_enabled as boolean;
+            spreadAweareBeTriggerMode = (pol.spread_aware_be_trigger_mode as string) ?? 'fixed_pips';
+            spreadAwareBeFixedTriggerPips = (pol.spread_aware_be_fixed_trigger_pips as number) ?? 5.0;
+            spreadAwareBeSpreadBufferPips = (pol.spread_aware_be_spread_buffer_pips as number) ?? 1.0;
+            spreadAwareBeApplyToZoneEntry = (pol.spread_aware_be_apply_to_zone_entry as boolean) ?? true;
+            spreadAwareBeApplyToTieredPullback = (pol.spread_aware_be_apply_to_tiered_pullback as boolean) ?? true;
+          }
+          if ('tier_ema_periods' in pol) {
+            tierEmaPeriods = (pol.tier_ema_periods as number[]) ?? [9, 11, 12, 13, 14, 15, 16, 17];
+          }
           if (policyCooldown > 0 || policySlPips !== 20) break;
         }
       }
@@ -3193,6 +3248,23 @@ function PresetsPage({ profile }: { profile: Profile }) {
         ema_zone_filter_enabled: emaZoneFilterEnabled,
         ema_zone_filter_lookback_bars: emaZoneFilterLookbackBars,
         ema_zone_filter_block_threshold: emaZoneFilterBlockThreshold,
+        // Trial #4: Tiered ATR Filter
+        tiered_atr_filter_enabled: tieredAtrFilterEnabled,
+        tiered_atr_block_below_pips: tieredAtrBlockBelowPips,
+        tiered_atr_allow_all_max_pips: tieredAtrAllowAllMaxPips,
+        tiered_atr_pullback_only_max_pips: tieredAtrPullbackOnlyMaxPips,
+        // Trial #4: Daily H/L Filter
+        daily_hl_filter_enabled: dailyHlFilterEnabled,
+        daily_hl_buffer_pips: dailyHlBufferPips,
+        // Trial #4: Spread-Aware BE
+        spread_aware_be_enabled: spreadAwareBeEnabled,
+        spread_aware_be_trigger_mode: spreadAweareBeTriggerMode,
+        spread_aware_be_fixed_trigger_pips: spreadAwareBeFixedTriggerPips,
+        spread_aware_be_spread_buffer_pips: spreadAwareBeSpreadBufferPips,
+        spread_aware_be_apply_to_zone_entry: spreadAwareBeApplyToZoneEntry,
+        spread_aware_be_apply_to_tiered_pullback: spreadAwareBeApplyToTieredPullback,
+        // Trial #4: Tier periods
+        tier_ema_periods: tierEmaPeriods,
         // Trial #3 EMA overrides from temp settings
         m5_trend_ema_fast: tempSettings?.m5_trend_ema_fast ?? null,
         m5_trend_ema_slow: tempSettings?.m5_trend_ema_slow ?? null,
@@ -3280,13 +3352,30 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.ema_zone_filter_enabled = editedSettings.ema_zone_filter_enabled;
           updates.ema_zone_filter_lookback_bars = Math.max(2, Math.min(10, editedSettings.ema_zone_filter_lookback_bars));
           updates.ema_zone_filter_block_threshold = Math.max(0.1, Math.min(0.8, editedSettings.ema_zone_filter_block_threshold));
+          // Tiered ATR Filter
+          updates.tiered_atr_filter_enabled = editedSettings.tiered_atr_filter_enabled;
+          updates.tiered_atr_block_below_pips = editedSettings.tiered_atr_block_below_pips;
+          updates.tiered_atr_allow_all_max_pips = editedSettings.tiered_atr_allow_all_max_pips;
+          updates.tiered_atr_pullback_only_max_pips = editedSettings.tiered_atr_pullback_only_max_pips;
+          // Daily H/L Filter
+          updates.daily_hl_filter_enabled = editedSettings.daily_hl_filter_enabled;
+          updates.daily_hl_buffer_pips = editedSettings.daily_hl_buffer_pips;
+          // Spread-Aware BE
+          updates.spread_aware_be_enabled = editedSettings.spread_aware_be_enabled;
+          updates.spread_aware_be_trigger_mode = editedSettings.spread_aware_be_trigger_mode;
+          updates.spread_aware_be_fixed_trigger_pips = editedSettings.spread_aware_be_fixed_trigger_pips;
+          updates.spread_aware_be_spread_buffer_pips = editedSettings.spread_aware_be_spread_buffer_pips;
+          updates.spread_aware_be_apply_to_zone_entry = editedSettings.spread_aware_be_apply_to_zone_entry;
+          updates.spread_aware_be_apply_to_tiered_pullback = editedSettings.spread_aware_be_apply_to_tiered_pullback;
+          // Tier periods
+          updates.tier_ema_periods = editedSettings.tier_ema_periods;
         }
         return Object.keys(updates).length > 0 ? { ...pol, ...updates } : pol;
       }) || [];
 
       const newExecution = {
         ...(execution || {}),
-        loop_poll_seconds: Math.max(0.5, editedSettings.loop_poll_seconds),
+        loop_poll_seconds: Math.max(0.25, editedSettings.loop_poll_seconds),
         policies,
       };
 
@@ -3799,6 +3888,188 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       Blocks zone entries during EMA compression. Tiered pullback unaffected.
                     </div>
                   </div>
+                  {/* Tiered ATR(14) Filter */}
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Tiered ATR(14) Filter
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={editedSettings.tiered_atr_filter_enabled}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, tiered_atr_filter_enabled: e.target.checked })}
+                            style={{ width: 18, height: 18, cursor: 'pointer' }}
+                          />
+                          <span style={{ fontWeight: 600, color: editedSettings.tiered_atr_filter_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                            {editedSettings.tiered_atr_filter_enabled ? 'ON' : 'OFF'}
+                          </span>
+                        </label>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Block Below (pips)</div>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          max="20"
+                          value={editedSettings.tiered_atr_block_below_pips}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, tiered_atr_block_below_pips: parseFloat(e.target.value) || 4 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        />
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>{'< this: ALL blocked'}</div>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Allow All Max (pips)</div>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          max="30"
+                          value={editedSettings.tiered_atr_allow_all_max_pips}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, tiered_atr_allow_all_max_pips: parseFloat(e.target.value) || 12 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        />
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>{'< this: allow ALL'}</div>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Pullback Only Max (pips)</div>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          max="40"
+                          value={editedSettings.tiered_atr_pullback_only_max_pips}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, tiered_atr_pullback_only_max_pips: parseFloat(e.target.value) || 15 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        />
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>{'< this: pullback only'}</div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
+                      {'< '}{ editedSettings.tiered_atr_block_below_pips}p: block ALL •
+                      {editedSettings.tiered_atr_block_below_pips}-{editedSettings.tiered_atr_allow_all_max_pips}p: allow ALL •
+                      {editedSettings.tiered_atr_allow_all_max_pips}-{editedSettings.tiered_atr_pullback_only_max_pips}p: pullback only •
+                      {'> '}{editedSettings.tiered_atr_pullback_only_max_pips}p: block ALL
+                    </div>
+                  </div>
+                  {/* Daily High/Low Filter */}
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Daily High/Low Filter (zone entry only)
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={editedSettings.daily_hl_filter_enabled}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, daily_hl_filter_enabled: e.target.checked })}
+                            style={{ width: 18, height: 18, cursor: 'pointer' }}
+                          />
+                          <span style={{ fontWeight: 600, color: editedSettings.daily_hl_filter_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                            {editedSettings.daily_hl_filter_enabled ? 'ON' : 'OFF'}
+                          </span>
+                        </label>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Buffer (pips)</div>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="1"
+                          max="20"
+                          value={editedSettings.daily_hl_buffer_pips}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, daily_hl_buffer_pips: parseFloat(e.target.value) || 5 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        />
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Distance from daily H/L</div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
+                      Blocks BUY within {editedSettings.daily_hl_buffer_pips}p of daily high • Blocks SELL within {editedSettings.daily_hl_buffer_pips}p of daily low
+                    </div>
+                  </div>
+                  {/* Spread-Aware Breakeven */}
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Spread-Aware Breakeven Stop Loss
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={editedSettings.spread_aware_be_enabled}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, spread_aware_be_enabled: e.target.checked })}
+                            style={{ width: 18, height: 18, cursor: 'pointer' }}
+                          />
+                          <span style={{ fontWeight: 600, color: editedSettings.spread_aware_be_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                            {editedSettings.spread_aware_be_enabled ? 'ON' : 'OFF'}
+                          </span>
+                        </label>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Trigger Mode</div>
+                        <select
+                          value={editedSettings.spread_aware_be_trigger_mode}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, spread_aware_be_trigger_mode: e.target.value })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        >
+                          <option value="fixed_pips">Fixed Pips</option>
+                          <option value="spread_relative">Spread + Buffer</option>
+                        </select>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Fixed Trigger (pips)</div>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="1"
+                          max="30"
+                          value={editedSettings.spread_aware_be_fixed_trigger_pips}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, spread_aware_be_fixed_trigger_pips: parseFloat(e.target.value) || 5 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Spread Buffer (pips)</div>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          max="10"
+                          value={editedSettings.spread_aware_be_spread_buffer_pips}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, spread_aware_be_spread_buffer_pips: parseFloat(e.target.value) || 1 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 16, marginTop: 8 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: '0.7rem' }}>
+                        <input
+                          type="checkbox"
+                          checked={editedSettings.spread_aware_be_apply_to_zone_entry}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, spread_aware_be_apply_to_zone_entry: e.target.checked })}
+                          style={{ width: 14, height: 14, cursor: 'pointer' }}
+                        />
+                        Apply to Zone Entry
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: '0.7rem' }}>
+                        <input
+                          type="checkbox"
+                          checked={editedSettings.spread_aware_be_apply_to_tiered_pullback}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, spread_aware_be_apply_to_tiered_pullback: e.target.checked })}
+                          style={{ width: 14, height: 14, cursor: 'pointer' }}
+                        />
+                        Apply to Tiered Pullback
+                      </label>
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                      SL = entry ± current spread. Ratchets favorably (never moves back toward entry).
+                    </div>
+                  </div>
                 </div>
               )}
               {/* EMA Override Settings (for kt_cg_counter_trend_pullback / Trial #3) */}
@@ -3954,9 +4225,27 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     </div>
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                        Tiered Pullback (fixed tiers: 9, 11, 13, 15, 17)
+                        Tiered Pullback (per-tier toggles)
                       </div>
-                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {[9, 11, 12, 13, 14, 15, 16, 17].map(tier => (
+                          <label key={tier} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '2px 6px', background: editedSettings.tier_ema_periods.includes(tier) ? 'var(--success)' : 'var(--bg-secondary)', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600, color: editedSettings.tier_ema_periods.includes(tier) ? '#fff' : 'var(--text-secondary)' }}>
+                            <input
+                              type="checkbox"
+                              checked={editedSettings.tier_ema_periods.includes(tier)}
+                              onChange={(e) => {
+                                const periods = e.target.checked
+                                  ? [...editedSettings.tier_ema_periods, tier].sort((a, b) => a - b)
+                                  : editedSettings.tier_ema_periods.filter(t => t !== tier);
+                                setEditedSettings({ ...editedSettings, tier_ema_periods: periods });
+                              }}
+                              style={{ width: 14, height: 14, cursor: 'pointer' }}
+                            />
+                            EMA {tier}
+                          </label>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
                         When price touches M1 EMA tiers, triggers entry. Each tier fires once per touch and resets when price moves away.
                       </div>
                     </div>

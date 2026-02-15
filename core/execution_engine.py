@@ -3305,6 +3305,59 @@ def _check_kt_cg_trial_4_cooldown(
         return True, None
 
 
+def _passes_tiered_atr_filter_trial_4(policy, m1_df: pd.DataFrame, pip_size: float, trigger_type: str) -> tuple[bool, str | None]:
+    """Tiered ATR(14) filter for Trial #4.
+
+    ATR ranges (in pips):
+    - < block_below: block ALL (too quiet)
+    - block_below to allow_all_max: allow ALL
+    - allow_all_max to pullback_only_max: block zone entry, allow pullback only
+    - > pullback_only_max: block ALL (too volatile)
+    """
+    if not getattr(policy, "tiered_atr_filter_enabled", False):
+        return True, None
+    if m1_df is None or len(m1_df) < 16:
+        return False, "tiered_atr_filter: insufficient data"
+    a = atr_fn(m1_df, 14)
+    if a.empty or pd.isna(a.iloc[-1]):
+        return False, "tiered_atr_filter: ATR not available"
+    atr_pips = float(a.iloc[-1]) / pip_size
+    block_below = getattr(policy, "tiered_atr_block_below_pips", 4.0)
+    allow_all_max = getattr(policy, "tiered_atr_allow_all_max_pips", 12.0)
+    pullback_only_max = getattr(policy, "tiered_atr_pullback_only_max_pips", 15.0)
+    if atr_pips < block_below:
+        return False, f"tiered_atr_filter: ATR {atr_pips:.1f}p < {block_below}p (too quiet, ALL blocked)"
+    if atr_pips <= allow_all_max:
+        return True, None  # Allow all
+    if atr_pips <= pullback_only_max:
+        if trigger_type == "zone_entry":
+            return False, f"tiered_atr_filter: ATR {atr_pips:.1f}p in [{allow_all_max}-{pullback_only_max}]p (zone entry blocked, pullback only)"
+        return True, None  # Allow pullback
+    return False, f"tiered_atr_filter: ATR {atr_pips:.1f}p > {pullback_only_max}p (too volatile, ALL blocked)"
+
+
+def _passes_daily_hl_filter(policy, data_by_tf: dict, tick, side: str, pip_size: float) -> tuple[bool, str | None]:
+    """Daily High/Low filter for Trial #4 zone entry only.
+
+    Blocks BUY within X pips of daily high, blocks SELL within X pips of daily low.
+    """
+    if not getattr(policy, "daily_hl_filter_enabled", False):
+        return True, None
+    d_df = data_by_tf.get("D")
+    if d_df is None or d_df.empty:
+        return True, None  # No data, allow
+    last_row = d_df.iloc[-1]
+    daily_high = float(last_row["high"])
+    daily_low = float(last_row["low"])
+    buffer = getattr(policy, "daily_hl_buffer_pips", 5.0) * pip_size
+    entry_price = tick.ask if side == "buy" else tick.bid
+    if side == "buy" and entry_price >= daily_high - buffer:
+        return False, f"daily_hl_filter: BUY blocked, price {entry_price:.3f} within {getattr(policy, 'daily_hl_buffer_pips', 5.0):.1f}p of daily high {daily_high:.3f}"
+    if side == "sell" and entry_price <= daily_low + buffer:
+        return False, f"daily_hl_filter: SELL blocked, price {entry_price:.3f} within {getattr(policy, 'daily_hl_buffer_pips', 5.0):.1f}p of daily low {daily_low:.3f}"
+    return True, None
+
+
 def _compute_ema_zone_filter_score(
     m1_df: pd.DataFrame,
     pip_size: float,
@@ -3706,7 +3759,11 @@ def execute_kt_cg_trial_4_policy_demo_only(
 
     m1_df = data_by_tf.get("M1")
     if m1_df is not None:
-        ok, reason = passes_atr_filter(profile, m1_df, "M1")
+        # Use tiered ATR filter if enabled (replaces generic ATR filter for Trial #4)
+        if getattr(policy, "tiered_atr_filter_enabled", False):
+            ok, reason = _passes_tiered_atr_filter_trial_4(policy, m1_df, float(profile.pip_size), trigger_type)
+        else:
+            ok, reason = passes_atr_filter(profile, m1_df, "M1")
         if not ok:
             store.insert_execution(
                 {
@@ -3779,6 +3836,29 @@ def execute_kt_cg_trial_4_policy_demo_only(
                             }
                         )
                         return {"decision": ExecutionDecision(attempted=True, placed=False, reason=danger_reason or "rolling_danger_zone"), "tier_updates": tier_updates, "divergence_updates": {}}
+
+    # Daily High/Low Filter: block zone entry near daily extremes
+    if trigger_type == "zone_entry":
+        ok, reason = _passes_daily_hl_filter(policy, data_by_tf, tick, side, float(profile.pip_size))
+        if not ok:
+            print(f"[{profile.profile_name}] kt_cg_trial_4 BLOCKED by daily H/L filter: {reason}")
+            store.insert_execution(
+                {
+                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "profile": profile.profile_name,
+                    "symbol": profile.symbol,
+                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                    "rule_id": rule_id,
+                    "mode": mode,
+                    "attempted": 1,
+                    "placed": 0,
+                    "reason": reason or "daily_hl_filter",
+                    "mt5_retcode": None,
+                    "mt5_order_id": None,
+                    "mt5_deal_id": None,
+                }
+            )
+            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "daily_hl_filter"), "tier_updates": tier_updates, "divergence_updates": {}}
 
     # RSI Divergence Detection and Blocking (M5-based)
     # BULL trend + bearish divergence detected -> block BUY entries for X minutes
@@ -4014,4 +4094,5 @@ def execute_kt_cg_trial_4_policy_demo_only(
         ),
         "tier_updates": tier_updates,
         "divergence_updates": divergence_updates,
+        "trigger_type": trigger_type,
     }

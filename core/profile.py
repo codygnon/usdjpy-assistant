@@ -430,7 +430,7 @@ class ExecutionPolicyKtCgTrial4(BaseModel):
        - If M3 BEAR AND M1 EMA5 < M1 EMA9 AND cooldown elapsed -> SELL
 
     2. Tiered Pullback (discrete event, NO cooldown):
-       - 5 tiers: M1 EMA 9, 11, 13, 15, 17
+       - 8 tiers: M1 EMA 9, 11, 12, 13, 14, 15, 16, 17
        - If M3 BULL AND live bid touches/goes below any tier EMA -> BUY
        - If M3 BEAR AND live ask touches/goes above any tier EMA -> SELL
        - Each tier fires only once per touch (state tracking)
@@ -456,7 +456,7 @@ class ExecutionPolicyKtCgTrial4(BaseModel):
 
     # Tiered Pullback Configuration
     tiered_pullback_enabled: bool = True
-    tier_ema_periods: tuple[int, ...] = (9, 11, 13, 15, 17)
+    tier_ema_periods: tuple[int, ...] = (9, 11, 12, 13, 14, 15, 16, 17)
     tier_reset_buffer_pips: float = 1.0  # Distance from EMA to reset tier
 
     # Close opposite trades before placing new trade
@@ -483,6 +483,28 @@ class ExecutionPolicyKtCgTrial4(BaseModel):
     rsi_divergence_period: int = 14  # RSI calculation period
     rsi_divergence_lookback_bars: int = 50  # Bars to analyze (split into reference/recent halves)
     rsi_divergence_block_minutes: float = 5.0  # How long to block entries after divergence
+
+    # Tiered ATR(14) Filter (replaces generic ATR filter for Trial #4)
+    # < block_below: block ALL (too quiet)
+    # block_below to allow_all_max: allow ALL
+    # allow_all_max to pullback_only_max: block zone entry, allow pullback only
+    # > pullback_only_max: block ALL (too volatile)
+    tiered_atr_filter_enabled: bool = True
+    tiered_atr_block_below_pips: float = 4.0
+    tiered_atr_allow_all_max_pips: float = 12.0
+    tiered_atr_pullback_only_max_pips: float = 15.0
+
+    # Daily High/Low Filter (blocks zone entry near daily extremes)
+    daily_hl_filter_enabled: bool = False
+    daily_hl_buffer_pips: float = 5.0
+
+    # Spread-Aware Breakeven Stop Loss
+    spread_aware_be_enabled: bool = False
+    spread_aware_be_trigger_mode: Literal["fixed_pips", "spread_relative"] = "fixed_pips"
+    spread_aware_be_fixed_trigger_pips: float = 5.0
+    spread_aware_be_spread_buffer_pips: float = 1.0
+    spread_aware_be_apply_to_zone_entry: bool = True
+    spread_aware_be_apply_to_tiered_pullback: bool = True
 
     # EMA Zone Entry Filter (scoring system: blocks zone entries during EMA compression)
     # Uses weighted score of M1 EMA 9 vs EMA 17 spread, slope, and spread direction

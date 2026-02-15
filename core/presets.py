@@ -1165,10 +1165,10 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
     # -----------------------------------------------------------------------
     PresetId.KT_CG_TRIAL_4: {
         "name": "KT/CG Trial #4 (M3 Trend + Tiered Pullback)",
-        "description": "Tiered Pullback: When M3 BULL and live price touches M1 EMA 9/11/13/15/17, triggers BUY. When M3 BEAR and price touches tier EMAs, triggers SELL. Each tier fires once per touch and resets when price moves away.",
+        "description": "Tiered Pullback: When M3 BULL and live price touches M1 EMA 9/11/12/13/14/15/16/17, triggers BUY. When M3 BEAR and price touches tier EMAs, triggers SELL. Each tier fires once per touch and resets when price moves away.",
         "pros": [
             "M3 updates every 3 minutes (faster than M5's 5 minutes)",
-            "5 tiered pullback levels = multiple entry opportunities per pullback",
+            "8 tiered pullback levels = multiple entry opportunities per pullback",
             "Each tier fires independently (no cooldown for tiered entries)",
             "Tier resets when price moves away - allows re-entry on deep pullbacks",
         ],
@@ -1205,8 +1205,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
             "breakeven": {"enabled": False},
         },
         "execution": {
-            "loop_poll_seconds": 1.0,
-            "loop_poll_seconds_fast": 0.5,
+            "loop_poll_seconds": 0.25,
+            "loop_poll_seconds_fast": 0.25,
             "policies": [
                 {
                     "type": "kt_cg_trial_4",
@@ -1220,7 +1220,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "m1_zone_entry_ema_slow": 9,
                     # Tiered Pullback Configuration
                     "tiered_pullback_enabled": True,
-                    "tier_ema_periods": [9, 11, 13, 15, 17],
+                    "tier_ema_periods": [9, 11, 12, 13, 14, 15, 16, 17],
                     "tier_reset_buffer_pips": 1.0,
                     # Close opposite trades before placing new trade
                     "close_opposite_on_trade": True,
@@ -1238,6 +1238,21 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "rsi_divergence_period": 14,
                     "rsi_divergence_lookback_bars": 50,
                     "rsi_divergence_block_minutes": 5.0,
+                    # Tiered ATR(14) Filter (replaces generic ATR for Trial #4)
+                    "tiered_atr_filter_enabled": True,
+                    "tiered_atr_block_below_pips": 4.0,
+                    "tiered_atr_allow_all_max_pips": 12.0,
+                    "tiered_atr_pullback_only_max_pips": 15.0,
+                    # Daily High/Low Filter
+                    "daily_hl_filter_enabled": False,
+                    "daily_hl_buffer_pips": 5.0,
+                    # Spread-Aware Breakeven
+                    "spread_aware_be_enabled": False,
+                    "spread_aware_be_trigger_mode": "fixed_pips",
+                    "spread_aware_be_fixed_trigger_pips": 5.0,
+                    "spread_aware_be_spread_buffer_pips": 1.0,
+                    "spread_aware_be_apply_to_zone_entry": True,
+                    "spread_aware_be_apply_to_tiered_pullback": True,
                     # EMA Zone Entry Filter (blocks zone entries during EMA compression)
                     "ema_zone_filter_enabled": True,
                     "ema_zone_filter_lookback_bars": 3,

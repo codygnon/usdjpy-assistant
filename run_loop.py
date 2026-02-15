@@ -58,7 +58,7 @@ def _poll_seconds(profile, cli_poll: float | None) -> float:
     )
     if use_fast and base > fast:
         return fast
-    return max(1.0, base)
+    return max(0.25, base)
 
 
 def _compute_mkt(profile, tick, data_by_tf) -> MarketContext:
@@ -81,6 +81,7 @@ def _insert_trade_for_policy(
     stop_price: float | None = None,
     target_price: float | None = None,
     size_lots: float | None = None,
+    entry_type: str | None = None,
 ) -> None:
     """Store a trade in DB when a policy places an order. Ensures preset and position_id for Performance by Preset."""
     try:
@@ -112,6 +113,8 @@ def _insert_trade_for_policy(
         }
         row["breakeven_applied"] = 0
         row["tp1_partial_done"] = 0
+        if entry_type:
+            row["entry_type"] = entry_type
         # Capture entry slippage if fill_price available
         if getattr(dec, 'fill_price', None) is not None:
             slippage = abs(dec.fill_price - entry_price) / float(profile.pip_size)
@@ -128,9 +131,18 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
         return
     breakeven = getattr(tm, "breakeven", None)
     target = getattr(tm, "target", None)
-    if (not breakeven or not getattr(breakeven, "enabled", False)) and (
-        not target or getattr(target, "mode", None) != "scaled" or not getattr(target, "tp1_pips", None)
-    ):
+
+    # Find Trial #4 spread-aware BE config if present
+    t4_spread_be = None
+    for pol in profile.execution.policies:
+        if getattr(pol, "type", None) == "kt_cg_trial_4" and getattr(pol, "enabled", True):
+            if getattr(pol, "spread_aware_be_enabled", False):
+                t4_spread_be = pol
+            break
+
+    has_simple_be = breakeven and getattr(breakeven, "enabled", False)
+    has_scaled = target and getattr(target, "mode", None) == "scaled" and getattr(target, "tp1_pips", None)
+    if not has_simple_be and not has_scaled and t4_spread_be is None:
         return
     try:
         open_positions = adapter.get_open_positions(profile.symbol)
@@ -147,6 +159,7 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
     }
     pip = float(profile.pip_size)
     mid = (tick.bid + tick.ask) / 2.0
+    current_spread = tick.ask - tick.bid
     for pos in open_positions:
         # OANDA: dict with "id", "currentUnits"; MT5: object with ticket, volume (lots)
         position_id = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
@@ -162,8 +175,72 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
         trade_id = str(trade_row["trade_id"])
         entry = float(trade_row["entry_price"])
         side = str(trade_row["side"]).lower()
-        # 1) Breakeven first
-        if breakeven and getattr(breakeven, "enabled", False):
+        entry_type = trade_row.get("entry_type")
+
+        # 1a) Spread-Aware Breakeven for Trial #4 trades
+        if t4_spread_be is not None and entry_type is not None:
+            # Check scope: apply_to_zone_entry / apply_to_tiered_pullback
+            apply = False
+            if entry_type == "zone_entry" and getattr(t4_spread_be, "spread_aware_be_apply_to_zone_entry", True):
+                apply = True
+            elif entry_type == "tiered_pullback" and getattr(t4_spread_be, "spread_aware_be_apply_to_tiered_pullback", True):
+                apply = True
+            if apply:
+                trigger_mode = getattr(t4_spread_be, "spread_aware_be_trigger_mode", "fixed_pips")
+                if trigger_mode == "spread_relative":
+                    trigger_pips = (current_spread / pip) + getattr(t4_spread_be, "spread_aware_be_spread_buffer_pips", 1.0)
+                else:
+                    trigger_pips = getattr(t4_spread_be, "spread_aware_be_fixed_trigger_pips", 5.0)
+                # Check if TP distance is large enough (skip if TP < trigger threshold)
+                tp_price = trade_row.get("target_price")
+                if tp_price is not None:
+                    tp_dist_pips = abs(float(tp_price) - entry) / pip
+                    if tp_dist_pips < trigger_pips:
+                        pass  # Skip BE — TP too close
+                    else:
+                        # Use bid for BUY, ask for SELL to check profit
+                        check_price = tick.bid if side == "buy" else tick.ask
+                        profit_pips = ((check_price - entry) / pip) if side == "buy" else ((entry - check_price) / pip)
+                        if profit_pips >= trigger_pips:
+                            # Compute new SL = entry ± current_spread
+                            if side == "buy":
+                                new_sl = entry + current_spread
+                            else:
+                                new_sl = entry - current_spread
+                            # Ratchet: only move SL favorably
+                            prev_be_sl = trade_row.get("breakeven_sl_price")
+                            if prev_be_sl is not None:
+                                prev_be_sl = float(prev_be_sl)
+                                if side == "buy":
+                                    new_sl = max(new_sl, prev_be_sl)
+                                else:
+                                    new_sl = min(new_sl, prev_be_sl)
+                            # Only update if SL changed
+                            if prev_be_sl is None or abs(new_sl - prev_be_sl) > pip * 0.01:
+                                try:
+                                    adapter.update_position_stop_loss(position_id, profile.symbol, round(new_sl, 3))
+                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(new_sl, 5)})
+                                    spread_pips = current_spread / pip
+                                    print(f"[{profile.profile_name}] spread-aware BE: pos {position_id} SL -> {new_sl:.3f} (spread={spread_pips:.1f}p, profit={profit_pips:.1f}p)")
+                                except Exception as e:
+                                    print(f"[{profile.profile_name}] spread-aware BE error pos {position_id}: {e}")
+                # Skip simple BE for this trade (spread-aware handles it)
+                # Fall through to TP1 and MAE/MFE below
+            else:
+                # Not in scope — fall through to simple BE
+                if has_simple_be:
+                    be_applied = trade_row.get("breakeven_applied") or 0
+                    if not be_applied:
+                        after_pips = float(getattr(breakeven, "after_pips", 0) or 0)
+                        if after_pips > 0:
+                            in_favor_buy = mid >= entry + after_pips * pip
+                            in_favor_sell = mid <= entry - after_pips * pip
+                            if (side == "buy" and in_favor_buy) or (side == "sell" and in_favor_sell):
+                                adapter.update_position_stop_loss(position_id, profile.symbol, entry)
+                                store.update_trade(trade_id, {"breakeven_applied": 1})
+                                print(f"[{profile.profile_name}] breakeven applied position {position_id}")
+        # 1b) Simple breakeven for non-Trial-4 or when spread-aware is disabled
+        elif has_simple_be:
             be_applied = trade_row.get("breakeven_applied") or 0
             if not be_applied:
                 after_pips = float(getattr(breakeven, "after_pips", 0) or 0)
@@ -298,6 +375,27 @@ def main() -> None:
         SYNC_INTERVAL_LOOPS = 12  # Sync every ~60 seconds (assuming 5s poll)
         _MAX_FETCH_RETRIES = 3  # Retry broker fetch this many times before sleeping and continuing
 
+        # Candle cache: {tf: (timestamp_fetched, DataFrame)}
+        # TTLs in seconds: M1=55, M3=175, M5=295, M15=895, H4=14395, D=300
+        _candle_cache: dict[str, tuple[float, pd.DataFrame]] = {}
+        _CANDLE_TTL: dict[str, float] = {
+            "M1": 55.0, "M3": 175.0, "M5": 295.0, "M15": 895.0,
+            "H4": 14395.0, "D": 300.0,
+        }
+
+        def _get_bars_cached(symbol: str, tf: str, count: int) -> pd.DataFrame:
+            """Fetch bars with caching to reduce API calls at fast poll rates."""
+            now = time.time()
+            cached = _candle_cache.get(tf)
+            ttl = _CANDLE_TTL.get(tf, 55.0)
+            if cached is not None:
+                cached_time, cached_df = cached
+                if now - cached_time < ttl:
+                    return cached_df
+            df = adapter.get_bars(symbol, tf, count)
+            _candle_cache[tf] = (now, df)
+            return df
+
         while True:
             loop_count += 1
             if loop_count % 20 == 0:
@@ -329,16 +427,20 @@ def main() -> None:
             for _fetch_attempt in range(_MAX_FETCH_RETRIES):
                 try:
                     data_by_tf = {
-                        "H4": adapter.get_bars(profile.symbol, "H4", 800),
-                        "M15": adapter.get_bars(profile.symbol, "M15", 2000),
-                        "M1": adapter.get_bars(profile.symbol, "M1", 3000),
+                        "H4": _get_bars_cached(profile.symbol, "H4", 800),
+                        "M15": _get_bars_cached(profile.symbol, "M15", 2000),
+                        "M1": _get_bars_cached(profile.symbol, "M1", 3000),
                     }
                     # Fetch M5 data when needed by ema_pullback, kt_cg_ctp, kt_cg_hybrid, or M5 confirmed-cross setups.
                     if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid:
-                        data_by_tf["M5"] = adapter.get_bars(profile.symbol, "M5", 2000)
+                        data_by_tf["M5"] = _get_bars_cached(profile.symbol, "M5", 2000)
                     # Fetch M3 data when needed by kt_cg_trial_4 (Trial #4 trend detection).
                     if has_kt_cg_trial_4:
-                        data_by_tf["M3"] = adapter.get_bars(profile.symbol, "M3", 3000)
+                        data_by_tf["M3"] = _get_bars_cached(profile.symbol, "M3", 3000)
+                    # Fetch D1 data when needed by daily H/L filter (Trial #4).
+                    if has_kt_cg_trial_4:
+                        data_by_tf["D"] = _get_bars_cached(profile.symbol, "D", 2)
+                    # Tick always fetched fresh for live price detection
                     tick = adapter.get_tick(profile.symbol)
                     break
                 except Exception as _fetch_err:
@@ -1013,12 +1115,15 @@ def main() -> None:
                             temp_overrides[mapped_key] = int(val)
                     if not temp_overrides:
                         temp_overrides = None
-                    # Load tier state for tiered pullback
+                    # Load tier state for tiered pullback (8 tiers)
                     tier_state = {
                         9: bool(state_data.get("tier_9_fired", False)),
                         11: bool(state_data.get("tier_11_fired", False)),
+                        12: bool(state_data.get("tier_12_fired", False)),
                         13: bool(state_data.get("tier_13_fired", False)),
+                        14: bool(state_data.get("tier_14_fired", False)),
                         15: bool(state_data.get("tier_15_fired", False)),
+                        16: bool(state_data.get("tier_16_fired", False)),
                         17: bool(state_data.get("tier_17_fired", False)),
                     }
                     # Load divergence block state for RSI divergence detection
@@ -1031,7 +1136,7 @@ def main() -> None:
                         divergence_state["block_sell_until"] = block_sell_until
                 except Exception:
                     temp_overrides = None
-                    tier_state = {9: False, 11: False, 13: False, 15: False, 17: False}
+                    tier_state = {9: False, 11: False, 12: False, 13: False, 14: False, 15: False, 16: False, 17: False}
                     divergence_state = {}
 
                 for pol in profile.execution.policies:
@@ -1059,6 +1164,7 @@ def main() -> None:
                     dec = exec_result["decision"]
                     tier_updates = exec_result.get("tier_updates", {})
                     divergence_updates = exec_result.get("divergence_updates", {})
+                    t4_trigger_type = exec_result.get("trigger_type")
 
                     # Persist tier state updates to runtime_state.json
                     if tier_updates:
@@ -1109,6 +1215,7 @@ def main() -> None:
                                 dec=dec,
                                 stop_price=sl_price,
                                 target_price=tp_price,
+                                entry_type=t4_trigger_type,
                             )
                         else:
                             print(f"[{profile.profile_name}] kt_cg_trial_4 {pol.id} mode={mode} -> {dec.reason}")
