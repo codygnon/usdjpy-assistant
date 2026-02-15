@@ -3640,10 +3640,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Poll Interval (s)</div>
                     <input
                       type="number"
-                      step="0.5"
-                      min="0.5"
+                      step="0.25"
+                      min="0.25"
                       value={editedSettings.loop_poll_seconds}
-                      onChange={(e) => setEditedSettings({ ...editedSettings, loop_poll_seconds: parseFloat(e.target.value) || 0.5 })}
+                      onChange={(e) => setEditedSettings({ ...editedSettings, loop_poll_seconds: parseFloat(e.target.value) || 0.25 })}
                       style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
                     />
                   </div>
