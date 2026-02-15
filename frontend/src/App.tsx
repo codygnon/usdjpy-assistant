@@ -598,15 +598,25 @@ interface CandlestickChartProps {
   height?: number;
 }
 
+const emaSeriesOptions = { lastValueVisible: false, priceLineVisible: false };
+const emaColors: Record<string, string> = {
+  ema5: '#ec4899', ema7: '#f97316', ema9: '#f59e0b', ema11: '#eab308',
+  ema13: '#3b82f6', ema15: '#14b8a6', ema17: '#8b5cf6', ema21: '#6366f1',
+  ema50: '#10b981', ema200: '#a855f7',
+};
+
 function CandlestickChart({ ohlc, emaStack, bollingerSeries, height = 300 }: CandlestickChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const emaSeriesRefs = useRef<Record<string, ISeriesApi<'Line'>>>({});
+  const bbSeriesRefs = useRef<{ upper?: ISeriesApi<'Line'>; middle?: ISeriesApi<'Line'>; lower?: ISeriesApi<'Line'> }>({});
+  const fitContentOnceRef = useRef(false);
 
+  // Effect 1: Create chart once on mount; do not recreate on data/height change.
   useEffect(() => {
-    if (!chartContainerRef.current || ohlc.length === 0) return;
+    if (!chartContainerRef.current) return;
 
-    // Create chart
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
       height: height,
@@ -633,7 +643,6 @@ function CandlestickChart({ ohlc, emaStack, bollingerSeries, height = 300 }: Can
 
     chartRef.current = chart;
 
-    // Add candlestick series (v4+ API)
     const candlestickSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#10b981',
       downColor: '#ef4444',
@@ -642,62 +651,14 @@ function CandlestickChart({ ohlc, emaStack, bollingerSeries, height = 300 }: Can
       wickUpColor: '#10b981',
       wickDownColor: '#ef4444',
     });
-
+    candlestickSeries.setData([]);
     seriesRef.current = candlestickSeries;
 
-    // Convert OHLC data to chart format
-    const chartData: CandlestickData<Time>[] = ohlc.map((bar) => ({
-      time: bar.time as Time,
-      open: bar.open,
-      high: bar.high,
-      low: bar.low,
-      close: bar.close,
-    }));
-
-    candlestickSeries.setData(chartData);
-
-    // Add EMA lines
-    const emaSeriesOptions = { lastValueVisible: false, priceLineVisible: false };
-    const emaColors: Record<string, string> = {
-      ema5: '#ec4899', ema7: '#f97316', ema9: '#f59e0b', ema11: '#eab308',
-      ema13: '#3b82f6', ema15: '#14b8a6', ema17: '#8b5cf6', ema21: '#6366f1',
-      ema50: '#10b981', ema200: '#a855f7',
-    };
-    if (emaStack) {
-      Object.entries(emaStack).forEach(([key, arr]) => {
-        if (arr && arr.length > 0) {
-          const color = emaColors[key] || '#94a3b8';
-          const emaSeries = chart.addSeries(LineSeries, { color, lineWidth: 1, title: key.toUpperCase(), ...emaSeriesOptions });
-          emaSeries.setData(arr.map(d => ({ time: d.time as Time, value: d.value })));
-        }
-      });
-    }
-
-    // Add Bollinger Bands
-    if (bollingerSeries) {
-      const bbColor = '#6b7280';
-      if (bollingerSeries.upper && bollingerSeries.upper.length > 0) {
-        const upper = chart.addSeries(LineSeries, { color: bbColor, lineWidth: 1, lineStyle: 2, title: 'BB Upper', ...emaSeriesOptions });
-        upper.setData(bollingerSeries.upper.map(d => ({ time: d.time as Time, value: d.value })));
-      }
-      if (bollingerSeries.middle && bollingerSeries.middle.length > 0) {
-        const middle = chart.addSeries(LineSeries, { color: bbColor, lineWidth: 1, title: 'BB Mid', ...emaSeriesOptions });
-        middle.setData(bollingerSeries.middle.map(d => ({ time: d.time as Time, value: d.value })));
-      }
-      if (bollingerSeries.lower && bollingerSeries.lower.length > 0) {
-        const lower = chart.addSeries(LineSeries, { color: bbColor, lineWidth: 1, lineStyle: 2, title: 'BB Lower', ...emaSeriesOptions });
-        lower.setData(bollingerSeries.lower.map(d => ({ time: d.time as Time, value: d.value })));
-      }
-    }
-
-    // Fit content
-    chart.timeScale().fitContent();
-
-    // Handle resize
     const handleResize = () => {
       if (chartContainerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({ 
-          width: chartContainerRef.current.clientWidth 
+        chartRef.current.applyOptions({
+          width: chartContainerRef.current.clientWidth,
+          height: height,
         });
       }
     };
@@ -707,35 +668,95 @@ function CandlestickChart({ ohlc, emaStack, bollingerSeries, height = 300 }: Can
     return () => {
       window.removeEventListener('resize', handleResize);
       chart.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
+      emaSeriesRefs.current = {};
+      bbSeriesRefs.current = {};
+      fitContentOnceRef.current = false;
     };
+  }, []);
+
+  // Effect 2: Update data and layout when props change; do not destroy chart or call fitContent after first time.
+  useEffect(() => {
+    const chart = chartRef.current;
+    const candlestickSeries = seriesRef.current;
+    if (!chartContainerRef.current || !chart || !candlestickSeries) return;
+
+    chart.applyOptions({ height });
+
+    const chartData: CandlestickData<Time>[] = ohlc.map((bar) => ({
+      time: bar.time as Time,
+      open: bar.open,
+      high: bar.high,
+      low: bar.low,
+      close: bar.close,
+    }));
+    candlestickSeries.setData(chartData);
+
+    if (emaStack) {
+      for (const [key, arr] of Object.entries(emaStack)) {
+        if (!arr) continue;
+        const color = emaColors[key] || '#94a3b8';
+        const lineData = arr.map(d => ({ time: d.time as Time, value: d.value }));
+        if (!emaSeriesRefs.current[key]) {
+          const emaSeries = chart.addSeries(LineSeries, { color, lineWidth: 1, title: key.toUpperCase(), ...emaSeriesOptions });
+          emaSeries.setData(lineData);
+          emaSeriesRefs.current[key] = emaSeries;
+        } else {
+          emaSeriesRefs.current[key].setData(lineData);
+        }
+      }
+    }
+
+    if (bollingerSeries) {
+      const bbColor = '#6b7280';
+      if (!bbSeriesRefs.current.upper) {
+        bbSeriesRefs.current.upper = chart.addSeries(LineSeries, { color: bbColor, lineWidth: 1, lineStyle: 2, title: 'BB Upper', ...emaSeriesOptions });
+        bbSeriesRefs.current.middle = chart.addSeries(LineSeries, { color: bbColor, lineWidth: 1, title: 'BB Mid', ...emaSeriesOptions });
+        bbSeriesRefs.current.lower = chart.addSeries(LineSeries, { color: bbColor, lineWidth: 1, lineStyle: 2, title: 'BB Lower', ...emaSeriesOptions });
+      }
+      const upper = bollingerSeries.upper?.length ? bollingerSeries.upper.map(d => ({ time: d.time as Time, value: d.value })) : [];
+      const middle = bollingerSeries.middle?.length ? bollingerSeries.middle.map(d => ({ time: d.time as Time, value: d.value })) : [];
+      const lower = bollingerSeries.lower?.length ? bollingerSeries.lower.map(d => ({ time: d.time as Time, value: d.value })) : [];
+      bbSeriesRefs.current.upper?.setData(upper);
+      bbSeriesRefs.current.middle?.setData(middle);
+      bbSeriesRefs.current.lower?.setData(lower);
+    }
+
+    if (ohlc.length > 0 && !fitContentOnceRef.current) {
+      chart.timeScale().fitContent();
+      fitContentOnceRef.current = true;
+    }
   }, [ohlc, emaStack, bollingerSeries, height]);
 
-  if (ohlc.length === 0) {
-    return (
-      <div style={{ 
-        height: height, 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'center',
-        background: 'var(--bg-tertiary)',
-        borderRadius: 6,
-        color: 'var(--text-secondary)'
-      }}>
-        No chart data available
-      </div>
-    );
-  }
-
   return (
-    <div
-      ref={chartContainerRef}
-      style={{
-        width: '100%',
-        height: height,
-        borderRadius: 6,
-        overflow: 'hidden'
-      }}
-    />
+    <div style={{ position: 'relative', width: '100%', height: height, borderRadius: 6, overflow: 'hidden' }}>
+      <div
+        ref={chartContainerRef}
+        style={{
+          width: '100%',
+          height: height,
+          borderRadius: 6,
+          overflow: 'hidden'
+        }}
+      />
+      {ohlc.length === 0 && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'var(--bg-tertiary)',
+            borderRadius: 6,
+            color: 'var(--text-secondary)'
+          }}
+        >
+          No chart data available
+        </div>
+      )}
+    </div>
   );
 }
 
