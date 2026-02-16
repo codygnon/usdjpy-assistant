@@ -3398,8 +3398,8 @@ def _compute_ema_zone_filter_score(
     spread_dir_pips = spread_pips - spread_prev
 
     # Score each metric: linearly interpolate, clamp to [0, 1]
-    # Spread size: 0 pips -> 0.0, 1 pip -> 1.0
-    spread_score = max(0.0, min(1.0, spread_pips / 1.0))
+    # Spread size: 0 pips -> 0.0, 4 pips -> 1.0
+    spread_score = max(0.0, min(1.0, spread_pips / 4.0))
     # Slope: -1 pip -> 0.0, +3 pips -> 1.0
     slope_score = max(0.0, min(1.0, (slope_pips + 1.0) / 4.0))
     # Spread direction: -3 pips -> 0.0, +3 pips -> 1.0
