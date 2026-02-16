@@ -3063,6 +3063,8 @@ interface EditedSettings {
   spread_aware_be_spread_buffer_pips: number;
   spread_aware_be_apply_to_zone_entry: boolean;
   spread_aware_be_apply_to_tiered_pullback: boolean;
+  // Trial #4: Zone entry toggle
+  zone_entry_enabled: boolean;
   // Trial #4: Per-tier toggles
   tier_ema_periods: number[];
   // Trial #3 EMA overrides
@@ -3160,6 +3162,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let spreadAwareBeSpreadBufferPips = 1.0;
       let spreadAwareBeApplyToZoneEntry = true;
       let spreadAwareBeApplyToTieredPullback = true;
+      // Trial #4: Zone entry toggle
+      let zoneEntryEnabled = true;
       // Trial #4: Tier EMA periods
       let tierEmaPeriods: number[] = [9, 11, 12, 13, 14, 15, 16, 17];
       if (policies) {
@@ -3213,6 +3217,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
             spreadAwareBeApplyToZoneEntry = (pol.spread_aware_be_apply_to_zone_entry as boolean) ?? true;
             spreadAwareBeApplyToTieredPullback = (pol.spread_aware_be_apply_to_tiered_pullback as boolean) ?? true;
           }
+          if ('zone_entry_enabled' in pol) {
+            zoneEntryEnabled = (pol.zone_entry_enabled as boolean) ?? true;
+          }
           if ('tier_ema_periods' in pol) {
             tierEmaPeriods = (pol.tier_ema_periods as number[]) ?? [9, 11, 12, 13, 14, 15, 16, 17];
           }
@@ -3263,6 +3270,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
         spread_aware_be_spread_buffer_pips: spreadAwareBeSpreadBufferPips,
         spread_aware_be_apply_to_zone_entry: spreadAwareBeApplyToZoneEntry,
         spread_aware_be_apply_to_tiered_pullback: spreadAwareBeApplyToTieredPullback,
+        // Trial #4: Zone entry toggle
+        zone_entry_enabled: zoneEntryEnabled,
         // Trial #4: Tier periods
         tier_ema_periods: tierEmaPeriods,
         // Trial #3 EMA overrides from temp settings
@@ -3367,6 +3376,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.spread_aware_be_spread_buffer_pips = editedSettings.spread_aware_be_spread_buffer_pips;
           updates.spread_aware_be_apply_to_zone_entry = editedSettings.spread_aware_be_apply_to_zone_entry;
           updates.spread_aware_be_apply_to_tiered_pullback = editedSettings.spread_aware_be_apply_to_tiered_pullback;
+          // Zone entry toggle
+          updates.zone_entry_enabled = editedSettings.zone_entry_enabled;
           // Tier periods
           updates.tier_ema_periods = editedSettings.tier_ema_periods;
         }
@@ -4224,11 +4235,41 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       </div>
                     </div>
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 8 }}>
+                        <input type="checkbox" checked={editedSettings.zone_entry_enabled} onChange={(e) => setEditedSettings({ ...editedSettings, zone_entry_enabled: e.target.checked })} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                        <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>Zone Entry Enabled</span>
+                      </label>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                        When OFF, only tiered pullback entries are active (zone entry trades are blocked).
+                      </div>
+                    </div>
+                    <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                        Tiered Pullback (per-tier toggles)
+                        Tiered Pullback — Tiers 9–17
                       </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                         {[9, 11, 12, 13, 14, 15, 16, 17].map(tier => (
+                          <label key={tier} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '2px 6px', background: editedSettings.tier_ema_periods.includes(tier) ? 'var(--success)' : 'var(--bg-secondary)', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600, color: editedSettings.tier_ema_periods.includes(tier) ? '#fff' : 'var(--text-secondary)' }}>
+                            <input
+                              type="checkbox"
+                              checked={editedSettings.tier_ema_periods.includes(tier)}
+                              onChange={(e) => {
+                                const periods = e.target.checked
+                                  ? [...editedSettings.tier_ema_periods, tier].sort((a, b) => a - b)
+                                  : editedSettings.tier_ema_periods.filter(t => t !== tier);
+                                setEditedSettings({ ...editedSettings, tier_ema_periods: periods });
+                              }}
+                              style={{ width: 14, height: 14, cursor: 'pointer' }}
+                            />
+                            EMA {tier}
+                          </label>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, marginTop: 12 }}>
+                        Tiered Pullback — Tiers 18–30
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {[18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30].map(tier => (
                           <label key={tier} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '2px 6px', background: editedSettings.tier_ema_periods.includes(tier) ? 'var(--success)' : 'var(--bg-secondary)', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600, color: editedSettings.tier_ema_periods.includes(tier) ? '#fff' : 'var(--text-secondary)' }}>
                             <input
                               type="checkbox"

@@ -1216,6 +1216,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "m3_trend_ema_fast": 5,
                     "m3_trend_ema_slow": 9,
                     # M1 Zone Entry - EMA5 vs EMA9 (respects cooldown)
+                    "zone_entry_enabled": True,
                     "m1_zone_entry_ema_fast": 5,
                     "m1_zone_entry_ema_slow": 9,
                     # Tiered Pullback Configuration

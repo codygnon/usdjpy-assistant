@@ -451,12 +451,13 @@ class ExecutionPolicyKtCgTrial4(BaseModel):
     m3_trend_ema_slow: int = 9
 
     # M1 Zone Entry - EMA5 vs EMA9
+    zone_entry_enabled: bool = True
     m1_zone_entry_ema_fast: int = 5
     m1_zone_entry_ema_slow: int = 9
 
     # Tiered Pullback Configuration
     tiered_pullback_enabled: bool = True
-    tier_ema_periods: tuple[int, ...] = (9, 11, 12, 13, 14, 15, 16, 17)
+    tier_ema_periods: tuple[int, ...] = (9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30)
     tier_reset_buffer_pips: float = 1.0  # Distance from EMA to reset tier
 
     # Close opposite trades before placing new trade

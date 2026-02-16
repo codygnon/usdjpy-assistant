@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -29,20 +29,30 @@ class RuntimeState:
     temp_m1_t4_zone_entry_ema_fast: Optional[int] = None
     temp_m1_t4_zone_entry_ema_slow: Optional[int] = None
 
-    # Trial #4 Tiered Pullback State (8 tiers: 9, 11, 12, 13, 14, 15, 16, 17)
-    tier_9_fired: bool = False
-    tier_11_fired: bool = False
-    tier_12_fired: bool = False
-    tier_13_fired: bool = False
-    tier_14_fired: bool = False
-    tier_15_fired: bool = False
-    tier_16_fired: bool = False
-    tier_17_fired: bool = False
+    # Trial #4 Tiered Pullback State (dynamic dict: EMA period -> fired bool)
+    tier_fired: dict = field(default_factory=dict)
 
     # RSI Divergence Block State (Trial #4)
     # ISO timestamps indicating when the block expires
     divergence_block_buy_until: Optional[str] = None
     divergence_block_sell_until: Optional[str] = None
+
+
+def _load_tier_fired(data: dict) -> dict:
+    """Load tier_fired from JSON data with backward compat for old tier_X_fired keys."""
+    # New format: single dict
+    if "tier_fired" in data and isinstance(data["tier_fired"], dict):
+        return {int(k): bool(v) for k, v in data["tier_fired"].items()}
+    # Legacy format: individual tier_X_fired keys
+    result = {}
+    for key, val in data.items():
+        if key.startswith("tier_") and key.endswith("_fired") and key != "tier_fired":
+            try:
+                period = int(key.replace("tier_", "").replace("_fired", ""))
+                result[period] = bool(val)
+            except ValueError:
+                pass
+    return result
 
 
 def load_state(path: str | Path) -> RuntimeState:
@@ -62,14 +72,7 @@ def load_state(path: str | Path) -> RuntimeState:
         temp_m3_trend_ema_slow=data.get("temp_m3_trend_ema_slow"),
         temp_m1_t4_zone_entry_ema_fast=data.get("temp_m1_t4_zone_entry_ema_fast"),
         temp_m1_t4_zone_entry_ema_slow=data.get("temp_m1_t4_zone_entry_ema_slow"),
-        tier_9_fired=bool(data.get("tier_9_fired", False)),
-        tier_11_fired=bool(data.get("tier_11_fired", False)),
-        tier_12_fired=bool(data.get("tier_12_fired", False)),
-        tier_13_fired=bool(data.get("tier_13_fired", False)),
-        tier_14_fired=bool(data.get("tier_14_fired", False)),
-        tier_15_fired=bool(data.get("tier_15_fired", False)),
-        tier_16_fired=bool(data.get("tier_16_fired", False)),
-        tier_17_fired=bool(data.get("tier_17_fired", False)),
+        tier_fired=_load_tier_fired(data),
         divergence_block_buy_until=data.get("divergence_block_buy_until"),
         divergence_block_sell_until=data.get("divergence_block_sell_until"),
     )
@@ -92,14 +95,7 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "temp_m3_trend_ema_slow": state.temp_m3_trend_ema_slow,
                 "temp_m1_t4_zone_entry_ema_fast": state.temp_m1_t4_zone_entry_ema_fast,
                 "temp_m1_t4_zone_entry_ema_slow": state.temp_m1_t4_zone_entry_ema_slow,
-                "tier_9_fired": state.tier_9_fired,
-                "tier_11_fired": state.tier_11_fired,
-                "tier_12_fired": state.tier_12_fired,
-                "tier_13_fired": state.tier_13_fired,
-                "tier_14_fired": state.tier_14_fired,
-                "tier_15_fired": state.tier_15_fired,
-                "tier_16_fired": state.tier_16_fired,
-                "tier_17_fired": state.tier_17_fired,
+                "tier_fired": state.tier_fired,
                 "divergence_block_buy_until": state.divergence_block_buy_until,
                 "divergence_block_sell_until": state.divergence_block_sell_until,
             },

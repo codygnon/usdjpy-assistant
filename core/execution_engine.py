@@ -3436,7 +3436,7 @@ def evaluate_kt_cg_trial_4_conditions(
        - M3 BEAR + M1 EMA5 < M1 EMA9 -> SELL
 
     2. Tiered Pullback (discrete event, NO cooldown):
-       - 5 tiers: M1 EMA 9, 11, 13, 15, 17
+       - Dynamic tiers: M1 EMA periods from policy.tier_ema_periods
        - M3 BULL + bid touches/goes below tier EMA -> BUY (each tier fires once)
        - M3 BEAR + ask touches/goes above tier EMA -> SELL (each tier fires once)
        - Tier resets when price moves away from EMA by reset_buffer
@@ -3567,18 +3567,22 @@ def evaluate_kt_cg_trial_4_conditions(
             "m3_trend": trend,
         }
 
-    # Check Zone Entry (respects cooldown)
+    # Check Zone Entry (respects cooldown) — only if zone_entry_enabled
     zone_entry_triggered = False
     zone_side: Optional[str] = None
+    zone_entry_enabled = getattr(policy, "zone_entry_enabled", True)
 
-    if is_bull and m1_zone_fast_val > m1_zone_slow_val:
-        zone_entry_triggered = True
-        zone_side = "buy"
-        reasons.append(f"ZONE ENTRY: BULL + M1 EMA{m1_zone_ema_fast} ({m1_zone_fast_val:.3f}) > EMA{m1_zone_ema_slow} ({m1_zone_slow_val:.3f}) -> BUY")
-    elif not is_bull and m1_zone_fast_val < m1_zone_slow_val:
-        zone_entry_triggered = True
-        zone_side = "sell"
-        reasons.append(f"ZONE ENTRY: BEAR + M1 EMA{m1_zone_ema_fast} ({m1_zone_fast_val:.3f}) < EMA{m1_zone_ema_slow} ({m1_zone_slow_val:.3f}) -> SELL")
+    if zone_entry_enabled:
+        if is_bull and m1_zone_fast_val > m1_zone_slow_val:
+            zone_entry_triggered = True
+            zone_side = "buy"
+            reasons.append(f"ZONE ENTRY: BULL + M1 EMA{m1_zone_ema_fast} ({m1_zone_fast_val:.3f}) > EMA{m1_zone_ema_slow} ({m1_zone_slow_val:.3f}) -> BUY")
+        elif not is_bull and m1_zone_fast_val < m1_zone_slow_val:
+            zone_entry_triggered = True
+            zone_side = "sell"
+            reasons.append(f"ZONE ENTRY: BEAR + M1 EMA{m1_zone_ema_fast} ({m1_zone_fast_val:.3f}) < EMA{m1_zone_ema_slow} ({m1_zone_slow_val:.3f}) -> SELL")
+    else:
+        reasons.append("ZONE ENTRY: disabled by zone_entry_enabled=False")
 
     if zone_entry_triggered and zone_side:
         return {

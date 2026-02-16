@@ -457,14 +457,7 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
         temp_m1_t4_zone_entry_ema_fast=req.m1_t4_zone_entry_ema_fast,
         temp_m1_t4_zone_entry_ema_slow=req.m1_t4_zone_entry_ema_slow,
         # Preserve tier state (not modified through temp settings API)
-        tier_9_fired=old.tier_9_fired,
-        tier_11_fired=old.tier_11_fired,
-        tier_12_fired=old.tier_12_fired,
-        tier_13_fired=old.tier_13_fired,
-        tier_14_fired=old.tier_14_fired,
-        tier_15_fired=old.tier_15_fired,
-        tier_16_fired=old.tier_16_fired,
-        tier_17_fired=old.tier_17_fired,
+        tier_fired=old.tier_fired,
         # Preserve divergence block state (not modified through temp settings API)
         divergence_block_buy_until=old.divergence_block_buy_until,
         divergence_block_sell_until=old.divergence_block_sell_until,

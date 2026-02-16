@@ -1115,17 +1115,20 @@ def main() -> None:
                             temp_overrides[mapped_key] = int(val)
                     if not temp_overrides:
                         temp_overrides = None
-                    # Load tier state for tiered pullback (8 tiers)
-                    tier_state = {
-                        9: bool(state_data.get("tier_9_fired", False)),
-                        11: bool(state_data.get("tier_11_fired", False)),
-                        12: bool(state_data.get("tier_12_fired", False)),
-                        13: bool(state_data.get("tier_13_fired", False)),
-                        14: bool(state_data.get("tier_14_fired", False)),
-                        15: bool(state_data.get("tier_15_fired", False)),
-                        16: bool(state_data.get("tier_16_fired", False)),
-                        17: bool(state_data.get("tier_17_fired", False)),
-                    }
+                    # Load tier state for tiered pullback (dynamic dict)
+                    tier_fired_raw = state_data.get("tier_fired")
+                    if isinstance(tier_fired_raw, dict):
+                        tier_state = {int(k): bool(v) for k, v in tier_fired_raw.items()}
+                    else:
+                        # Backward compat: read old tier_X_fired keys
+                        tier_state = {}
+                        for key, val in state_data.items():
+                            if key.startswith("tier_") and key.endswith("_fired") and key != "tier_fired":
+                                try:
+                                    period = int(key.replace("tier_", "").replace("_fired", ""))
+                                    tier_state[period] = bool(val)
+                                except ValueError:
+                                    pass
                     # Load divergence block state for RSI divergence detection
                     divergence_state: dict[str, str] = {}
                     block_buy_until = state_data.get("divergence_block_buy_until")
@@ -1136,7 +1139,7 @@ def main() -> None:
                         divergence_state["block_sell_until"] = block_sell_until
                 except Exception:
                     temp_overrides = None
-                    tier_state = {9: False, 11: False, 12: False, 13: False, 14: False, 15: False, 16: False, 17: False}
+                    tier_state = {}
                     divergence_state = {}
 
                 for pol in profile.execution.policies:
@@ -1170,9 +1173,14 @@ def main() -> None:
                     if tier_updates:
                         try:
                             current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                            # Use tier_fired dict (migrate away from old tier_X_fired keys)
+                            tf_dict = current_state_data.get("tier_fired", {})
+                            if not isinstance(tf_dict, dict):
+                                tf_dict = {}
                             for tier, new_state in tier_updates.items():
-                                current_state_data[f"tier_{tier}_fired"] = new_state
+                                tf_dict[str(tier)] = new_state
                                 tier_state[tier] = new_state  # Update local state too
+                            current_state_data["tier_fired"] = tf_dict
                             state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
                         except Exception as e:
                             print(f"[{profile.profile_name}] Failed to persist tier state: {e}")
