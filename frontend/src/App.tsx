@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef } from 'react';
-import { createChart, IChartApi, ISeriesApi, CandlestickData, Time, CandlestickSeries, LineSeries } from 'lightweight-charts';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { createChart, IChartApi, ISeriesApi, CandlestickData, Time, CandlestickSeries, LineSeries, LineStyle, IPriceLine, createSeriesMarkers, ISeriesMarkersPluginApi, SeriesMarker } from 'lightweight-charts';
 import { ComposedChart, Area, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ScatterChart, Scatter, Cell, BarChart, LineChart, AreaChart } from 'recharts';
 import * as api from './api';
 
@@ -591,11 +591,33 @@ interface ChartTrade {
   exit_price?: number;
 }
 
+interface TradeToggleState {
+  master: boolean;
+  open: boolean;
+  closed: boolean;
+  closedFilter: '24h' | '7d' | '30d' | 'all';
+}
+
+const DEFAULT_TRADE_TOGGLES: TradeToggleState = { master: true, open: true, closed: true, closedFilter: '7d' };
+
+function loadTradeToggles(): TradeToggleState {
+  try {
+    const s = localStorage.getItem('chart-trade-toggles');
+    if (s) return { ...DEFAULT_TRADE_TOGGLES, ...JSON.parse(s) };
+  } catch {}
+  return { ...DEFAULT_TRADE_TOGGLES };
+}
+
+function saveTradeToggles(t: TradeToggleState) {
+  localStorage.setItem('chart-trade-toggles', JSON.stringify(t));
+}
+
 interface CandlestickChartProps {
   ohlc: api.OhlcBar[];
   emaStack?: Record<string, { time: number; value: number }[]>;
   bollingerSeries?: { upper: { time: number; value: number }[]; middle: { time: number; value: number }[]; lower: { time: number; value: number }[] };
   height?: number;
+  chartTrades?: ChartTrade[];
 }
 
 const emaSeriesOptions = { lastValueVisible: false, priceLineVisible: false };
@@ -605,15 +627,29 @@ const emaColors: Record<string, string> = {
   ema50: '#10b981', ema200: '#a855f7',
 };
 
-function CandlestickChart({ ohlc, emaStack, bollingerSeries, height = 300 }: CandlestickChartProps) {
+function CandlestickChart({ ohlc, emaStack, bollingerSeries, height = 300, chartTrades }: CandlestickChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const emaSeriesRefs = useRef<Record<string, ISeriesApi<'Line'>>>({});
   const bbSeriesRefs = useRef<{ upper?: ISeriesApi<'Line'>; middle?: ISeriesApi<'Line'>; lower?: ISeriesApi<'Line'> }>({});
   const fitContentOnceRef = useRef(false);
+  const priceLinesRef = useRef<IPriceLine[]>([]);
+  const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const connectorCanvasRef = useRef<HTMLCanvasElement>(null);
+  const [tradeToggles, setTradeToggles] = useState<TradeToggleState>(loadTradeToggles);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
+  const [hoveredTradeId, setHoveredTradeId] = useState<string | null>(null);
 
-  // Effect 1: Create chart once on mount; do not recreate on data/height change.
+  const updateToggles = useCallback((update: Partial<TradeToggleState>) => {
+    setTradeToggles(prev => {
+      const next = { ...prev, ...update };
+      saveTradeToggles(next);
+      return next;
+    });
+  }, []);
+
+  // Effect 1: Create chart once on mount
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -654,6 +690,9 @@ function CandlestickChart({ ohlc, emaStack, bollingerSeries, height = 300 }: Can
     candlestickSeries.setData([]);
     seriesRef.current = candlestickSeries;
 
+    // Create markers plugin
+    markersPluginRef.current = createSeriesMarkers(candlestickSeries, []);
+
     const handleResize = () => {
       if (chartContainerRef.current && chartRef.current) {
         chartRef.current.applyOptions({
@@ -672,11 +711,13 @@ function CandlestickChart({ ohlc, emaStack, bollingerSeries, height = 300 }: Can
       seriesRef.current = null;
       emaSeriesRefs.current = {};
       bbSeriesRefs.current = {};
+      priceLinesRef.current = [];
+      markersPluginRef.current = null;
       fitContentOnceRef.current = false;
     };
   }, []);
 
-  // Effect 2: Update data and layout when props change; do not destroy chart or call fitContent after first time.
+  // Effect 2: Update candle/EMA/BB data
   useEffect(() => {
     const chart = chartRef.current;
     const candlestickSeries = seriesRef.current;
@@ -729,6 +770,304 @@ function CandlestickChart({ ohlc, emaStack, bollingerSeries, height = 300 }: Can
     }
   }, [ohlc, emaStack, bollingerSeries, height]);
 
+  // Effect 3: Trade overlays (SL/TP lines, markers, connector canvas)
+  useEffect(() => {
+    const series = seriesRef.current;
+    const chart = chartRef.current;
+    if (!series || !chart) return;
+
+    // Remove old price lines
+    for (const pl of priceLinesRef.current) {
+      try { series.removePriceLine(pl); } catch {}
+    }
+    priceLinesRef.current = [];
+
+    if (!chartTrades || !tradeToggles.master) {
+      markersPluginRef.current?.setMarkers([]);
+      drawConnectors([]);
+      return;
+    }
+
+    const now = Date.now() / 1000;
+    const openTrades = chartTrades.filter(t => !t.exit_time && !t.exit_price);
+    const closedTrades = chartTrades.filter(t => t.exit_time || t.exit_price);
+
+    // Filter closed trades by time window
+    const filterCutoff: Record<string, number> = { '24h': 86400, '7d': 604800, '30d': 2592000, 'all': Infinity };
+    const cutoff = now - (filterCutoff[tradeToggles.closedFilter] ?? 604800);
+    const filteredClosed = closedTrades.filter(t => (t.exit_time || 0) >= cutoff);
+
+    // SL/TP price lines for open trades
+    if (tradeToggles.open) {
+      const currentPrice = ohlc.length > 0 ? ohlc[ohlc.length - 1].close : null;
+      for (const t of openTrades) {
+        if (t.stop_price != null) {
+          const tooClose = currentPrice != null && Math.abs(t.stop_price - currentPrice) < 0.05;
+          const pl = series.createPriceLine({
+            price: t.stop_price,
+            color: '#ef4444',
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: !tooClose,
+            title: '',
+          });
+          priceLinesRef.current.push(pl);
+        }
+        if (t.target_price != null) {
+          const tooClose = currentPrice != null && Math.abs(t.target_price - currentPrice) < 0.05;
+          const pl = series.createPriceLine({
+            price: t.target_price,
+            color: '#22c55e',
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: !tooClose,
+            title: '',
+          });
+          priceLinesRef.current.push(pl);
+        }
+        // Entry price line (no axis label)
+        if (t.entry_price) {
+          const pl = series.createPriceLine({
+            price: t.entry_price,
+            color: t.side.toLowerCase() === 'buy' ? '#3b82f6' : '#ef4444',
+            lineWidth: 1,
+            lineStyle: LineStyle.Dotted,
+            axisLabelVisible: false,
+            title: '',
+          });
+          priceLinesRef.current.push(pl);
+        }
+      }
+    }
+
+    // Build markers
+    const allMarkers: SeriesMarker<Time>[] = [];
+
+    if (tradeToggles.open) {
+      for (const t of openTrades) {
+        if (!t.entry_time) continue;
+        const isBuy = t.side.toLowerCase() === 'buy';
+        allMarkers.push({
+          time: t.entry_time as unknown as Time,
+          position: isBuy ? 'belowBar' : 'aboveBar',
+          color: isBuy ? '#22c55e' : '#ef4444',
+          shape: isBuy ? 'arrowUp' : 'arrowDown',
+          text: '',
+          id: `open-${t.trade_id}`,
+        });
+      }
+    }
+
+    if (tradeToggles.closed) {
+      const isHovered = (id: string) => hoveredTradeId === id;
+      const manyVisible = filteredClosed.length > 20;
+      for (const t of filteredClosed) {
+        const profit = t.exit_price != null ? (t.side.toLowerCase() === 'buy' ? t.exit_price - t.entry_price : t.entry_price - t.exit_price) : 0;
+        const isProfit = profit >= 0;
+        const hovered = isHovered(t.trade_id);
+        const alpha = hovered ? 1.0 : 0.2;
+        const baseColor = isProfit ? [34, 197, 94] : [239, 68, 68];
+        const color = `rgba(${baseColor[0]},${baseColor[1]},${baseColor[2]},${alpha})`;
+        const sz = manyVisible && !hovered ? 0.5 : 1;
+
+        if (t.entry_time) {
+          allMarkers.push({
+            time: t.entry_time as unknown as Time,
+            position: 'inBar',
+            color,
+            shape: 'circle',
+            text: '',
+            id: `closed-entry-${t.trade_id}`,
+            size: sz,
+          });
+        }
+        if (t.exit_time) {
+          allMarkers.push({
+            time: t.exit_time as unknown as Time,
+            position: 'inBar',
+            color,
+            shape: 'circle',
+            text: '',
+            id: `closed-exit-${t.trade_id}`,
+            size: sz,
+          });
+        }
+      }
+    }
+
+    // Sort markers by time (required by lightweight-charts)
+    allMarkers.sort((a, b) => (a.time as number) - (b.time as number));
+    markersPluginRef.current?.setMarkers(allMarkers);
+
+    // Draw closed trade connectors
+    if (tradeToggles.closed) {
+      drawConnectors(filteredClosed);
+    } else {
+      drawConnectors([]);
+    }
+  }, [chartTrades, tradeToggles, ohlc, hoveredTradeId]);
+
+  // Draw connector lines on overlay canvas
+  const drawConnectors = useCallback((trades: ChartTrade[]) => {
+    const canvas = connectorCanvasRef.current;
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    if (!canvas || !chart || !series) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const container = chartContainerRef.current;
+    if (container) {
+      canvas.width = container.clientWidth;
+      canvas.height = container.clientHeight;
+    }
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    for (const t of trades) {
+      if (!t.entry_time || !t.exit_time || t.exit_price == null) continue;
+      const x1 = chart.timeScale().timeToCoordinate(t.entry_time as unknown as Time);
+      const y1 = series.priceToCoordinate(t.entry_price);
+      const x2 = chart.timeScale().timeToCoordinate(t.exit_time as unknown as Time);
+      const y2 = series.priceToCoordinate(t.exit_price);
+      if (x1 == null || y1 == null || x2 == null || y2 == null) continue;
+
+      const profit = t.side.toLowerCase() === 'buy' ? t.exit_price - t.entry_price : t.entry_price - t.exit_price;
+      const isHovered = hoveredTradeId === t.trade_id;
+      const alpha = isHovered ? 0.8 : 0.15;
+      ctx.strokeStyle = profit >= 0 ? `rgba(34,197,94,${alpha})` : `rgba(239,68,68,${alpha})`;
+      ctx.lineWidth = isHovered ? 2 : 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+  }, [hoveredTradeId]);
+
+  // Redraw connectors on visible range change
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !chartTrades) return;
+
+    let debounceTimer: ReturnType<typeof setTimeout>;
+    const closedTrades = chartTrades.filter(t => t.exit_time || t.exit_price);
+    const now = Date.now() / 1000;
+    const filterCutoff: Record<string, number> = { '24h': 86400, '7d': 604800, '30d': 2592000, 'all': Infinity };
+    const cutoff = now - (filterCutoff[tradeToggles.closedFilter] ?? 604800);
+    const filteredClosed = closedTrades.filter(t => (t.exit_time || 0) >= cutoff);
+
+    const handler = () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        if (tradeToggles.master && tradeToggles.closed) {
+          drawConnectors(filteredClosed);
+        }
+      }, 100);
+    };
+
+    chart.timeScale().subscribeVisibleTimeRangeChange(handler);
+    return () => {
+      clearTimeout(debounceTimer);
+      chart.timeScale().unsubscribeVisibleTimeRangeChange(handler);
+    };
+  }, [chartTrades, tradeToggles, drawConnectors]);
+
+  // Crosshair tooltip for trade markers
+  useEffect(() => {
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    if (!chart || !series || !chartTrades) return;
+
+    const handler = (param: { time?: Time; point?: { x: number; y: number } }) => {
+      if (!param.time || !param.point) {
+        setTooltip(null);
+        setHoveredTradeId(null);
+        return;
+      }
+
+      const t = param.time as unknown as number;
+      const yCoord = param.point.y;
+
+      // Find nearest trade marker
+      let nearest: ChartTrade | null = null;
+      let nearestDist = Infinity;
+
+      for (const trade of chartTrades) {
+        if (!trade.entry_time) continue;
+        // Check entry
+        if (Math.abs(trade.entry_time - t) <= 180) {
+          const priceY = series.priceToCoordinate(trade.entry_price);
+          if (priceY != null) {
+            const dist = Math.abs(priceY - yCoord);
+            if (dist < 30 && dist < nearestDist) {
+              nearest = trade;
+              nearestDist = dist;
+            }
+          }
+        }
+        // Check exit
+        if (trade.exit_time && trade.exit_price != null && Math.abs(trade.exit_time - t) <= 180) {
+          const priceY = series.priceToCoordinate(trade.exit_price);
+          if (priceY != null) {
+            const dist = Math.abs(priceY - yCoord);
+            if (dist < 30 && dist < nearestDist) {
+              nearest = trade;
+              nearestDist = dist;
+            }
+          }
+        }
+      }
+
+      if (nearest) {
+        const isBuy = nearest.side.toLowerCase() === 'buy';
+        const isOpen = !nearest.exit_time && nearest.exit_price == null;
+        let text = `#${nearest.trade_id} ${nearest.side.toUpperCase()} @ ${nearest.entry_price.toFixed(3)}`;
+        if (!isOpen && nearest.exit_price != null) {
+          const pnl = isBuy ? nearest.exit_price - nearest.entry_price : nearest.entry_price - nearest.exit_price;
+          const pips = (pnl * 100).toFixed(1);
+          text += ` → ${nearest.exit_price.toFixed(3)} (${pnl >= 0 ? '+' : ''}${pips}p)`;
+        }
+        if (isOpen) text += ' [OPEN]';
+        if (nearest.stop_price != null) text += ` SL:${nearest.stop_price.toFixed(3)}`;
+        if (nearest.target_price != null) text += ` TP:${nearest.target_price.toFixed(3)}`;
+
+        setTooltip({ x: param.point.x, y: param.point.y, text });
+        setHoveredTradeId(nearest.trade_id);
+      } else {
+        setTooltip(null);
+        setHoveredTradeId(null);
+      }
+    };
+
+    chart.subscribeCrosshairMove(handler);
+    return () => { chart.unsubscribeCrosshairMove(handler); };
+  }, [chartTrades]);
+
+  // Build EMA legend entries
+  const emaLegendEntries = emaStack
+    ? Object.entries(emaStack)
+        .filter(([, arr]) => arr && arr.length > 0)
+        .map(([key, arr]) => ({
+          key,
+          color: emaColors[key] || '#94a3b8',
+          value: arr[arr.length - 1]?.value,
+        }))
+    : [];
+
+  // Toggle pill style helper
+  const pillStyle = (active: boolean): React.CSSProperties => ({
+    background: active ? 'rgba(99,102,241,0.6)' : 'rgba(55,65,81,0.6)',
+    color: active ? '#fff' : '#9ca3af',
+    border: 'none',
+    borderRadius: 10,
+    padding: '1px 7px',
+    fontSize: '0.6rem',
+    fontWeight: 600,
+    cursor: 'pointer',
+    lineHeight: '16px',
+  });
+
   return (
     <div style={{ position: 'relative', width: '100%', height: height, borderRadius: 6, overflow: 'hidden' }}>
       <div
@@ -740,6 +1079,104 @@ function CandlestickChart({ ohlc, emaStack, bollingerSeries, height = 300 }: Can
           overflow: 'hidden'
         }}
       />
+      {/* Connector canvas overlay */}
+      <canvas
+        ref={connectorCanvasRef}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          pointerEvents: 'none',
+          zIndex: 5,
+        }}
+      />
+      {/* EMA Legend (top-left) */}
+      {emaLegendEntries.length > 0 && (
+        <div style={{
+          position: 'absolute',
+          top: 6,
+          left: 6,
+          zIndex: 10,
+          background: 'rgba(13,17,28,0.85)',
+          borderRadius: 4,
+          padding: '3px 7px',
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 6,
+          maxWidth: '50%',
+        }}>
+          {emaLegendEntries.map(e => (
+            <span key={e.key} style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: '0.6rem', color: '#d1d5db' }}>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: e.color, display: 'inline-block', flexShrink: 0 }} />
+              <span style={{ color: e.color, fontWeight: 600 }}>{e.key.toUpperCase()}</span>
+              <span>{e.value?.toFixed(3) ?? '-'}</span>
+            </span>
+          ))}
+        </div>
+      )}
+      {/* Trade Toggle Panel (top-right) */}
+      {chartTrades && chartTrades.length > 0 && (
+        <div style={{
+          position: 'absolute',
+          top: 6,
+          right: 60,
+          zIndex: 10,
+          background: 'rgba(13,17,28,0.85)',
+          borderRadius: 4,
+          padding: '3px 7px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+        }}>
+          <button type="button" style={pillStyle(tradeToggles.master)} onClick={() => updateToggles({ master: !tradeToggles.master })}>
+            Trades
+          </button>
+          {tradeToggles.master && (
+            <>
+              <button type="button" style={pillStyle(tradeToggles.open)} onClick={() => updateToggles({ open: !tradeToggles.open })}>
+                Open
+              </button>
+              <button type="button" style={pillStyle(tradeToggles.closed)} onClick={() => updateToggles({ closed: !tradeToggles.closed })}>
+                Closed
+              </button>
+              {tradeToggles.closed && (
+                <span style={{ display: 'flex', gap: 2 }}>
+                  {(['24h', '7d', '30d', 'all'] as const).map(f => (
+                    <button key={f} type="button" style={{
+                      ...pillStyle(tradeToggles.closedFilter === f),
+                      fontSize: '0.55rem',
+                      padding: '1px 5px',
+                    }} onClick={() => updateToggles({ closedFilter: f })}>
+                      {f}
+                    </button>
+                  ))}
+                </span>
+              )}
+            </>
+          )}
+        </div>
+      )}
+      {/* Trade hover tooltip */}
+      {tooltip && (
+        <div style={{
+          position: 'absolute',
+          left: Math.min(tooltip.x + 12, (chartContainerRef.current?.clientWidth || 400) - 220),
+          top: Math.max(tooltip.y - 30, 4),
+          zIndex: 20,
+          background: 'rgba(13,17,28,0.95)',
+          border: '1px solid rgba(99,102,241,0.4)',
+          borderRadius: 4,
+          padding: '4px 8px',
+          fontSize: '0.65rem',
+          color: '#d1d5db',
+          whiteSpace: 'nowrap',
+          pointerEvents: 'none',
+        }}>
+          {tooltip.text}
+        </div>
+      )}
       {ohlc.length === 0 && (
         <div
           style={{
@@ -1164,6 +1601,7 @@ function AnalysisPage({ profile }: { profile: Profile }) {
                       emaStack={getFilteredEmas(tfData.all_emas)}
                       bollingerSeries={bbToggle ? tfData.bollinger_series : undefined}
                       height={enlargedTf === tf ? 520 : 280}
+                      chartTrades={chartTrades}
                     />
                     {/* Active Trades Overlay */}
                     {(() => {
@@ -1487,6 +1925,7 @@ function AnalysisPage({ profile }: { profile: Profile }) {
                 emaStack={getFilteredEmas(tfData.all_emas)}
                 bollingerSeries={bbToggle ? tfData.bollinger_series : undefined}
                 height={chartHeight}
+                chartTrades={chartTrades}
               />
             </div>
 
