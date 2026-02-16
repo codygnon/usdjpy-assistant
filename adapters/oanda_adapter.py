@@ -197,9 +197,9 @@ class OandaAdapter:
         if not prices:
             raise RuntimeError(f"OANDA: no price for {symbol} ({inst})")
         p = prices[0]
-        # Use closeout for executable bid/ask
-        bid = float(p.get("closeoutBid", p.get("bids", [{}])[0].get("price", 0)))
-        ask = float(p.get("closeoutAsk", p.get("asks", [{}])[0].get("price", 0)))
+        # Use normal tradeable bid/ask (bids[]/asks[]) - matches actual position opening prices
+        bid = float(p.get("bids", [{}])[0].get("price", 0))
+        ask = float(p.get("asks", [{}])[0].get("price", 0))
         ts = p.get("time", "")
         from datetime import datetime, timezone
         try:
