@@ -470,7 +470,8 @@ class ExecutionPolicyKtCgTrial5(BaseModel):
     rsi_divergence_block_minutes: float = 5.0
 
     # --- Trial #5 Dual ATR Filter ---
-    # M1 ATR(7) - Session-Dynamic
+    # M1 ATR(7) - Session-Dynamic (master on/off for entire M1 ATR filter)
+    m1_atr_filter_enabled: bool = True
     m1_atr_period: int = 7
     m1_atr_min_pips: float = 2.5  # default/fallback threshold
     session_dynamic_atr_enabled: bool = True

@@ -3358,62 +3358,66 @@ def _passes_atr_filter_trial_5(
 ) -> tuple[bool, str | None]:
     """Dual ATR filter for Trial #5.
 
-    1. M1 ATR(period) with session-dynamic threshold (block below)
+    1. M1 ATR(period) with session-dynamic threshold (block below) — skipped if m1_atr_filter_enabled is False
        - Then applies tiered logic (allow_all_max / pullback_only_max / block above)
     2. M3 ATR(period) simple range filter (block outside min-max)
     """
-    # --- M1 ATR check ---
-    m1_atr_period = getattr(policy, "m1_atr_period", 7)
-    if m1_df is None or len(m1_df) < m1_atr_period + 2:
-        return False, "trial5_atr: insufficient M1 data"
-    a1 = atr_fn(m1_df, m1_atr_period)
-    if a1.empty or pd.isna(a1.iloc[-1]):
-        return False, "trial5_atr: M1 ATR not available"
-    m1_atr_pips = float(a1.iloc[-1]) / pip_size
+    m1_filter_enabled = getattr(policy, "m1_atr_filter_enabled", True)
 
-    # Determine M1 ATR minimum threshold (session-dynamic or static)
-    m1_min = getattr(policy, "m1_atr_min_pips", 2.5)
-    session_dynamic = getattr(policy, "session_dynamic_atr_enabled", False)
-    auto_session = getattr(policy, "auto_session_detection_enabled", True)
-    current_session = "none"
-    if session_dynamic and auto_session:
-        utc_hour = datetime.now(timezone.utc).hour
-        active_sessions = _get_current_sessions(utc_hour)
-        # Use highest threshold among active sessions
-        thresholds = []
-        for s in active_sessions:
-            if s == "tokyo":
-                thresholds.append(getattr(policy, "m1_atr_tokyo_min_pips", 2.2))
-            elif s == "london":
-                thresholds.append(getattr(policy, "m1_atr_london_min_pips", 2.5))
-            elif s == "ny":
-                thresholds.append(getattr(policy, "m1_atr_ny_min_pips", 2.8))
-        if thresholds:
-            m1_min = max(thresholds)
-            current_session = "+".join(active_sessions)
-        else:
-            current_session = "none"
-    elif session_dynamic:
-        # Session-dynamic enabled but auto-detection off: use default
-        current_session = "manual"
+    # --- M1 ATR check (skip entirely if filter disabled) ---
+    if m1_filter_enabled:
+        m1_atr_period = getattr(policy, "m1_atr_period", 7)
+        if m1_df is None or len(m1_df) < m1_atr_period + 2:
+            return False, "trial5_atr: insufficient M1 data"
+        a1 = atr_fn(m1_df, m1_atr_period)
+        if a1.empty or pd.isna(a1.iloc[-1]):
+            return False, "trial5_atr: M1 ATR not available"
+        m1_atr_pips = float(a1.iloc[-1]) / pip_size
 
-    if m1_atr_pips < m1_min:
-        return False, f"trial5_m1_atr: {m1_atr_pips:.1f}p < {m1_min:.1f}p min (session={current_session}, ALL blocked)"
+        # Determine M1 ATR minimum threshold (session-dynamic or static)
+        m1_min = getattr(policy, "m1_atr_min_pips", 2.5)
+        session_dynamic = getattr(policy, "session_dynamic_atr_enabled", False)
+        auto_session = getattr(policy, "auto_session_detection_enabled", True)
+        current_session = "none"
+        if session_dynamic and auto_session:
+            utc_hour = datetime.now(timezone.utc).hour
+            active_sessions = _get_current_sessions(utc_hour)
+            # Use highest threshold among active sessions
+            thresholds = []
+            for s in active_sessions:
+                if s == "tokyo":
+                    thresholds.append(getattr(policy, "m1_atr_tokyo_min_pips", 2.2))
+                elif s == "london":
+                    thresholds.append(getattr(policy, "m1_atr_london_min_pips", 2.5))
+                elif s == "ny":
+                    thresholds.append(getattr(policy, "m1_atr_ny_min_pips", 2.8))
+            if thresholds:
+                m1_min = max(thresholds)
+                current_session = "+".join(active_sessions)
+            else:
+                current_session = "none"
+        elif session_dynamic:
+            # Session-dynamic enabled but auto-detection off: use default
+            current_session = "manual"
 
-    # Apply tiered logic from Trial #4 fields on the M1 ATR value
-    if getattr(policy, "tiered_atr_filter_enabled", False):
-        block_below = getattr(policy, "tiered_atr_block_below_pips", 4.0)
-        allow_all_max = getattr(policy, "tiered_atr_allow_all_max_pips", 12.0)
-        pullback_only_max = getattr(policy, "tiered_atr_pullback_only_max_pips", 15.0)
-        if m1_atr_pips < block_below:
-            return False, f"trial5_tiered_atr: M1 ATR {m1_atr_pips:.1f}p < {block_below}p (too quiet, ALL blocked)"
-        if m1_atr_pips <= allow_all_max:
-            pass  # Allow all
-        elif m1_atr_pips <= pullback_only_max:
-            if trigger_type == "zone_entry":
-                return False, f"trial5_tiered_atr: M1 ATR {m1_atr_pips:.1f}p in [{allow_all_max}-{pullback_only_max}]p (zone entry blocked)"
-        else:
-            return False, f"trial5_tiered_atr: M1 ATR {m1_atr_pips:.1f}p > {pullback_only_max}p (too volatile, ALL blocked)"
+        if m1_atr_pips < m1_min:
+            return False, f"trial5_m1_atr: {m1_atr_pips:.1f}p < {m1_min:.1f}p min (session={current_session}, ALL blocked)"
+
+        # Apply tiered logic from Trial #4 fields on the M1 ATR value
+        if getattr(policy, "tiered_atr_filter_enabled", False):
+            block_below = getattr(policy, "tiered_atr_block_below_pips", 4.0)
+            allow_all_max = getattr(policy, "tiered_atr_allow_all_max_pips", 12.0)
+            pullback_only_max = getattr(policy, "tiered_atr_pullback_only_max_pips", 15.0)
+            if m1_atr_pips < block_below:
+                return False, f"trial5_tiered_atr: M1 ATR {m1_atr_pips:.1f}p < {block_below}p (too quiet, ALL blocked)"
+            if m1_atr_pips <= allow_all_max:
+                pass  # Allow all
+            elif m1_atr_pips <= pullback_only_max:
+                if trigger_type == "zone_entry":
+                    return False, f"trial5_tiered_atr: M1 ATR {m1_atr_pips:.1f}p in [{allow_all_max}-{pullback_only_max}]p (zone entry blocked)"
+            else:
+                return False, f"trial5_tiered_atr: M1 ATR {m1_atr_pips:.1f}p > {pullback_only_max}p (too volatile, ALL blocked)"
+
 
     # --- M3 ATR check ---
     m3_atr_enabled = getattr(policy, "m3_atr_filter_enabled", False)

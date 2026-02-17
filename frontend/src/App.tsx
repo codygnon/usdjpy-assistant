@@ -3627,6 +3627,7 @@ interface EditedSettings {
   m1_t4_zone_entry_ema_fast: number | null;
   m1_t4_zone_entry_ema_slow: number | null;
   // Trial #5: Dual ATR Filter
+  m1_atr_filter_enabled: boolean;
   m1_atr_period: number;
   m1_atr_min_pips: number;
   session_dynamic_atr_enabled: boolean;
@@ -3728,6 +3729,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
       // Trial #4: Tier EMA periods
       let tierEmaPeriods: number[] = [9, 11, 12, 13, 14, 15, 16, 17];
       // Trial #5: Dual ATR Filter
+      let m1AtrFilterEnabled = true;
       let m1AtrPeriod = 7;
       let m1AtrMinPips = 2.5;
       let sessionDynamicAtrEnabled = true;
@@ -3797,6 +3799,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
             tierEmaPeriods = (pol.tier_ema_periods as number[]) ?? [9, 11, 12, 13, 14, 15, 16, 17];
           }
           // Trial #5: Dual ATR Filter
+          if ('m1_atr_filter_enabled' in pol) {
+            m1AtrFilterEnabled = (pol.m1_atr_filter_enabled as boolean) ?? true;
+          }
           if ('m1_atr_period' in pol) {
             m1AtrPeriod = (pol.m1_atr_period as number) ?? 7;
             m1AtrMinPips = (pol.m1_atr_min_pips as number) ?? 2.5;
@@ -3874,6 +3879,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         m1_t4_zone_entry_ema_fast: tempSettings?.m1_t4_zone_entry_ema_fast ?? null,
         m1_t4_zone_entry_ema_slow: tempSettings?.m1_t4_zone_entry_ema_slow ?? null,
         // Trial #5: Dual ATR Filter
+        m1_atr_filter_enabled: m1AtrFilterEnabled,
         m1_atr_period: m1AtrPeriod,
         m1_atr_min_pips: m1AtrMinPips,
         session_dynamic_atr_enabled: sessionDynamicAtrEnabled,
@@ -4010,6 +4016,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.zone_entry_enabled = editedSettings.zone_entry_enabled;
           updates.tier_ema_periods = editedSettings.tier_ema_periods;
           // Trial #5 specific: Dual ATR Filter
+          updates.m1_atr_filter_enabled = editedSettings.m1_atr_filter_enabled;
           updates.m1_atr_period = Math.max(1, Math.min(50, editedSettings.m1_atr_period));
           updates.m1_atr_min_pips = Math.max(0, editedSettings.m1_atr_min_pips);
           updates.session_dynamic_atr_enabled = editedSettings.session_dynamic_atr_enabled;
@@ -4612,6 +4619,22 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                       M1 ATR Session-Dynamic Filter (Trial #5)
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={editedSettings.m1_atr_filter_enabled}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, m1_atr_filter_enabled: e.target.checked })}
+                          style={{ width: 18, height: 18, cursor: 'pointer' }}
+                        />
+                        <span style={{ fontWeight: 600, fontSize: '0.85rem', color: editedSettings.m1_atr_filter_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                          {editedSettings.m1_atr_filter_enabled ? 'ON' : 'OFF'}
+                        </span>
+                      </label>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                        When OFF, M1 ATR min and tiered logic are skipped; only M3 ATR range (if enabled) applies.
+                      </span>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>

@@ -1345,7 +1345,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "rsi_divergence_lookback_bars": 50,
                     "rsi_divergence_block_minutes": 5.0,
                     # --- Trial #5 Dual ATR Filter ---
-                    # M1 ATR(7) - Session-Dynamic
+                    # M1 ATR(7) - Session-Dynamic (master on/off)
+                    "m1_atr_filter_enabled": True,
                     "m1_atr_period": 7,
                     "m1_atr_min_pips": 2.5,
                     "session_dynamic_atr_enabled": True,
