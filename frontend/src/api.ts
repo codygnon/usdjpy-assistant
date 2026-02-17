@@ -440,6 +440,23 @@ export interface OhlcBar {
   close: number;
 }
 
+export interface ScalpScoreLayer {
+  name: string;
+  score: number;
+  max: number;
+  components: Record<string, unknown>;
+}
+
+export interface ScalpScore {
+  finalScore: number;
+  direction: string;
+  confidence: string;
+  killSwitch: boolean;
+  killReason: string | null;
+  layers: ScalpScoreLayer[];
+  timestamp: string;
+}
+
 export interface TaTimeframe {
   regime: string;
   rsi: TaRsi;
@@ -450,6 +467,7 @@ export interface TaTimeframe {
   ohlc: OhlcBar[];
   all_emas?: Record<string, { time: number; value: number }[]>;
   bollinger_series?: { upper: { time: number; value: number }[]; middle: { time: number; value: number }[]; lower: { time: number; value: number }[] };
+  scalp_score?: ScalpScore | null;
   error?: string;
 }
 

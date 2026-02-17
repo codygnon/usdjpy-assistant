@@ -1215,6 +1215,9 @@ function AnalysisPage({ profile }: { profile: Profile }) {
   const [emaToggles, setEmaToggles] = useState<Record<string, boolean>>({});
   const [bbToggle, setBbToggle] = useState(false);
   const [tradesMinimized, setTradesMinimized] = useState(false);
+  const [scoreVisible, setScoreVisible] = useState(() => localStorage.getItem('ta_score_visible') === 'true');
+  const [scoreExpanded, setScoreExpanded] = useState<string | null>(null);
+  const [scoreHistory, setScoreHistory] = useState<Record<string, number[]>>({});
 
   const EMA_PERIODS = [5, 7, 9, 11, 13, 15, 17, 21, 50, 200] as const;
   const EMA_COLORS: Record<string, string> = {
@@ -1241,6 +1244,20 @@ function AnalysisPage({ profile }: { profile: Profile }) {
         api.getTrades(profile.name, 250).then((r) => r.trades).catch(() => []),
       ]);
       setTa(taData);
+      // Track scalp score history (last 50 per TF)
+      if (taData?.timeframes) {
+        setScoreHistory(prev => {
+          const next = { ...prev };
+          for (const tf of ['M1', 'M3', 'M5']) {
+            const ss = taData.timeframes[tf]?.scalp_score;
+            if (ss && ss.finalScore != null) {
+              const arr = [...(next[tf] || []), ss.finalScore];
+              next[tf] = arr.slice(-50);
+            }
+          }
+          return next;
+        });
+      }
       // Build chart trades: open + recently closed (with entry/exit times for markers)
       const chartTradesList: ChartTrade[] = allTradesData
         .filter((t: Record<string, unknown>) => t.trade_id && t.entry_price)
@@ -1423,6 +1440,17 @@ function AnalysisPage({ profile }: { profile: Profile }) {
           )}
           <button
             className="btn btn-secondary"
+            style={{ fontSize: '0.8rem' }}
+            onClick={() => {
+              const next = !scoreVisible;
+              setScoreVisible(next);
+              localStorage.setItem('ta_score_visible', String(next));
+            }}
+          >
+            {scoreVisible ? 'Score ON' : 'Score OFF'}
+          </button>
+          <button
+            className="btn btn-secondary"
             onClick={fetchTa}
             disabled={loading}
           >
@@ -1521,6 +1549,88 @@ function AnalysisPage({ profile }: { profile: Profile }) {
                 {tfData.summary}
               </p>
             )}
+
+            {/* Scalp Score Badge */}
+            {scoreVisible && tfData.scalp_score && (() => {
+              const ss = tfData.scalp_score;
+              const isKill = ss.killSwitch;
+              const bg = isKill ? '#1a1a2e' : ss.direction === 'LONG' ? 'rgba(16,185,129,0.15)' : ss.direction === 'SHORT' ? 'rgba(239,68,68,0.15)' : 'rgba(107,114,128,0.15)';
+              const color = isKill ? '#ef4444' : ss.direction === 'LONG' ? '#10b981' : ss.direction === 'SHORT' ? '#ef4444' : '#9ca3af';
+              const arrow = isKill ? '\u2298' : ss.direction === 'LONG' ? '\u25B2' : ss.direction === 'SHORT' ? '\u25BC' : '\u25CF';
+              const label = isKill ? 'NO TRADE' : `${ss.finalScore > 0 ? '+' : ''}${ss.finalScore.toFixed(1)} ${ss.confidence}`;
+              const isExp = scoreExpanded === tf;
+              const history = scoreHistory[tf] || [];
+              return (
+                <div style={{ marginTop: 8 }}>
+                  <div
+                    onClick={() => setScoreExpanded(isExp ? null : tf)}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      background: bg, border: `1px solid ${color}33`, borderRadius: 6,
+                      padding: '4px 12px', cursor: 'pointer', userSelect: 'none',
+                      transition: 'all 0.2s',
+                    }}
+                  >
+                    <span style={{ color, fontWeight: 700, fontSize: '0.95rem' }}>{arrow}</span>
+                    <span style={{ color, fontWeight: 600, fontSize: '0.85rem', letterSpacing: 0.5 }}>{label}</span>
+                    {isKill && ss.killReason && (
+                      <span style={{ color: '#9ca3af', fontSize: '0.7rem', marginLeft: 4 }}>({ss.killReason})</span>
+                    )}
+                    <span style={{ color: '#6b7280', fontSize: '0.6rem', marginLeft: 4 }}>{isExp ? '\u25BC' : '\u25B6'}</span>
+                  </div>
+                  {/* Sparkline */}
+                  {history.length > 1 && (
+                    <svg width={100} height={20} style={{ marginLeft: 8, verticalAlign: 'middle' }}>
+                      {(() => {
+                        const min = Math.min(...history, -10);
+                        const max = Math.max(...history, 10);
+                        const range = max - min || 1;
+                        const points = history.map((v, i) => `${(i / (history.length - 1)) * 96 + 2},${18 - ((v - min) / range) * 16}`).join(' ');
+                        return <>
+                          <line x1="2" y1="10" x2="98" y2="10" stroke="#374151" strokeWidth="0.5" />
+                          <polyline points={points} fill="none" stroke={color} strokeWidth="1.5" />
+                        </>;
+                      })()}
+                    </svg>
+                  )}
+                  {/* Breakdown */}
+                  {isExp && (
+                    <div style={{ marginTop: 8, padding: 10, background: 'var(--bg-tertiary)', borderRadius: 6, fontSize: '0.8rem' }}>
+                      {ss.layers.map((layer: { name: string; score: number; max: number; components: Record<string, unknown> }) => {
+                        const pct = (layer.score / layer.max) * 100;
+                        const barColor = layer.score > 0 ? '#10b981' : layer.score < 0 ? '#ef4444' : '#6b7280';
+                        return (
+                          <div key={layer.name} style={{ marginBottom: 6 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                              <span style={{ color: 'var(--text-secondary)' }}>{layer.name}</span>
+                              <span style={{ color: barColor, fontWeight: 600 }}>
+                                {layer.score > 0 ? '+' : ''}{layer.score.toFixed(2)} / {layer.max}
+                              </span>
+                            </div>
+                            <div style={{ height: 6, background: '#1f2937', borderRadius: 3, overflow: 'hidden', position: 'relative' }}>
+                              <div style={{
+                                position: 'absolute',
+                                left: pct >= 0 ? '50%' : `${50 + pct / 2}%`,
+                                width: `${Math.abs(pct) / 2}%`,
+                                height: '100%',
+                                background: barColor,
+                                borderRadius: 3,
+                              }} />
+                            </div>
+                            <div style={{ fontSize: '0.7rem', color: '#6b7280', marginTop: 2 }}>
+                              {Object.entries(layer.components)
+                                .filter(([k]) => k !== 'total')
+                                .map(([k, v]) => `${k}: ${typeof v === 'number' ? (v as number).toFixed(2) : v}`)
+                                .join(' | ')}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Expanded Detail - click on chart does not collapse */}
             {isExpanded && (

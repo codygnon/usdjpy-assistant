@@ -152,6 +152,71 @@ def bollinger_bands(series: pd.Series, period: int = 20, std_dev: float = 2.0) -
     return upper, middle, lower
 
 
+def stochastic(
+    df: pd.DataFrame, k_period: int = 5, d_period: int = 3, smooth: int = 3
+) -> tuple[pd.Series, pd.Series]:
+    """Stochastic oscillator returning (%K, %D).
+
+    Uses standard formula:
+      raw_k = (close - lowest_low) / (highest_high - lowest_low) * 100
+      %K = SMA(raw_k, smooth)
+      %D = SMA(%K, d_period)
+    """
+    low_min = df["low"].rolling(k_period).min()
+    high_max = df["high"].rolling(k_period).max()
+    denom = (high_max - low_min).replace(0, float("nan"))
+    raw_k = (df["close"] - low_min) / denom * 100
+    pct_k = raw_k.rolling(smooth).mean()
+    pct_d = pct_k.rolling(d_period).mean()
+    return pct_k, pct_d
+
+
+def session_vwap(df: pd.DataFrame) -> pd.Series:
+    """VWAP that resets at London (08:00 UTC) and NY (13:00 UTC) session opens.
+
+    Requires a 'time' column with timezone-aware timestamps.
+    Falls back to cumulative VWAP if timestamps are unavailable.
+    """
+    typical = (df["high"] + df["low"] + df["close"]) / 3.0
+    if "tick_volume" in df.columns and df["tick_volume"].notna().any():
+        vol = pd.to_numeric(df["tick_volume"], errors="coerce").fillna(0)
+    elif "real_volume" in df.columns and df["real_volume"].notna().any():
+        vol = pd.to_numeric(df["real_volume"], errors="coerce").fillna(0)
+    else:
+        vol = pd.Series(1.0, index=df.index)
+
+    tp_vol = typical * vol
+    result = pd.Series(index=df.index, dtype=float)
+
+    # Detect session boundaries (London 08:00 UTC, NY 13:00 UTC)
+    session_starts = [8, 13]
+    cum_tp = 0.0
+    cum_v = 0.0
+    prev_hour = -1
+
+    for i in range(len(df)):
+        try:
+            ts = df["time"].iloc[i]
+            if hasattr(ts, "hour"):
+                hour = ts.hour
+            else:
+                hour = pd.Timestamp(ts).hour
+        except Exception:
+            hour = -1
+
+        # Reset at session boundaries
+        if hour in session_starts and hour != prev_hour:
+            cum_tp = 0.0
+            cum_v = 0.0
+
+        cum_tp += tp_vol.iloc[i]
+        cum_v += vol.iloc[i]
+        result.iloc[i] = cum_tp / cum_v if cum_v > 0 else typical.iloc[i]
+        prev_hour = hour
+
+    return result
+
+
 def vwap(df: pd.DataFrame) -> pd.Series:
     """Volume-weighted average price. Requires columns: high, low, close, and optionally tick_volume or real_volume."""
     typical = (df["high"] + df["low"] + df["close"]) / 3.0

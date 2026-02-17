@@ -595,6 +595,16 @@ class OandaAdapter:
             print(f"[oanda] get_closed_positions_from_history: {len(opens)} opens, {len(closes)} closes -> 0 matched (check symbol filter or open/close pairing)")
         return results
 
+    def get_order_book(self, instrument: str) -> dict:
+        """GET /v3/instruments/{inst}/orderBook — returns price bucket array."""
+        inst = _symbol_to_instrument(instrument)
+        return self._req("GET", f"/v3/instruments/{inst}/orderBook")
+
+    def get_position_book(self, instrument: str) -> dict:
+        """GET /v3/instruments/{inst}/positionBook — returns price bucket array."""
+        inst = _symbol_to_instrument(instrument)
+        return self._req("GET", f"/v3/instruments/{inst}/positionBook")
+
     def get_mt5_report_stats(self, symbol: str | None = None, pip_size: float | None = None, days_back: int = 90):
         return None
 

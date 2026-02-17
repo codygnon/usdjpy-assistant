@@ -1266,11 +1266,13 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
     from core.indicators import ema
     from core.ta_analysis import compute_ta_for_tf
     from core.timeframes import Timeframe
-    
+    from core.book_cache import get_book_cache
+    from core.scalp_score import ScalpScore
+
     path = _resolve_profile_path(profile_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Profile not found")
-    
+
     try:
         profile = load_profile_v1(path)
         from adapters.broker import get_adapter
@@ -1290,6 +1292,20 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
             # Timeframe is a Literal type, not an Enum - use string values directly
             timeframes: list[Timeframe] = ["H4", "H1", "M30", "M15", "M5", "M3", "M1"]
             result: dict[str, Any] = {"timeframes": {}}
+
+            # Poll order/position books for scalp score (deduplicates via cache)
+            book_cache = get_book_cache()
+            try:
+                book_cache.poll_books(adapter, profile.symbol)
+            except Exception:
+                pass  # Books are optional; score degrades gracefully
+
+            # Get tick early for scalp score
+            scalp_tick = None
+            try:
+                scalp_tick = adapter.get_tick(profile.symbol)
+            except Exception:
+                pass
             
             for tf in timeframes:
                 try:
@@ -1348,7 +1364,37 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
                             bb_series["upper"].append({"time": ts, "value": round(float(bb_upper.loc[idx]), 3)})
                             bb_series["middle"].append({"time": ts, "value": round(float(bb_middle.loc[idx]), 3)})
                             bb_series["lower"].append({"time": ts, "value": round(float(bb_lower.loc[idx]), 3)})
+                    # Compute scalp score for M1/M3/M5
+                    scalp_score_data = None
+                    if tf in ("M1", "M3", "M5") and scalp_tick and len(df) >= 20:
+                        try:
+                            from datetime import datetime, timezone as tz
+                            ob_snaps = [s.data for s in book_cache.get_order_books(profile.symbol)]
+                            pb_snaps = [s.data for s in book_cache.get_position_books(profile.symbol)]
+                            ss = ScalpScore.calculate(
+                                df=df,
+                                tick_bid=scalp_tick.bid,
+                                tick_ask=scalp_tick.ask,
+                                order_book_snapshots=ob_snaps,
+                                position_book_snapshots=pb_snaps,
+                                pip_size=profile.pip_size,
+                                timeframe=tf,
+                                timestamp_iso=datetime.now(tz.utc).isoformat(),
+                            )
+                            scalp_score_data = {
+                                "finalScore": ss.final_score,
+                                "direction": ss.direction,
+                                "confidence": ss.confidence,
+                                "killSwitch": ss.kill_switch,
+                                "killReason": ss.kill_reason,
+                                "layers": ss.layers,
+                                "timestamp": ss.timestamp,
+                            }
+                        except Exception:
+                            pass
+
                     result["timeframes"][tf] = {
+                        "scalp_score": scalp_score_data,
                         "regime": ta.regime,
                         "rsi": {
                             "value": round(ta.rsi_value, 2) if ta.rsi_value is not None else None,
