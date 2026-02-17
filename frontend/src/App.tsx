@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { createChart, IChartApi, ISeriesApi, CandlestickData, Time, CandlestickSeries, LineSeries, LineStyle, IPriceLine, createSeriesMarkers, ISeriesMarkersPluginApi, SeriesMarker } from 'lightweight-charts';
 import { ComposedChart, Area, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ScatterChart, Scatter, Cell, BarChart, LineChart, AreaChart } from 'recharts';
 import * as api from './api';
@@ -6072,24 +6072,7 @@ function EquityCurveChart({ profileName, profilePath }: { profileName: string; p
 // Analytics Components for Logs & Stats
 // ---------------------------------------------------------------------------
 
-function SessionPerformance({ profileName, profilePath }: { profileName: string; profilePath: string }) {
-  const [trades, setTrades] = useState<api.TradeDetail[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setLoading(true);
-    api.getTradeHistoryDetail(profileName, profilePath, 365)
-      .then((resp) => setTrades(resp.trades))
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, [profileName, profilePath]);
-
-  if (loading) return (
-    <div className="card mb-4">
-      <h3 className="card-title" style={{ margin: 0, marginBottom: 8 }}>Session Performance</h3>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>Loading...</p>
-    </div>
-  );
+function SessionPerformance({ trades }: { trades: api.TradeDetail[] }) {
 
   if (trades.length === 0) return (
     <div className="card mb-4">
@@ -6148,28 +6131,7 @@ function SessionPerformance({ profileName, profilePath }: { profileName: string;
   );
 }
 
-function LongShortPerformance({ profileName, profilePath }: { profileName: string; profilePath: string }) {
-  const [trades, setTrades] = useState<api.TradeDetail[]>([]);
-  const [displayCurrency, setDisplayCurrency] = useState<string>('USD');
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setLoading(true);
-    api.getTradeHistoryDetail(profileName, profilePath, 365)
-      .then((resp) => {
-        setTrades(resp.trades);
-        setDisplayCurrency(resp.display_currency || 'USD');
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, [profileName, profilePath]);
-
-  if (loading) return (
-    <div className="card mb-4">
-      <h3 className="card-title" style={{ margin: 0, marginBottom: 8 }}>Long vs Short</h3>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>Loading...</p>
-    </div>
-  );
+function LongShortPerformance({ trades, displayCurrency = 'USD' }: { trades: api.TradeDetail[]; displayCurrency?: string }) {
 
   if (trades.length === 0) return (
     <div className="card mb-4">
@@ -6226,19 +6188,7 @@ function LongShortPerformance({ profileName, profilePath }: { profileName: strin
   );
 }
 
-function SpreadPerformance({ profileName, profilePath }: { profileName: string; profilePath: string }) {
-  const [trades, setTrades] = useState<api.TradeDetail[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setLoading(true);
-    api.getTradeHistoryDetail(profileName, profilePath, 365)
-      .then((resp) => setTrades(resp.trades))
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, [profileName, profilePath]);
-
-  if (loading) return null;
+function SpreadPerformance({ trades }: { trades: api.TradeDetail[] }) {
 
   const withSpread = trades.filter((t) => t.spread_pips !== null && t.spread_pips !== undefined);
 
@@ -6551,36 +6501,57 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
 
   const chartColors = { green: '#22c55e', red: '#ef4444', blue: '#3b82f6', orange: '#f59e0b', purple: '#a855f7' };
 
-  // --- Section data ---
-  const maeTradesAll = filtered.filter(t => t.max_adverse_pips != null && t.pips != null);
-  const mfeTradesAll = filtered.filter(t => t.max_favorable_pips != null && t.pips != null);
-  const rTradesAll = filtered.filter(t => t.r_multiple != null);
-  const durationTradesAll = filtered.filter(t => t.duration_minutes != null && t.pips != null);
+  // --- Section data (memoized) ---
+  const maeTradesAll = useMemo(() => filtered.filter(t => t.max_adverse_pips != null && t.pips != null), [filtered]);
+  const mfeTradesAll = useMemo(() => filtered.filter(t => t.max_favorable_pips != null && t.pips != null), [filtered]);
+  const rTradesAll = useMemo(() => filtered.filter(t => t.r_multiple != null), [filtered]);
+  const durationTradesAll = useMemo(() => filtered.filter(t => t.duration_minutes != null && t.pips != null), [filtered]);
 
-  // --- R-Distribution computations ---
-  const rValues = rTradesAll.map(t => t.r_multiple!);
-  const rWins = rValues.filter(r => r > 0);
-  const rLosses = rValues.filter(r => r <= 0);
-  const avgWinR = rWins.length > 0 ? rWins.reduce((s, r) => s + r, 0) / rWins.length : 0;
-  const avgLossR = rLosses.length > 0 ? Math.abs(rLosses.reduce((s, r) => s + r, 0) / rLosses.length) : 0;
-  const winRateR = rTradesAll.length > 0 ? rWins.length / rTradesAll.length : 0;
-  const expectancy = rTradesAll.length > 0 ? winRateR * avgWinR - (1 - winRateR) * avgLossR : null;
+  // --- R-Distribution computations (memoized) ---
+  const { rValues, avgWinR, avgLossR, winRateR, expectancy } = useMemo(() => {
+    const rVals = rTradesAll.map(t => t.r_multiple!);
+    const rW = rVals.filter(r => r > 0);
+    const rL = rVals.filter(r => r <= 0);
+    const aWR = rW.length > 0 ? rW.reduce((s, r) => s + r, 0) / rW.length : 0;
+    const aLR = rL.length > 0 ? Math.abs(rL.reduce((s, r) => s + r, 0) / rL.length) : 0;
+    const wrR = rTradesAll.length > 0 ? rW.length / rTradesAll.length : 0;
+    const exp = rTradesAll.length > 0 ? wrR * aWR - (1 - wrR) * aLR : null;
+    return { rValues: rVals, avgWinR: aWR, avgLossR: aLR, winRateR: wrR, expectancy: exp };
+  }, [rTradesAll]);
 
-  // Drawdown
-  const ddData = computeDrawdownSeries(filtered, {
-    startingBalance: startingBalance ?? undefined,
-    totalProfitCurrency: totalProfitCurrency ?? undefined,
-  });
+  // Drawdown (memoized, gated on section expanded)
+  const ddData = useMemo(() =>
+    expandedSections.drawdown ? computeDrawdownSeries(filtered, {
+      startingBalance: startingBalance ?? undefined,
+      totalProfitCurrency: totalProfitCurrency ?? undefined,
+    }) : {
+      series: [] as { idx: number; dd: number; date: string }[],
+      maxDdPips: 0, maxDdPct: null as number | null, maxDdPctNote: null as string | null,
+      currentDd: 0, longestTrades: 0, longestTime: '',
+      recoveryFactor: null as number | null, recoveryFactorNote: null as string | null,
+      maxDdUsd: null as number | null,
+    },
+    [expandedSections.drawdown, filtered, startingBalance, totalProfitCurrency]
+  );
 
-  // Duration
-  const durWinners = durationTradesAll.filter(t => (t.pips ?? 0) > 0);
-  const durLosers = durationTradesAll.filter(t => (t.pips ?? 0) <= 0);
-  const avgDurWin = durWinners.length > 0 ? durWinners.reduce((s, t) => s + t.duration_minutes!, 0) / durWinners.length : 0;
-  const avgDurLoss = durLosers.length > 0 ? durLosers.reduce((s, t) => s + t.duration_minutes!, 0) / durLosers.length : 0;
-  const durRatio = avgDurLoss > 0 ? avgDurWin / avgDurLoss : 0;
-  const totalPips = durationTradesAll.reduce((s, t) => s + (t.pips ?? 0), 0);
-  const totalHours = durationTradesAll.reduce((s, t) => s + t.duration_minutes!, 0) / 60;
-  const pipsPerHour = totalHours > 0 ? totalPips / totalHours : 0;
+  // Duration (memoized)
+  const { avgDurWin, avgDurLoss, durRatio, pipsPerHour } = useMemo(() => {
+    const dW = durationTradesAll.filter(t => (t.pips ?? 0) > 0);
+    const dL = durationTradesAll.filter(t => (t.pips ?? 0) <= 0);
+    const aDW = dW.length > 0 ? dW.reduce((s, t) => s + t.duration_minutes!, 0) / dW.length : 0;
+    const aDL = dL.length > 0 ? dL.reduce((s, t) => s + t.duration_minutes!, 0) / dL.length : 0;
+    const dR = aDL > 0 ? aDW / aDL : 0;
+    const tP = durationTradesAll.reduce((s, t) => s + (t.pips ?? 0), 0);
+    const tH = durationTradesAll.reduce((s, t) => s + t.duration_minutes!, 0) / 60;
+    const pPH = tH > 0 ? tP / tH : 0;
+    return { durWinners: dW, durLosers: dL, avgDurWin: aDW, avgDurLoss: aDL, durRatio: dR, totalPips: tP, totalHours: tH, pipsPerHour: pPH };
+  }, [durationTradesAll]);
+
+  // Rolling metrics (memoized, gated on section expanded)
+  const rollingData = useMemo(() =>
+    expandedSections.rolling ? computeRollingMetrics(filtered, rollingWindow, rollingMode, timeWindow) : [],
+    [expandedSections.rolling, filtered, rollingWindow, rollingMode, timeWindow]
+  );
 
   const formatDuration = (mins: number) => {
     if (mins < 60) return `${Math.round(mins)}m`;
@@ -6754,7 +6725,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
           </div>
 
           {(() => {
-            const rolling = computeRollingMetrics(filtered, rollingWindow, rollingMode, timeWindow);
+            const rolling = rollingData;
             const minLen = rollingMode === 'trades' ? rollingWindow : 3;
             if (rolling.length < minLen) {
               return <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Need at least {minLen} trades for rolling metrics.</p>;
@@ -7060,6 +7031,10 @@ function LogsPage({ profile }: { profile: Profile }) {
   const [expandedPreset, setExpandedPreset] = useState<string | null>(null);
   const [mt5Report, setMt5Report] = useState<api.Mt5Report | null>(null);
   const [mt5ReportExpanded, setMt5ReportExpanded] = useState<string | null>('summary');
+  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [analyticsTradesData, setAnalyticsTradesData] = useState<{ trades: api.TradeDetail[]; displayCurrency: string } | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [visibleTradeCount, setVisibleTradeCount] = useState(50);
 
   const fetchData = () => {
     api.getQuickStats(profile.name, profile.path).then(setStats).catch(console.error);
@@ -7132,6 +7107,17 @@ function LogsPage({ profile }: { profile: Profile }) {
       setConfirmClose(null);
     }
   };
+
+  // Fetch analytics trades once when "Load Analytics" is clicked
+  useEffect(() => {
+    if (showAnalytics && !analyticsTradesData && !analyticsLoading) {
+      setAnalyticsLoading(true);
+      api.getTradeHistoryDetail(profile.name, profile.path, 365)
+        .then((resp) => setAnalyticsTradesData({ trades: resp.trades, displayCurrency: resp.display_currency || 'USD' }))
+        .catch(console.error)
+        .finally(() => setAnalyticsLoading(false));
+    }
+  }, [showAnalytics, profile.name, profile.path]);
 
   const totalBreakdown = Object.values(breakdown).reduce((a, b) => a + b, 0);
 
@@ -7291,13 +7277,32 @@ function LogsPage({ profile }: { profile: Profile }) {
       {/* Equity Curve Chart */}
       <EquityCurveChart profileName={profile.name} profilePath={profile.path} />
 
-      {/* Analytics Sections */}
-      <SessionPerformance profileName={profile.name} profilePath={profile.path} />
-      <LongShortPerformance profileName={profile.name} profilePath={profile.path} />
-      <SpreadPerformance profileName={profile.name} profilePath={profile.path} />
-
-      {/* Advanced Analytics */}
-      <AdvancedAnalytics profileName={profile.name} profilePath={profile.path} />
+      {/* Load Analytics Button */}
+      {!showAnalytics ? (
+        <div className="card mb-4" style={{ textAlign: 'center' }}>
+          <button
+            className="btn"
+            onClick={() => setShowAnalytics(true)}
+            style={{ padding: '10px 24px', fontSize: '0.9rem' }}
+          >
+            Load Analytics
+          </button>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginTop: 8, marginBottom: 0 }}>
+            Session, Long/Short, Spread, and Advanced Analytics
+          </p>
+        </div>
+      ) : analyticsLoading ? (
+        <div className="card mb-4">
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>Loading analytics...</p>
+        </div>
+      ) : analyticsTradesData ? (
+        <>
+          <SessionPerformance trades={analyticsTradesData.trades} />
+          <LongShortPerformance trades={analyticsTradesData.trades} displayCurrency={analyticsTradesData.displayCurrency} />
+          <SpreadPerformance trades={analyticsTradesData.trades} />
+          <AdvancedAnalytics profileName={profile.name} profilePath={profile.path} />
+        </>
+      ) : null}
 
       {/* MT5 Full Report */}
       {mt5Report && (
@@ -7564,7 +7569,7 @@ function LogsPage({ profile }: { profile: Profile }) {
 
       {/* Trades Table */}
       <div className="card mb-4">
-        <h3 className="card-title">Recent Trades</h3>
+        <h3 className="card-title">Recent Trades {trades.length > 0 && <span style={{ fontWeight: 400, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>({Math.min(visibleTradeCount, trades.length)}/{trades.length})</span>}</h3>
         <div className="table-container">
           <table>
             <thead>
@@ -7589,7 +7594,7 @@ function LogsPage({ profile }: { profile: Profile }) {
                   </td>
                 </tr>
               ) : (
-                trades.map((t, i) => {
+                trades.slice(0, visibleTradeCount).map((t, i) => {
                   const openedBy = String(t.opened_by || '');
                   const exitReason = String(t.exit_reason || '');
                   
@@ -7668,6 +7673,13 @@ function LogsPage({ profile }: { profile: Profile }) {
             </tbody>
           </table>
         </div>
+        {trades.length > visibleTradeCount && (
+          <div style={{ textAlign: 'center', marginTop: 12 }}>
+            <button className="btn" onClick={() => setVisibleTradeCount(prev => prev + 50)} style={{ padding: '6px 16px', fontSize: '0.8rem' }}>
+              Load more ({trades.length - visibleTradeCount} remaining)
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Executions Table */}

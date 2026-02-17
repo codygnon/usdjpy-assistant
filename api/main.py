@@ -61,6 +61,34 @@ app.add_middleware(
 _loop_processes: dict[str, subprocess.Popen] = {}
 
 # ---------------------------------------------------------------------------
+# Module-level caches for performance
+# ---------------------------------------------------------------------------
+import time as _time
+
+# Candle cache: {(symbol, tf, count): (timestamp, dataframe)}
+_api_candle_cache: dict[tuple[str, str, int], tuple[float, Any]] = {}
+_CANDLE_TTL: dict[str, float] = {
+    "M1": 55, "M3": 175, "M5": 300, "M15": 300, "M30": 300,
+    "H1": 600, "H4": 600, "D": 300,
+}
+
+def _get_bars_cached(adapter: Any, symbol: str, tf: str, count: int = 700) -> Any:
+    """Fetch bars with module-level TTL cache."""
+    key = (symbol, tf, count)
+    now = _time.monotonic()
+    cached = _api_candle_cache.get(key)
+    ttl = _CANDLE_TTL.get(tf, 300)
+    if cached and (now - cached[0]) < ttl:
+        return cached[1]
+    df = adapter.get_bars(symbol, tf, count=count)
+    _api_candle_cache[key] = (now, df)
+    return df
+
+# Backfill MAE/MFE throttle: {profile_name: last_run_timestamp}
+_backfill_last_run: dict[str, float] = {}
+_BACKFILL_INTERVAL = 60.0  # seconds
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -1300,7 +1328,7 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
             except Exception:
                 pass  # Books are optional; score degrades gracefully
 
-            # Get tick early for scalp score
+            # Get tick once for scalp score + spread info
             scalp_tick = None
             try:
                 scalp_tick = adapter.get_tick(profile.symbol)
@@ -1309,8 +1337,8 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
             
             for tf in timeframes:
                 try:
-                    # Fetch OHLC data from broker (MT5 or OANDA)
-                    df = adapter.get_bars(profile.symbol, tf, count=700)
+                    # Fetch OHLC data from broker (cached)
+                    df = _get_bars_cached(adapter, profile.symbol, tf, count=700)
                     if df is None or df.empty:
                         result["timeframes"][tf] = {
                             "error": f"No data available for {tf}",
@@ -1336,34 +1364,35 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
                             macd_direction = "positive"
                         elif ta.macd_hist < 0:
                             macd_direction = "negative"
-                    # Build OHLC array for chart (last 500 bars)
+                    # Build OHLC array for chart (last 500 bars) - vectorized
                     df_tail = df.tail(500)
-                    ohlc_data = []
-                    for _, row in df_tail.iterrows():
-                        ohlc_data.append({
-                            "time": int(row["time"].timestamp()),
-                            "open": round(float(row["open"]), 3),
-                            "high": round(float(row["high"]), 3),
-                            "low": round(float(row["low"]), 3),
-                            "close": round(float(row["close"]), 3),
-                        })
-                    # Build all 10 EMA series for chart overlay
+                    timestamps = df_tail["time"].apply(lambda t: int(t.timestamp())).values
+                    ohlc_data = [
+                        {"time": int(ts), "open": round(float(o), 3), "high": round(float(h), 3), "low": round(float(l), 3), "close": round(float(c), 3)}
+                        for ts, o, h, l, c in zip(timestamps, df_tail["open"].values, df_tail["high"].values, df_tail["low"].values, df_tail["close"].values)
+                    ]
+                    # Build all 10 EMA series for chart overlay - vectorized
                     close = df["close"]
+                    tail_idx = df_tail.index
                     all_emas_arrs: dict[str, list[dict[str, Any]]] = {}
                     for p in [5, 7, 9, 11, 13, 15, 17, 21, 50, 200]:
                         s = ema(close, p)
-                        all_emas_arrs[f"ema{p}"] = [{"time": int(row["time"].timestamp()), "value": round(float(s.loc[row.name]), 3)} for _, row in df_tail.iterrows() if row.name in s.index and not pd.isna(s.loc[row.name])]
-                    # Build Bollinger Bands series for chart overlay
+                        s_tail = s.reindex(tail_idx).dropna()
+                        ts_arr = df_tail.loc[s_tail.index, "time"].apply(lambda t: int(t.timestamp()))
+                        all_emas_arrs[f"ema{p}"] = [{"time": int(t), "value": round(float(v), 3)} for t, v in zip(ts_arr.values, s_tail.values)]
+                    # Build Bollinger Bands series for chart overlay - vectorized
                     from core.indicators import bollinger_bands
                     bb_upper, bb_middle, bb_lower = bollinger_bands(close, 20, 2.0)
-                    bb_series: dict[str, list[dict[str, Any]]] = {"upper": [], "middle": [], "lower": []}
-                    for _, row in df_tail.iterrows():
-                        ts = int(row["time"].timestamp())
-                        idx = row.name
-                        if idx in bb_upper.index and not pd.isna(bb_upper.loc[idx]):
-                            bb_series["upper"].append({"time": ts, "value": round(float(bb_upper.loc[idx]), 3)})
-                            bb_series["middle"].append({"time": ts, "value": round(float(bb_middle.loc[idx]), 3)})
-                            bb_series["lower"].append({"time": ts, "value": round(float(bb_lower.loc[idx]), 3)})
+                    bb_u_tail = bb_upper.reindex(tail_idx).dropna()
+                    bb_m_tail = bb_middle.reindex(tail_idx).dropna()
+                    bb_l_tail = bb_lower.reindex(tail_idx).dropna()
+                    common_bb_idx = bb_u_tail.index
+                    bb_ts = df_tail.loc[common_bb_idx, "time"].apply(lambda t: int(t.timestamp())).values
+                    bb_series: dict[str, list[dict[str, Any]]] = {
+                        "upper": [{"time": int(t), "value": round(float(v), 3)} for t, v in zip(bb_ts, bb_u_tail.values)],
+                        "middle": [{"time": int(t), "value": round(float(v), 3)} for t, v in zip(bb_ts, bb_m_tail.values)],
+                        "lower": [{"time": int(t), "value": round(float(v), 3)} for t, v in zip(bb_ts, bb_l_tail.values)],
+                    }
                     # Compute scalp score for M1/M3/M5
                     scalp_score_data = None
                     if tf in ("M1", "M3", "M5") and scalp_tick and len(df) >= 20:
@@ -1445,8 +1474,8 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
                         "bollinger_series": {"upper": [], "middle": [], "lower": []},
                     }
 
-            # Get current tick for spread info
-            tick = adapter.get_tick(profile.symbol)
+            # Reuse tick from scalp score (no second API call)
+            tick = scalp_tick
             if tick:
                 spread_pips = (tick.ask - tick.bid) / profile.pip_size
                 result["current_tick"] = {
@@ -1564,12 +1593,16 @@ def get_advanced_analytics(
 
     store = _store_for(profile_name)
 
-    # Lazily backfill MAE/MFE from candle data for historical trades
+    # Lazily backfill MAE/MFE from candle data (throttled to once per 60s per profile)
     if profile:
-        try:
-            _backfill_mae_mfe(profile, store, profile_name)
-        except Exception:
-            pass
+        now_mono = _time.monotonic()
+        last_run = _backfill_last_run.get(profile_name, 0)
+        if now_mono - last_run >= _BACKFILL_INTERVAL:
+            try:
+                _backfill_mae_mfe(profile, store, profile_name)
+                _backfill_last_run[profile_name] = now_mono
+            except Exception:
+                pass
 
     df = store.read_trades_df(profile_name)
     if df.empty or "exit_price" not in df.columns:
