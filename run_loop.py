@@ -25,6 +25,7 @@ from core.execution_engine import (
     execute_kt_cg_ctp_policy_demo_only,
     execute_kt_cg_hybrid_policy_demo_only,
     execute_kt_cg_trial_4_policy_demo_only,
+    execute_kt_cg_trial_5_policy_demo_only,
     execute_price_level_policy_demo_only,
     execute_session_momentum_policy_demo_only,
     execute_signal_demo_only,
@@ -135,7 +136,7 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
     # Find Trial #4 spread-aware BE config if present
     t4_spread_be = None
     for pol in profile.execution.policies:
-        if getattr(pol, "type", None) == "kt_cg_trial_4" and getattr(pol, "enabled", True):
+        if getattr(pol, "type", None) in ("kt_cg_trial_4", "kt_cg_trial_5") and getattr(pol, "enabled", True):
             if getattr(pol, "spread_aware_be_enabled", False):
                 t4_spread_be = pol
             break
@@ -357,6 +358,10 @@ def main() -> None:
             getattr(p, "type", None) == "kt_cg_trial_4" and getattr(p, "enabled", True)
             for p in profile.execution.policies
         )
+        has_kt_cg_trial_5 = any(
+            getattr(p, "type", None) == "kt_cg_trial_5" and getattr(p, "enabled", True)
+            for p in profile.execution.policies
+        )
         # Confirmed-cross setups can now use M5; detect if any do so we fetch M5 bars.
         m5_cross_setup_ids = {
             sid
@@ -434,11 +439,11 @@ def main() -> None:
                     # Fetch M5 data when needed by ema_pullback, kt_cg_ctp, kt_cg_hybrid, or M5 confirmed-cross setups.
                     if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid:
                         data_by_tf["M5"] = _get_bars_cached(profile.symbol, "M5", 2000)
-                    # Fetch M3 data when needed by kt_cg_trial_4 (Trial #4 trend detection).
-                    if has_kt_cg_trial_4:
+                    # Fetch M3 data when needed by kt_cg_trial_4/5 (trend detection).
+                    if has_kt_cg_trial_4 or has_kt_cg_trial_5:
                         data_by_tf["M3"] = _get_bars_cached(profile.symbol, "M3", 3000)
-                    # Fetch D1 data when needed by daily H/L filter (Trial #4).
-                    if has_kt_cg_trial_4:
+                    # Fetch D1 data when needed by daily H/L filter (Trial #4/5).
+                    if has_kt_cg_trial_4 or has_kt_cg_trial_5:
                         data_by_tf["D"] = _get_bars_cached(profile.symbol, "D", 2)
                     # Tick always fetched fresh for live price detection
                     tick = adapter.get_tick(profile.symbol)
@@ -1227,6 +1232,135 @@ def main() -> None:
                             )
                         else:
                             print(f"[{profile.profile_name}] kt_cg_trial_4 {pol.id} mode={mode} -> {dec.reason}")
+
+            # Trial #5 execution — same structure as Trial #4 with dual ATR filter
+            if has_kt_cg_trial_5:
+                t5_mkt = mkt
+                if t5_mkt is None:
+                    spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
+                    t5_mkt = MarketContext(spread_pips=float(spread_pips), alignment_score=0)
+                trades_df = store.read_trades_df(profile.profile_name)
+                temp_overrides = None
+                tier_state: dict[int, bool] = {}
+                try:
+                    state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                    temp_overrides = {}
+                    for key in ("temp_m3_trend_ema_fast", "temp_m3_trend_ema_slow",
+                                "temp_m1_t4_zone_entry_ema_fast", "temp_m1_t4_zone_entry_ema_slow"):
+                        val = state_data.get(key)
+                        if val is not None:
+                            mapped_key = key.replace("temp_", "").replace("_t4_", "_")
+                            temp_overrides[mapped_key] = int(val)
+                    if not temp_overrides:
+                        temp_overrides = None
+                    tier_fired_raw = state_data.get("tier_fired")
+                    if isinstance(tier_fired_raw, dict):
+                        tier_state = {int(k): bool(v) for k, v in tier_fired_raw.items()}
+                    else:
+                        tier_state = {}
+                        for key, val in state_data.items():
+                            if key.startswith("tier_") and key.endswith("_fired") and key != "tier_fired":
+                                try:
+                                    period = int(key.replace("tier_", "").replace("_fired", ""))
+                                    tier_state[period] = bool(val)
+                                except ValueError:
+                                    pass
+                    divergence_state: dict[str, str] = {}
+                    block_buy_until = state_data.get("divergence_block_buy_until")
+                    block_sell_until = state_data.get("divergence_block_sell_until")
+                    if block_buy_until:
+                        divergence_state["block_buy_until"] = block_buy_until
+                    if block_sell_until:
+                        divergence_state["block_sell_until"] = block_sell_until
+                except Exception:
+                    temp_overrides = None
+                    tier_state = {}
+                    divergence_state = {}
+
+                for pol in profile.execution.policies:
+                    if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "kt_cg_trial_5":
+                        continue
+                    m1_df = data_by_tf.get("M1")
+                    if m1_df is None or m1_df.empty:
+                        continue
+                    bar_time_utc = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
+                    exec_result = execute_kt_cg_trial_5_policy_demo_only(
+                        adapter=adapter,
+                        profile=profile,
+                        log_dir=log_dir,
+                        policy=pol,
+                        context=t5_mkt,
+                        data_by_tf=data_by_tf,
+                        tick=tick,
+                        trades_df=trades_df,
+                        mode=mode,
+                        bar_time_utc=bar_time_utc,
+                        tier_state=tier_state,
+                        temp_overrides=temp_overrides,
+                        divergence_state=divergence_state,
+                    )
+                    dec = exec_result["decision"]
+                    tier_updates = exec_result.get("tier_updates", {})
+                    divergence_updates = exec_result.get("divergence_updates", {})
+                    t5_trigger_type = exec_result.get("trigger_type")
+
+                    # Persist tier state updates
+                    if tier_updates:
+                        try:
+                            current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                            tf_dict = current_state_data.get("tier_fired", {})
+                            if not isinstance(tf_dict, dict):
+                                tf_dict = {}
+                            for tier, new_state in tier_updates.items():
+                                tf_dict[str(tier)] = new_state
+                                tier_state[tier] = new_state
+                            current_state_data["tier_fired"] = tf_dict
+                            state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
+                        except Exception as e:
+                            print(f"[{profile.profile_name}] Failed to persist tier state: {e}")
+
+                    # Persist divergence state updates
+                    if divergence_updates:
+                        try:
+                            current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                            for key, value in divergence_updates.items():
+                                state_key = f"divergence_{key}"
+                                current_state_data[state_key] = value
+                                divergence_state[key] = value
+                            state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
+                        except Exception as e:
+                            print(f"[{profile.profile_name}] Failed to persist divergence state: {e}")
+
+                    if dec.attempted:
+                        if dec.placed:
+                            side = dec.side or "buy"
+                            entry_price = tick.ask if side == "buy" else tick.bid
+                            pip = float(profile.pip_size)
+                            sl_pips = getattr(pol, "sl_pips", None)
+                            if sl_pips is None:
+                                sl_pips = float(get_effective_risk(profile).min_stop_pips)
+                            if side == "buy":
+                                tp_price = entry_price + pol.tp_pips * pip
+                                sl_price = entry_price - sl_pips * pip
+                            else:
+                                tp_price = entry_price - pol.tp_pips * pip
+                                sl_price = entry_price + sl_pips * pip
+                            print(f"[{profile.profile_name}] TRADE PLACED: kt_cg_trial_5:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
+                            _insert_trade_for_policy(
+                                profile=profile,
+                                adapter=adapter,
+                                store=store,
+                                policy_type="kt_cg_trial_5",
+                                policy_id=pol.id,
+                                side=side,
+                                entry_price=entry_price,
+                                dec=dec,
+                                stop_price=sl_price,
+                                target_price=tp_price,
+                                entry_type=t5_trigger_type,
+                            )
+                        else:
+                            print(f"[{profile.profile_name}] kt_cg_trial_5 {pol.id} mode={mode} -> {dec.reason}")
 
             if args.once:
                 break

@@ -420,6 +420,95 @@ class ExecutionPolicyKtCgCounterTrendPullback(BaseModel):
     swing_danger_zone_pct: float = 0.15
 
 
+class ExecutionPolicyKtCgTrial5(BaseModel):
+    """KT/CG Trial #5 (Dual ATR Filter with Session-Dynamic Thresholds).
+
+    Extends Trial #4 with upgraded ATR filter system:
+    - M1 ATR(7) with per-session dynamic thresholds
+    - M3 ATR(14) with simple configurable range
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["kt_cg_trial_5"] = "kt_cg_trial_5"
+    id: str = "kt_cg_trial_5_default"
+    enabled: bool = False
+
+    # M3 Trend EMAs
+    m3_trend_ema_fast: int = 5
+    m3_trend_ema_slow: int = 9
+
+    # M1 Zone Entry - EMA5 vs EMA9
+    zone_entry_enabled: bool = True
+    m1_zone_entry_ema_fast: int = 5
+    m1_zone_entry_ema_slow: int = 9
+
+    # Tiered Pullback Configuration
+    tiered_pullback_enabled: bool = True
+    tier_ema_periods: tuple[int, ...] = (9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30)
+    tier_reset_buffer_pips: float = 1.0
+
+    # Close opposite trades before placing new trade
+    close_opposite_on_trade: bool = True
+
+    # Cooldown after trade (Zone Entry respects this, Tiered Pullback has NO cooldown)
+    cooldown_minutes: float = 3.0
+
+    tp_pips: float = 15.0
+    sl_pips: Optional[float] = 10.0
+    confirm_bars: int = 1
+
+    # Rolling Danger Zone Filter (M1-based)
+    rolling_danger_zone_enabled: bool = True
+    rolling_danger_lookback_bars: int = 100
+    rolling_danger_zone_pct: float = 0.15
+
+    # RSI Divergence Detection (M5-based, rolling window comparison)
+    rsi_divergence_enabled: bool = False
+    rsi_divergence_period: int = 14
+    rsi_divergence_lookback_bars: int = 50
+    rsi_divergence_block_minutes: float = 5.0
+
+    # --- Trial #5 Dual ATR Filter ---
+    # M1 ATR(7) - Session-Dynamic
+    m1_atr_period: int = 7
+    m1_atr_min_pips: float = 2.5  # default/fallback threshold
+    session_dynamic_atr_enabled: bool = True
+    auto_session_detection_enabled: bool = True
+    m1_atr_tokyo_min_pips: float = 2.2
+    m1_atr_london_min_pips: float = 2.5
+    m1_atr_ny_min_pips: float = 2.8
+
+    # M3 ATR(14) - Simple Range
+    m3_atr_filter_enabled: bool = True
+    m3_atr_period: int = 14
+    m3_atr_min_pips: float = 4.5
+    m3_atr_max_pips: float = 11.0
+
+    # Keep Trial #4 tiered ATR fields for the tiered logic (allow_all_max / pullback_only_max)
+    tiered_atr_filter_enabled: bool = True
+    tiered_atr_block_below_pips: float = 4.0
+    tiered_atr_allow_all_max_pips: float = 12.0
+    tiered_atr_pullback_only_max_pips: float = 15.0
+
+    # Daily High/Low Filter (blocks zone entry near daily extremes)
+    daily_hl_filter_enabled: bool = False
+    daily_hl_buffer_pips: float = 5.0
+
+    # Spread-Aware Breakeven Stop Loss
+    spread_aware_be_enabled: bool = False
+    spread_aware_be_trigger_mode: Literal["fixed_pips", "spread_relative"] = "fixed_pips"
+    spread_aware_be_fixed_trigger_pips: float = 5.0
+    spread_aware_be_spread_buffer_pips: float = 1.0
+    spread_aware_be_apply_to_zone_entry: bool = True
+    spread_aware_be_apply_to_tiered_pullback: bool = True
+
+    # EMA Zone Entry Filter
+    ema_zone_filter_enabled: bool = True
+    ema_zone_filter_lookback_bars: int = 3
+    ema_zone_filter_block_threshold: float = 0.35
+
+
 class ExecutionPolicyKtCgTrial4(BaseModel):
     """KT/CG Trial #4 (M3 Trend + Tiered Pullback System).
 
@@ -529,6 +618,7 @@ ExecutionPolicy = Annotated[
         ExecutionPolicyKtCgHybrid,
         ExecutionPolicyKtCgCounterTrendPullback,
         ExecutionPolicyKtCgTrial4,
+        ExecutionPolicyKtCgTrial5,
     ],
     Field(discriminator="type"),
 ]

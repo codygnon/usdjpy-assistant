@@ -3626,6 +3626,18 @@ interface EditedSettings {
   m3_trend_ema_slow: number | null;
   m1_t4_zone_entry_ema_fast: number | null;
   m1_t4_zone_entry_ema_slow: number | null;
+  // Trial #5: Dual ATR Filter
+  m1_atr_period: number;
+  m1_atr_min_pips: number;
+  session_dynamic_atr_enabled: boolean;
+  auto_session_detection_enabled: boolean;
+  m1_atr_tokyo_min_pips: number;
+  m1_atr_london_min_pips: number;
+  m1_atr_ny_min_pips: number;
+  m3_atr_filter_enabled: boolean;
+  m3_atr_period: number;
+  m3_atr_min_pips: number;
+  m3_atr_max_pips: number;
 }
 
 function PresetsPage({ profile }: { profile: Profile }) {
@@ -3715,6 +3727,18 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let zoneEntryEnabled = true;
       // Trial #4: Tier EMA periods
       let tierEmaPeriods: number[] = [9, 11, 12, 13, 14, 15, 16, 17];
+      // Trial #5: Dual ATR Filter
+      let m1AtrPeriod = 7;
+      let m1AtrMinPips = 2.5;
+      let sessionDynamicAtrEnabled = true;
+      let autoSessionDetectionEnabled = true;
+      let m1AtrTokyoMinPips = 2.2;
+      let m1AtrLondonMinPips = 2.5;
+      let m1AtrNyMinPips = 2.8;
+      let m3AtrFilterEnabled = true;
+      let m3AtrPeriod = 14;
+      let m3AtrMinPips = 4.5;
+      let m3AtrMaxPips = 11.0;
       if (policies) {
         for (const pol of policies) {
           if ('cooldown_minutes' in pol) {
@@ -3771,6 +3795,22 @@ function PresetsPage({ profile }: { profile: Profile }) {
           }
           if ('tier_ema_periods' in pol) {
             tierEmaPeriods = (pol.tier_ema_periods as number[]) ?? [9, 11, 12, 13, 14, 15, 16, 17];
+          }
+          // Trial #5: Dual ATR Filter
+          if ('m1_atr_period' in pol) {
+            m1AtrPeriod = (pol.m1_atr_period as number) ?? 7;
+            m1AtrMinPips = (pol.m1_atr_min_pips as number) ?? 2.5;
+            sessionDynamicAtrEnabled = (pol.session_dynamic_atr_enabled as boolean) ?? true;
+            autoSessionDetectionEnabled = (pol.auto_session_detection_enabled as boolean) ?? true;
+            m1AtrTokyoMinPips = (pol.m1_atr_tokyo_min_pips as number) ?? 2.2;
+            m1AtrLondonMinPips = (pol.m1_atr_london_min_pips as number) ?? 2.5;
+            m1AtrNyMinPips = (pol.m1_atr_ny_min_pips as number) ?? 2.8;
+          }
+          if ('m3_atr_filter_enabled' in pol) {
+            m3AtrFilterEnabled = (pol.m3_atr_filter_enabled as boolean) ?? true;
+            m3AtrPeriod = (pol.m3_atr_period as number) ?? 14;
+            m3AtrMinPips = (pol.m3_atr_min_pips as number) ?? 4.5;
+            m3AtrMaxPips = (pol.m3_atr_max_pips as number) ?? 11.0;
           }
           if (policyCooldown > 0 || policySlPips !== 20) break;
         }
@@ -3833,6 +3873,18 @@ function PresetsPage({ profile }: { profile: Profile }) {
         m3_trend_ema_slow: tempSettings?.m3_trend_ema_slow ?? null,
         m1_t4_zone_entry_ema_fast: tempSettings?.m1_t4_zone_entry_ema_fast ?? null,
         m1_t4_zone_entry_ema_slow: tempSettings?.m1_t4_zone_entry_ema_slow ?? null,
+        // Trial #5: Dual ATR Filter
+        m1_atr_period: m1AtrPeriod,
+        m1_atr_min_pips: m1AtrMinPips,
+        session_dynamic_atr_enabled: sessionDynamicAtrEnabled,
+        auto_session_detection_enabled: autoSessionDetectionEnabled,
+        m1_atr_tokyo_min_pips: m1AtrTokyoMinPips,
+        m1_atr_london_min_pips: m1AtrLondonMinPips,
+        m1_atr_ny_min_pips: m1AtrNyMinPips,
+        m3_atr_filter_enabled: m3AtrFilterEnabled,
+        m3_atr_period: m3AtrPeriod,
+        m3_atr_min_pips: m3AtrMinPips,
+        m3_atr_max_pips: m3AtrMaxPips,
       });
     }
   }, [showActiveSettings, currentProfile, tempSettings]);
@@ -3930,6 +3982,46 @@ function PresetsPage({ profile }: { profile: Profile }) {
           // Tier periods
           updates.tier_ema_periods = editedSettings.tier_ema_periods;
         }
+        // Update Trial #5 settings
+        if (pol.type === 'kt_cg_trial_5') {
+          // All Trial #4 settings also apply to Trial #5
+          updates.rolling_danger_zone_enabled = editedSettings.rolling_danger_zone_enabled;
+          updates.rolling_danger_lookback_bars = Math.max(20, Math.min(1500, editedSettings.rolling_danger_lookback_bars));
+          updates.rolling_danger_zone_pct = Math.max(0.05, Math.min(0.50, editedSettings.rolling_danger_zone_pct));
+          updates.rsi_divergence_enabled = editedSettings.rsi_divergence_enabled;
+          updates.rsi_divergence_period = Math.max(5, Math.min(50, editedSettings.rsi_divergence_period));
+          updates.rsi_divergence_lookback_bars = Math.max(20, Math.min(1500, editedSettings.rsi_divergence_lookback_bars));
+          updates.rsi_divergence_block_minutes = Math.max(1, Math.min(30, editedSettings.rsi_divergence_block_minutes));
+          updates.ema_zone_filter_enabled = editedSettings.ema_zone_filter_enabled;
+          updates.ema_zone_filter_lookback_bars = Math.max(2, Math.min(10, editedSettings.ema_zone_filter_lookback_bars));
+          updates.ema_zone_filter_block_threshold = Math.max(0.1, Math.min(0.8, editedSettings.ema_zone_filter_block_threshold));
+          updates.tiered_atr_filter_enabled = editedSettings.tiered_atr_filter_enabled;
+          updates.tiered_atr_block_below_pips = editedSettings.tiered_atr_block_below_pips;
+          updates.tiered_atr_allow_all_max_pips = editedSettings.tiered_atr_allow_all_max_pips;
+          updates.tiered_atr_pullback_only_max_pips = editedSettings.tiered_atr_pullback_only_max_pips;
+          updates.daily_hl_filter_enabled = editedSettings.daily_hl_filter_enabled;
+          updates.daily_hl_buffer_pips = editedSettings.daily_hl_buffer_pips;
+          updates.spread_aware_be_enabled = editedSettings.spread_aware_be_enabled;
+          updates.spread_aware_be_trigger_mode = editedSettings.spread_aware_be_trigger_mode;
+          updates.spread_aware_be_fixed_trigger_pips = editedSettings.spread_aware_be_fixed_trigger_pips;
+          updates.spread_aware_be_spread_buffer_pips = editedSettings.spread_aware_be_spread_buffer_pips;
+          updates.spread_aware_be_apply_to_zone_entry = editedSettings.spread_aware_be_apply_to_zone_entry;
+          updates.spread_aware_be_apply_to_tiered_pullback = editedSettings.spread_aware_be_apply_to_tiered_pullback;
+          updates.zone_entry_enabled = editedSettings.zone_entry_enabled;
+          updates.tier_ema_periods = editedSettings.tier_ema_periods;
+          // Trial #5 specific: Dual ATR Filter
+          updates.m1_atr_period = Math.max(1, Math.min(50, editedSettings.m1_atr_period));
+          updates.m1_atr_min_pips = Math.max(0, editedSettings.m1_atr_min_pips);
+          updates.session_dynamic_atr_enabled = editedSettings.session_dynamic_atr_enabled;
+          updates.auto_session_detection_enabled = editedSettings.auto_session_detection_enabled;
+          updates.m1_atr_tokyo_min_pips = Math.max(0, editedSettings.m1_atr_tokyo_min_pips);
+          updates.m1_atr_london_min_pips = Math.max(0, editedSettings.m1_atr_london_min_pips);
+          updates.m1_atr_ny_min_pips = Math.max(0, editedSettings.m1_atr_ny_min_pips);
+          updates.m3_atr_filter_enabled = editedSettings.m3_atr_filter_enabled;
+          updates.m3_atr_period = Math.max(1, Math.min(50, editedSettings.m3_atr_period));
+          updates.m3_atr_min_pips = Math.max(0, editedSettings.m3_atr_min_pips);
+          updates.m3_atr_max_pips = Math.max(0, editedSettings.m3_atr_max_pips);
+        }
         return Object.keys(updates).length > 0 ? { ...pol, ...updates } : pol;
       }) || [];
 
@@ -3959,7 +4051,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
       // Save temp EMA settings if using Trial #3 or Trial #4
       const hasKtCgCtp = policies.some(p => p.type === 'kt_cg_counter_trend_pullback');
       const hasKtCgTrial4 = policies.some(p => p.type === 'kt_cg_trial_4');
-      if (hasKtCgCtp || hasKtCgTrial4) {
+      const hasKtCgTrial5 = policies.some(p => p.type === 'kt_cg_trial_5');
+      if (hasKtCgCtp || hasKtCgTrial4 || hasKtCgTrial5) {
         const settings: any = {};
         if (hasKtCgCtp) {
           settings.m5_trend_ema_fast = editedSettings.m5_trend_ema_fast;
@@ -3967,7 +4060,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
           settings.m1_zone_entry_ema_slow = editedSettings.m1_zone_entry_ema_slow;
           settings.m1_pullback_cross_ema_slow = editedSettings.m1_pullback_cross_ema_slow;
         }
-        if (hasKtCgTrial4) {
+        if (hasKtCgTrial4 || hasKtCgTrial5) {
           settings.m3_trend_ema_fast = editedSettings.m3_trend_ema_fast;
           settings.m3_trend_ema_slow = editedSettings.m3_trend_ema_slow;
           settings.m1_t4_zone_entry_ema_fast = editedSettings.m1_t4_zone_entry_ema_fast;
@@ -4284,7 +4377,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                 </div>
               )}
               {/* Rolling Danger Zone Settings (for kt_cg_trial_4 - Trial #4) */}
-              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4') && (
+              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4' || pol.type === 'kt_cg_trial_5') && (
                 <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
                     Rolling Danger Zone (blocks trades near M1 rolling high/low extremes)
@@ -4514,6 +4607,172 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       {'> '}{editedSettings.tiered_atr_pullback_only_max_pips}p: block ALL
                     </div>
                   </div>
+                  {/* Trial #5: Dual ATR Filter (M1 Session-Dynamic + M3 Range) */}
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && (
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      M1 ATR Session-Dynamic Filter (Trial #5)
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>M1 ATR Period</div>
+                        <input
+                          type="number"
+                          step="1"
+                          min="1"
+                          max="50"
+                          value={editedSettings.m1_atr_period}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, m1_atr_period: parseInt(e.target.value) || 7 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Default Min (pips)</div>
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="20"
+                          value={editedSettings.m1_atr_min_pips}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, m1_atr_min_pips: parseFloat(e.target.value) || 2.5 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={editedSettings.session_dynamic_atr_enabled}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, session_dynamic_atr_enabled: e.target.checked })}
+                            style={{ width: 18, height: 18, cursor: 'pointer' }}
+                          />
+                          <span style={{ fontWeight: 600, fontSize: '0.75rem', color: editedSettings.session_dynamic_atr_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                            Session Dynamic
+                          </span>
+                        </label>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={editedSettings.auto_session_detection_enabled}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, auto_session_detection_enabled: e.target.checked })}
+                            style={{ width: 18, height: 18, cursor: 'pointer' }}
+                          />
+                          <span style={{ fontWeight: 600, fontSize: '0.75rem', color: editedSettings.auto_session_detection_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                            Auto Detect
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+                    {editedSettings.session_dynamic_atr_enabled && (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginTop: 12 }}>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Tokyo Min (pips)</div>
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            max="20"
+                            value={editedSettings.m1_atr_tokyo_min_pips}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, m1_atr_tokyo_min_pips: parseFloat(e.target.value) || 2.2 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          />
+                          <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginTop: 2 }}>00:00-09:00 UTC</div>
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>London Min (pips)</div>
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            max="20"
+                            value={editedSettings.m1_atr_london_min_pips}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, m1_atr_london_min_pips: parseFloat(e.target.value) || 2.5 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          />
+                          <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginTop: 2 }}>07:00-16:00 UTC</div>
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>NY Min (pips)</div>
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            max="20"
+                            value={editedSettings.m1_atr_ny_min_pips}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, m1_atr_ny_min_pips: parseFloat(e.target.value) || 2.8 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          />
+                          <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginTop: 2 }}>12:00-21:00 UTC</div>
+                        </div>
+                      </div>
+                    )}
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
+                      M1 ATR({editedSettings.m1_atr_period}) must be &gt;= threshold. Session overlaps use highest threshold.
+                    </div>
+                    {/* M3 ATR Range Filter */}
+                    <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                        M3 ATR Range Filter (Trial #5)
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={editedSettings.m3_atr_filter_enabled}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, m3_atr_filter_enabled: e.target.checked })}
+                              style={{ width: 18, height: 18, cursor: 'pointer' }}
+                            />
+                            <span style={{ fontWeight: 600, color: editedSettings.m3_atr_filter_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                              {editedSettings.m3_atr_filter_enabled ? 'ON' : 'OFF'}
+                            </span>
+                          </label>
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>M3 ATR Period</div>
+                          <input
+                            type="number"
+                            step="1"
+                            min="1"
+                            max="50"
+                            value={editedSettings.m3_atr_period}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, m3_atr_period: parseInt(e.target.value) || 14 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Min (pips)</div>
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            max="30"
+                            value={editedSettings.m3_atr_min_pips}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, m3_atr_min_pips: parseFloat(e.target.value) || 4.5 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max (pips)</div>
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            max="30"
+                            value={editedSettings.m3_atr_max_pips}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, m3_atr_max_pips: parseFloat(e.target.value) || 11 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          />
+                        </div>
+                      </div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
+                        M3 ATR({editedSettings.m3_atr_period}) must be between {editedSettings.m3_atr_min_pips}p and {editedSettings.m3_atr_max_pips}p. Outside range: block ALL.
+                      </div>
+                    </div>
+                  </div>
+                  )}
                   {/* Daily High/Low Filter */}
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
@@ -4719,7 +4978,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                 </div>
               )}
               {/* EMA Override Settings (for kt_cg_trial_4 / Trial #4) */}
-              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4') && (
+              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4' || pol.type === 'kt_cg_trial_5') && (
                 <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
                     EMA Override Settings (Trial #4)

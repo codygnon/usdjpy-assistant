@@ -3336,6 +3336,105 @@ def _passes_tiered_atr_filter_trial_4(policy, m1_df: pd.DataFrame, pip_size: flo
     return False, f"tiered_atr_filter: ATR {atr_pips:.1f}p > {pullback_only_max}p (too volatile, ALL blocked)"
 
 
+def _get_current_sessions(utc_hour: int) -> list[str]:
+    """Return active trading sessions for a given UTC hour.
+
+    - Tokyo: 00:00-09:00 UTC
+    - London: 07:00-16:00 UTC
+    - NY: 12:00-21:00 UTC
+    """
+    sessions = []
+    if 0 <= utc_hour < 9:
+        sessions.append("tokyo")
+    if 7 <= utc_hour < 16:
+        sessions.append("london")
+    if 12 <= utc_hour < 21:
+        sessions.append("ny")
+    return sessions
+
+
+def _passes_atr_filter_trial_5(
+    policy, m1_df: pd.DataFrame, m3_df: pd.DataFrame | None, pip_size: float, trigger_type: str
+) -> tuple[bool, str | None]:
+    """Dual ATR filter for Trial #5.
+
+    1. M1 ATR(period) with session-dynamic threshold (block below)
+       - Then applies tiered logic (allow_all_max / pullback_only_max / block above)
+    2. M3 ATR(period) simple range filter (block outside min-max)
+    """
+    # --- M1 ATR check ---
+    m1_atr_period = getattr(policy, "m1_atr_period", 7)
+    if m1_df is None or len(m1_df) < m1_atr_period + 2:
+        return False, "trial5_atr: insufficient M1 data"
+    a1 = atr_fn(m1_df, m1_atr_period)
+    if a1.empty or pd.isna(a1.iloc[-1]):
+        return False, "trial5_atr: M1 ATR not available"
+    m1_atr_pips = float(a1.iloc[-1]) / pip_size
+
+    # Determine M1 ATR minimum threshold (session-dynamic or static)
+    m1_min = getattr(policy, "m1_atr_min_pips", 2.5)
+    session_dynamic = getattr(policy, "session_dynamic_atr_enabled", False)
+    auto_session = getattr(policy, "auto_session_detection_enabled", True)
+    current_session = "none"
+    if session_dynamic and auto_session:
+        utc_hour = datetime.now(timezone.utc).hour
+        active_sessions = _get_current_sessions(utc_hour)
+        # Use highest threshold among active sessions
+        thresholds = []
+        for s in active_sessions:
+            if s == "tokyo":
+                thresholds.append(getattr(policy, "m1_atr_tokyo_min_pips", 2.2))
+            elif s == "london":
+                thresholds.append(getattr(policy, "m1_atr_london_min_pips", 2.5))
+            elif s == "ny":
+                thresholds.append(getattr(policy, "m1_atr_ny_min_pips", 2.8))
+        if thresholds:
+            m1_min = max(thresholds)
+            current_session = "+".join(active_sessions)
+        else:
+            current_session = "none"
+    elif session_dynamic:
+        # Session-dynamic enabled but auto-detection off: use default
+        current_session = "manual"
+
+    if m1_atr_pips < m1_min:
+        return False, f"trial5_m1_atr: {m1_atr_pips:.1f}p < {m1_min:.1f}p min (session={current_session}, ALL blocked)"
+
+    # Apply tiered logic from Trial #4 fields on the M1 ATR value
+    if getattr(policy, "tiered_atr_filter_enabled", False):
+        block_below = getattr(policy, "tiered_atr_block_below_pips", 4.0)
+        allow_all_max = getattr(policy, "tiered_atr_allow_all_max_pips", 12.0)
+        pullback_only_max = getattr(policy, "tiered_atr_pullback_only_max_pips", 15.0)
+        if m1_atr_pips < block_below:
+            return False, f"trial5_tiered_atr: M1 ATR {m1_atr_pips:.1f}p < {block_below}p (too quiet, ALL blocked)"
+        if m1_atr_pips <= allow_all_max:
+            pass  # Allow all
+        elif m1_atr_pips <= pullback_only_max:
+            if trigger_type == "zone_entry":
+                return False, f"trial5_tiered_atr: M1 ATR {m1_atr_pips:.1f}p in [{allow_all_max}-{pullback_only_max}]p (zone entry blocked)"
+        else:
+            return False, f"trial5_tiered_atr: M1 ATR {m1_atr_pips:.1f}p > {pullback_only_max}p (too volatile, ALL blocked)"
+
+    # --- M3 ATR check ---
+    m3_atr_enabled = getattr(policy, "m3_atr_filter_enabled", False)
+    if m3_atr_enabled:
+        m3_atr_period = getattr(policy, "m3_atr_period", 14)
+        if m3_df is None or len(m3_df) < m3_atr_period + 2:
+            return False, "trial5_m3_atr: insufficient M3 data"
+        a3 = atr_fn(m3_df, m3_atr_period)
+        if a3.empty or pd.isna(a3.iloc[-1]):
+            return False, "trial5_m3_atr: M3 ATR not available"
+        m3_atr_pips = float(a3.iloc[-1]) / pip_size
+        m3_min = getattr(policy, "m3_atr_min_pips", 4.5)
+        m3_max = getattr(policy, "m3_atr_max_pips", 11.0)
+        if m3_atr_pips < m3_min:
+            return False, f"trial5_m3_atr: {m3_atr_pips:.1f}p < {m3_min:.1f}p min (ALL blocked)"
+        if m3_atr_pips > m3_max:
+            return False, f"trial5_m3_atr: {m3_atr_pips:.1f}p > {m3_max:.1f}p max (ALL blocked)"
+
+    return True, None
+
+
 def _passes_daily_hl_filter(policy, data_by_tf: dict, tick, side: str, pip_size: float) -> tuple[bool, str | None]:
     """Daily High/Low filter for Trial #4 zone entry only.
 
@@ -4084,6 +4183,388 @@ def execute_kt_cg_trial_4_policy_demo_only(
     if placed:
         tier_info = f" tier_{tiered_pullback_tier}" if tiered_pullback_tier else ""
         print(f"[{profile.profile_name}] TRADE PLACED: kt_cg_trial_4:{trigger_type}{tier_info} | {'; '.join(eval_reasons)}")
+
+    return {
+        "decision": ExecutionDecision(
+            attempted=True,
+            placed=placed,
+            reason=reason,
+            order_retcode=res.retcode,
+            order_id=res.order,
+            deal_id=res.deal,
+            fill_price=getattr(res, 'fill_price', None),
+            side=side,
+        ),
+        "tier_updates": tier_updates,
+        "divergence_updates": divergence_updates,
+        "trigger_type": trigger_type,
+    }
+
+
+def execute_kt_cg_trial_5_policy_demo_only(
+    *,
+    adapter,
+    profile: ProfileV1,
+    log_dir: Path,
+    policy,  # ExecutionPolicyKtCgTrial5
+    context: MarketContext,
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+    tick: Tick,
+    trades_df: Optional[pd.DataFrame],
+    mode: str,
+    bar_time_utc: str,
+    tier_state: dict[int, bool],
+    temp_overrides: Optional[dict] = None,
+    divergence_state: Optional[dict[str, str]] = None,
+) -> dict:
+    """Evaluate KT/CG Trial #5 (Dual ATR + Session-Dynamic) policy.
+
+    Same as Trial #4 but uses _passes_atr_filter_trial_5 instead of _passes_tiered_atr_filter_trial_4.
+    """
+    if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
+        return {"decision": ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed"), "tier_updates": {}, "divergence_updates": {}}
+    if not adapter.is_demo_account():
+        return {"decision": ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)"), "tier_updates": {}, "divergence_updates": {}}
+
+    store = _store(log_dir)
+    rule_id = f"kt_cg_trial_5:{policy.id}:M1:{bar_time_utc}"
+
+    # Evaluate conditions - reuses Trial #4 evaluate function (same zone entry + tiered pullback)
+    result = evaluate_kt_cg_trial_4_conditions(
+        profile, policy, data_by_tf,
+        current_bid=tick.bid,
+        current_ask=tick.ask,
+        tier_state=tier_state,
+        temp_overrides=temp_overrides,
+    )
+    passed = result["passed"]
+    side = result["side"]
+    eval_reasons = result["reasons"]
+    trigger_type = result["trigger_type"]
+    tier_updates = result.get("tier_updates", {})
+    tiered_pullback_tier = result.get("tiered_pullback_tier")
+
+    if not passed or side is None:
+        return {"decision": ExecutionDecision(attempted=False, placed=False, reason="; ".join(eval_reasons)), "tier_updates": tier_updates, "divergence_updates": {}}
+
+    if trigger_type == "tiered_pullback" and tiered_pullback_tier:
+        rule_id = f"kt_cg_trial_5:{policy.id}:tier_{tiered_pullback_tier}"
+
+    # Idempotency check for zone_entry only
+    if trigger_type == "zone_entry":
+        within = 2
+        if store.has_recent_price_level_placement(profile.profile_name, rule_id, within):
+            return {"decision": ExecutionDecision(attempted=False, placed=False, reason="kt_cg_trial_5: recent placement (idempotent)"), "tier_updates": tier_updates, "divergence_updates": {}}
+
+    # Check cooldown for Zone Entry only
+    if trigger_type == "zone_entry":
+        cooldown_ok, cooldown_reason = _check_kt_cg_trial_4_cooldown(
+            store, profile.profile_name, policy.id, policy.cooldown_minutes
+        )
+        if not cooldown_ok:
+            store.insert_execution(
+                {
+                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "profile": profile.profile_name,
+                    "symbol": profile.symbol,
+                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                    "rule_id": rule_id,
+                    "mode": mode,
+                    "attempted": 1,
+                    "placed": 0,
+                    "reason": cooldown_reason or "zone_entry_cooldown",
+                    "mt5_retcode": None,
+                    "mt5_order_id": None,
+                    "mt5_deal_id": None,
+                }
+            )
+            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=cooldown_reason or "zone_entry_cooldown"), "tier_updates": tier_updates, "divergence_updates": {}}
+
+    # EMA Zone Entry Filter
+    if trigger_type == "zone_entry":
+        ema_zone_filter_enabled = getattr(policy, "ema_zone_filter_enabled", False)
+        if ema_zone_filter_enabled:
+            m1_df_zone = data_by_tf.get("M1")
+            if m1_df_zone is not None and not m1_df_zone.empty:
+                is_bull = side == "buy"
+                zf_lookback = getattr(policy, "ema_zone_filter_lookback_bars", 3)
+                zf_threshold = getattr(policy, "ema_zone_filter_block_threshold", 0.35)
+                pip_size = float(profile.pip_size)
+                zf_score, zf_details = _compute_ema_zone_filter_score(
+                    m1_df_zone, pip_size, is_bull, zf_lookback
+                )
+                if "error" not in zf_details and zf_score < zf_threshold:
+                    zf_reason = (
+                        f"ema_zone_filter: BLOCKED score={zf_score:.2f}"
+                        f" (spread={zf_details['spread_pips']:.1f}p"
+                        f" slope={zf_details['slope_pips']:.1f}p"
+                        f" dir={zf_details['spread_dir_pips']:.1f}p)"
+                        f" threshold={zf_threshold}"
+                    )
+                    print(f"[{profile.profile_name}] kt_cg_trial_5 {zf_reason}")
+                    store.insert_execution(
+                        {
+                            "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                            "profile": profile.profile_name,
+                            "symbol": profile.symbol,
+                            "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                            "rule_id": rule_id,
+                            "mode": mode,
+                            "attempted": 1,
+                            "placed": 0,
+                            "reason": zf_reason,
+                            "mt5_retcode": None,
+                            "mt5_order_id": None,
+                            "mt5_deal_id": None,
+                        }
+                    )
+                    return {"decision": ExecutionDecision(attempted=True, placed=False, reason=zf_reason), "tier_updates": tier_updates, "divergence_updates": {}}
+
+    # Session filter
+    now_utc = datetime.now(timezone.utc)
+    ok, reason = passes_session_filter(profile, now_utc)
+    if not ok:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": reason or "session_filter",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter"), "tier_updates": tier_updates, "divergence_updates": {}}
+
+    # --- Trial #5 Dual ATR Filter (replaces Trial #4's single tiered ATR) ---
+    m1_df = data_by_tf.get("M1")
+    m3_df = data_by_tf.get("M3")
+    if m1_df is not None:
+        ok, reason = _passes_atr_filter_trial_5(policy, m1_df, m3_df, float(profile.pip_size), trigger_type)
+        if not ok:
+            store.insert_execution(
+                {
+                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "profile": profile.profile_name,
+                    "symbol": profile.symbol,
+                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                    "rule_id": rule_id,
+                    "mode": mode,
+                    "attempted": 1,
+                    "placed": 0,
+                    "reason": reason or "trial5_atr_filter",
+                    "mt5_retcode": None,
+                    "mt5_order_id": None,
+                    "mt5_deal_id": None,
+                }
+            )
+            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "trial5_atr_filter"), "tier_updates": tier_updates, "divergence_updates": {}}
+
+    # Rolling Danger Zone filter
+    rolling_danger_enabled = getattr(policy, "rolling_danger_zone_enabled", False)
+    if rolling_danger_enabled:
+        m1_df = data_by_tf.get("M1")
+        if m1_df is not None and not m1_df.empty:
+            lookback = getattr(policy, "rolling_danger_lookback_bars", 100)
+            danger_pct = getattr(policy, "rolling_danger_zone_pct", 0.15)
+            bars_to_use = m1_df.tail(lookback)
+            if len(bars_to_use) >= 10:
+                rolling_high = float(bars_to_use["high"].max())
+                rolling_low = float(bars_to_use["low"].min())
+                price_range = rolling_high - rolling_low
+                if price_range > 0:
+                    upper_danger_threshold = rolling_high - (price_range * danger_pct)
+                    lower_danger_threshold = rolling_low + (price_range * danger_pct)
+                    entry_price_check = tick.ask if side == "buy" else tick.bid
+                    danger_blocked = False
+                    danger_reason = None
+                    if side == "buy" and entry_price_check >= upper_danger_threshold:
+                        danger_blocked = True
+                        danger_reason = f"rolling_danger_zone: BUY blocked, price {entry_price_check:.3f} >= upper threshold {upper_danger_threshold:.3f}"
+                    elif side == "sell" and entry_price_check <= lower_danger_threshold:
+                        danger_blocked = True
+                        danger_reason = f"rolling_danger_zone: SELL blocked, price {entry_price_check:.3f} <= lower threshold {lower_danger_threshold:.3f}"
+                    if danger_blocked:
+                        print(f"[{profile.profile_name}] kt_cg_trial_5 BLOCKED by danger zone: {danger_reason}")
+                        store.insert_execution(
+                            {
+                                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                                "profile": profile.profile_name,
+                                "symbol": profile.symbol,
+                                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                                "rule_id": rule_id,
+                                "mode": mode,
+                                "attempted": 1,
+                                "placed": 0,
+                                "reason": danger_reason or "rolling_danger_zone",
+                                "mt5_retcode": None,
+                                "mt5_order_id": None,
+                                "mt5_deal_id": None,
+                            }
+                        )
+                        return {"decision": ExecutionDecision(attempted=True, placed=False, reason=danger_reason or "rolling_danger_zone"), "tier_updates": tier_updates, "divergence_updates": {}}
+
+    # Daily High/Low Filter (zone entry only)
+    if trigger_type == "zone_entry":
+        ok, reason = _passes_daily_hl_filter(policy, data_by_tf, tick, side, float(profile.pip_size))
+        if not ok:
+            print(f"[{profile.profile_name}] kt_cg_trial_5 BLOCKED by daily H/L filter: {reason}")
+            store.insert_execution(
+                {
+                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "profile": profile.profile_name,
+                    "symbol": profile.symbol,
+                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                    "rule_id": rule_id,
+                    "mode": mode,
+                    "attempted": 1,
+                    "placed": 0,
+                    "reason": reason or "daily_hl_filter",
+                    "mt5_retcode": None,
+                    "mt5_order_id": None,
+                    "mt5_deal_id": None,
+                }
+            )
+            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "daily_hl_filter"), "tier_updates": tier_updates, "divergence_updates": {}}
+
+    # RSI Divergence Detection (same as Trial #4)
+    divergence_updates: dict[str, str] = {}
+    rsi_divergence_enabled = getattr(policy, "rsi_divergence_enabled", False)
+    if rsi_divergence_enabled:
+        m5_df = data_by_tf.get("M5")
+        if m5_df is not None and not m5_df.empty:
+            rsi_period = getattr(policy, "rsi_divergence_period", 14)
+            lookback_bars = getattr(policy, "rsi_divergence_lookback_bars", 50)
+            block_minutes = getattr(policy, "rsi_divergence_block_minutes", 5.0)
+            m3_trend = result.get("m3_trend", "NEUTRAL")
+            now_utc_div = datetime.now(timezone.utc)
+            if divergence_state:
+                block_buy_until_str = divergence_state.get("block_buy_until")
+                block_sell_until_str = divergence_state.get("block_sell_until")
+                if side == "buy" and block_buy_until_str:
+                    try:
+                        block_until = datetime.fromisoformat(block_buy_until_str.replace("Z", "+00:00"))
+                        if now_utc_div < block_until:
+                            block_reason = f"rsi_divergence: BUY blocked until {block_buy_until_str}"
+                            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=block_reason), "tier_updates": tier_updates, "divergence_updates": {}}
+                    except (ValueError, TypeError):
+                        pass
+                if side == "sell" and block_sell_until_str:
+                    try:
+                        block_until = datetime.fromisoformat(block_sell_until_str.replace("Z", "+00:00"))
+                        if now_utc_div < block_until:
+                            block_reason = f"rsi_divergence: SELL blocked until {block_sell_until_str}"
+                            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=block_reason), "tier_updates": tier_updates, "divergence_updates": {}}
+                    except (ValueError, TypeError):
+                        pass
+            has_bearish, has_bullish, divergence_details = detect_rsi_divergence(
+                m5_df, rsi_period=rsi_period, lookback_bars=lookback_bars
+            )
+            if m3_trend == "BULL" and has_bearish and side == "buy":
+                from datetime import timedelta
+                block_until = now_utc_div + timedelta(minutes=block_minutes)
+                divergence_updates["block_buy_until"] = block_until.isoformat()
+                block_reason = f"rsi_divergence: bearish divergence in BULL, BUY blocked for {block_minutes:.1f} min"
+                return {"decision": ExecutionDecision(attempted=True, placed=False, reason=block_reason), "tier_updates": tier_updates, "divergence_updates": divergence_updates}
+            if m3_trend == "BEAR" and has_bullish and side == "sell":
+                from datetime import timedelta
+                block_until = now_utc_div + timedelta(minutes=block_minutes)
+                divergence_updates["block_sell_until"] = block_until.isoformat()
+                block_reason = f"rsi_divergence: bullish divergence in BEAR, SELL blocked for {block_minutes:.1f} min"
+                return {"decision": ExecutionDecision(attempted=True, placed=False, reason=block_reason), "tier_updates": tier_updates, "divergence_updates": divergence_updates}
+
+    entry_price = tick.ask if side == "buy" else tick.bid
+    candidate = _kt_cg_trial_4_candidate(profile, policy, entry_price, side)
+    decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
+    if not decision.allow:
+        sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": sig_id,
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": "risk_reject: " + "; ".join(decision.hard_reasons),
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return {"decision": ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons)), "tier_updates": tier_updates, "divergence_updates": divergence_updates}
+
+    if mode == "ARMED_MANUAL_CONFIRM":
+        sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": sig_id,
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": "manual_confirm_required",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return {"decision": ExecutionDecision(attempted=True, placed=False, reason="manual_confirm_required"), "tier_updates": tier_updates, "divergence_updates": divergence_updates}
+
+    # ARMED_AUTO_DEMO: place the trade
+    if policy.close_opposite_on_trade:
+        closed = close_opposite_positions(adapter, profile, side, log_dir)
+        if closed:
+            print(f"[{profile.profile_name}] kt_cg_trial_5: closed {len(closed)} opposite position(s) before {side.upper()}")
+
+    comment = f"kt_cg_trial_5:{policy.id}:{trigger_type}"
+    if trigger_type == "tiered_pullback" and tiered_pullback_tier:
+        comment = f"kt_cg_trial_5:{policy.id}:tier_{tiered_pullback_tier}"
+
+    res = adapter.order_send_market(
+        symbol=profile.symbol,
+        side=side,
+        volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
+        sl=candidate.stop_price,
+        tp=candidate.target_price,
+        comment=comment,
+    )
+    placed = res.retcode in (0, 10008, 10009)
+    reason = f"{trigger_type}:order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
+    if trigger_type == "tiered_pullback" and tiered_pullback_tier:
+        reason = f"tier_{tiered_pullback_tier}:order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
+    sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+    store.insert_execution(
+        {
+            "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+            "profile": profile.profile_name,
+            "symbol": profile.symbol,
+            "signal_id": sig_id,
+            "rule_id": rule_id,
+            "mode": mode,
+            "attempted": 1,
+            "placed": 1 if placed else 0,
+            "reason": reason,
+            "mt5_retcode": res.retcode,
+            "mt5_order_id": res.order,
+            "mt5_deal_id": res.deal,
+        }
+    )
+
+    if placed:
+        tier_info = f" tier_{tiered_pullback_tier}" if tiered_pullback_tier else ""
+        print(f"[{profile.profile_name}] TRADE PLACED: kt_cg_trial_5:{trigger_type}{tier_info} | {'; '.join(eval_reasons)}")
 
     return {
         "decision": ExecutionDecision(

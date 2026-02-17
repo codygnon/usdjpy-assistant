@@ -37,6 +37,7 @@ class PresetId(str, Enum):
     KT_CG_TRIAL_2 = "kt_cg_trial_2"
     KT_CG_TRIAL_3 = "kt_cg_trial_3"
     KT_CG_TRIAL_4 = "kt_cg_trial_4"
+    KT_CG_TRIAL_5 = "kt_cg_trial_5"
     M5_M1_EMA_CROSS_9_21 = "m5_m1_ema_cross_9_21"
 
 
@@ -1255,6 +1256,124 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "spread_aware_be_apply_to_zone_entry": True,
                     "spread_aware_be_apply_to_tiered_pullback": True,
                     # EMA Zone Entry Filter (blocks zone entries during EMA compression)
+                    "ema_zone_filter_enabled": True,
+                    "ema_zone_filter_lookback_bars": 3,
+                    "ema_zone_filter_block_threshold": 0.35,
+                },
+            ],
+        },
+    },
+    # -----------------------------------------------------------------------
+    # KT/CG Trial #5 (Dual ATR Filter with Session-Dynamic Thresholds)
+    # Copy of Trial #4 with upgraded ATR filter system:
+    # - M1 ATR(7) with per-session dynamic thresholds
+    # - M3 ATR(14) with simple configurable range
+    # -----------------------------------------------------------------------
+    PresetId.KT_CG_TRIAL_5: {
+        "name": "KT/CG Trial #5 (Dual ATR + Session-Dynamic)",
+        "description": "Trial #4 with Dual ATR filter: M1 ATR(7) session-dynamic thresholds (Tokyo 2.2p, London 2.5p, NY 2.8p) + M3 ATR(14) range filter (4.5-11p). Auto session detection.",
+        "pros": [
+            "Session-aware M1 ATR adapts to volatility patterns per session",
+            "M3 ATR range filter adds second layer of volatility validation",
+            "All Trial #4 features preserved (tiered pullback, danger zone, etc.)",
+            "Auto session detection based on UTC time",
+        ],
+        "cons": [
+            "More filters = fewer trade signals",
+            "Session boundaries are approximate (overlap handling uses highest threshold)",
+            "Testing preset - expect tuning needed for threshold values",
+        ],
+        "risk": {
+            "max_lots": 0.1,
+            "require_stop": True,
+            "min_stop_pips": 20.0,
+            "max_spread_pips": 6.0,
+            "max_trades_per_day": 100,
+            "max_open_trades": 20,
+            "cooldown_minutes_after_loss": 0,
+        },
+        "strategy": {
+            "filters": {
+                "alignment": {"enabled": False},
+                "ema_stack_filter": {"enabled": False},
+                "atr_filter": {"enabled": False},
+                "session_filter": {"enabled": False},
+            },
+            "setups": {},
+        },
+        "trade_management": {
+            "target": {
+                "mode": "fixed_pips",
+                "pips_default": 0.5,
+            },
+            "stop_loss": None,
+            "breakeven": {"enabled": False},
+        },
+        "execution": {
+            "loop_poll_seconds": 0.25,
+            "loop_poll_seconds_fast": 0.25,
+            "policies": [
+                {
+                    "type": "kt_cg_trial_5",
+                    "id": "kt_cg_trial_5",
+                    "enabled": True,
+                    # M3 Trend EMAs (default 5/9)
+                    "m3_trend_ema_fast": 5,
+                    "m3_trend_ema_slow": 9,
+                    # M1 Zone Entry - EMA5 vs EMA9 (respects cooldown)
+                    "zone_entry_enabled": True,
+                    "m1_zone_entry_ema_fast": 5,
+                    "m1_zone_entry_ema_slow": 9,
+                    # Tiered Pullback Configuration
+                    "tiered_pullback_enabled": True,
+                    "tier_ema_periods": [9, 11, 12, 13, 14, 15, 16, 17],
+                    "tier_reset_buffer_pips": 1.0,
+                    # Close opposite trades before placing new trade
+                    "close_opposite_on_trade": True,
+                    # Cooldown (Zone Entry respects this, Tiered Pullback has NO cooldown)
+                    "cooldown_minutes": 3.0,
+                    "tp_pips": 0.5,
+                    "sl_pips": 20.0,
+                    "confirm_bars": 1,
+                    # Rolling Danger Zone Filter (M1-based)
+                    "rolling_danger_zone_enabled": True,
+                    "rolling_danger_lookback_bars": 100,
+                    "rolling_danger_zone_pct": 0.15,
+                    # RSI Divergence Detection - disabled by default
+                    "rsi_divergence_enabled": False,
+                    "rsi_divergence_period": 14,
+                    "rsi_divergence_lookback_bars": 50,
+                    "rsi_divergence_block_minutes": 5.0,
+                    # --- Trial #5 Dual ATR Filter ---
+                    # M1 ATR(7) - Session-Dynamic
+                    "m1_atr_period": 7,
+                    "m1_atr_min_pips": 2.5,
+                    "session_dynamic_atr_enabled": True,
+                    "auto_session_detection_enabled": True,
+                    "m1_atr_tokyo_min_pips": 2.2,
+                    "m1_atr_london_min_pips": 2.5,
+                    "m1_atr_ny_min_pips": 2.8,
+                    # M3 ATR(14) - Simple Range
+                    "m3_atr_filter_enabled": True,
+                    "m3_atr_period": 14,
+                    "m3_atr_min_pips": 4.5,
+                    "m3_atr_max_pips": 11.0,
+                    # Tiered ATR (kept for tiered logic)
+                    "tiered_atr_filter_enabled": True,
+                    "tiered_atr_block_below_pips": 4.0,
+                    "tiered_atr_allow_all_max_pips": 12.0,
+                    "tiered_atr_pullback_only_max_pips": 15.0,
+                    # Daily High/Low Filter
+                    "daily_hl_filter_enabled": False,
+                    "daily_hl_buffer_pips": 5.0,
+                    # Spread-Aware Breakeven
+                    "spread_aware_be_enabled": False,
+                    "spread_aware_be_trigger_mode": "fixed_pips",
+                    "spread_aware_be_fixed_trigger_pips": 5.0,
+                    "spread_aware_be_spread_buffer_pips": 1.0,
+                    "spread_aware_be_apply_to_zone_entry": True,
+                    "spread_aware_be_apply_to_tiered_pullback": True,
+                    # EMA Zone Entry Filter
                     "ema_zone_filter_enabled": True,
                     "ema_zone_filter_lookback_bars": 3,
                     "ema_zone_filter_block_threshold": 0.35,
