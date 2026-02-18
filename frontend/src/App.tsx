@@ -6629,6 +6629,21 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
     return null;
   }
 
+  // DEBUG: Check for any object values in trades that would cause render issues
+  for (const t of trades) {
+    for (const [k, v] of Object.entries(t)) {
+      if (v !== null && typeof v === 'object') {
+        console.error(`AdvancedAnalytics: trade field "${k}" is an object:`, v);
+        return (
+          <div className="card mb-4" style={{ padding: 16, color: 'var(--danger)' }}>
+            <strong>Debug:</strong> Trade field &quot;{k}&quot; is an object instead of a primitive value.
+            <pre style={{ fontSize: '0.7rem', marginTop: 8, overflow: 'auto' }}>{JSON.stringify(v, null, 2)}</pre>
+          </div>
+        );
+      }
+    }
+  }
+
   // Shared style helpers
   const sectionHeaderStyle: React.CSSProperties = {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
