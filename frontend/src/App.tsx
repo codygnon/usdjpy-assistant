@@ -4020,14 +4020,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         }
         // Update Trial #5 settings
         if (pol.type === 'kt_cg_trial_5') {
-          // All Trial #4 settings also apply to Trial #5
-          updates.rolling_danger_zone_enabled = editedSettings.rolling_danger_zone_enabled;
-          updates.rolling_danger_lookback_bars = Math.max(20, Math.min(1500, editedSettings.rolling_danger_lookback_bars));
-          updates.rolling_danger_zone_pct = Math.max(0.05, Math.min(0.50, editedSettings.rolling_danger_zone_pct));
-          updates.rsi_divergence_enabled = editedSettings.rsi_divergence_enabled;
-          updates.rsi_divergence_period = Math.max(5, Math.min(50, editedSettings.rsi_divergence_period));
-          updates.rsi_divergence_lookback_bars = Math.max(20, Math.min(1500, editedSettings.rsi_divergence_lookback_bars));
-          updates.rsi_divergence_block_minutes = Math.max(1, Math.min(30, editedSettings.rsi_divergence_block_minutes));
+          // Trial #5 settings (no rolling danger zone or RSI divergence)
           updates.ema_zone_filter_enabled = editedSettings.ema_zone_filter_enabled;
           updates.ema_zone_filter_lookback_bars = Math.max(2, Math.min(10, editedSettings.ema_zone_filter_lookback_bars));
           updates.ema_zone_filter_block_threshold = Math.max(0.1, Math.min(0.8, editedSettings.ema_zone_filter_block_threshold));
@@ -4414,8 +4407,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   </div>
                 </div>
               )}
-              {/* Rolling Danger Zone Settings (for kt_cg_trial_4 - Trial #4) */}
+              {/* Trial #4/#5 shared settings block */}
               {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4' || pol.type === 'kt_cg_trial_5') && (
+                <>
+                {/* Rolling Danger Zone + RSI Divergence (Trial #4 only) */}
+                {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && (
                 <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
                     Rolling Danger Zone (blocks trades near M1 rolling high/low extremes)
@@ -4529,6 +4525,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       BULL + bearish divergence → blocks BUY • BEAR + bullish divergence → blocks SELL
                     </div>
                   </div>
+                </div>
+                )}
                   {/* EMA Zone Entry Filter */}
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
@@ -5025,7 +5023,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       SL = entry ± current spread. Ratchets favorably (never moves back toward entry).
                     </div>
                   </div>
-                </div>
+                </>
               )}
               {/* EMA Override Settings (for kt_cg_counter_trend_pullback / Trial #3) */}
               {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_counter_trend_pullback') && (

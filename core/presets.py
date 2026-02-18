@@ -1335,15 +1335,6 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "tp_pips": 0.5,
                     "sl_pips": 20.0,
                     "confirm_bars": 1,
-                    # Rolling Danger Zone Filter (M1-based)
-                    "rolling_danger_zone_enabled": True,
-                    "rolling_danger_lookback_bars": 100,
-                    "rolling_danger_zone_pct": 0.15,
-                    # RSI Divergence Detection - disabled by default
-                    "rsi_divergence_enabled": False,
-                    "rsi_divergence_period": 14,
-                    "rsi_divergence_lookback_bars": 50,
-                    "rsi_divergence_block_minutes": 5.0,
                     # --- Trial #5 Dual ATR Filter ---
                     # M1 ATR(7) - Session-Dynamic (master on/off)
                     "m1_atr_filter_enabled": True,

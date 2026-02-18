@@ -458,17 +458,6 @@ class ExecutionPolicyKtCgTrial5(BaseModel):
     sl_pips: Optional[float] = 10.0
     confirm_bars: int = 1
 
-    # Rolling Danger Zone Filter (M1-based)
-    rolling_danger_zone_enabled: bool = True
-    rolling_danger_lookback_bars: int = 100
-    rolling_danger_zone_pct: float = 0.15
-
-    # RSI Divergence Detection (M5-based, rolling window comparison)
-    rsi_divergence_enabled: bool = False
-    rsi_divergence_period: int = 14
-    rsi_divergence_lookback_bars: int = 50
-    rsi_divergence_block_minutes: float = 5.0
-
     # --- Trial #5 Dual ATR Filter ---
     # M1 ATR(7) - Session-Dynamic (master on/off for entire M1 ATR filter)
     m1_atr_filter_enabled: bool = True
@@ -765,6 +754,21 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
                         pol.pop("swing_confirmation_bars", None)  # No longer needed
                         # Remove old RSI divergence swing window (now uses rolling window comparison)
                         pol.pop("rsi_divergence_swing_window", None)
+                    if isinstance(pol, dict) and pol.get("type") == "kt_cg_trial_5":
+                        # Remove tiered ATR fields (replaced by M1 ATR max in Trial #5)
+                        pol.pop("tiered_atr_filter_enabled", None)
+                        pol.pop("tiered_atr_block_below_pips", None)
+                        pol.pop("tiered_atr_allow_all_max_pips", None)
+                        pol.pop("tiered_atr_pullback_only_max_pips", None)
+                        # Remove rolling danger zone (removed from Trial #5)
+                        pol.pop("rolling_danger_zone_enabled", None)
+                        pol.pop("rolling_danger_lookback_bars", None)
+                        pol.pop("rolling_danger_zone_pct", None)
+                        # Remove RSI divergence (removed from Trial #5)
+                        pol.pop("rsi_divergence_enabled", None)
+                        pol.pop("rsi_divergence_period", None)
+                        pol.pop("rsi_divergence_lookback_bars", None)
+                        pol.pop("rsi_divergence_block_minutes", None)
         return d
 
     profile_name = d.get("profile_name") or d.get("name") or "default"

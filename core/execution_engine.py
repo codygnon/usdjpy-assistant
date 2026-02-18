@@ -4439,50 +4439,6 @@ def execute_kt_cg_trial_5_policy_demo_only(
             )
             return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "trial5_atr_filter"), "tier_updates": tier_updates, "divergence_updates": {}}
 
-    # Rolling Danger Zone filter
-    rolling_danger_enabled = getattr(policy, "rolling_danger_zone_enabled", False)
-    if rolling_danger_enabled:
-        m1_df = data_by_tf.get("M1")
-        if m1_df is not None and not m1_df.empty:
-            lookback = getattr(policy, "rolling_danger_lookback_bars", 100)
-            danger_pct = getattr(policy, "rolling_danger_zone_pct", 0.15)
-            bars_to_use = m1_df.tail(lookback)
-            if len(bars_to_use) >= 10:
-                rolling_high = float(bars_to_use["high"].max())
-                rolling_low = float(bars_to_use["low"].min())
-                price_range = rolling_high - rolling_low
-                if price_range > 0:
-                    upper_danger_threshold = rolling_high - (price_range * danger_pct)
-                    lower_danger_threshold = rolling_low + (price_range * danger_pct)
-                    entry_price_check = tick.ask if side == "buy" else tick.bid
-                    danger_blocked = False
-                    danger_reason = None
-                    if side == "buy" and entry_price_check >= upper_danger_threshold:
-                        danger_blocked = True
-                        danger_reason = f"rolling_danger_zone: BUY blocked, price {entry_price_check:.3f} >= upper threshold {upper_danger_threshold:.3f}"
-                    elif side == "sell" and entry_price_check <= lower_danger_threshold:
-                        danger_blocked = True
-                        danger_reason = f"rolling_danger_zone: SELL blocked, price {entry_price_check:.3f} <= lower threshold {lower_danger_threshold:.3f}"
-                    if danger_blocked:
-                        print(f"[{profile.profile_name}] kt_cg_trial_5 BLOCKED by danger zone: {danger_reason}")
-                        store.insert_execution(
-                            {
-                                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
-                                "profile": profile.profile_name,
-                                "symbol": profile.symbol,
-                                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
-                                "rule_id": rule_id,
-                                "mode": mode,
-                                "attempted": 1,
-                                "placed": 0,
-                                "reason": danger_reason or "rolling_danger_zone",
-                                "mt5_retcode": None,
-                                "mt5_order_id": None,
-                                "mt5_deal_id": None,
-                            }
-                        )
-                        return {"decision": ExecutionDecision(attempted=True, placed=False, reason=danger_reason or "rolling_danger_zone"), "tier_updates": tier_updates, "divergence_updates": {}}
-
     # Daily High/Low Filter (applies to BOTH zone entry AND pullback in Trial #5)
     dr_high = daily_reset_state.get("daily_reset_high") if daily_reset_state else None
     dr_low = daily_reset_state.get("daily_reset_low") if daily_reset_state else None
@@ -4511,51 +4467,7 @@ def execute_kt_cg_trial_5_policy_demo_only(
         )
         return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "daily_hl_filter"), "tier_updates": tier_updates, "divergence_updates": {}}
 
-    # RSI Divergence Detection (same as Trial #4)
     divergence_updates: dict[str, str] = {}
-    rsi_divergence_enabled = getattr(policy, "rsi_divergence_enabled", False)
-    if rsi_divergence_enabled:
-        m5_df = data_by_tf.get("M5")
-        if m5_df is not None and not m5_df.empty:
-            rsi_period = getattr(policy, "rsi_divergence_period", 14)
-            lookback_bars = getattr(policy, "rsi_divergence_lookback_bars", 50)
-            block_minutes = getattr(policy, "rsi_divergence_block_minutes", 5.0)
-            m3_trend = result.get("m3_trend", "NEUTRAL")
-            now_utc_div = datetime.now(timezone.utc)
-            if divergence_state:
-                block_buy_until_str = divergence_state.get("block_buy_until")
-                block_sell_until_str = divergence_state.get("block_sell_until")
-                if side == "buy" and block_buy_until_str:
-                    try:
-                        block_until = datetime.fromisoformat(block_buy_until_str.replace("Z", "+00:00"))
-                        if now_utc_div < block_until:
-                            block_reason = f"rsi_divergence: BUY blocked until {block_buy_until_str}"
-                            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=block_reason), "tier_updates": tier_updates, "divergence_updates": {}}
-                    except (ValueError, TypeError):
-                        pass
-                if side == "sell" and block_sell_until_str:
-                    try:
-                        block_until = datetime.fromisoformat(block_sell_until_str.replace("Z", "+00:00"))
-                        if now_utc_div < block_until:
-                            block_reason = f"rsi_divergence: SELL blocked until {block_sell_until_str}"
-                            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=block_reason), "tier_updates": tier_updates, "divergence_updates": {}}
-                    except (ValueError, TypeError):
-                        pass
-            has_bearish, has_bullish, divergence_details = detect_rsi_divergence(
-                m5_df, rsi_period=rsi_period, lookback_bars=lookback_bars
-            )
-            if m3_trend == "BULL" and has_bearish and side == "buy":
-                from datetime import timedelta
-                block_until = now_utc_div + timedelta(minutes=block_minutes)
-                divergence_updates["block_buy_until"] = block_until.isoformat()
-                block_reason = f"rsi_divergence: bearish divergence in BULL, BUY blocked for {block_minutes:.1f} min"
-                return {"decision": ExecutionDecision(attempted=True, placed=False, reason=block_reason), "tier_updates": tier_updates, "divergence_updates": divergence_updates}
-            if m3_trend == "BEAR" and has_bullish and side == "sell":
-                from datetime import timedelta
-                block_until = now_utc_div + timedelta(minutes=block_minutes)
-                divergence_updates["block_sell_until"] = block_until.isoformat()
-                block_reason = f"rsi_divergence: bullish divergence in BEAR, SELL blocked for {block_minutes:.1f} min"
-                return {"decision": ExecutionDecision(attempted=True, placed=False, reason=block_reason), "tier_updates": tier_updates, "divergence_updates": divergence_updates}
 
     entry_price = tick.ask if side == "buy" else tick.bid
     candidate = _kt_cg_trial_4_candidate(profile, policy, entry_price, side)
