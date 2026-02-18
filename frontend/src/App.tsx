@@ -6415,10 +6415,15 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
     setLoading(true);
     api.getAdvancedAnalytics(profileName, profilePath, 365)
       .then((data) => {
-        setTrades(data.trades);
-        setCurrency(data.display_currency || 'USD');
-        setStartingBalance(data.starting_balance ?? null);
-        setTotalProfitCurrency(data.total_profit_currency ?? null);
+        const raw = Array.isArray(data?.trades) ? data.trades : [];
+        const normalized = raw.map((t: api.AdvancedTrade) => ({
+          ...t,
+          exit_time_utc: typeof t.exit_time_utc === 'string' ? t.exit_time_utc : String(t.exit_time_utc ?? ''),
+        }));
+        setTrades(normalized);
+        setCurrency(data?.display_currency || 'USD');
+        setStartingBalance(data?.starting_balance ?? null);
+        setTotalProfitCurrency(data?.total_profit_currency ?? null);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -6428,26 +6433,28 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
     setExpandedSections(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // Filter trades by preset
-  const presets = Array.from(new Set(trades.map(t => t.preset_name).filter(Boolean))) as string[];
-  const filtered = presetFilter === 'all' ? trades : trades.filter(t => t.preset_name === presetFilter);
+  const safeTrades = Array.isArray(trades) ? trades : [];
+  const presets = Array.from(new Set(safeTrades.map(t => t.preset_name).filter(Boolean))) as string[];
+  const filtered = presetFilter === 'all' ? safeTrades : safeTrades.filter(t => t.preset_name === presetFilter);
 
   // --- Computation utilities ---
   const computeEquitySeries = (arr: api.AdvancedTrade[]) => {
     let cum = 0;
+    const exit = (t: api.AdvancedTrade) => (t.exit_time_utc != null ? String(t.exit_time_utc) : '');
     return arr
       .filter(t => t.pips != null)
-      .sort((a, b) => a.exit_time_utc.localeCompare(b.exit_time_utc))
+      .sort((a, b) => exit(a).localeCompare(exit(b)))
       .map((t, i) => {
         cum += t.pips!;
-        return { idx: i + 1, cumPips: Math.round(cum * 100) / 100, date: t.exit_time_utc.slice(0, 10), pips: t.pips! };
+        return { idx: i + 1, cumPips: Math.round(cum * 100) / 100, date: exit(t).slice(0, 10), pips: t.pips! };
       });
   };
 
   const computeRollingMetrics = (arr: api.AdvancedTrade[], windowSize: number, mode: 'trades' | 'time', timeDays: number) => {
+    const exitStr = (t: api.AdvancedTrade) => (t.exit_time_utc != null ? String(t.exit_time_utc) : '');
     const sorted = arr
       .filter(t => t.pips != null)
-      .sort((a, b) => a.exit_time_utc.localeCompare(b.exit_time_utc));
+      .sort((a, b) => exitStr(a).localeCompare(exitStr(b)));
     if (sorted.length === 0) return [];
 
     return sorted.map((_, i) => {
@@ -6456,9 +6463,12 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
         const start = Math.max(0, i - windowSize + 1);
         window = sorted.slice(start, i + 1);
       } else {
-        const exitDate = new Date(sorted[i].exit_time_utc);
+        const exitDate = new Date(exitStr(sorted[i]) || 0);
         const cutoff = new Date(exitDate.getTime() - timeDays * 86400000);
-        window = sorted.filter(t => new Date(t.exit_time_utc) >= cutoff && new Date(t.exit_time_utc) <= exitDate);
+        window = sorted.filter(t => {
+          const et = exitStr(t);
+          return et && new Date(et) >= cutoff && new Date(et) <= exitDate;
+        });
       }
       if (window.length === 0) return null;
 
@@ -6476,7 +6486,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
       const wr = rTrades.length > 0 ? winsR.length / rTrades.length : 0;
       const expectancy = rTrades.length > 0 ? Math.round((wr * avgWinR - (1 - wr) * avgLossR) * 100) / 100 : null;
 
-      return { idx: i + 1, winRate, avgPips, avgR, expectancy, date: sorted[i].exit_time_utc.slice(0, 10) };
+      return { idx: i + 1, winRate, avgPips, avgR, expectancy, date: exitStr(sorted[i]).slice(0, 10) };
     }).filter(Boolean) as { idx: number; winRate: number; avgPips: number; avgR: number | null; expectancy: number | null; date: string }[];
   };
 
@@ -6549,9 +6559,10 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
     let maxDdUsd: number | null = null;
 
     if (useCurrency && totalProfitCur != null) {
+      const exitStr = (t: api.AdvancedTrade) => (t.exit_time_utc != null ? String(t.exit_time_utc) : '');
       const sortedByExit = arr
         .filter(t => t.profit != null)
-        .sort((a, b) => a.exit_time_utc.localeCompare(b.exit_time_utc));
+        .sort((a, b) => exitStr(a).localeCompare(exitStr(b)));
       let cum = 0;
       let peakUsd = sb;
       let maxDdUsdVal = 0;
@@ -6625,12 +6636,12 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
     );
   }
 
-  if (trades.length === 0) {
+  if (safeTrades.length === 0) {
     return null;
   }
 
   // DEBUG: Check for any object values in trades that would cause render issues
-  for (const t of trades) {
+  for (const t of safeTrades) {
     for (const [k, v] of Object.entries(t)) {
       if (v !== null && typeof v === 'object') {
         console.error(`AdvancedAnalytics: trade field "${k}" is an object:`, v);
