@@ -7440,10 +7440,18 @@ function LogsPage({ profile }: { profile: Profile }) {
         </div>
       ) : analyticsTradesData ? (
         <>
-          <ErrorBoundary><SessionPerformance trades={analyticsTradesData.trades} /></ErrorBoundary>
-          <ErrorBoundary><LongShortPerformance trades={analyticsTradesData.trades} displayCurrency={analyticsTradesData.displayCurrency} /></ErrorBoundary>
-          <ErrorBoundary><SpreadPerformance trades={analyticsTradesData.trades} /></ErrorBoundary>
-          <ErrorBoundary><AdvancedAnalytics profileName={profile.name} profilePath={profile.path} /></ErrorBoundary>
+          <ErrorBoundary fallback={<div className="card mb-4" style={{ padding: 16, color: 'var(--danger)' }}>SessionPerformance crashed</div>}>
+            <SessionPerformance trades={analyticsTradesData.trades} />
+          </ErrorBoundary>
+          <ErrorBoundary fallback={<div className="card mb-4" style={{ padding: 16, color: 'var(--danger)' }}>LongShortPerformance crashed</div>}>
+            <LongShortPerformance trades={analyticsTradesData.trades} displayCurrency={analyticsTradesData.displayCurrency} />
+          </ErrorBoundary>
+          <ErrorBoundary fallback={<div className="card mb-4" style={{ padding: 16, color: 'var(--danger)' }}>SpreadPerformance crashed</div>}>
+            <SpreadPerformance trades={analyticsTradesData.trades} />
+          </ErrorBoundary>
+          <ErrorBoundary fallback={<div className="card mb-4" style={{ padding: 16, color: 'var(--danger)' }}>AdvancedAnalytics crashed</div>}>
+            <AdvancedAnalytics profileName={profile.name} profilePath={profile.path} />
+          </ErrorBoundary>
         </>
       ) : null}
 
