@@ -6437,6 +6437,66 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
   const presets = Array.from(new Set(safeTrades.map(t => t.preset_name).filter(Boolean))) as string[];
   const filtered = presetFilter === 'all' ? safeTrades : safeTrades.filter(t => t.preset_name === presetFilter);
 
+  // --- Section data (memoized) - must run every render to satisfy Rules of Hooks ---
+  const maeTradesAll = useMemo(() => filtered.filter(t => t.max_adverse_pips != null && t.pips != null), [filtered]);
+  const mfeTradesAll = useMemo(() => filtered.filter(t => t.max_favorable_pips != null && t.pips != null), [filtered]);
+  const rTradesAll = useMemo(() => filtered.filter(t => t.r_multiple != null), [filtered]);
+  const durationTradesAll = useMemo(() => filtered.filter(t => t.duration_minutes != null && t.pips != null), [filtered]);
+  const { rValues, avgWinR, avgLossR, winRateR, expectancy } = useMemo(() => {
+    const rVals = rTradesAll.map(t => t.r_multiple!);
+    const rW = rVals.filter(r => r > 0);
+    const rL = rVals.filter(r => r <= 0);
+    const aWR = rW.length > 0 ? rW.reduce((s, r) => s + r, 0) / rW.length : 0;
+    const aLR = rL.length > 0 ? Math.abs(rL.reduce((s, r) => s + r, 0) / rL.length) : 0;
+    const wrR = rTradesAll.length > 0 ? rW.length / rTradesAll.length : 0;
+    const exp = rTradesAll.length > 0 ? wrR * aWR - (1 - wrR) * aLR : null;
+    return { rValues: rVals, avgWinR: aWR, avgLossR: aLR, winRateR: wrR, expectancy: exp };
+  }, [rTradesAll]);
+  const ddData = useMemo(() =>
+    expandedSections.drawdown ? computeDrawdownSeries(filtered, {
+      startingBalance: startingBalance ?? undefined,
+      totalProfitCurrency: totalProfitCurrency ?? undefined,
+    }) : {
+      series: [] as { idx: number; dd: number; date: string }[],
+      maxDdPips: 0, maxDdPct: null as number | null, maxDdPctNote: null as string | null,
+      currentDd: 0, longestTrades: 0, longestTime: '',
+      recoveryFactor: null as number | null, recoveryFactorNote: null as string | null,
+      maxDdUsd: null as number | null,
+    },
+    [expandedSections.drawdown, filtered, startingBalance, totalProfitCurrency]
+  );
+  const { avgDurWin, avgDurLoss, durRatio, pipsPerHour } = useMemo(() => {
+    const dW = durationTradesAll.filter(t => (t.pips ?? 0) > 0);
+    const dL = durationTradesAll.filter(t => (t.pips ?? 0) <= 0);
+    const aDW = dW.length > 0 ? dW.reduce((s, t) => s + t.duration_minutes!, 0) / dW.length : 0;
+    const aDL = dL.length > 0 ? dL.reduce((s, t) => s + t.duration_minutes!, 0) / dL.length : 0;
+    const dR = aDL > 0 ? aDW / aDL : 0;
+    const tP = durationTradesAll.reduce((s, t) => s + (t.pips ?? 0), 0);
+    const tH = durationTradesAll.reduce((s, t) => s + t.duration_minutes!, 0) / 60;
+    const pPH = tH > 0 ? tP / tH : 0;
+    return { durWinners: dW, durLosers: dL, avgDurWin: aDW, avgDurLoss: aDL, durRatio: dR, totalPips: tP, totalHours: tH, pipsPerHour: pPH };
+  }, [durationTradesAll]);
+  const rollingData = useMemo(() =>
+    expandedSections.rolling ? computeRollingMetrics(filtered, rollingWindow, rollingMode, timeWindow) : [],
+    [expandedSections.rolling, filtered, rollingWindow, rollingMode, timeWindow]
+  );
+  const sectionHeaderStyle: React.CSSProperties = {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    cursor: 'pointer', padding: '12px 16px',
+    background: 'var(--bg-tertiary)', borderRadius: 6, border: '1px solid var(--border)',
+    marginBottom: 4,
+  };
+  const statBoxStyle: React.CSSProperties = {
+    textAlign: 'center', padding: 12, background: 'var(--bg-tertiary)',
+    borderRadius: 6, border: '1px solid var(--border)',
+  };
+  const chartColors = { green: '#22c55e', red: '#ef4444', blue: '#3b82f6', orange: '#f59e0b', purple: '#a855f7' };
+  const formatDuration = (mins: number) => {
+    if (mins < 60) return `${Math.round(mins)}m`;
+    if (mins < 1440) return `${(mins / 60).toFixed(1)}h`;
+    return `${(mins / 1440).toFixed(1)}d`;
+  };
+
   // --- Computation utilities ---
   const computeEquitySeries = (arr: api.AdvancedTrade[]) => {
     let cum = 0;
@@ -6655,79 +6715,6 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
     }
   }
 
-  // Shared style helpers
-  const sectionHeaderStyle: React.CSSProperties = {
-    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-    cursor: 'pointer', padding: '12px 16px',
-    background: 'var(--bg-tertiary)', borderRadius: 6, border: '1px solid var(--border)',
-    marginBottom: 4,
-  };
-
-  const statBoxStyle: React.CSSProperties = {
-    textAlign: 'center', padding: 12, background: 'var(--bg-tertiary)',
-    borderRadius: 6, border: '1px solid var(--border)',
-  };
-
-  const chartColors = { green: '#22c55e', red: '#ef4444', blue: '#3b82f6', orange: '#f59e0b', purple: '#a855f7' };
-
-  // --- Section data (memoized) ---
-  const maeTradesAll = useMemo(() => filtered.filter(t => t.max_adverse_pips != null && t.pips != null), [filtered]);
-  const mfeTradesAll = useMemo(() => filtered.filter(t => t.max_favorable_pips != null && t.pips != null), [filtered]);
-  const rTradesAll = useMemo(() => filtered.filter(t => t.r_multiple != null), [filtered]);
-  const durationTradesAll = useMemo(() => filtered.filter(t => t.duration_minutes != null && t.pips != null), [filtered]);
-
-  // --- R-Distribution computations (memoized) ---
-  const { rValues, avgWinR, avgLossR, winRateR, expectancy } = useMemo(() => {
-    const rVals = rTradesAll.map(t => t.r_multiple!);
-    const rW = rVals.filter(r => r > 0);
-    const rL = rVals.filter(r => r <= 0);
-    const aWR = rW.length > 0 ? rW.reduce((s, r) => s + r, 0) / rW.length : 0;
-    const aLR = rL.length > 0 ? Math.abs(rL.reduce((s, r) => s + r, 0) / rL.length) : 0;
-    const wrR = rTradesAll.length > 0 ? rW.length / rTradesAll.length : 0;
-    const exp = rTradesAll.length > 0 ? wrR * aWR - (1 - wrR) * aLR : null;
-    return { rValues: rVals, avgWinR: aWR, avgLossR: aLR, winRateR: wrR, expectancy: exp };
-  }, [rTradesAll]);
-
-  // Drawdown (memoized, gated on section expanded)
-  const ddData = useMemo(() =>
-    expandedSections.drawdown ? computeDrawdownSeries(filtered, {
-      startingBalance: startingBalance ?? undefined,
-      totalProfitCurrency: totalProfitCurrency ?? undefined,
-    }) : {
-      series: [] as { idx: number; dd: number; date: string }[],
-      maxDdPips: 0, maxDdPct: null as number | null, maxDdPctNote: null as string | null,
-      currentDd: 0, longestTrades: 0, longestTime: '',
-      recoveryFactor: null as number | null, recoveryFactorNote: null as string | null,
-      maxDdUsd: null as number | null,
-    },
-    [expandedSections.drawdown, filtered, startingBalance, totalProfitCurrency]
-  );
-
-  // Duration (memoized)
-  const { avgDurWin, avgDurLoss, durRatio, pipsPerHour } = useMemo(() => {
-    const dW = durationTradesAll.filter(t => (t.pips ?? 0) > 0);
-    const dL = durationTradesAll.filter(t => (t.pips ?? 0) <= 0);
-    const aDW = dW.length > 0 ? dW.reduce((s, t) => s + t.duration_minutes!, 0) / dW.length : 0;
-    const aDL = dL.length > 0 ? dL.reduce((s, t) => s + t.duration_minutes!, 0) / dL.length : 0;
-    const dR = aDL > 0 ? aDW / aDL : 0;
-    const tP = durationTradesAll.reduce((s, t) => s + (t.pips ?? 0), 0);
-    const tH = durationTradesAll.reduce((s, t) => s + t.duration_minutes!, 0) / 60;
-    const pPH = tH > 0 ? tP / tH : 0;
-    return { durWinners: dW, durLosers: dL, avgDurWin: aDW, avgDurLoss: aDL, durRatio: dR, totalPips: tP, totalHours: tH, pipsPerHour: pPH };
-  }, [durationTradesAll]);
-
-  // Rolling metrics (memoized, gated on section expanded)
-  const rollingData = useMemo(() =>
-    expandedSections.rolling ? computeRollingMetrics(filtered, rollingWindow, rollingMode, timeWindow) : [],
-    [expandedSections.rolling, filtered, rollingWindow, rollingMode, timeWindow]
-  );
-
-  const formatDuration = (mins: number) => {
-    if (mins < 60) return `${Math.round(mins)}m`;
-    if (mins < 1440) return `${(mins / 60).toFixed(1)}h`;
-    return `${(mins / 1440).toFixed(1)}d`;
-  };
-
   return (
     <div className="card mb-4">
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -6768,6 +6755,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
                 {/* MAE vs P&L Scatter */}
                 <div>
                   <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>MAE vs P&L (pips)</div>
+                  <div style={{ minHeight: 250, width: '100%' }}>
                   <ResponsiveContainer width="100%" height={250}>
                     <ScatterChart margin={{ top: 5, right: 20, bottom: 20, left: 10 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -6783,11 +6771,13 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
                       </Scatter>
                     </ScatterChart>
                   </ResponsiveContainer>
+                  </div>
                 </div>
 
                 {/* MFE vs P&L Scatter */}
                 <div>
                   <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>MFE vs P&L (pips)</div>
+                  <div style={{ minHeight: 250, width: '100%' }}>
                   <ResponsiveContainer width="100%" height={250}>
                     <ScatterChart margin={{ top: 5, right: 20, bottom: 20, left: 10 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -6803,6 +6793,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
                       </Scatter>
                     </ScatterChart>
                   </ResponsiveContainer>
+                  </div>
                 </div>
               </div>
 
@@ -6831,6 +6822,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
                     const bins = computeHistogramBins(winnerMAEs, 8);
                     if (bins.length === 0) return <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>No data</p>;
                     return (
+                      <div style={{ minHeight: 200, width: '100%' }}>
                       <ResponsiveContainer width="100%" height={200}>
                         <BarChart data={bins} margin={{ top: 5, right: 20, bottom: 20, left: 10 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -6840,6 +6832,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
                           <Bar dataKey="count" fill={chartColors.blue} radius={[4, 4, 0, 0]} />
                         </BarChart>
                       </ResponsiveContainer>
+                      </div>
                     );
                   })()}
                 </div>
@@ -6909,8 +6902,8 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
             const tooltipStyle = { background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.8rem' };
 
             return (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
-                <div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16, minHeight: 220 }}>
+                <div style={{ minHeight: 200 }}>
                   <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>Rolling Win Rate (%)</div>
                   <ResponsiveContainer width="100%" height={200}>
                     <LineChart data={rolling} margin={chartMargin}>
@@ -6923,7 +6916,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-                <div>
+                <div style={{ minHeight: 200 }}>
                   <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>Rolling Avg Pips</div>
                   <ResponsiveContainer width="100%" height={200}>
                     <LineChart data={rolling} margin={chartMargin}>
@@ -6937,7 +6930,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-                <div>
+                <div style={{ minHeight: 200 }}>
                   <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>Rolling Expectancy (R)</div>
                   <ResponsiveContainer width="100%" height={200}>
                     <LineChart data={rolling.filter(r => r.expectancy != null)} margin={chartMargin}>
@@ -6950,7 +6943,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-                <div>
+                <div style={{ minHeight: 200 }}>
                   <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>Rolling Avg R</div>
                   <ResponsiveContainer width="100%" height={200}>
                     <LineChart data={rolling.filter(r => r.avgR != null)} margin={chartMargin}>
@@ -7013,6 +7006,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
               {(() => {
                 const bins = computeHistogramBins(rValues, 10);
                 return (
+                  <div style={{ minHeight: 250, width: '100%' }}>
                   <ResponsiveContainer width="100%" height={250}>
                     <BarChart data={bins} margin={{ top: 5, right: 20, bottom: 20, left: 10 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -7026,6 +7020,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
                       </Bar>
                     </BarChart>
                   </ResponsiveContainer>
+                  </div>
                 );
               })()}
             </>
@@ -7084,6 +7079,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
 
               {/* Underwater equity curve */}
               <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>Underwater Equity Curve</div>
+              <div style={{ minHeight: 200, width: '100%' }}>
               <ResponsiveContainer width="100%" height={200}>
                 <AreaChart data={ddData.series} margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -7100,6 +7096,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
                   <Area type="monotone" dataKey="dd" stroke={chartColors.red} fill="url(#ddGradient)" strokeWidth={1.5} />
                 </AreaChart>
               </ResponsiveContainer>
+              </div>
             </>
           )}
         </div>
@@ -7139,6 +7136,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
                 {/* Duration vs P&L scatter */}
                 <div>
                   <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>Duration vs P&L</div>
+                  <div style={{ minHeight: 250, width: '100%' }}>
                   <ResponsiveContainer width="100%" height={250}>
                     <ScatterChart margin={{ top: 5, right: 20, bottom: 20, left: 10 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -7152,6 +7150,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
                       </Scatter>
                     </ScatterChart>
                   </ResponsiveContainer>
+                  </div>
                 </div>
 
                 {/* Duration histogram */}
@@ -7160,6 +7159,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
                   {(() => {
                     const bins = computeHistogramBins(durationTradesAll.map(t => t.duration_minutes!), 8);
                     return (
+                      <div style={{ minHeight: 250, width: '100%' }}>
                       <ResponsiveContainer width="100%" height={250}>
                         <BarChart data={bins} margin={{ top: 5, right: 20, bottom: 20, left: 10 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -7169,6 +7169,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
                           <Bar dataKey="count" fill={chartColors.blue} radius={[4, 4, 0, 0]} />
                         </BarChart>
                       </ResponsiveContainer>
+                      </div>
                     );
                   })()}
                 </div>
