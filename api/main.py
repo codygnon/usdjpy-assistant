@@ -429,6 +429,11 @@ def get_runtime_state(profile_name: str) -> dict[str, Any]:
         "kill_switch": state.kill_switch,
         "last_processed_bar_time_utc": state.last_processed_bar_time_utc,
         "loop_running": _is_loop_running(profile_name),
+        "daily_reset_date": state.daily_reset_date,
+        "daily_reset_high": state.daily_reset_high,
+        "daily_reset_low": state.daily_reset_low,
+        "daily_reset_block_active": state.daily_reset_block_active,
+        "daily_reset_settled": state.daily_reset_settled,
     }
 
 
@@ -445,6 +450,14 @@ def update_runtime_state(profile_name: str, req: RuntimeStateUpdate) -> dict[str
         temp_m5_trend_ema_slow=old.temp_m5_trend_ema_slow,
         temp_m1_zone_entry_ema_slow=old.temp_m1_zone_entry_ema_slow,
         temp_m1_pullback_cross_ema_slow=old.temp_m1_pullback_cross_ema_slow,
+        tier_fired=old.tier_fired,
+        divergence_block_buy_until=old.divergence_block_buy_until,
+        divergence_block_sell_until=old.divergence_block_sell_until,
+        daily_reset_date=old.daily_reset_date,
+        daily_reset_high=old.daily_reset_high,
+        daily_reset_low=old.daily_reset_low,
+        daily_reset_block_active=old.daily_reset_block_active,
+        daily_reset_settled=old.daily_reset_settled,
     )
     save_state(state_path, new_state)
     return {"status": "saved"}
@@ -489,6 +502,12 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
         # Preserve divergence block state (not modified through temp settings API)
         divergence_block_buy_until=old.divergence_block_buy_until,
         divergence_block_sell_until=old.divergence_block_sell_until,
+        # Preserve daily reset state (not modified through temp settings API)
+        daily_reset_date=old.daily_reset_date,
+        daily_reset_high=old.daily_reset_high,
+        daily_reset_low=old.daily_reset_low,
+        daily_reset_block_active=old.daily_reset_block_active,
+        daily_reset_settled=old.daily_reset_settled,
     )
     save_state(state_path, new_state)
     return {"status": "saved"}

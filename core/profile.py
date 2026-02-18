@@ -486,15 +486,18 @@ class ExecutionPolicyKtCgTrial5(BaseModel):
     m3_atr_min_pips: float = 4.5
     m3_atr_max_pips: float = 11.0
 
-    # Keep Trial #4 tiered ATR fields for the tiered logic (allow_all_max / pullback_only_max)
-    tiered_atr_filter_enabled: bool = True
-    tiered_atr_block_below_pips: float = 4.0
-    tiered_atr_allow_all_max_pips: float = 12.0
-    tiered_atr_pullback_only_max_pips: float = 15.0
+    # M1 ATR(7) Session-Dynamic MAX thresholds
+    m1_atr_max_pips: float = 11.0
+    m1_atr_tokyo_max_pips: float = 8.0
+    m1_atr_london_max_pips: float = 10.0
+    m1_atr_ny_max_pips: float = 11.0
 
-    # Daily High/Low Filter (blocks zone entry near daily extremes)
-    daily_hl_filter_enabled: bool = False
-    daily_hl_buffer_pips: float = 5.0
+    # Daily Reset 2-Hour Block (00:00-02:00 UTC)
+    daily_reset_block_enabled: bool = True
+
+    # Daily High/Low Filter (blocks BOTH zone entry AND pullback near daily extremes)
+    daily_hl_filter_enabled: bool = True
+    daily_hl_buffer_pips: float = 15.0
 
     # Spread-Aware Breakeven Stop Loss
     spread_aware_be_enabled: bool = False

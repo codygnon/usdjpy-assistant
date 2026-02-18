@@ -1272,10 +1272,19 @@ def main() -> None:
                         divergence_state["block_buy_until"] = block_buy_until
                     if block_sell_until:
                         divergence_state["block_sell_until"] = block_sell_until
+                    # Load daily reset state for Trial #5
+                    daily_reset_state_t5: dict = {
+                        "daily_reset_date": state_data.get("daily_reset_date"),
+                        "daily_reset_high": state_data.get("daily_reset_high"),
+                        "daily_reset_low": state_data.get("daily_reset_low"),
+                        "daily_reset_block_active": bool(state_data.get("daily_reset_block_active", False)),
+                        "daily_reset_settled": bool(state_data.get("daily_reset_settled", False)),
+                    }
                 except Exception:
                     temp_overrides = None
                     tier_state = {}
                     divergence_state = {}
+                    daily_reset_state_t5 = {}
 
                 for pol in profile.execution.policies:
                     if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "kt_cg_trial_5":
@@ -1298,6 +1307,7 @@ def main() -> None:
                         tier_state=tier_state,
                         temp_overrides=temp_overrides,
                         divergence_state=divergence_state,
+                        daily_reset_state=daily_reset_state_t5,
                     )
                     dec = exec_result["decision"]
                     tier_updates = exec_result.get("tier_updates", {})
@@ -1330,6 +1340,16 @@ def main() -> None:
                             state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
                         except Exception as e:
                             print(f"[{profile.profile_name}] Failed to persist divergence state: {e}")
+
+                    # Persist daily reset state (updated in-place by engine)
+                    if daily_reset_state_t5:
+                        try:
+                            current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                            for key in ("daily_reset_date", "daily_reset_high", "daily_reset_low", "daily_reset_block_active", "daily_reset_settled"):
+                                current_state_data[key] = daily_reset_state_t5.get(key)
+                            state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
+                        except Exception as e:
+                            print(f"[{profile.profile_name}] Failed to persist daily reset state: {e}")
 
                     if dec.attempted:
                         if dec.placed:

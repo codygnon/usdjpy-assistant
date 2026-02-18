@@ -1359,14 +1359,16 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "m3_atr_period": 14,
                     "m3_atr_min_pips": 4.5,
                     "m3_atr_max_pips": 11.0,
-                    # Tiered ATR (kept for tiered logic)
-                    "tiered_atr_filter_enabled": True,
-                    "tiered_atr_block_below_pips": 4.0,
-                    "tiered_atr_allow_all_max_pips": 12.0,
-                    "tiered_atr_pullback_only_max_pips": 15.0,
-                    # Daily High/Low Filter
-                    "daily_hl_filter_enabled": False,
-                    "daily_hl_buffer_pips": 5.0,
+                    # M1 ATR(7) Session-Dynamic MAX thresholds
+                    "m1_atr_max_pips": 11.0,
+                    "m1_atr_tokyo_max_pips": 8.0,
+                    "m1_atr_london_max_pips": 10.0,
+                    "m1_atr_ny_max_pips": 11.0,
+                    # Daily Reset 2-Hour Block (00:00-02:00 UTC)
+                    "daily_reset_block_enabled": True,
+                    # Daily High/Low Filter (blocks BOTH zone entry AND pullback)
+                    "daily_hl_filter_enabled": True,
+                    "daily_hl_buffer_pips": 15.0,
                     # Spread-Aware Breakeven
                     "spread_aware_be_enabled": False,
                     "spread_aware_be_trigger_mode": "fixed_pips",

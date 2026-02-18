@@ -37,6 +37,13 @@ class RuntimeState:
     divergence_block_buy_until: Optional[str] = None
     divergence_block_sell_until: Optional[str] = None
 
+    # Daily Reset Block (Trial #5)
+    daily_reset_date: Optional[str] = None        # "YYYY-MM-DD" of current tracking day
+    daily_reset_high: Optional[float] = None       # Tracked daily high from ticks
+    daily_reset_low: Optional[float] = None        # Tracked daily low from ticks
+    daily_reset_block_active: bool = False          # True during 00:00-02:00 UTC
+    daily_reset_settled: bool = False               # True after 02:00 (H/L is usable)
+
 
 def _load_tier_fired(data: dict) -> dict:
     """Load tier_fired from JSON data with backward compat for old tier_X_fired keys."""
@@ -75,6 +82,11 @@ def load_state(path: str | Path) -> RuntimeState:
         tier_fired=_load_tier_fired(data),
         divergence_block_buy_until=data.get("divergence_block_buy_until"),
         divergence_block_sell_until=data.get("divergence_block_sell_until"),
+        daily_reset_date=data.get("daily_reset_date"),
+        daily_reset_high=data.get("daily_reset_high"),
+        daily_reset_low=data.get("daily_reset_low"),
+        daily_reset_block_active=bool(data.get("daily_reset_block_active", False)),
+        daily_reset_settled=bool(data.get("daily_reset_settled", False)),
     )
 
 
@@ -98,6 +110,11 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "tier_fired": state.tier_fired,
                 "divergence_block_buy_until": state.divergence_block_buy_until,
                 "divergence_block_sell_until": state.divergence_block_sell_until,
+                "daily_reset_date": state.daily_reset_date,
+                "daily_reset_high": state.daily_reset_high,
+                "daily_reset_low": state.daily_reset_low,
+                "daily_reset_block_active": state.daily_reset_block_active,
+                "daily_reset_settled": state.daily_reset_settled,
             },
             indent=2,
             sort_keys=False,

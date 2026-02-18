@@ -3353,6 +3353,43 @@ def _get_current_sessions(utc_hour: int) -> list[str]:
     return sessions
 
 
+def _update_daily_reset_state(tick_mid: float, daily_reset_state: dict) -> dict:
+    """Update daily reset H/L tracking from tick data.
+
+    Called every loop iteration for Trial #5.
+    - At 00:00 UTC (new day): reset H/L, set block_active=True, settled=False
+    - During 00:00-02:00: update H/L, keep block active
+    - At 02:00+: set block_active=False, settled=True, continue updating H/L
+    """
+    now_utc = datetime.now(timezone.utc)
+    today_str = now_utc.strftime("%Y-%m-%d")
+    utc_hour = now_utc.hour
+
+    current_date = daily_reset_state.get("daily_reset_date")
+
+    if current_date != today_str:
+        # New day detected — reset everything
+        daily_reset_state["daily_reset_date"] = today_str
+        daily_reset_state["daily_reset_high"] = tick_mid
+        daily_reset_state["daily_reset_low"] = tick_mid
+        daily_reset_state["daily_reset_block_active"] = utc_hour < 2
+        daily_reset_state["daily_reset_settled"] = utc_hour >= 2
+    else:
+        # Same day — update H/L
+        current_high = daily_reset_state.get("daily_reset_high")
+        current_low = daily_reset_state.get("daily_reset_low")
+        if current_high is None or tick_mid > current_high:
+            daily_reset_state["daily_reset_high"] = tick_mid
+        if current_low is None or tick_mid < current_low:
+            daily_reset_state["daily_reset_low"] = tick_mid
+
+        # Update block/settled status
+        daily_reset_state["daily_reset_block_active"] = utc_hour < 2
+        daily_reset_state["daily_reset_settled"] = utc_hour >= 2
+
+    return daily_reset_state
+
+
 def _passes_atr_filter_trial_5(
     policy, m1_df: pd.DataFrame, m3_df: pd.DataFrame | None, pip_size: float, trigger_type: str
 ) -> tuple[bool, str | None]:
@@ -3403,20 +3440,21 @@ def _passes_atr_filter_trial_5(
         if m1_atr_pips < m1_min:
             return False, f"trial5_m1_atr: {m1_atr_pips:.1f}p < {m1_min:.1f}p min (session={current_session}, ALL blocked)"
 
-        # Apply tiered logic from Trial #4 fields on the M1 ATR value
-        if getattr(policy, "tiered_atr_filter_enabled", False):
-            block_below = getattr(policy, "tiered_atr_block_below_pips", 4.0)
-            allow_all_max = getattr(policy, "tiered_atr_allow_all_max_pips", 12.0)
-            pullback_only_max = getattr(policy, "tiered_atr_pullback_only_max_pips", 15.0)
-            if m1_atr_pips < block_below:
-                return False, f"trial5_tiered_atr: M1 ATR {m1_atr_pips:.1f}p < {block_below}p (too quiet, ALL blocked)"
-            if m1_atr_pips <= allow_all_max:
-                pass  # Allow all
-            elif m1_atr_pips <= pullback_only_max:
-                if trigger_type == "zone_entry":
-                    return False, f"trial5_tiered_atr: M1 ATR {m1_atr_pips:.1f}p in [{allow_all_max}-{pullback_only_max}]p (zone entry blocked)"
-            else:
-                return False, f"trial5_tiered_atr: M1 ATR {m1_atr_pips:.1f}p > {pullback_only_max}p (too volatile, ALL blocked)"
+        # M1 ATR MAX check (session-dynamic upper cap)
+        m1_max = getattr(policy, "m1_atr_max_pips", 11.0)
+        if session_dynamic and auto_session:
+            max_thresholds = []
+            for s in active_sessions:
+                if s == "tokyo":
+                    max_thresholds.append(getattr(policy, "m1_atr_tokyo_max_pips", 8.0))
+                elif s == "london":
+                    max_thresholds.append(getattr(policy, "m1_atr_london_max_pips", 10.0))
+                elif s == "ny":
+                    max_thresholds.append(getattr(policy, "m1_atr_ny_max_pips", 11.0))
+            if max_thresholds:
+                m1_max = min(max_thresholds)  # Conservative: use lowest max among active sessions
+        if m1_atr_pips > m1_max:
+            return False, f"trial5_m1_atr: {m1_atr_pips:.1f}p > {m1_max:.1f}p max (session={current_session}, ALL blocked)"
 
 
     # --- M3 ATR check ---
@@ -3439,25 +3477,41 @@ def _passes_atr_filter_trial_5(
     return True, None
 
 
-def _passes_daily_hl_filter(policy, data_by_tf: dict, tick, side: str, pip_size: float) -> tuple[bool, str | None]:
-    """Daily High/Low filter for Trial #4 zone entry only.
+def _passes_daily_hl_filter(
+    policy, data_by_tf: dict, tick, side: str, pip_size: float,
+    daily_reset_high: float | None = None, daily_reset_low: float | None = None,
+    daily_reset_settled: bool = False,
+) -> tuple[bool, str | None]:
+    """Daily High/Low filter.
 
     Blocks BUY within X pips of daily high, blocks SELL within X pips of daily low.
+    If state-tracked H/L is available and settled, use it; otherwise fall back to OANDA D candle.
     """
     if not getattr(policy, "daily_hl_filter_enabled", False):
         return True, None
-    d_df = data_by_tf.get("D")
-    if d_df is None or d_df.empty:
-        return True, None  # No data, allow
-    last_row = d_df.iloc[-1]
-    daily_high = float(last_row["high"])
-    daily_low = float(last_row["low"])
+
+    daily_high = None
+    daily_low = None
+    source = "oanda_d"
+
+    # Prefer state-tracked H/L if available and settled
+    if daily_reset_settled and daily_reset_high is not None and daily_reset_low is not None:
+        daily_high = daily_reset_high
+        daily_low = daily_reset_low
+        source = "live_tracked"
+    else:
+        d_df = data_by_tf.get("D")
+        if d_df is None or d_df.empty:
+            return True, None  # No data, allow
+        last_row = d_df.iloc[-1]
+        daily_high = float(last_row["high"])
+        daily_low = float(last_row["low"])
     buffer = getattr(policy, "daily_hl_buffer_pips", 5.0) * pip_size
     entry_price = tick.ask if side == "buy" else tick.bid
     if side == "buy" and entry_price >= daily_high - buffer:
-        return False, f"daily_hl_filter: BUY blocked, price {entry_price:.3f} within {getattr(policy, 'daily_hl_buffer_pips', 5.0):.1f}p of daily high {daily_high:.3f}"
+        return False, f"daily_hl_filter: BUY blocked, price {entry_price:.3f} within {getattr(policy, 'daily_hl_buffer_pips', 5.0):.1f}p of daily high {daily_high:.3f} ({source})"
     if side == "sell" and entry_price <= daily_low + buffer:
-        return False, f"daily_hl_filter: SELL blocked, price {entry_price:.3f} within {getattr(policy, 'daily_hl_buffer_pips', 5.0):.1f}p of daily low {daily_low:.3f}"
+        return False, f"daily_hl_filter: SELL blocked, price {entry_price:.3f} within {getattr(policy, 'daily_hl_buffer_pips', 5.0):.1f}p of daily low {daily_low:.3f} ({source})"
     return True, None
 
 
@@ -4220,6 +4274,7 @@ def execute_kt_cg_trial_5_policy_demo_only(
     tier_state: dict[int, bool],
     temp_overrides: Optional[dict] = None,
     divergence_state: Optional[dict[str, str]] = None,
+    daily_reset_state: Optional[dict] = None,
 ) -> dict:
     """Evaluate KT/CG Trial #5 (Dual ATR + Session-Dynamic) policy.
 
@@ -4229,6 +4284,20 @@ def execute_kt_cg_trial_5_policy_demo_only(
         return {"decision": ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed"), "tier_updates": {}, "divergence_updates": {}}
     if not adapter.is_demo_account():
         return {"decision": ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)"), "tier_updates": {}, "divergence_updates": {}}
+
+    # --- Daily Reset Block & H/L Tracking ---
+    if daily_reset_state is not None:
+        tick_mid = (tick.bid + tick.ask) / 2.0
+        _update_daily_reset_state(tick_mid, daily_reset_state)
+
+        # Block ALL trades during 00:00-02:00 UTC
+        if getattr(policy, "daily_reset_block_enabled", False) and daily_reset_state.get("daily_reset_block_active", False):
+            return {
+                "decision": ExecutionDecision(attempted=True, placed=False, reason="daily_reset_block: 00:00-02:00 UTC block active"),
+                "tier_updates": {},
+                "divergence_updates": {},
+                "daily_reset_state": daily_reset_state,
+            }
 
     store = _store(log_dir)
     rule_id = f"kt_cg_trial_5:{policy.id}:M1:{bar_time_utc}"
@@ -4414,28 +4483,33 @@ def execute_kt_cg_trial_5_policy_demo_only(
                         )
                         return {"decision": ExecutionDecision(attempted=True, placed=False, reason=danger_reason or "rolling_danger_zone"), "tier_updates": tier_updates, "divergence_updates": {}}
 
-    # Daily High/Low Filter (zone entry only)
-    if trigger_type == "zone_entry":
-        ok, reason = _passes_daily_hl_filter(policy, data_by_tf, tick, side, float(profile.pip_size))
-        if not ok:
-            print(f"[{profile.profile_name}] kt_cg_trial_5 BLOCKED by daily H/L filter: {reason}")
-            store.insert_execution(
-                {
-                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
-                    "profile": profile.profile_name,
-                    "symbol": profile.symbol,
-                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
-                    "rule_id": rule_id,
-                    "mode": mode,
-                    "attempted": 1,
-                    "placed": 0,
-                    "reason": reason or "daily_hl_filter",
-                    "mt5_retcode": None,
-                    "mt5_order_id": None,
-                    "mt5_deal_id": None,
-                }
-            )
-            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "daily_hl_filter"), "tier_updates": tier_updates, "divergence_updates": {}}
+    # Daily High/Low Filter (applies to BOTH zone entry AND pullback in Trial #5)
+    dr_high = daily_reset_state.get("daily_reset_high") if daily_reset_state else None
+    dr_low = daily_reset_state.get("daily_reset_low") if daily_reset_state else None
+    dr_settled = daily_reset_state.get("daily_reset_settled", False) if daily_reset_state else False
+    ok, reason = _passes_daily_hl_filter(
+        policy, data_by_tf, tick, side, float(profile.pip_size),
+        daily_reset_high=dr_high, daily_reset_low=dr_low, daily_reset_settled=dr_settled,
+    )
+    if not ok:
+        print(f"[{profile.profile_name}] kt_cg_trial_5 BLOCKED by daily H/L filter: {reason}")
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": reason or "daily_hl_filter",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "daily_hl_filter"), "tier_updates": tier_updates, "divergence_updates": {}}
 
     # RSI Divergence Detection (same as Trial #4)
     divergence_updates: dict[str, str] = {}

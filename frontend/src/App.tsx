@@ -3602,6 +3602,13 @@ interface EditedSettings {
   tiered_atr_block_below_pips: number;
   tiered_atr_allow_all_max_pips: number;
   tiered_atr_pullback_only_max_pips: number;
+  // Trial #5: Daily Reset Block
+  daily_reset_block_enabled: boolean;
+  // Trial #5: M1 ATR Max thresholds
+  m1_atr_max_pips: number;
+  m1_atr_tokyo_max_pips: number;
+  m1_atr_london_max_pips: number;
+  m1_atr_ny_max_pips: number;
   // Trial #4: Daily High/Low Filter
   daily_hl_filter_enabled: boolean;
   daily_hl_buffer_pips: number;
@@ -3741,6 +3748,12 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let m3AtrPeriod = 14;
       let m3AtrMinPips = 4.5;
       let m3AtrMaxPips = 11.0;
+      // Trial #5: Daily Reset Block & M1 ATR Max
+      let dailyResetBlockEnabled = true;
+      let m1AtrMaxPips = 11.0;
+      let m1AtrTokyoMaxPips = 8.0;
+      let m1AtrLondonMaxPips = 10.0;
+      let m1AtrNyMaxPips = 11.0;
       if (policies) {
         for (const pol of policies) {
           if ('cooldown_minutes' in pol) {
@@ -3817,6 +3830,16 @@ function PresetsPage({ profile }: { profile: Profile }) {
             m3AtrMinPips = (pol.m3_atr_min_pips as number) ?? 4.5;
             m3AtrMaxPips = (pol.m3_atr_max_pips as number) ?? 11.0;
           }
+          // Trial #5: Daily Reset Block & M1 ATR Max
+          if ('daily_reset_block_enabled' in pol) {
+            dailyResetBlockEnabled = (pol.daily_reset_block_enabled as boolean) ?? true;
+          }
+          if ('m1_atr_max_pips' in pol) {
+            m1AtrMaxPips = (pol.m1_atr_max_pips as number) ?? 11.0;
+            m1AtrTokyoMaxPips = (pol.m1_atr_tokyo_max_pips as number) ?? 8.0;
+            m1AtrLondonMaxPips = (pol.m1_atr_london_max_pips as number) ?? 10.0;
+            m1AtrNyMaxPips = (pol.m1_atr_ny_max_pips as number) ?? 11.0;
+          }
           if (policyCooldown > 0 || policySlPips !== 20) break;
         }
       }
@@ -3854,6 +3877,13 @@ function PresetsPage({ profile }: { profile: Profile }) {
         tiered_atr_block_below_pips: tieredAtrBlockBelowPips,
         tiered_atr_allow_all_max_pips: tieredAtrAllowAllMaxPips,
         tiered_atr_pullback_only_max_pips: tieredAtrPullbackOnlyMaxPips,
+        // Trial #5: Daily Reset Block
+        daily_reset_block_enabled: dailyResetBlockEnabled,
+        // Trial #5: M1 ATR Max
+        m1_atr_max_pips: m1AtrMaxPips,
+        m1_atr_tokyo_max_pips: m1AtrTokyoMaxPips,
+        m1_atr_london_max_pips: m1AtrLondonMaxPips,
+        m1_atr_ny_max_pips: m1AtrNyMaxPips,
         // Trial #4: Daily H/L Filter
         daily_hl_filter_enabled: dailyHlFilterEnabled,
         daily_hl_buffer_pips: dailyHlBufferPips,
@@ -4001,10 +4031,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.ema_zone_filter_enabled = editedSettings.ema_zone_filter_enabled;
           updates.ema_zone_filter_lookback_bars = Math.max(2, Math.min(10, editedSettings.ema_zone_filter_lookback_bars));
           updates.ema_zone_filter_block_threshold = Math.max(0.1, Math.min(0.8, editedSettings.ema_zone_filter_block_threshold));
-          updates.tiered_atr_filter_enabled = editedSettings.tiered_atr_filter_enabled;
-          updates.tiered_atr_block_below_pips = editedSettings.tiered_atr_block_below_pips;
-          updates.tiered_atr_allow_all_max_pips = editedSettings.tiered_atr_allow_all_max_pips;
-          updates.tiered_atr_pullback_only_max_pips = editedSettings.tiered_atr_pullback_only_max_pips;
+          updates.daily_reset_block_enabled = editedSettings.daily_reset_block_enabled;
+          updates.m1_atr_max_pips = Math.max(0, editedSettings.m1_atr_max_pips);
+          updates.m1_atr_tokyo_max_pips = Math.max(0, editedSettings.m1_atr_tokyo_max_pips);
+          updates.m1_atr_london_max_pips = Math.max(0, editedSettings.m1_atr_london_max_pips);
+          updates.m1_atr_ny_max_pips = Math.max(0, editedSettings.m1_atr_ny_max_pips);
           updates.daily_hl_filter_enabled = editedSettings.daily_hl_filter_enabled;
           updates.daily_hl_buffer_pips = editedSettings.daily_hl_buffer_pips;
           updates.spread_aware_be_enabled = editedSettings.spread_aware_be_enabled;
@@ -4548,7 +4579,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       Blocks zone entries during EMA compression. Tiered pullback unaffected.
                     </div>
                   </div>
-                  {/* Tiered ATR(14) Filter */}
+                  {/* Tiered ATR(14) Filter — Trial #4 only (removed from Trial #5) */}
+                  {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                       Tiered ATR(14) Filter
@@ -4614,6 +4646,31 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       {'> '}{editedSettings.tiered_atr_pullback_only_max_pips}p: block ALL
                     </div>
                   </div>
+                  )}
+                  {/* Trial #5: Daily Reset Block */}
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && (
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Daily Reset Block (00:00-02:00 UTC)
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={editedSettings.daily_reset_block_enabled}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, daily_reset_block_enabled: e.target.checked })}
+                          style={{ width: 18, height: 18, cursor: 'pointer' }}
+                        />
+                        <span style={{ fontWeight: 600, color: editedSettings.daily_reset_block_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                          {editedSettings.daily_reset_block_enabled ? 'ON' : 'OFF'}
+                        </span>
+                      </label>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                        Blocks ALL trades 00:00-02:00 UTC. Daily H/L tracked live from ticks after 02:00.
+                      </span>
+                    </div>
+                  </div>
+                  )}
                   {/* Trial #5: Dual ATR Filter (M1 Session-Dynamic + M3 Range) */}
                   {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
@@ -4732,7 +4789,63 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       </div>
                     )}
                     <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
-                      M1 ATR({editedSettings.m1_atr_period}) must be &gt;= threshold. Session overlaps use highest threshold.
+                      M1 ATR({editedSettings.m1_atr_period}) must be &gt;= min threshold (overlaps: highest) and &lt;= max threshold (overlaps: lowest/conservative).
+                    </div>
+                    {/* M1 ATR Max per-session */}
+                    <div style={{ marginTop: 12 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                        M1 ATR Max Thresholds (per session)
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Default Max (pips)</div>
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            max="30"
+                            value={editedSettings.m1_atr_max_pips}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, m1_atr_max_pips: parseFloat(e.target.value) || 11 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Tokyo Max (pips)</div>
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            max="30"
+                            value={editedSettings.m1_atr_tokyo_max_pips}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, m1_atr_tokyo_max_pips: parseFloat(e.target.value) || 8 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>London Max (pips)</div>
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            max="30"
+                            value={editedSettings.m1_atr_london_max_pips}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, m1_atr_london_max_pips: parseFloat(e.target.value) || 10 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>NY Max (pips)</div>
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            max="30"
+                            value={editedSettings.m1_atr_ny_max_pips}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, m1_atr_ny_max_pips: parseFloat(e.target.value) || 11 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          />
+                        </div>
+                      </div>
                     </div>
                     {/* M3 ATR Range Filter */}
                     <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
@@ -4799,7 +4912,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   {/* Daily High/Low Filter */}
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                      Daily High/Low Filter (zone entry only)
+                      Daily High/Low Filter (zone entry + pullback for Trial #5)
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
