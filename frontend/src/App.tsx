@@ -1,7 +1,37 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { createChart, IChartApi, ISeriesApi, CandlestickData, Time, CandlestickSeries, LineSeries, LineStyle, IPriceLine, createSeriesMarkers, ISeriesMarkersPluginApi, SeriesMarker } from 'lightweight-charts';
 import { ComposedChart, Area, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ScatterChart, Scatter, Cell, BarChart, LineChart, AreaChart } from 'recharts';
 import * as api from './api';
+
+// Error boundary to prevent white-screen crashes
+class ErrorBoundary extends React.Component<
+  { fallback?: React.ReactNode; children: React.ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { fallback?: React.ReactNode; children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback || (
+        <div className="card mb-4" style={{ padding: 24, textAlign: 'center' }}>
+          <div style={{ color: 'var(--danger)', fontWeight: 600, marginBottom: 8 }}>Something went wrong</div>
+          <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: 12 }}>
+            {this.state.error?.message || 'Unknown error'}
+          </div>
+          <button className="btn btn-secondary" onClick={() => this.setState({ hasError: false, error: null })}>
+            Try Again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 type Page = 'run' | 'presets' | 'profile' | 'logs' | 'analysis' | 'guide';
 
@@ -428,12 +458,14 @@ export default function App() {
             </div>
           ) : (
             <>
+              <ErrorBoundary>
               {page === 'run' && <RunPage profile={selectedProfile} />}
               {page === 'analysis' && <AnalysisPage profile={selectedProfile} />}
               {page === 'presets' && <PresetsPage profile={selectedProfile} />}
               {page === 'profile' && <ProfilePage profile={selectedProfile} authStatus={authStatus} onAuthChange={fetchProfiles} />}
               {page === 'logs' && <LogsPage profile={selectedProfile} />}
               {page === 'guide' && <GuidePage />}
+              </ErrorBoundary>
             </>
           )
         ) : (
@@ -7408,10 +7440,10 @@ function LogsPage({ profile }: { profile: Profile }) {
         </div>
       ) : analyticsTradesData ? (
         <>
-          <SessionPerformance trades={analyticsTradesData.trades} />
-          <LongShortPerformance trades={analyticsTradesData.trades} displayCurrency={analyticsTradesData.displayCurrency} />
-          <SpreadPerformance trades={analyticsTradesData.trades} />
-          <AdvancedAnalytics profileName={profile.name} profilePath={profile.path} />
+          <ErrorBoundary><SessionPerformance trades={analyticsTradesData.trades} /></ErrorBoundary>
+          <ErrorBoundary><LongShortPerformance trades={analyticsTradesData.trades} displayCurrency={analyticsTradesData.displayCurrency} /></ErrorBoundary>
+          <ErrorBoundary><SpreadPerformance trades={analyticsTradesData.trades} /></ErrorBoundary>
+          <ErrorBoundary><AdvancedAnalytics profileName={profile.name} profilePath={profile.path} /></ErrorBoundary>
         </>
       ) : null}
 
