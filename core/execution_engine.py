@@ -3353,13 +3353,14 @@ def _get_current_sessions(utc_hour: int) -> list[str]:
     return sessions
 
 
-def _update_daily_reset_state(tick_mid: float, daily_reset_state: dict) -> dict:
-    """Update daily reset H/L tracking from tick data.
+def _update_daily_reset_state(tick_mid: float, daily_reset_state: dict, d_candle_df=None) -> dict:
+    """Update daily reset H/L tracking, seeded from OANDA D1 candle and extended by ticks.
 
     Called every loop iteration for Trial #5.
-    - At 00:00 UTC (new day): reset H/L, set block_active=True, settled=False
-    - During 00:00-02:00: update H/L, keep block active
-    - At 02:00+: set block_active=False, settled=True, continue updating H/L
+    - At 00:00 UTC (new day): seed H/L from D1 candle (covers full day so far), set block_active=True
+    - During 00:00-02:00: extend H/L from ticks, keep block active
+    - At 02:00+: set block_active=False, settled=True, continue extending H/L from ticks
+    - On first init (bot start mid-day): seed from D1 candle to capture price action before bot started
     """
     now_utc = datetime.now(timezone.utc)
     today_str = now_utc.strftime("%Y-%m-%d")
@@ -3367,21 +3368,43 @@ def _update_daily_reset_state(tick_mid: float, daily_reset_state: dict) -> dict:
 
     current_date = daily_reset_state.get("daily_reset_date")
 
+    # Seed H/L from OANDA D1 candle (covers the full day including before bot started)
+    d_high = None
+    d_low = None
+    if d_candle_df is not None and not d_candle_df.empty:
+        last_row = d_candle_df.iloc[-1]
+        d_high = float(last_row["high"])
+        d_low = float(last_row["low"])
+
     if current_date != today_str:
-        # New day detected — reset everything
+        # New day or first init — seed from D1 candle, then extend with tick
+        seed_high = d_high if d_high is not None else tick_mid
+        seed_low = d_low if d_low is not None else tick_mid
+        # Extend with current tick (tick may be beyond candle if candle is slightly stale)
         daily_reset_state["daily_reset_date"] = today_str
-        daily_reset_state["daily_reset_high"] = tick_mid
-        daily_reset_state["daily_reset_low"] = tick_mid
+        daily_reset_state["daily_reset_high"] = max(seed_high, tick_mid)
+        daily_reset_state["daily_reset_low"] = min(seed_low, tick_mid)
         daily_reset_state["daily_reset_block_active"] = utc_hour < 2
         daily_reset_state["daily_reset_settled"] = utc_hour >= 2
     else:
-        # Same day — update H/L
+        # Same day — extend H/L from tick AND D1 candle (candle updates as OANDA refreshes)
         current_high = daily_reset_state.get("daily_reset_high")
         current_low = daily_reset_state.get("daily_reset_low")
-        if current_high is None or tick_mid > current_high:
-            daily_reset_state["daily_reset_high"] = tick_mid
-        if current_low is None or tick_mid < current_low:
-            daily_reset_state["daily_reset_low"] = tick_mid
+
+        new_high = tick_mid
+        new_low = tick_mid
+        if current_high is not None:
+            new_high = max(current_high, tick_mid)
+        if current_low is not None:
+            new_low = min(current_low, tick_mid)
+        # Also incorporate D1 candle values (catches any price action missed between polls)
+        if d_high is not None:
+            new_high = max(new_high, d_high)
+        if d_low is not None:
+            new_low = min(new_low, d_low)
+
+        daily_reset_state["daily_reset_high"] = new_high
+        daily_reset_state["daily_reset_low"] = new_low
 
         # Update block/settled status
         daily_reset_state["daily_reset_block_active"] = utc_hour < 2
@@ -4288,7 +4311,7 @@ def execute_kt_cg_trial_5_policy_demo_only(
     # --- Daily Reset Block & H/L Tracking ---
     if daily_reset_state is not None:
         tick_mid = (tick.bid + tick.ask) / 2.0
-        _update_daily_reset_state(tick_mid, daily_reset_state)
+        _update_daily_reset_state(tick_mid, daily_reset_state, d_candle_df=data_by_tf.get("D"))
 
         # Block ALL trades during 00:00-02:00 UTC
         if getattr(policy, "daily_reset_block_enabled", False) and daily_reset_state.get("daily_reset_block_active", False):
