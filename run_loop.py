@@ -1328,11 +1328,11 @@ def main() -> None:
                     # Exhaustion status (when enabled)
                     if getattr(pol, "trend_exhaustion_enabled", False):
                         ex_result = exec_result.get("exhaustion_result")
-                        ex_state = exec_result.get("exhaustion_state", {})
+                        ex_state = exec_result.get("exhaustion_state") or {}
                         zone = ex_result.get("zone", "—") if ex_result else "—"
                         flip_price = ex_state.get("trend_flip_price")
                         last_cross = f"{flip_price:.3f}" if flip_price is not None else "—"
-                        ratio = ex_result.get("extension_ratio")
+                        ratio = ex_result.get("extension_ratio") if ex_result else None
                         ratio_str = f"{ratio}x ATR" if ratio is not None else "—"
                         print(f"[{profile.profile_name}] Exhaustion: {zone} | last M3 cross {last_cross} | {ratio_str}")
 
