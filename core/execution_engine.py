@@ -3384,8 +3384,8 @@ def _update_daily_reset_state(tick_mid: float, daily_reset_state: dict, d_candle
         daily_reset_state["daily_reset_date"] = today_str
         daily_reset_state["daily_reset_high"] = max(seed_high, tick_mid)
         daily_reset_state["daily_reset_low"] = min(seed_low, tick_mid)
-        daily_reset_state["daily_reset_block_active"] = utc_hour < 2
-        daily_reset_state["daily_reset_settled"] = utc_hour >= 2
+        daily_reset_state["daily_reset_block_active"] = (utc_hour >= 21 or utc_hour < 2)
+        daily_reset_state["daily_reset_settled"] = (2 <= utc_hour < 21)
     else:
         # Same day — extend H/L from tick AND D1 candle (candle updates as OANDA refreshes)
         current_high = daily_reset_state.get("daily_reset_high")
@@ -3406,9 +3406,9 @@ def _update_daily_reset_state(tick_mid: float, daily_reset_state: dict, d_candle
         daily_reset_state["daily_reset_high"] = new_high
         daily_reset_state["daily_reset_low"] = new_low
 
-        # Update block/settled status
-        daily_reset_state["daily_reset_block_active"] = utc_hour < 2
-        daily_reset_state["daily_reset_settled"] = utc_hour >= 2
+        # Update block/settled status (dead zone: 21:00-02:00 UTC)
+        daily_reset_state["daily_reset_block_active"] = (utc_hour >= 21 or utc_hour < 2)
+        daily_reset_state["daily_reset_settled"] = (2 <= utc_hour < 21)
 
     return daily_reset_state
 
@@ -3543,10 +3543,12 @@ def _compute_ema_zone_filter_score(
     pip_size: float,
     is_bull: bool,
     lookback_bars: int,
+    policy=None,
 ) -> tuple[float, dict]:
-    """Compute weighted EMA zone filter score for Trial #4 zone entries.
+    """Compute weighted EMA zone filter score for Trial #4/5 zone entries.
 
     Uses M1 EMA 9 vs EMA 17 to detect compression/fading momentum.
+    When policy is provided, reads weights and interpolation ranges from it.
     Returns (weighted_score, details_dict).
     """
     close = m1_df["close"].astype(float)
@@ -3577,15 +3579,34 @@ def _compute_ema_zone_filter_score(
         spread_prev = (ema17_prev - ema9_prev) / pip_size
     spread_dir_pips = spread_pips - spread_prev
 
-    # Score each metric: linearly interpolate, clamp to [0, 1]
-    # Spread size: 0 pips -> 0.0, 4 pips -> 1.0
-    spread_score = max(0.0, min(1.0, spread_pips / 4.0))
-    # Slope: -1 pip -> 0.0, +3 pips -> 1.0
-    slope_score = max(0.0, min(1.0, (slope_pips + 1.0) / 4.0))
-    # Spread direction: -3 pips -> 0.0, +3 pips -> 1.0
-    dir_score = max(0.0, min(1.0, (spread_dir_pips + 3.0) / 6.0))
+    # Read weights and ranges from policy (with hardcoded fallbacks)
+    w_spread = getattr(policy, "ema_zone_filter_spread_weight", 0.45) if policy else 0.45
+    w_slope = getattr(policy, "ema_zone_filter_slope_weight", 0.40) if policy else 0.40
+    w_dir = getattr(policy, "ema_zone_filter_direction_weight", 0.15) if policy else 0.15
 
-    weighted = 0.45 * spread_score + 0.40 * slope_score + 0.15 * dir_score
+    # Auto-normalize weights to sum to 1.0
+    w_total = w_spread + w_slope + w_dir
+    if w_total > 0:
+        w_spread /= w_total
+        w_slope /= w_total
+        w_dir /= w_total
+
+    spread_min = getattr(policy, "ema_zone_filter_spread_min_pips", 0.0) if policy else 0.0
+    spread_max = getattr(policy, "ema_zone_filter_spread_max_pips", 4.0) if policy else 4.0
+    slope_min = getattr(policy, "ema_zone_filter_slope_min_pips", -1.0) if policy else -1.0
+    slope_max = getattr(policy, "ema_zone_filter_slope_max_pips", 3.0) if policy else 3.0
+    dir_min = getattr(policy, "ema_zone_filter_dir_min_pips", -3.0) if policy else -3.0
+    dir_max = getattr(policy, "ema_zone_filter_dir_max_pips", 3.0) if policy else 3.0
+
+    # Score each metric: linearly interpolate, clamp to [0, 1]
+    spread_range = spread_max - spread_min
+    spread_score = max(0.0, min(1.0, (spread_pips - spread_min) / spread_range)) if spread_range > 0 else 0.5
+    slope_range = slope_max - slope_min
+    slope_score = max(0.0, min(1.0, (slope_pips - slope_min) / slope_range)) if slope_range > 0 else 0.5
+    dir_range = dir_max - dir_min
+    dir_score = max(0.0, min(1.0, (spread_dir_pips - dir_min) / dir_range)) if dir_range > 0 else 0.5
+
+    weighted = w_spread * spread_score + w_slope * slope_score + w_dir * dir_score
 
     details = {
         "spread_pips": round(spread_pips, 2),
@@ -4282,6 +4303,143 @@ def execute_kt_cg_trial_4_policy_demo_only(
     }
 
 
+def _passes_fresh_cross_check(m1_df: pd.DataFrame, is_bull: bool) -> tuple[bool, str | None]:
+    """Check if there was a fresh EMA5/EMA9 cross within the last 10 M1 bars.
+
+    BULL: EMA5 > EMA9 now AND within bars [-11] to [-2] EMA5 WAS <= EMA9
+    BEAR: EMA5 < EMA9 now AND within bars [-11] to [-2] EMA5 WAS >= EMA9
+
+    Hardcoded lookback of 10 bars. Always active for Trial #5.
+    """
+    FRESH_CROSS_LOOKBACK = 10
+
+    close = m1_df["close"].astype(float)
+    ema5 = close.ewm(span=5, adjust=False).mean()
+    ema9 = close.ewm(span=9, adjust=False).mean()
+
+    # Need enough bars
+    needed = FRESH_CROSS_LOOKBACK + 2
+    if len(ema5) < needed:
+        return True, None  # Insufficient data, allow
+
+    # Current state check
+    ema5_now = float(ema5.iloc[-1])
+    ema9_now = float(ema9.iloc[-1])
+
+    if is_bull and ema5_now <= ema9_now:
+        return False, "fresh_cross: EMA5 not above EMA9 (no bull condition)"
+    if not is_bull and ema5_now >= ema9_now:
+        return False, "fresh_cross: EMA5 not below EMA9 (no bear condition)"
+
+    # Check if the opposite condition existed within lookback window (bars -11 to -2)
+    found_opposite = False
+    for i in range(-(FRESH_CROSS_LOOKBACK + 1), -1):
+        e5 = float(ema5.iloc[i])
+        e9 = float(ema9.iloc[i])
+        if is_bull and e5 <= e9:
+            found_opposite = True
+            break
+        if not is_bull and e5 >= e9:
+            found_opposite = True
+            break
+
+    if not found_opposite:
+        direction = "BULL" if is_bull else "BEAR"
+        return False, f"fresh_cross: no recent cross within {FRESH_CROSS_LOOKBACK} bars ({direction}, EMA5 has been on same side)"
+
+    return True, None
+
+
+def _detect_trend_flip_and_compute_exhaustion(
+    m3_df: pd.DataFrame,
+    current_price: float,
+    pip_size: float,
+    exhaustion_state: dict,
+    policy=None,
+) -> dict:
+    """Detect M3 EMA9/EMA21 trend flip and compute extension exhaustion.
+
+    Returns dict with:
+        - flip_detected: bool
+        - reset_tiers: bool (True on flip)
+        - zone: str ("FRESH" / "MATURE" / "EXTENDED" / "EXHAUSTED")
+        - extension_ratio: float
+        - trend_flip_price: float or None
+        - trend_flip_direction: str or None
+    """
+    result = {
+        "flip_detected": False,
+        "reset_tiers": False,
+        "zone": "FRESH",
+        "extension_ratio": 0.0,
+        "trend_flip_price": exhaustion_state.get("trend_flip_price"),
+        "trend_flip_direction": exhaustion_state.get("trend_flip_direction"),
+    }
+
+    close = m3_df["close"].astype(float)
+    if len(close) < 22:
+        return result
+
+    ema9 = close.ewm(span=9, adjust=False).mean()
+    ema21 = close.ewm(span=21, adjust=False).mean()
+
+    if len(ema9) < 3:
+        return result
+
+    # Crossover detection: compare bar[-1] vs bar[-2]
+    ema9_now = float(ema9.iloc[-1])
+    ema21_now = float(ema21.iloc[-1])
+    ema9_prev = float(ema9.iloc[-2])
+    ema21_prev = float(ema21.iloc[-2])
+
+    is_bull_now = ema9_now > ema21_now
+    was_bull_prev = ema9_prev > ema21_prev
+
+    if is_bull_now != was_bull_prev:
+        # Trend flip detected!
+        new_direction = "bull" if is_bull_now else "bear"
+        result["flip_detected"] = True
+        result["reset_tiers"] = True
+        result["trend_flip_price"] = current_price
+        result["trend_flip_direction"] = new_direction
+        result["zone"] = "FRESH"
+        result["extension_ratio"] = 0.0
+        return result
+
+    # No flip — compute extension ratio from flip price
+    flip_price = exhaustion_state.get("trend_flip_price")
+    if flip_price is None:
+        return result
+
+    # Compute M3 ATR(14) for normalization
+    atr_series = atr_fn(m3_df, 14)
+    if atr_series.empty or pd.isna(atr_series.iloc[-1]):
+        return result
+    m3_atr_pips = float(atr_series.iloc[-1]) / pip_size
+    if m3_atr_pips <= 0:
+        return result
+
+    extension_pips = abs(current_price - flip_price) / pip_size
+    extension_ratio = extension_pips / m3_atr_pips
+    result["extension_ratio"] = round(extension_ratio, 2)
+
+    # Determine zone from thresholds
+    fresh_max = getattr(policy, "trend_exhaustion_fresh_max", 2.0) if policy else 2.0
+    mature_max = getattr(policy, "trend_exhaustion_mature_max", 3.5) if policy else 3.5
+    extended_max = getattr(policy, "trend_exhaustion_extended_max", 5.0) if policy else 5.0
+
+    if extension_ratio <= fresh_max:
+        result["zone"] = "FRESH"
+    elif extension_ratio <= mature_max:
+        result["zone"] = "MATURE"
+    elif extension_ratio <= extended_max:
+        result["zone"] = "EXTENDED"
+    else:
+        result["zone"] = "EXHAUSTED"
+
+    return result
+
+
 def execute_kt_cg_trial_5_policy_demo_only(
     *,
     adapter,
@@ -4298,41 +4456,109 @@ def execute_kt_cg_trial_5_policy_demo_only(
     temp_overrides: Optional[dict] = None,
     divergence_state: Optional[dict[str, str]] = None,
     daily_reset_state: Optional[dict] = None,
+    exhaustion_state: Optional[dict] = None,
 ) -> dict:
-    """Evaluate KT/CG Trial #5 (Dual ATR + Session-Dynamic) policy.
+    """Evaluate KT/CG Trial #5 (Overhauled: Fresh Cross, Exhaustion, Extended Tiers).
 
-    Same as Trial #4 but uses _passes_atr_filter_trial_5 instead of _passes_tiered_atr_filter_trial_4.
+    Key changes from previous Trial #5:
+    - Fresh Cross replaces cooldown for zone entry
+    - Trend Extension Exhaustion restricts entries during extended moves
+    - Dead zone extended to 21:00-02:00 UTC
+    - EMA Zone Filter accepts configurable weights/ranges from policy
     """
     if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
         return {"decision": ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed"), "tier_updates": {}, "divergence_updates": {}}
     if not adapter.is_demo_account():
         return {"decision": ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)"), "tier_updates": {}, "divergence_updates": {}}
 
-    # --- Daily Reset Block & H/L Tracking ---
+    if exhaustion_state is None:
+        exhaustion_state = {}
+
+    # --- Dead Zone Block & H/L Tracking (21:00-02:00 UTC) ---
     if daily_reset_state is not None:
         tick_mid = (tick.bid + tick.ask) / 2.0
         _update_daily_reset_state(tick_mid, daily_reset_state, d_candle_df=data_by_tf.get("D"))
 
-        # Block ALL trades during 00:00-02:00 UTC
         if getattr(policy, "daily_reset_block_enabled", False) and daily_reset_state.get("daily_reset_block_active", False):
             return {
-                "decision": ExecutionDecision(attempted=True, placed=False, reason="daily_reset_block: 00:00-02:00 UTC block active"),
+                "decision": ExecutionDecision(attempted=True, placed=False, reason="dead_zone_block: 21:00-02:00 UTC block active"),
                 "tier_updates": {},
                 "divergence_updates": {},
                 "daily_reset_state": daily_reset_state,
+                "exhaustion_state": exhaustion_state,
+            }
+
+    # --- Trend Extension Exhaustion ---
+    exhaustion_result = None
+    m3_df = data_by_tf.get("M3")
+    current_price = (tick.bid + tick.ask) / 2.0
+    pip_size = float(profile.pip_size)
+    if getattr(policy, "trend_exhaustion_enabled", False) and m3_df is not None and not m3_df.empty:
+        exhaustion_result = _detect_trend_flip_and_compute_exhaustion(
+            m3_df, current_price, pip_size, exhaustion_state, policy
+        )
+        # Update exhaustion state in-place for persistence
+        if exhaustion_result.get("flip_detected"):
+            exhaustion_state["trend_flip_price"] = exhaustion_result["trend_flip_price"]
+            exhaustion_state["trend_flip_direction"] = exhaustion_result["trend_flip_direction"]
+
+        exhaust_zone = exhaustion_result.get("zone", "FRESH")
+        if exhaust_zone == "EXHAUSTED":
+            return {
+                "decision": ExecutionDecision(
+                    attempted=True, placed=False,
+                    reason=f"trend_exhaustion: EXHAUSTED (ratio={exhaustion_result['extension_ratio']:.1f}x ATR, ALL blocked)"
+                ),
+                "tier_updates": {},
+                "divergence_updates": {},
+                "exhaustion_state": exhaustion_state,
+                "exhaustion_result": exhaustion_result,
             }
 
     store = _store(log_dir)
     rule_id = f"kt_cg_trial_5:{policy.id}:M1:{bar_time_utc}"
 
-    # Evaluate conditions - reuses Trial #4 evaluate function (same zone entry + tiered pullback)
-    result = evaluate_kt_cg_trial_4_conditions(
-        profile, policy, data_by_tf,
-        current_bid=tick.bid,
-        current_ask=tick.ask,
-        tier_state=tier_state,
-        temp_overrides=temp_overrides,
-    )
+    # --- Apply exhaustion tier filtering BEFORE evaluating conditions ---
+    # Build effective tier list based on exhaustion zone
+    effective_tier_periods = list(getattr(policy, "tier_ema_periods", (18, 21, 25, 29, 34)))
+    block_zone_entry_by_exhaustion = False
+    if exhaustion_result:
+        exhaust_zone = exhaustion_result.get("zone", "FRESH")
+        if exhaust_zone == "EXTENDED":
+            # Only allow deepest tiers (29, 34), block zone entry
+            effective_tier_periods = [p for p in effective_tier_periods if p >= 29]
+            block_zone_entry_by_exhaustion = True
+        elif exhaust_zone == "MATURE":
+            # Filter out shallowest active tier, block zone entry
+            if effective_tier_periods:
+                effective_tier_periods = effective_tier_periods[1:]  # Remove shallowest
+            block_zone_entry_by_exhaustion = True
+
+        # On flip: tier reset is handled in run_loop.py (tier_fired cleared)
+
+    # Create a temporary policy-like object with filtered tier_ema_periods if needed
+    # We modify the tier_state passed to evaluate_kt_cg_trial_4_conditions
+    # by only passing tiers that are in the effective list
+    filtered_tier_state = {k: v for k, v in tier_state.items() if k in effective_tier_periods}
+
+    # Build temp_overrides with effective tiers
+    eval_temp_overrides = dict(temp_overrides) if temp_overrides else {}
+
+    # Evaluate conditions - reuses Trial #4 evaluate function
+    # We need to temporarily override tier_ema_periods on the policy
+    original_tiers = policy.tier_ema_periods
+    try:
+        object.__setattr__(policy, 'tier_ema_periods', tuple(effective_tier_periods))
+        result = evaluate_kt_cg_trial_4_conditions(
+            profile, policy, data_by_tf,
+            current_bid=tick.bid,
+            current_ask=tick.ask,
+            tier_state=filtered_tier_state,
+            temp_overrides=eval_temp_overrides if eval_temp_overrides else None,
+        )
+    finally:
+        object.__setattr__(policy, 'tier_ema_periods', original_tiers)
+
     passed = result["passed"]
     side = result["side"]
     eval_reasons = result["reasons"]
@@ -4341,7 +4567,21 @@ def execute_kt_cg_trial_5_policy_demo_only(
     tiered_pullback_tier = result.get("tiered_pullback_tier")
 
     if not passed or side is None:
-        return {"decision": ExecutionDecision(attempted=False, placed=False, reason="; ".join(eval_reasons)), "tier_updates": tier_updates, "divergence_updates": {}}
+        return {"decision": ExecutionDecision(attempted=False, placed=False, reason="; ".join(eval_reasons)), "tier_updates": tier_updates, "divergence_updates": {}, "exhaustion_state": exhaustion_state, "exhaustion_result": exhaustion_result}
+
+    # Block zone entry if exhaustion says so
+    if trigger_type == "zone_entry" and block_zone_entry_by_exhaustion:
+        exhaust_zone = exhaustion_result.get("zone", "FRESH") if exhaustion_result else "FRESH"
+        return {
+            "decision": ExecutionDecision(
+                attempted=True, placed=False,
+                reason=f"trend_exhaustion: {exhaust_zone} zone blocks zone_entry (ratio={exhaustion_result['extension_ratio']:.1f}x ATR)"
+            ),
+            "tier_updates": tier_updates,
+            "divergence_updates": {},
+            "exhaustion_state": exhaustion_state,
+            "exhaustion_result": exhaustion_result,
+        }
 
     if trigger_type == "tiered_pullback" and tiered_pullback_tier:
         rule_id = f"kt_cg_trial_5:{policy.id}:tier_{tiered_pullback_tier}"
@@ -4350,33 +4590,34 @@ def execute_kt_cg_trial_5_policy_demo_only(
     if trigger_type == "zone_entry":
         within = 2
         if store.has_recent_price_level_placement(profile.profile_name, rule_id, within):
-            return {"decision": ExecutionDecision(attempted=False, placed=False, reason="kt_cg_trial_5: recent placement (idempotent)"), "tier_updates": tier_updates, "divergence_updates": {}}
+            return {"decision": ExecutionDecision(attempted=False, placed=False, reason="kt_cg_trial_5: recent placement (idempotent)"), "tier_updates": tier_updates, "divergence_updates": {}, "exhaustion_state": exhaustion_state}
 
-    # Check cooldown for Zone Entry only
+    # Fresh Cross check for Zone Entry (replaces cooldown)
     if trigger_type == "zone_entry":
-        cooldown_ok, cooldown_reason = _check_kt_cg_trial_4_cooldown(
-            store, profile.profile_name, policy.id, policy.cooldown_minutes
-        )
-        if not cooldown_ok:
-            store.insert_execution(
-                {
-                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
-                    "profile": profile.profile_name,
-                    "symbol": profile.symbol,
-                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
-                    "rule_id": rule_id,
-                    "mode": mode,
-                    "attempted": 1,
-                    "placed": 0,
-                    "reason": cooldown_reason or "zone_entry_cooldown",
-                    "mt5_retcode": None,
-                    "mt5_order_id": None,
-                    "mt5_deal_id": None,
-                }
-            )
-            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=cooldown_reason or "zone_entry_cooldown"), "tier_updates": tier_updates, "divergence_updates": {}}
+        m1_df_fc = data_by_tf.get("M1")
+        if m1_df_fc is not None and not m1_df_fc.empty:
+            is_bull = side == "buy"
+            fc_ok, fc_reason = _passes_fresh_cross_check(m1_df_fc, is_bull)
+            if not fc_ok:
+                store.insert_execution(
+                    {
+                        "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                        "profile": profile.profile_name,
+                        "symbol": profile.symbol,
+                        "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                        "rule_id": rule_id,
+                        "mode": mode,
+                        "attempted": 1,
+                        "placed": 0,
+                        "reason": fc_reason or "fresh_cross_blocked",
+                        "mt5_retcode": None,
+                        "mt5_order_id": None,
+                        "mt5_deal_id": None,
+                    }
+                )
+                return {"decision": ExecutionDecision(attempted=True, placed=False, reason=fc_reason or "fresh_cross_blocked"), "tier_updates": tier_updates, "divergence_updates": {}, "exhaustion_state": exhaustion_state}
 
-    # EMA Zone Entry Filter
+    # EMA Zone Entry Filter (with configurable weights/ranges from policy)
     if trigger_type == "zone_entry":
         ema_zone_filter_enabled = getattr(policy, "ema_zone_filter_enabled", False)
         if ema_zone_filter_enabled:
@@ -4385,9 +4626,8 @@ def execute_kt_cg_trial_5_policy_demo_only(
                 is_bull = side == "buy"
                 zf_lookback = getattr(policy, "ema_zone_filter_lookback_bars", 3)
                 zf_threshold = getattr(policy, "ema_zone_filter_block_threshold", 0.35)
-                pip_size = float(profile.pip_size)
                 zf_score, zf_details = _compute_ema_zone_filter_score(
-                    m1_df_zone, pip_size, is_bull, zf_lookback
+                    m1_df_zone, pip_size, is_bull, zf_lookback, policy=policy
                 )
                 if "error" not in zf_details and zf_score < zf_threshold:
                     zf_reason = (
@@ -4414,7 +4654,7 @@ def execute_kt_cg_trial_5_policy_demo_only(
                             "mt5_deal_id": None,
                         }
                     )
-                    return {"decision": ExecutionDecision(attempted=True, placed=False, reason=zf_reason), "tier_updates": tier_updates, "divergence_updates": {}}
+                    return {"decision": ExecutionDecision(attempted=True, placed=False, reason=zf_reason), "tier_updates": tier_updates, "divergence_updates": {}, "exhaustion_state": exhaustion_state}
 
     # Session filter
     now_utc = datetime.now(timezone.utc)
@@ -4436,13 +4676,12 @@ def execute_kt_cg_trial_5_policy_demo_only(
                 "mt5_deal_id": None,
             }
         )
-        return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter"), "tier_updates": tier_updates, "divergence_updates": {}}
+        return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter"), "tier_updates": tier_updates, "divergence_updates": {}, "exhaustion_state": exhaustion_state}
 
-    # --- Trial #5 Dual ATR Filter (replaces Trial #4's single tiered ATR) ---
+    # --- Trial #5 Dual ATR Filter ---
     m1_df = data_by_tf.get("M1")
-    m3_df = data_by_tf.get("M3")
     if m1_df is not None:
-        ok, reason = _passes_atr_filter_trial_5(policy, m1_df, m3_df, float(profile.pip_size), trigger_type)
+        ok, reason = _passes_atr_filter_trial_5(policy, m1_df, m3_df, pip_size, trigger_type)
         if not ok:
             store.insert_execution(
                 {
@@ -4460,14 +4699,14 @@ def execute_kt_cg_trial_5_policy_demo_only(
                     "mt5_deal_id": None,
                 }
             )
-            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "trial5_atr_filter"), "tier_updates": tier_updates, "divergence_updates": {}}
+            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "trial5_atr_filter"), "tier_updates": tier_updates, "divergence_updates": {}, "exhaustion_state": exhaustion_state}
 
     # Daily High/Low Filter (applies to BOTH zone entry AND pullback in Trial #5)
     dr_high = daily_reset_state.get("daily_reset_high") if daily_reset_state else None
     dr_low = daily_reset_state.get("daily_reset_low") if daily_reset_state else None
     dr_settled = daily_reset_state.get("daily_reset_settled", False) if daily_reset_state else False
     ok, reason = _passes_daily_hl_filter(
-        policy, data_by_tf, tick, side, float(profile.pip_size),
+        policy, data_by_tf, tick, side, pip_size,
         daily_reset_high=dr_high, daily_reset_low=dr_low, daily_reset_settled=dr_settled,
     )
     if not ok:
@@ -4488,7 +4727,7 @@ def execute_kt_cg_trial_5_policy_demo_only(
                 "mt5_deal_id": None,
             }
         )
-        return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "daily_hl_filter"), "tier_updates": tier_updates, "divergence_updates": {}}
+        return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "daily_hl_filter"), "tier_updates": tier_updates, "divergence_updates": {}, "exhaustion_state": exhaustion_state}
 
     divergence_updates: dict[str, str] = {}
 
@@ -4513,7 +4752,7 @@ def execute_kt_cg_trial_5_policy_demo_only(
                 "mt5_deal_id": None,
             }
         )
-        return {"decision": ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons)), "tier_updates": tier_updates, "divergence_updates": divergence_updates}
+        return {"decision": ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons)), "tier_updates": tier_updates, "divergence_updates": divergence_updates, "exhaustion_state": exhaustion_state}
 
     if mode == "ARMED_MANUAL_CONFIRM":
         sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
@@ -4533,7 +4772,7 @@ def execute_kt_cg_trial_5_policy_demo_only(
                 "mt5_deal_id": None,
             }
         )
-        return {"decision": ExecutionDecision(attempted=True, placed=False, reason="manual_confirm_required"), "tier_updates": tier_updates, "divergence_updates": divergence_updates}
+        return {"decision": ExecutionDecision(attempted=True, placed=False, reason="manual_confirm_required"), "tier_updates": tier_updates, "divergence_updates": divergence_updates, "exhaustion_state": exhaustion_state}
 
     # ARMED_AUTO_DEMO: place the trade
     if policy.close_opposite_on_trade:
@@ -4593,4 +4832,6 @@ def execute_kt_cg_trial_5_policy_demo_only(
         "tier_updates": tier_updates,
         "divergence_updates": divergence_updates,
         "trigger_type": trigger_type,
+        "exhaustion_state": exhaustion_state,
+        "exhaustion_result": exhaustion_result,
     }

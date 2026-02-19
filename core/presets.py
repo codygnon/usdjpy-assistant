@@ -1270,17 +1270,17 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
     # - M3 ATR(14) with simple configurable range
     # -----------------------------------------------------------------------
     PresetId.KT_CG_TRIAL_5: {
-        "name": "KT/CG Trial #5 (Dual ATR + Session-Dynamic)",
-        "description": "Trial #4 with Dual ATR filter: M1 ATR(7) session-dynamic thresholds (Tokyo 2.2p, London 2.5p, NY 2.8p) + M3 ATR(14) range filter (4.5-11p). Auto session detection.",
+        "name": "KT/CG Trial #5 (Fresh Cross + Exhaustion + Extended Tiers)",
+        "description": "Overhauled Trial #5: Fresh Cross replaces cooldown, Trend Extension Exhaustion prevents chasing, tiers extended to EMA 34, dead zone 21:00-02:00 UTC, expanded EMA Zone Filter.",
         "pros": [
-            "Session-aware M1 ATR adapts to volatility patterns per session",
-            "M3 ATR range filter adds second layer of volatility validation",
-            "All Trial #4 features preserved (tiered pullback, danger zone, etc.)",
-            "Auto session detection based on UTC time",
+            "Fresh Cross prevents re-entry during unbroken runs",
+            "Trend Exhaustion blocks entries during extended moves",
+            "Deep tiers (EMA 18-34) catch meaningful pullbacks",
+            "Fully configurable EMA Zone Filter weights",
         ],
         "cons": [
             "More filters = fewer trade signals",
-            "Session boundaries are approximate (overlap handling uses highest threshold)",
+            "Fresh Cross may delay entry after choppy crosses",
             "Testing preset - expect tuning needed for threshold values",
         ],
         "risk": {
@@ -1320,18 +1320,18 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     # M3 Trend EMAs (default 5/9)
                     "m3_trend_ema_fast": 5,
                     "m3_trend_ema_slow": 9,
-                    # M1 Zone Entry - EMA5 vs EMA9 (respects cooldown)
+                    # M1 Zone Entry - EMA5 vs EMA9 (hardcoded)
                     "zone_entry_enabled": True,
                     "m1_zone_entry_ema_fast": 5,
                     "m1_zone_entry_ema_slow": 9,
-                    # Tiered Pullback Configuration
+                    # Tiered Pullback Configuration (default: 18, 21, 25, 29, 34)
                     "tiered_pullback_enabled": True,
-                    "tier_ema_periods": [9, 11, 12, 13, 14, 15, 16, 17],
+                    "tier_ema_periods": [18, 21, 25, 29, 34],
                     "tier_reset_buffer_pips": 1.0,
                     # Close opposite trades before placing new trade
                     "close_opposite_on_trade": True,
-                    # Cooldown (Zone Entry respects this, Tiered Pullback has NO cooldown)
-                    "cooldown_minutes": 3.0,
+                    # Cooldown REMOVED (replaced by Fresh Cross)
+                    "cooldown_minutes": 0.0,
                     "tp_pips": 0.5,
                     "sl_pips": 20.0,
                     "confirm_bars": 1,
@@ -1342,35 +1342,49 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "m1_atr_min_pips": 2.5,
                     "session_dynamic_atr_enabled": True,
                     "auto_session_detection_enabled": True,
-                    "m1_atr_tokyo_min_pips": 2.2,
-                    "m1_atr_london_min_pips": 2.5,
-                    "m1_atr_ny_min_pips": 2.8,
+                    "m1_atr_tokyo_min_pips": 3.0,
+                    "m1_atr_london_min_pips": 3.0,
+                    "m1_atr_ny_min_pips": 3.5,
                     # M3 ATR(14) - Simple Range
                     "m3_atr_filter_enabled": True,
                     "m3_atr_period": 14,
-                    "m3_atr_min_pips": 4.5,
-                    "m3_atr_max_pips": 11.0,
+                    "m3_atr_min_pips": 5.0,
+                    "m3_atr_max_pips": 16.0,
                     # M1 ATR(7) Session-Dynamic MAX thresholds
                     "m1_atr_max_pips": 11.0,
-                    "m1_atr_tokyo_max_pips": 8.0,
-                    "m1_atr_london_max_pips": 10.0,
-                    "m1_atr_ny_max_pips": 11.0,
-                    # Daily Reset 2-Hour Block (00:00-02:00 UTC)
+                    "m1_atr_tokyo_max_pips": 12.0,
+                    "m1_atr_london_max_pips": 14.0,
+                    "m1_atr_ny_max_pips": 16.0,
+                    # Dead Zone (21:00-02:00 UTC)
                     "daily_reset_block_enabled": True,
                     # Daily High/Low Filter (blocks BOTH zone entry AND pullback)
                     "daily_hl_filter_enabled": True,
                     "daily_hl_buffer_pips": 15.0,
-                    # Spread-Aware Breakeven
+                    # Spread-Aware Breakeven (trigger_mode/apply_to hardcoded)
                     "spread_aware_be_enabled": False,
                     "spread_aware_be_trigger_mode": "fixed_pips",
                     "spread_aware_be_fixed_trigger_pips": 5.0,
                     "spread_aware_be_spread_buffer_pips": 1.0,
                     "spread_aware_be_apply_to_zone_entry": True,
                     "spread_aware_be_apply_to_tiered_pullback": True,
-                    # EMA Zone Entry Filter
+                    # EMA Zone Entry Filter (fully configurable)
                     "ema_zone_filter_enabled": True,
                     "ema_zone_filter_lookback_bars": 3,
                     "ema_zone_filter_block_threshold": 0.35,
+                    "ema_zone_filter_spread_weight": 0.45,
+                    "ema_zone_filter_slope_weight": 0.40,
+                    "ema_zone_filter_direction_weight": 0.15,
+                    "ema_zone_filter_spread_min_pips": 0.0,
+                    "ema_zone_filter_spread_max_pips": 4.0,
+                    "ema_zone_filter_slope_min_pips": -1.0,
+                    "ema_zone_filter_slope_max_pips": 3.0,
+                    "ema_zone_filter_dir_min_pips": -3.0,
+                    "ema_zone_filter_dir_max_pips": 3.0,
+                    # Trend Extension Exhaustion
+                    "trend_exhaustion_enabled": True,
+                    "trend_exhaustion_fresh_max": 2.0,
+                    "trend_exhaustion_mature_max": 3.5,
+                    "trend_exhaustion_extended_max": 5.0,
                 },
             ],
         },

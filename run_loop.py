@@ -1280,11 +1280,17 @@ def main() -> None:
                         "daily_reset_block_active": bool(state_data.get("daily_reset_block_active", False)),
                         "daily_reset_settled": bool(state_data.get("daily_reset_settled", False)),
                     }
+                    # Load exhaustion state for Trial #5
+                    exhaustion_state_t5: dict = {
+                        "trend_flip_price": state_data.get("trend_flip_price"),
+                        "trend_flip_direction": state_data.get("trend_flip_direction"),
+                    }
                 except Exception:
                     temp_overrides = None
                     tier_state = {}
                     divergence_state = {}
                     daily_reset_state_t5 = {}
+                    exhaustion_state_t5 = {}
 
                 for pol in profile.execution.policies:
                     if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "kt_cg_trial_5":
@@ -1308,6 +1314,7 @@ def main() -> None:
                         temp_overrides=temp_overrides,
                         divergence_state=divergence_state,
                         daily_reset_state=daily_reset_state_t5,
+                        exhaustion_state=exhaustion_state_t5,
                     )
                     dec = exec_result["decision"]
                     tier_updates = exec_result.get("tier_updates", {})
@@ -1350,6 +1357,24 @@ def main() -> None:
                             state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
                         except Exception as e:
                             print(f"[{profile.profile_name}] Failed to persist daily reset state: {e}")
+
+                    # Persist exhaustion state and handle tier reset on flip
+                    returned_exhaustion = exec_result.get("exhaustion_state", {})
+                    returned_exhaust_result = exec_result.get("exhaustion_result")
+                    if returned_exhaustion:
+                        try:
+                            current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                            for key in ("trend_flip_price", "trend_flip_direction"):
+                                current_state_data[key] = returned_exhaustion.get(key)
+                            # On trend flip: clear all tier_fired states
+                            if returned_exhaust_result and returned_exhaust_result.get("reset_tiers"):
+                                current_state_data["tier_fired"] = {}
+                                tier_state.clear()
+                                print(f"[{profile.profile_name}] TREND FLIP detected -> all tier_fired states cleared")
+                            state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
+                            exhaustion_state_t5 = returned_exhaustion
+                        except Exception as e:
+                            print(f"[{profile.profile_name}] Failed to persist exhaustion state: {e}")
 
                     if dec.attempted:
                         if dec.placed:

@@ -3678,6 +3678,21 @@ interface EditedSettings {
   m3_atr_period: number;
   m3_atr_min_pips: number;
   m3_atr_max_pips: number;
+  // Trial #5: EMA Zone Filter weights/ranges
+  ema_zone_filter_spread_weight: number;
+  ema_zone_filter_slope_weight: number;
+  ema_zone_filter_direction_weight: number;
+  ema_zone_filter_spread_min_pips: number;
+  ema_zone_filter_spread_max_pips: number;
+  ema_zone_filter_slope_min_pips: number;
+  ema_zone_filter_slope_max_pips: number;
+  ema_zone_filter_dir_min_pips: number;
+  ema_zone_filter_dir_max_pips: number;
+  // Trial #5: Trend Extension Exhaustion
+  trend_exhaustion_enabled: boolean;
+  trend_exhaustion_fresh_max: number;
+  trend_exhaustion_mature_max: number;
+  trend_exhaustion_extended_max: number;
 }
 
 function PresetsPage({ profile }: { profile: Profile }) {
@@ -3748,6 +3763,21 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let emaZoneFilterEnabled = true;
       let emaZoneFilterLookbackBars = 3;
       let emaZoneFilterBlockThreshold = 0.35;
+      // Trial #5: EMA Zone Filter weights/ranges
+      let emaZoneFilterSpreadWeight = 0.45;
+      let emaZoneFilterSlopeWeight = 0.40;
+      let emaZoneFilterDirectionWeight = 0.15;
+      let emaZoneFilterSpreadMinPips = 0.0;
+      let emaZoneFilterSpreadMaxPips = 4.0;
+      let emaZoneFilterSlopeMinPips = -1.0;
+      let emaZoneFilterSlopeMaxPips = 3.0;
+      let emaZoneFilterDirMinPips = -3.0;
+      let emaZoneFilterDirMaxPips = 3.0;
+      // Trial #5: Trend Extension Exhaustion
+      let trendExhaustionEnabled = true;
+      let trendExhaustionFreshMax = 2.0;
+      let trendExhaustionMatureMax = 3.5;
+      let trendExhaustionExtendedMax = 5.0;
       // Trial #4: Tiered ATR Filter
       let tieredAtrFilterEnabled = true;
       let tieredAtrBlockBelowPips = 4.0;
@@ -3872,6 +3902,25 @@ function PresetsPage({ profile }: { profile: Profile }) {
             m1AtrLondonMaxPips = (pol.m1_atr_london_max_pips as number) ?? 10.0;
             m1AtrNyMaxPips = (pol.m1_atr_ny_max_pips as number) ?? 11.0;
           }
+          // Trial #5: EMA Zone Filter weights/ranges
+          if ('ema_zone_filter_spread_weight' in pol) {
+            emaZoneFilterSpreadWeight = (pol.ema_zone_filter_spread_weight as number) ?? 0.45;
+            emaZoneFilterSlopeWeight = (pol.ema_zone_filter_slope_weight as number) ?? 0.40;
+            emaZoneFilterDirectionWeight = (pol.ema_zone_filter_direction_weight as number) ?? 0.15;
+            emaZoneFilterSpreadMinPips = (pol.ema_zone_filter_spread_min_pips as number) ?? 0.0;
+            emaZoneFilterSpreadMaxPips = (pol.ema_zone_filter_spread_max_pips as number) ?? 4.0;
+            emaZoneFilterSlopeMinPips = (pol.ema_zone_filter_slope_min_pips as number) ?? -1.0;
+            emaZoneFilterSlopeMaxPips = (pol.ema_zone_filter_slope_max_pips as number) ?? 3.0;
+            emaZoneFilterDirMinPips = (pol.ema_zone_filter_dir_min_pips as number) ?? -3.0;
+            emaZoneFilterDirMaxPips = (pol.ema_zone_filter_dir_max_pips as number) ?? 3.0;
+          }
+          // Trial #5: Trend Extension Exhaustion
+          if ('trend_exhaustion_enabled' in pol) {
+            trendExhaustionEnabled = (pol.trend_exhaustion_enabled as boolean) ?? true;
+            trendExhaustionFreshMax = (pol.trend_exhaustion_fresh_max as number) ?? 2.0;
+            trendExhaustionMatureMax = (pol.trend_exhaustion_mature_max as number) ?? 3.5;
+            trendExhaustionExtendedMax = (pol.trend_exhaustion_extended_max as number) ?? 5.0;
+          }
           if (policyCooldown > 0 || policySlPips !== 20) break;
         }
       }
@@ -3904,6 +3953,21 @@ function PresetsPage({ profile }: { profile: Profile }) {
         ema_zone_filter_enabled: emaZoneFilterEnabled,
         ema_zone_filter_lookback_bars: emaZoneFilterLookbackBars,
         ema_zone_filter_block_threshold: emaZoneFilterBlockThreshold,
+        // Trial #5: EMA Zone Filter weights/ranges
+        ema_zone_filter_spread_weight: emaZoneFilterSpreadWeight,
+        ema_zone_filter_slope_weight: emaZoneFilterSlopeWeight,
+        ema_zone_filter_direction_weight: emaZoneFilterDirectionWeight,
+        ema_zone_filter_spread_min_pips: emaZoneFilterSpreadMinPips,
+        ema_zone_filter_spread_max_pips: emaZoneFilterSpreadMaxPips,
+        ema_zone_filter_slope_min_pips: emaZoneFilterSlopeMinPips,
+        ema_zone_filter_slope_max_pips: emaZoneFilterSlopeMaxPips,
+        ema_zone_filter_dir_min_pips: emaZoneFilterDirMinPips,
+        ema_zone_filter_dir_max_pips: emaZoneFilterDirMaxPips,
+        // Trial #5: Trend Extension Exhaustion
+        trend_exhaustion_enabled: trendExhaustionEnabled,
+        trend_exhaustion_fresh_max: trendExhaustionFreshMax,
+        trend_exhaustion_mature_max: trendExhaustionMatureMax,
+        trend_exhaustion_extended_max: trendExhaustionExtendedMax,
         // Trial #4: Tiered ATR Filter
         tiered_atr_filter_enabled: tieredAtrFilterEnabled,
         tiered_atr_block_below_pips: tieredAtrBlockBelowPips,
@@ -4084,6 +4148,21 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.m3_atr_period = Math.max(1, Math.min(50, editedSettings.m3_atr_period));
           updates.m3_atr_min_pips = Math.max(0, editedSettings.m3_atr_min_pips);
           updates.m3_atr_max_pips = Math.max(0, editedSettings.m3_atr_max_pips);
+          // Trial #5: EMA Zone Filter weights/ranges
+          updates.ema_zone_filter_spread_weight = editedSettings.ema_zone_filter_spread_weight;
+          updates.ema_zone_filter_slope_weight = editedSettings.ema_zone_filter_slope_weight;
+          updates.ema_zone_filter_direction_weight = editedSettings.ema_zone_filter_direction_weight;
+          updates.ema_zone_filter_spread_min_pips = editedSettings.ema_zone_filter_spread_min_pips;
+          updates.ema_zone_filter_spread_max_pips = editedSettings.ema_zone_filter_spread_max_pips;
+          updates.ema_zone_filter_slope_min_pips = editedSettings.ema_zone_filter_slope_min_pips;
+          updates.ema_zone_filter_slope_max_pips = editedSettings.ema_zone_filter_slope_max_pips;
+          updates.ema_zone_filter_dir_min_pips = editedSettings.ema_zone_filter_dir_min_pips;
+          updates.ema_zone_filter_dir_max_pips = editedSettings.ema_zone_filter_dir_max_pips;
+          // Trial #5: Trend Extension Exhaustion
+          updates.trend_exhaustion_enabled = editedSettings.trend_exhaustion_enabled;
+          updates.trend_exhaustion_fresh_max = editedSettings.trend_exhaustion_fresh_max;
+          updates.trend_exhaustion_mature_max = editedSettings.trend_exhaustion_mature_max;
+          updates.trend_exhaustion_extended_max = editedSettings.trend_exhaustion_extended_max;
         }
         return Object.keys(updates).length > 0 ? { ...pol, ...updates } : pol;
       }) || [];
@@ -4363,6 +4442,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
                     />
                   </div>
+                  {/* Cooldown hidden for Trial #5 (replaced by Fresh Cross) */}
+                  {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && (
                   <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Cooldown After Trade (min)</div>
                     <input
@@ -4374,6 +4455,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
                     />
                   </div>
+                  )}
                 </div>
               )}
               {/* Swing Level Filter Settings (for kt_cg_hybrid and kt_cg_counter_trend_pullback - Trial #2 and #3) */}
@@ -4608,7 +4690,120 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
                       Blocks zone entries during EMA compression. Tiered pullback unaffected.
                     </div>
+                    {/* Expanded EMA Zone Filter weights + ranges (Trial #5 only) */}
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && editedSettings.ema_zone_filter_enabled && (
+                    <div style={{ marginTop: 12 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                        Weights (auto-normalize to 1.0)
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                        <div style={{ padding: 6, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 2 }}>Spread</div>
+                          <input type="number" step="0.05" min="0" max="1" value={editedSettings.ema_zone_filter_spread_weight ?? 0.45}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, ema_zone_filter_spread_weight: parseFloat(e.target.value) || 0.45 })}
+                            style={{ width: '100%', padding: '3px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.8rem' }} />
+                          <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginTop: 1 }}>EMA9-EMA17 gap</div>
+                        </div>
+                        <div style={{ padding: 6, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 2 }}>Slope</div>
+                          <input type="number" step="0.05" min="0" max="1" value={editedSettings.ema_zone_filter_slope_weight ?? 0.40}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, ema_zone_filter_slope_weight: parseFloat(e.target.value) || 0.40 })}
+                            style={{ width: '100%', padding: '3px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.8rem' }} />
+                          <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginTop: 1 }}>EMA9 direction</div>
+                        </div>
+                        <div style={{ padding: 6, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 2 }}>Direction</div>
+                          <input type="number" step="0.05" min="0" max="1" value={editedSettings.ema_zone_filter_direction_weight ?? 0.15}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, ema_zone_filter_direction_weight: parseFloat(e.target.value) || 0.15 })}
+                            style={{ width: '100%', padding: '3px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.8rem' }} />
+                          <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginTop: 1 }}>Spread change</div>
+                        </div>
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, marginTop: 12 }}>
+                        Interpolation Ranges (min/max pips)
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                        <div style={{ padding: 6, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 2 }}>Spread Range</div>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <input type="number" step="0.5" value={editedSettings.ema_zone_filter_spread_min_pips ?? 0}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, ema_zone_filter_spread_min_pips: parseFloat(e.target.value) ?? 0 })}
+                              style={{ flex: 1, padding: '3px 4px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.75rem' }} />
+                            <input type="number" step="0.5" value={editedSettings.ema_zone_filter_spread_max_pips ?? 4}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, ema_zone_filter_spread_max_pips: parseFloat(e.target.value) ?? 4 })}
+                              style={{ flex: 1, padding: '3px 4px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.75rem' }} />
+                          </div>
+                        </div>
+                        <div style={{ padding: 6, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 2 }}>Slope Range</div>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <input type="number" step="0.5" value={editedSettings.ema_zone_filter_slope_min_pips ?? -1}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, ema_zone_filter_slope_min_pips: parseFloat(e.target.value) ?? -1 })}
+                              style={{ flex: 1, padding: '3px 4px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.75rem' }} />
+                            <input type="number" step="0.5" value={editedSettings.ema_zone_filter_slope_max_pips ?? 3}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, ema_zone_filter_slope_max_pips: parseFloat(e.target.value) ?? 3 })}
+                              style={{ flex: 1, padding: '3px 4px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.75rem' }} />
+                          </div>
+                        </div>
+                        <div style={{ padding: 6, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 2 }}>Direction Range</div>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <input type="number" step="0.5" value={editedSettings.ema_zone_filter_dir_min_pips ?? -3}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, ema_zone_filter_dir_min_pips: parseFloat(e.target.value) ?? -3 })}
+                              style={{ flex: 1, padding: '3px 4px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.75rem' }} />
+                            <input type="number" step="0.5" value={editedSettings.ema_zone_filter_dir_max_pips ?? 3}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, ema_zone_filter_dir_max_pips: parseFloat(e.target.value) ?? 3 })}
+                              style={{ flex: 1, padding: '3px 4px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.75rem' }} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    )}
                   </div>
+                  {/* Trend Extension Exhaustion (Trial #5 only) */}
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && (
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Trend Extension Exhaustion (M3 EMA9/EMA21)
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={editedSettings.trend_exhaustion_enabled ?? true}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, trend_exhaustion_enabled: e.target.checked })}
+                            style={{ width: 18, height: 18, cursor: 'pointer' }} />
+                          <span style={{ fontWeight: 600, color: (editedSettings.trend_exhaustion_enabled ?? true) ? 'var(--success)' : 'var(--text-secondary)' }}>
+                            {(editedSettings.trend_exhaustion_enabled ?? true) ? 'ON' : 'OFF'}
+                          </span>
+                        </label>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Fresh Max (ATR)</div>
+                        <input type="number" step="0.5" min="0.5" max="10" value={editedSettings.trend_exhaustion_fresh_max ?? 2.0}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, trend_exhaustion_fresh_max: parseFloat(e.target.value) || 2.0 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>All entries allowed</div>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Mature Max (ATR)</div>
+                        <input type="number" step="0.5" min="0.5" max="15" value={editedSettings.trend_exhaustion_mature_max ?? 3.5}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, trend_exhaustion_mature_max: parseFloat(e.target.value) || 3.5 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Shallowest tier + zone blocked</div>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Extended Max (ATR)</div>
+                        <input type="number" step="0.5" min="0.5" max="20" value={editedSettings.trend_exhaustion_extended_max ?? 5.0}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, trend_exhaustion_extended_max: parseFloat(e.target.value) || 5.0 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Only deep tiers (29,34)</div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
+                      Measures extension from M3 EMA9/21 flip as ratio of M3 ATR(14). FRESH: all entries. MATURE: blocks zone entry + shallowest tier. EXTENDED: only tiers 29,34. EXHAUSTED: blocks ALL.
+                    </div>
+                  </div>
+                  )}
                   {/* Tiered ATR(14) Filter — Trial #4 only (removed from Trial #5) */}
                   {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
@@ -4681,7 +4876,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                      Daily Reset Block (00:00-02:00 UTC)
+                      Dead Zone (21:00-02:00 UTC)
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                       <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
@@ -4696,7 +4891,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         </span>
                       </label>
                       <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                        Blocks ALL trades 00:00-02:00 UTC. Daily H/L tracked live from ticks after 02:00.
+                        Blocks ALL trades 21:00-02:00 UTC. Daily H/L tracked live from ticks after 02:00.
                       </span>
                     </div>
                   </div>
@@ -4724,30 +4919,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       </span>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
-                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>M1 ATR Period</div>
-                        <input
-                          type="number"
-                          step="1"
-                          min="1"
-                          max="50"
-                          value={editedSettings.m1_atr_period}
-                          onChange={(e) => setEditedSettings({ ...editedSettings, m1_atr_period: parseInt(e.target.value) || 7 })}
-                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                        />
-                      </div>
-                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Default Min (pips)</div>
-                        <input
-                          type="number"
-                          step="0.1"
-                          min="0"
-                          max="20"
-                          value={editedSettings.m1_atr_min_pips}
-                          onChange={(e) => setEditedSettings({ ...editedSettings, m1_atr_min_pips: parseFloat(e.target.value) || 2.5 })}
-                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                        />
-                      </div>
+                      {/* M1 ATR Period and Default Min are hardcoded for Trial #5 */}
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                           <input
@@ -4827,18 +4999,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         M1 ATR Max Thresholds (per session)
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
-                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Default Max (pips)</div>
-                          <input
-                            type="number"
-                            step="0.5"
-                            min="0"
-                            max="30"
-                            value={editedSettings.m1_atr_max_pips}
-                            onChange={(e) => setEditedSettings({ ...editedSettings, m1_atr_max_pips: parseFloat(e.target.value) || 11 })}
-                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                          />
-                        </div>
+                        {/* Default Max is hardcoded for Trial #5 */}
                         <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Tokyo Max (pips)</div>
                           <input
@@ -4896,18 +5057,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                             </span>
                           </label>
                         </div>
-                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>M3 ATR Period</div>
-                          <input
-                            type="number"
-                            step="1"
-                            min="1"
-                            max="50"
-                            value={editedSettings.m3_atr_period}
-                            onChange={(e) => setEditedSettings({ ...editedSettings, m3_atr_period: parseInt(e.target.value) || 14 })}
-                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                          />
-                        </div>
+                        {/* M3 ATR Period is hardcoded (14) for Trial #5 */}
                         <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Min (pips)</div>
                           <input
@@ -4995,6 +5145,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
                           </span>
                         </label>
                       </div>
+                      {/* Trigger Mode hidden for Trial #5 (hardcoded to fixed_pips) */}
+                      {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && (
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Trigger Mode</div>
                         <select
@@ -5006,6 +5158,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                           <option value="spread_relative">Spread + Buffer</option>
                         </select>
                       </div>
+                      )}
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Fixed Trigger (pips)</div>
                         <input
@@ -5031,6 +5184,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         />
                       </div>
                     </div>
+                    {/* Apply-to checkboxes hidden for Trial #5 (hardcoded to both true) */}
+                    {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && (
                     <div style={{ display: 'flex', gap: 16, marginTop: 8 }}>
                       <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: '0.7rem' }}>
                         <input
@@ -5051,6 +5206,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         Apply to Tiered Pullback
                       </label>
                     </div>
+                    )}
                     <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
                       SL = entry ± current spread. Ratchets favorably (never moves back toward entry).
                     </div>
@@ -5143,23 +5299,23 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   </button>
                 </div>
               )}
-              {/* EMA Override Settings (for kt_cg_trial_4 / Trial #4) */}
+              {/* EMA Override Settings (for kt_cg_trial_4 / Trial #4 and Trial #5) */}
               {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4' || pol.type === 'kt_cg_trial_5') && (
                 <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
-                    EMA Override Settings (Trial #4)
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') ? 'View Settings (Trial #5)' : 'EMA Override Settings (Trial #4)'}
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                        M3 Trend – fast / slow EMAs (default 9 / 21)
+                        M3 Trend – fast / slow EMAs (default 5 / 9)
                       </div>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         <input
                           type="number"
                           step="1"
                           min="1"
-                          placeholder="9"
+                          placeholder="5"
                           value={editedSettings.m3_trend_ema_fast ?? ''}
                           onChange={(e) => setEditedSettings({ ...editedSettings, m3_trend_ema_fast: e.target.value ? parseInt(e.target.value) : null })}
                           style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
@@ -5169,7 +5325,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                           type="number"
                           step="1"
                           min="1"
-                          placeholder="21"
+                          placeholder="9"
                           value={editedSettings.m3_trend_ema_slow ?? ''}
                           onChange={(e) => setEditedSettings({ ...editedSettings, m3_trend_ema_slow: e.target.value ? parseInt(e.target.value) : null })}
                           style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
@@ -5179,6 +5335,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         M3 Trend: fast {'>'} slow = BULL
                       </div>
                     </div>
+                    {/* M1 Zone Entry EMA overrides: hidden for Trial #5 (hardcoded to 5/9) */}
+                    {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && (
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                         M1 Zone Entry – fast / slow EMAs (default 5 / 9)
@@ -5208,6 +5366,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         Zone Entry: fast {'>'} slow = BUY
                       </div>
                     </div>
+                    )}
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 8 }}>
                         <input type="checkbox" checked={editedSettings.zone_entry_enabled} onChange={(e) => setEditedSettings({ ...editedSettings, zone_entry_enabled: e.target.checked })} style={{ width: 16, height: 16, cursor: 'pointer' }} />
@@ -5240,10 +5399,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         ))}
                       </div>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, marginTop: 12 }}>
-                        Tiered Pullback — Tiers 18–30
+                        Tiered Pullback — Tiers 18–34
                       </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                        {[18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30].map(tier => (
+                        {[18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34].map(tier => (
                           <label key={tier} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '2px 6px', background: editedSettings.tier_ema_periods.includes(tier) ? 'var(--success)' : 'var(--bg-secondary)', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600, color: editedSettings.tier_ema_periods.includes(tier) ? '#fff' : 'var(--text-secondary)' }}>
                             <input
                               type="checkbox"
@@ -5276,7 +5435,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     })}
                     style={{ fontSize: '0.8rem' }}
                   >
-                    Reset Trial #4 EMAs to Defaults
+                    Reset EMAs to Defaults
                   </button>
                 </div>
               )}

@@ -434,6 +434,8 @@ def get_runtime_state(profile_name: str) -> dict[str, Any]:
         "daily_reset_low": state.daily_reset_low,
         "daily_reset_block_active": state.daily_reset_block_active,
         "daily_reset_settled": state.daily_reset_settled,
+        "trend_flip_price": state.trend_flip_price,
+        "trend_flip_direction": state.trend_flip_direction,
     }
 
 
@@ -458,6 +460,8 @@ def update_runtime_state(profile_name: str, req: RuntimeStateUpdate) -> dict[str
         daily_reset_low=old.daily_reset_low,
         daily_reset_block_active=old.daily_reset_block_active,
         daily_reset_settled=old.daily_reset_settled,
+        trend_flip_price=old.trend_flip_price,
+        trend_flip_direction=old.trend_flip_direction,
     )
     save_state(state_path, new_state)
     return {"status": "saved"}
@@ -508,6 +512,9 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
         daily_reset_low=old.daily_reset_low,
         daily_reset_block_active=old.daily_reset_block_active,
         daily_reset_settled=old.daily_reset_settled,
+        # Preserve exhaustion state (not modified through temp settings API)
+        trend_flip_price=old.trend_flip_price,
+        trend_flip_direction=old.trend_flip_direction,
     )
     save_state(state_path, new_state)
     return {"status": "saved"}

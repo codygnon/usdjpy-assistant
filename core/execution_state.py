@@ -41,8 +41,12 @@ class RuntimeState:
     daily_reset_date: Optional[str] = None        # "YYYY-MM-DD" of current tracking day
     daily_reset_high: Optional[float] = None       # Tracked daily high from ticks
     daily_reset_low: Optional[float] = None        # Tracked daily low from ticks
-    daily_reset_block_active: bool = False          # True during 00:00-02:00 UTC
-    daily_reset_settled: bool = False               # True after 02:00 (H/L is usable)
+    daily_reset_block_active: bool = False          # True during dead zone (21:00-02:00 UTC)
+    daily_reset_settled: bool = False               # True when outside dead zone (H/L is usable)
+
+    # Trend Extension Exhaustion (Trial #5)
+    trend_flip_price: Optional[float] = None       # Price at last M3 EMA9/EMA21 trend flip
+    trend_flip_direction: Optional[str] = None     # "bull" or "bear"
 
 
 def _load_tier_fired(data: dict) -> dict:
@@ -87,6 +91,8 @@ def load_state(path: str | Path) -> RuntimeState:
         daily_reset_low=data.get("daily_reset_low"),
         daily_reset_block_active=bool(data.get("daily_reset_block_active", False)),
         daily_reset_settled=bool(data.get("daily_reset_settled", False)),
+        trend_flip_price=data.get("trend_flip_price"),
+        trend_flip_direction=data.get("trend_flip_direction"),
     )
 
 
@@ -115,6 +121,8 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "daily_reset_low": state.daily_reset_low,
                 "daily_reset_block_active": state.daily_reset_block_active,
                 "daily_reset_settled": state.daily_reset_settled,
+                "trend_flip_price": state.trend_flip_price,
+                "trend_flip_direction": state.trend_flip_direction,
             },
             indent=2,
             sort_keys=False,

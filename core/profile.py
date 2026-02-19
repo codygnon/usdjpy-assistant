@@ -421,11 +421,15 @@ class ExecutionPolicyKtCgCounterTrendPullback(BaseModel):
 
 
 class ExecutionPolicyKtCgTrial5(BaseModel):
-    """KT/CG Trial #5 (Dual ATR Filter with Session-Dynamic Thresholds).
+    """KT/CG Trial #5 (Overhauled: Fresh Cross, Trend Exhaustion, Extended Tiers).
 
-    Extends Trial #4 with upgraded ATR filter system:
-    - M1 ATR(7) with per-session dynamic thresholds
-    - M3 ATR(14) with simple configurable range
+    Two INDEPENDENT entry triggers:
+    1. Zone Entry (requires fresh EMA5/EMA9 cross within 10 bars):
+       - M3 BULL + M1 EMA5 > EMA9 + fresh cross -> BUY
+    2. Tiered Pullback (NO cooldown): live price touches M1 EMA tiers
+
+    Features: Dual ATR filter, Dead Zone 21:00-02:00 UTC, Daily H/L filter,
+    Trend Extension Exhaustion, Expanded EMA Zone Filter, Spread-Aware BE.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -438,57 +442,58 @@ class ExecutionPolicyKtCgTrial5(BaseModel):
     m3_trend_ema_fast: int = 5
     m3_trend_ema_slow: int = 9
 
-    # M1 Zone Entry - EMA5 vs EMA9
+    # M1 Zone Entry - EMA5 vs EMA9 (hardcoded, kept for getattr compat)
     zone_entry_enabled: bool = True
     m1_zone_entry_ema_fast: int = 5
     m1_zone_entry_ema_slow: int = 9
 
-    # Tiered Pullback Configuration
+    # Tiered Pullback Configuration (default tiers: 18, 21, 25, 29, 34)
     tiered_pullback_enabled: bool = True
-    tier_ema_periods: tuple[int, ...] = (9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30)
-    tier_reset_buffer_pips: float = 1.0
+    tier_ema_periods: tuple[int, ...] = (18, 21, 25, 29, 34)
+    tier_reset_buffer_pips: float = 1.0  # hardcoded
 
     # Close opposite trades before placing new trade
     close_opposite_on_trade: bool = True
 
-    # Cooldown after trade (Zone Entry respects this, Tiered Pullback has NO cooldown)
-    cooldown_minutes: float = 3.0
+    # Cooldown REMOVED from Trial #5 (replaced by Fresh Cross)
+    # Field kept for backward compat during migration
+    cooldown_minutes: float = 0.0
 
     tp_pips: float = 15.0
     sl_pips: Optional[float] = 10.0
-    confirm_bars: int = 1
+    confirm_bars: int = 1  # hardcoded
 
     # --- Trial #5 Dual ATR Filter ---
     # M1 ATR(7) - Session-Dynamic (master on/off for entire M1 ATR filter)
     m1_atr_filter_enabled: bool = True
     m1_atr_period: int = 7
-    m1_atr_min_pips: float = 2.5  # default/fallback threshold
+    m1_atr_min_pips: float = 2.5  # hardcoded fallback
     session_dynamic_atr_enabled: bool = True
     auto_session_detection_enabled: bool = True
-    m1_atr_tokyo_min_pips: float = 2.2
-    m1_atr_london_min_pips: float = 2.5
-    m1_atr_ny_min_pips: float = 2.8
+    m1_atr_tokyo_min_pips: float = 3.0
+    m1_atr_london_min_pips: float = 3.0
+    m1_atr_ny_min_pips: float = 3.5
 
     # M3 ATR(14) - Simple Range
     m3_atr_filter_enabled: bool = True
-    m3_atr_period: int = 14
-    m3_atr_min_pips: float = 4.5
-    m3_atr_max_pips: float = 11.0
+    m3_atr_period: int = 14  # hardcoded
+    m3_atr_min_pips: float = 5.0
+    m3_atr_max_pips: float = 16.0
 
     # M1 ATR(7) Session-Dynamic MAX thresholds
-    m1_atr_max_pips: float = 11.0
-    m1_atr_tokyo_max_pips: float = 8.0
-    m1_atr_london_max_pips: float = 10.0
-    m1_atr_ny_max_pips: float = 11.0
+    m1_atr_max_pips: float = 11.0  # hardcoded fallback
+    m1_atr_tokyo_max_pips: float = 12.0
+    m1_atr_london_max_pips: float = 14.0
+    m1_atr_ny_max_pips: float = 16.0
 
-    # Daily Reset 2-Hour Block (00:00-02:00 UTC)
+    # Dead Zone (21:00-02:00 UTC) — hours hardcoded, only toggle exposed
     daily_reset_block_enabled: bool = True
 
     # Daily High/Low Filter (blocks BOTH zone entry AND pullback near daily extremes)
     daily_hl_filter_enabled: bool = True
     daily_hl_buffer_pips: float = 15.0
 
-    # Spread-Aware Breakeven Stop Loss
+    # Spread-Aware Breakeven Stop Loss (trigger_mode and apply_to fields hardcoded)
     spread_aware_be_enabled: bool = False
     spread_aware_be_trigger_mode: Literal["fixed_pips", "spread_relative"] = "fixed_pips"
     spread_aware_be_fixed_trigger_pips: float = 5.0
@@ -496,10 +501,25 @@ class ExecutionPolicyKtCgTrial5(BaseModel):
     spread_aware_be_apply_to_zone_entry: bool = True
     spread_aware_be_apply_to_tiered_pullback: bool = True
 
-    # EMA Zone Entry Filter
+    # EMA Zone Entry Filter (fully configurable weights and interpolation ranges)
     ema_zone_filter_enabled: bool = True
     ema_zone_filter_lookback_bars: int = 3
     ema_zone_filter_block_threshold: float = 0.35
+    ema_zone_filter_spread_weight: float = 0.45
+    ema_zone_filter_slope_weight: float = 0.40
+    ema_zone_filter_direction_weight: float = 0.15
+    ema_zone_filter_spread_min_pips: float = 0.0
+    ema_zone_filter_spread_max_pips: float = 4.0
+    ema_zone_filter_slope_min_pips: float = -1.0
+    ema_zone_filter_slope_max_pips: float = 3.0
+    ema_zone_filter_dir_min_pips: float = -3.0
+    ema_zone_filter_dir_max_pips: float = 3.0
+
+    # Trend Extension Exhaustion
+    trend_exhaustion_enabled: bool = True
+    trend_exhaustion_fresh_max: float = 2.0
+    trend_exhaustion_mature_max: float = 3.5
+    trend_exhaustion_extended_max: float = 5.0
 
 
 class ExecutionPolicyKtCgTrial4(BaseModel):
@@ -769,6 +789,9 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
                         pol.pop("rsi_divergence_period", None)
                         pol.pop("rsi_divergence_lookback_bars", None)
                         pol.pop("rsi_divergence_block_minutes", None)
+                        # Migrate cooldown_minutes -> 0 (replaced by Fresh Cross)
+                        if "cooldown_minutes" in pol:
+                            pol["cooldown_minutes"] = 0.0
         return d
 
     profile_name = d.get("profile_name") or d.get("name") or "default"
