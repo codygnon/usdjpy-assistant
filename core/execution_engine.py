@@ -4586,36 +4586,31 @@ def execute_kt_cg_trial_5_policy_demo_only(
     if trigger_type == "tiered_pullback" and tiered_pullback_tier:
         rule_id = f"kt_cg_trial_5:{policy.id}:tier_{tiered_pullback_tier}"
 
+    # Max 3 zone entry trades open at once (Trial #5)
+    if trigger_type == "zone_entry":
+        max_zone_entry_open = getattr(policy, "max_zone_entry_open", 3)
+        try:
+            open_trades = store.list_open_trades(profile.profile_name)
+            zone_entry_open = sum(1 for row in open_trades if row.get("entry_type") == "zone_entry")
+            if zone_entry_open >= max_zone_entry_open:
+                return {
+                    "decision": ExecutionDecision(
+                        attempted=True, placed=False,
+                        reason=f"max_zone_entry_open: {zone_entry_open} zone entry trade(s) already open (max {max_zone_entry_open})",
+                    ),
+                    "tier_updates": tier_updates,
+                    "divergence_updates": {},
+                    "exhaustion_state": exhaustion_state,
+                    "exhaustion_result": exhaustion_result,
+                }
+        except Exception:
+            pass
+
     # Idempotency check for zone_entry only
     if trigger_type == "zone_entry":
         within = 2
         if store.has_recent_price_level_placement(profile.profile_name, rule_id, within):
             return {"decision": ExecutionDecision(attempted=False, placed=False, reason="kt_cg_trial_5: recent placement (idempotent)"), "tier_updates": tier_updates, "divergence_updates": {}, "exhaustion_state": exhaustion_state}
-
-    # Fresh Cross check for Zone Entry (replaces cooldown)
-    if trigger_type == "zone_entry":
-        m1_df_fc = data_by_tf.get("M1")
-        if m1_df_fc is not None and not m1_df_fc.empty:
-            is_bull = side == "buy"
-            fc_ok, fc_reason = _passes_fresh_cross_check(m1_df_fc, is_bull)
-            if not fc_ok:
-                store.insert_execution(
-                    {
-                        "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
-                        "profile": profile.profile_name,
-                        "symbol": profile.symbol,
-                        "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
-                        "rule_id": rule_id,
-                        "mode": mode,
-                        "attempted": 1,
-                        "placed": 0,
-                        "reason": fc_reason or "fresh_cross_blocked",
-                        "mt5_retcode": None,
-                        "mt5_order_id": None,
-                        "mt5_deal_id": None,
-                    }
-                )
-                return {"decision": ExecutionDecision(attempted=True, placed=False, reason=fc_reason or "fresh_cross_blocked"), "tier_updates": tier_updates, "divergence_updates": {}, "exhaustion_state": exhaustion_state}
 
     # EMA Zone Entry Filter (with configurable weights/ranges from policy)
     if trigger_type == "zone_entry":
