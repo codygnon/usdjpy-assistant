@@ -167,6 +167,8 @@ class SqliteStore:
             # v1.8: Spread-aware breakeven
             self._ensure_column(conn, "trades", "entry_type", "TEXT")
             self._ensure_column(conn, "trades", "breakeven_sl_price", "REAL")
+            # v1.9: Post-SL recovery tracking
+            self._ensure_column(conn, "trades", "post_sl_recovery_pips", "REAL")
             conn.commit()
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, col: str, col_type: str) -> None:

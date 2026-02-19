@@ -30,29 +30,78 @@ def _determine_exit_reason(
     stop_price: float | None,
     side: str,
     pip_size: float,
+    breakeven_sl_price: float | None = None,
+    breakeven_applied: int = 0,
 ) -> str:
-    """Determine if trade was closed at TP, SL, or manually by user.
-    
-    Tolerance: within 1 pip of target/stop counts as hitting it.
+    """Determine if trade was closed at TP, SL, BE, or manually by user.
+
+    Tolerance: within 1.5 pips of target/stop counts as hitting it.
+    BE tolerance is 3 pips due to spread-aware SL that varies slightly.
     """
     tolerance = pip_size * 1.5  # 1.5 pips tolerance
-    
+
     if target_price and not pd.isna(target_price):
         if abs(exit_price - target_price) <= tolerance:
             return "hit_take_profit"
-    
+
+    # Check breakeven BEFORE original SL — BE SL is far from original stop_price
+    if breakeven_applied and breakeven_sl_price and not pd.isna(breakeven_sl_price):
+        if abs(exit_price - breakeven_sl_price) <= pip_size * 3:
+            return "hit_breakeven"
+
     if stop_price and not pd.isna(stop_price):
         if abs(exit_price - stop_price) <= tolerance:
             return "hit_stop_loss"
-    
+
     # If we have a target and exit is before it (for profit), user closed early
     if target_price and not pd.isna(target_price):
         if side == "buy" and exit_price < target_price:
             return "user_closed_early"
         if side == "sell" and exit_price > target_price:
             return "user_closed_early"
-    
+
     return "user_closed_early"
+
+
+def compute_post_sl_recovery_pips(
+    adapter: Any,
+    symbol: str,
+    side: str,
+    exit_price: float,
+    exit_time_utc: str,
+    pip_size: float,
+    window_minutes: int = 30,
+) -> float | None:
+    """Fetch M1 candles after a SL/BE close and return max favorable move within window.
+
+    BUY: how far price rose above exit_price → positive pips
+    SELL: how far price fell below exit_price → positive pips
+    Returns None on failure (no candles, adapter error, etc.).
+    """
+    try:
+        df = adapter.get_bars_from_time(symbol, "M1", exit_time_utc, count=window_minutes)
+        if df is None or df.empty:
+            return None
+
+        # Filter to only candles at or after exit time
+        exit_ts = pd.to_datetime(exit_time_utc, utc=True)
+        if "time" in df.columns:
+            df = df[df["time"] >= exit_ts]
+
+        if df.empty:
+            return None
+
+        if side == "buy":
+            best_high = df["high"].max()
+            recovery = (best_high - exit_price) / pip_size
+        else:
+            best_low = df["low"].min()
+            recovery = (exit_price - best_low) / pip_size
+
+        return round(max(0.0, float(recovery)), 2)
+    except Exception as e:
+        print(f"[trade_sync] compute_post_sl_recovery_pips failed: {e}")
+        return None
 
 
 def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore") -> int:
@@ -157,12 +206,16 @@ def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore") -> int:
                 pass
         
         # Determine exit reason
+        be_sl_price = _safe_get(trade_row, "breakeven_sl_price")
+        be_applied = int(_safe_get(trade_row, "breakeven_applied") or 0)
         exit_reason = _determine_exit_reason(
             exit_price=exit_price,
             target_price=target_price,
             stop_price=stop_price,
             side=side,
             pip_size=pip_size,
+            breakeven_sl_price=float(be_sl_price) if be_sl_price is not None else None,
+            breakeven_applied=be_applied,
         )
         
         # Update database

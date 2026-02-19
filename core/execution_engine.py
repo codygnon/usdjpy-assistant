@@ -4350,15 +4350,16 @@ def _passes_fresh_cross_check(m1_df: pd.DataFrame, is_bull: bool) -> tuple[bool,
     return True, None
 
 
-def _find_last_m3_ema_cross(m3_df: pd.DataFrame) -> tuple[Optional[float], Optional[str]]:
+def _find_last_m3_ema_cross(m3_df: pd.DataFrame) -> tuple[Optional[float], Optional[str], Optional[str]]:
     """Find the most recent M3 EMA9/EMA21 crossover in history. Used to bootstrap exhaustion state.
 
-    Returns (flip_price, direction) with flip_price = close of the bar where cross occurred,
-    direction = "bull" or "bear". Returns (None, None) if no crossover found or insufficient bars.
+    Returns (flip_price, direction, flip_bar_time) with flip_price = close of the bar where cross
+    occurred, direction = "bull" or "bear", flip_bar_time = ISO UTC timestamp of that bar.
+    Returns (None, None, None) if no crossover found or insufficient bars.
     """
     close = m3_df["close"].astype(float)
     if len(close) < 3:
-        return None, None
+        return None, None, None
     ema9 = close.ewm(span=9, adjust=False).mean()
     ema21 = close.ewm(span=21, adjust=False).mean()
     n = len(ema9)
@@ -4368,8 +4369,15 @@ def _find_last_m3_ema_cross(m3_df: pd.DataFrame) -> tuple[Optional[float], Optio
         if bull_now != bull_prev:
             flip_price = float(close.iloc[i])
             direction = "bull" if bull_now else "bear"
-            return flip_price, direction
-    return None, None
+            flip_bar_time = None
+            if "time" in m3_df.columns:
+                try:
+                    t = m3_df["time"].iloc[i]
+                    flip_bar_time = pd.Timestamp(t).tz_convert("UTC").isoformat()
+                except Exception:
+                    pass
+            return flip_price, direction, flip_bar_time
+    return None, None, None
 
 
 def _detect_trend_flip_and_compute_exhaustion(
@@ -4394,8 +4402,11 @@ def _detect_trend_flip_and_compute_exhaustion(
         "reset_tiers": False,
         "zone": "FRESH",
         "extension_ratio": 0.0,
+        "adjusted_ratio": 0.0,
+        "time_factor": 1.0,
         "trend_flip_price": exhaustion_state.get("trend_flip_price"),
         "trend_flip_direction": exhaustion_state.get("trend_flip_direction"),
+        "trend_flip_time": exhaustion_state.get("trend_flip_time"),
     }
 
     close = m3_df["close"].astype(float)
@@ -4420,12 +4431,16 @@ def _detect_trend_flip_and_compute_exhaustion(
     if is_bull_now != was_bull_prev:
         # Trend flip detected!
         new_direction = "bull" if is_bull_now else "bear"
+        now_utc = datetime.now(timezone.utc).isoformat()
         result["flip_detected"] = True
         result["reset_tiers"] = True
         result["trend_flip_price"] = current_price
         result["trend_flip_direction"] = new_direction
+        result["trend_flip_time"] = now_utc
         result["zone"] = "FRESH"
         result["extension_ratio"] = 0.0
+        result["adjusted_ratio"] = 0.0
+        result["time_factor"] = 0.0
         return result
 
     # No flip — compute extension ratio from flip price
@@ -4445,16 +4460,31 @@ def _detect_trend_flip_and_compute_exhaustion(
     extension_ratio = extension_pips / m3_atr_pips
     result["extension_ratio"] = round(extension_ratio, 2)
 
-    # Determine zone from thresholds
+    # Time-based ramp: scale extension_ratio from 0→1 over ramp_minutes after flip
+    flip_time_str = exhaustion_state.get("trend_flip_time")
+    ramp_minutes = getattr(policy, "trend_exhaustion_ramp_minutes", 12.0) if policy else 12.0
+    time_factor = 1.0
+    if flip_time_str and ramp_minutes > 0:
+        try:
+            ft = pd.to_datetime(flip_time_str, utc=True)
+            elapsed_min = (pd.Timestamp.now(tz="UTC") - ft).total_seconds() / 60.0
+            time_factor = min(1.0, elapsed_min / ramp_minutes)
+        except Exception:
+            pass
+    adjusted_ratio = extension_ratio * time_factor
+    result["adjusted_ratio"] = round(adjusted_ratio, 2)
+    result["time_factor"] = round(time_factor, 3)
+
+    # Determine zone from thresholds (using adjusted_ratio so fresh flips stay in FRESH/MATURE)
     fresh_max = getattr(policy, "trend_exhaustion_fresh_max", 2.0) if policy else 2.0
     mature_max = getattr(policy, "trend_exhaustion_mature_max", 3.5) if policy else 3.5
     extended_max = getattr(policy, "trend_exhaustion_extended_max", 5.0) if policy else 5.0
 
-    if extension_ratio <= fresh_max:
+    if adjusted_ratio <= fresh_max:
         result["zone"] = "FRESH"
-    elif extension_ratio <= mature_max:
+    elif adjusted_ratio <= mature_max:
         result["zone"] = "MATURE"
-    elif extension_ratio <= extended_max:
+    elif adjusted_ratio <= extended_max:
         result["zone"] = "EXTENDED"
     else:
         result["zone"] = "EXHAUSTED"
@@ -4518,10 +4548,11 @@ def execute_kt_cg_trial_5_policy_demo_only(
     if getattr(policy, "trend_exhaustion_enabled", False) and m3_df is not None and not m3_df.empty:
         # Bootstrap: if no persisted flip price (e.g. after long pause), find last M3 cross from history
         if exhaustion_state.get("trend_flip_price") is None:
-            flip_price, flip_dir = _find_last_m3_ema_cross(m3_df)
+            flip_price, flip_dir, flip_bar_time = _find_last_m3_ema_cross(m3_df)
             if flip_price is not None and flip_dir is not None:
                 exhaustion_state["trend_flip_price"] = flip_price
                 exhaustion_state["trend_flip_direction"] = flip_dir
+                exhaustion_state["trend_flip_time"] = flip_bar_time
         exhaustion_result = _detect_trend_flip_and_compute_exhaustion(
             m3_df, current_price, pip_size, exhaustion_state, policy
         )
@@ -4529,6 +4560,7 @@ def execute_kt_cg_trial_5_policy_demo_only(
         if exhaustion_result.get("flip_detected"):
             exhaustion_state["trend_flip_price"] = exhaustion_result["trend_flip_price"]
             exhaustion_state["trend_flip_direction"] = exhaustion_result["trend_flip_direction"]
+            exhaustion_state["trend_flip_time"] = exhaustion_result["trend_flip_time"]
 
         exhaust_zone = exhaustion_result.get("zone", "FRESH")
         if exhaust_zone == "EXHAUSTED":
@@ -4634,12 +4666,32 @@ def execute_kt_cg_trial_5_policy_demo_only(
         except Exception:
             pass
 
-    # Per-direction open trade cap
+    # Per-direction open trade cap (uses live broker positions, not DB)
     max_open_per_side = policy.max_open_trades_per_side
     if max_open_per_side is not None:
         try:
-            all_open = store.list_open_trades(profile.profile_name)
-            side_open = sum(1 for row in all_open if row.get("side", "").lower() == side)
+            open_positions = adapter.get_open_positions(profile.symbol)
+            side_open = 0
+            if open_positions:
+                for pos in open_positions:
+                    if isinstance(pos, dict):
+                        pos_side = (pos.get("side") or "").lower()
+                        if pos_side == "long":
+                            pos_side = "buy"
+                        elif pos_side == "short":
+                            pos_side = "sell"
+                        else:
+                            continue
+                    else:
+                        mt5_type = getattr(pos, "type", None)
+                        if mt5_type == 0:
+                            pos_side = "buy"
+                        elif mt5_type == 1:
+                            pos_side = "sell"
+                        else:
+                            continue
+                    if pos_side == side:
+                        side_open += 1
             if side_open >= max_open_per_side:
                 return {
                     "decision": ExecutionDecision(

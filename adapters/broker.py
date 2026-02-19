@@ -40,6 +40,10 @@ class _Mt5Wrapper:
     def get_account_info(self): return self._m.get_account_info()
     def get_tick(self, symbol: str): return self._m.get_tick(symbol)
     def get_bars(self, symbol: str, tf, count: int): return self._m.get_bars(symbol, tf, count)
+    def get_bars_from_time(self, symbol: str, tf, from_time_utc: str, count: int = 30):
+        """MT5 stub: returns empty DataFrame (post-SL recovery only supported for OANDA)."""
+        import pandas as pd
+        return pd.DataFrame()
     def is_demo_account(self): return self._m.is_demo_account()
     def get_open_positions(self, symbol=None): return self._m.get_open_positions(symbol)
     def order_send_market(self, **kwargs): return self._m.order_send_market(**kwargs)

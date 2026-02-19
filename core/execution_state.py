@@ -47,6 +47,7 @@ class RuntimeState:
     # Trend Extension Exhaustion (Trial #5)
     trend_flip_price: Optional[float] = None       # Price at last M3 EMA9/EMA21 trend flip
     trend_flip_direction: Optional[str] = None     # "bull" or "bear"
+    trend_flip_time: Optional[str] = None          # ISO UTC timestamp of last M3 EMA9/21 flip
 
 
 def _load_tier_fired(data: dict) -> dict:
@@ -93,6 +94,7 @@ def load_state(path: str | Path) -> RuntimeState:
         daily_reset_settled=bool(data.get("daily_reset_settled", False)),
         trend_flip_price=data.get("trend_flip_price"),
         trend_flip_direction=data.get("trend_flip_direction"),
+        trend_flip_time=data.get("trend_flip_time"),
     )
 
 
@@ -123,6 +125,7 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "daily_reset_settled": state.daily_reset_settled,
                 "trend_flip_price": state.trend_flip_price,
                 "trend_flip_direction": state.trend_flip_direction,
+                "trend_flip_time": state.trend_flip_time,
             },
             indent=2,
             sort_keys=False,

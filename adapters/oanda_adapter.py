@@ -238,6 +238,34 @@ class OandaAdapter:
             df["time"] = [r["time"] for r in rows]
         return df
 
+    def get_bars_from_time(self, symbol: str, tf: Timeframe, from_time_utc: str, count: int = 30) -> pd.DataFrame:
+        """Fetch up to `count` M1 candles starting at `from_time_utc` (ISO 8601 string)."""
+        import urllib.parse
+        inst = _symbol_to_instrument(symbol)
+        gran = _timeframe_to_granularity(tf)
+        from_enc = urllib.parse.quote(from_time_utc, safe="")
+        url = f"/v3/instruments/{inst}/candles?granularity={gran}&from={from_enc}&count={count}&price=M"
+        data = self._req("GET", url)
+        candles = data.get("candles", [])
+        rows = []
+        for c in candles:
+            mid = c.get("mid", {})
+            t = c.get("time", "")
+            try:
+                dt = pd.Timestamp(t).tz_convert("UTC")
+            except Exception:
+                dt = pd.Timestamp.now(tz="UTC")
+            rows.append({
+                "time": dt,
+                "open": float(mid.get("o", 0)),
+                "high": float(mid.get("h", 0)),
+                "low": float(mid.get("l", 0)),
+                "close": float(mid.get("c", 0)),
+                "tick_volume": int(c.get("volume", 0)),
+            })
+        df = pd.DataFrame(rows)
+        return df
+
     def is_demo_account(self) -> bool:
         return self._base == _BASE_URLS["practice"]
 

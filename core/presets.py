@@ -1385,6 +1385,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "trend_exhaustion_fresh_max": 2.0,
                     "trend_exhaustion_mature_max": 3.5,
                     "trend_exhaustion_extended_max": 5.0,
+                    "trend_exhaustion_ramp_minutes": 12.0,
                     # Per-direction open trade cap
                     "max_open_trades_per_side": 5,
                 },

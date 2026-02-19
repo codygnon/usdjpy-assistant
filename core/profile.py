@@ -520,6 +520,7 @@ class ExecutionPolicyKtCgTrial5(BaseModel):
     trend_exhaustion_fresh_max: float = 2.0
     trend_exhaustion_mature_max: float = 3.5
     trend_exhaustion_extended_max: float = 5.0
+    trend_exhaustion_ramp_minutes: float = 12.0
 
     # Per-direction open trade cap (None = disabled)
     max_open_trades_per_side: Optional[int] = None

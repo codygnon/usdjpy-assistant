@@ -524,6 +524,7 @@ export interface AdvancedTrade {
   duration_minutes: number | null;
   max_adverse_pips: number | null;
   max_favorable_pips: number | null;
+  post_sl_recovery_pips: number | null;
   preset_name: string | null;
   exit_reason: string | null;
 }

@@ -1288,6 +1288,7 @@ def main() -> None:
                     exhaustion_state_t5: dict = {
                         "trend_flip_price": state_data.get("trend_flip_price"),
                         "trend_flip_direction": state_data.get("trend_flip_direction"),
+                        "trend_flip_time": state_data.get("trend_flip_time"),
                     }
                 except Exception:
                     temp_overrides = None
@@ -1332,9 +1333,12 @@ def main() -> None:
                         zone = ex_result.get("zone", "—") if ex_result else "—"
                         flip_price = ex_state.get("trend_flip_price")
                         last_cross = f"{flip_price:.3f}" if flip_price is not None else "—"
-                        ratio = ex_result.get("extension_ratio") if ex_result else None
-                        ratio_str = f"{ratio}x ATR" if ratio is not None else "—"
-                        print(f"[{profile.profile_name}] Exhaustion: {zone} | last M3 cross {last_cross} | {ratio_str}")
+                        ratio_raw = ex_result.get("extension_ratio") if ex_result else None
+                        ratio_adj = ex_result.get("adjusted_ratio") if ex_result else None
+                        tf = ex_result.get("time_factor") if ex_result else None
+                        raw_str = f"{ratio_raw}x" if ratio_raw is not None else "—"
+                        adj_str = f"{ratio_adj}x (tf={tf:.2f})" if ratio_adj is not None and tf is not None else "—"
+                        print(f"[{profile.profile_name}] Exhaustion: {zone} | cross@{last_cross} | raw={raw_str} adj={adj_str}")
 
                     # Persist tier state updates
                     if tier_updates:
@@ -1379,7 +1383,7 @@ def main() -> None:
                     if returned_exhaustion:
                         try:
                             current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
-                            for key in ("trend_flip_price", "trend_flip_direction"):
+                            for key in ("trend_flip_price", "trend_flip_direction", "trend_flip_time"):
                                 current_state_data[key] = returned_exhaustion.get(key)
                             # On trend flip: clear all tier_fired states
                             if returned_exhaust_result and returned_exhaust_result.get("reset_tiers"):

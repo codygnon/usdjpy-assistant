@@ -515,6 +515,7 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
         # Preserve exhaustion state (not modified through temp settings API)
         trend_flip_price=old.trend_flip_price,
         trend_flip_direction=old.trend_flip_direction,
+        trend_flip_time=old.trend_flip_time,
     )
     save_state(state_path, new_state)
     return {"status": "saved"}
@@ -1698,6 +1699,7 @@ def get_advanced_analytics(
 
         mae = float(row["max_adverse_pips"]) if pd.notna(row.get("max_adverse_pips")) else None
         mfe = float(row["max_favorable_pips"]) if pd.notna(row.get("max_favorable_pips")) else None
+        recovery = float(row["post_sl_recovery_pips"]) if pd.notna(row.get("post_sl_recovery_pips")) else None
 
         trades_list.append({
             "trade_id": str(row.get("trade_id") or ""),
@@ -1713,6 +1715,7 @@ def get_advanced_analytics(
             "duration_minutes": duration,
             "max_adverse_pips": mae,
             "max_favorable_pips": mfe,
+            "post_sl_recovery_pips": recovery,
             "preset_name": str(row.get("preset_name") or ""),
             "exit_reason": str(row.get("exit_reason") or ""),
         })
@@ -1897,10 +1900,14 @@ def _sync_open_trades_with_broker(profile: ProfileV1, store: SqliteStore) -> int
         else:
             pips = (entry_price - exit_price) / pip_size
 
-        # Determine exit reason
+        # Determine exit reason (BE before original SL)
+        be_sl = trade_row.get("breakeven_sl_price")
+        be_applied = int(trade_row.get("breakeven_applied") or 0)
         exit_reason = "broker_closed"
         if target_price and abs(exit_price - float(target_price)) <= pip_size * 2:
             exit_reason = "hit_take_profit"
+        elif be_applied and be_sl and abs(exit_price - float(be_sl)) <= pip_size * 3:
+            exit_reason = "hit_breakeven"
         elif stop_price and abs(exit_price - float(stop_price)) <= pip_size * 2:
             exit_reason = "hit_stop_loss"
 
@@ -1922,6 +1929,18 @@ def _sync_open_trades_with_broker(profile: ProfileV1, store: SqliteStore) -> int
         }
         if profit is not None:
             updates["profit"] = profit
+
+        # Compute post-SL recovery pips for SL/BE closes
+        if exit_reason in ("hit_stop_loss", "hit_breakeven") and exit_time:
+            try:
+                from core.trade_sync import compute_post_sl_recovery_pips
+                recovery = compute_post_sl_recovery_pips(
+                    adapter, profile.symbol, side, exit_price, exit_time, pip_size
+                )
+                if recovery is not None:
+                    updates["post_sl_recovery_pips"] = recovery
+            except Exception as _e:
+                print(f"[api] post_sl_recovery failed for {trade_id}: {_e}")
 
         store.close_trade(trade_id=trade_id, updates=updates)
         print(f"[api] synced closed trade {trade_id}: {exit_reason}, pips={pips:.2f}")
@@ -2233,10 +2252,14 @@ def _aggressive_sync_with_broker(profile: ProfileV1, store: SqliteStore) -> int:
         else:
             pips = (entry_price - exit_price) / pip_size
 
-        # Determine exit reason
+        # Determine exit reason (BE before original SL)
+        be_sl = trade_row.get("breakeven_sl_price")
+        be_applied = int(trade_row.get("breakeven_applied") or 0)
         exit_reason = "broker_closed_sync"
         if target_price and abs(exit_price - float(target_price)) <= pip_size * 2:
             exit_reason = "hit_take_profit"
+        elif be_applied and be_sl and abs(exit_price - float(be_sl)) <= pip_size * 3:
+            exit_reason = "hit_breakeven"
         elif stop_price and abs(exit_price - float(stop_price)) <= pip_size * 2:
             exit_reason = "hit_stop_loss"
 
@@ -2259,6 +2282,18 @@ def _aggressive_sync_with_broker(profile: ProfileV1, store: SqliteStore) -> int:
         if profit is not None:
             updates["profit"] = profit
 
+        # Compute post-SL recovery pips for SL/BE closes
+        if exit_reason in ("hit_stop_loss", "hit_breakeven") and exit_time:
+            try:
+                from core.trade_sync import compute_post_sl_recovery_pips
+                recovery = compute_post_sl_recovery_pips(
+                    adapter, profile.symbol, side, exit_price, exit_time, pip_size
+                )
+                if recovery is not None:
+                    updates["post_sl_recovery_pips"] = recovery
+            except Exception as _e:
+                print(f"[api] post_sl_recovery failed for {trade_id}: {_e}")
+
         store.close_trade(trade_id=trade_id, updates=updates)
         print(f"[api] aggressive sync: closed {trade_id} with exit_reason={exit_reason}, pips={pips:.2f}")
         synced += 1
@@ -2269,6 +2304,104 @@ def _aggressive_sync_with_broker(profile: ProfileV1, store: SqliteStore) -> int:
         pass
 
     return synced
+
+
+# ---------------------------------------------------------------------------
+# Backfill exit analytics
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/data/{profile_name}/backfill-exit-analytics")
+def backfill_exit_analytics(profile_name: str, profile_path: str) -> dict[str, Any]:
+    """Backfill exit_reason and post_sl_recovery_pips for historical trades.
+
+    Pass 1: Fix exit_reason for trades where breakeven was applied but reason
+            was recorded as broker_closed / broker_closed_sync / hit_stop_loss.
+    Pass 2: Compute post_sl_recovery_pips for SL/BE closes that are missing it.
+    """
+    from core.trade_sync import compute_post_sl_recovery_pips
+
+    path = _resolve_profile_path(profile_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Profile not found")
+    profile = load_profile_v1(path)
+    store = _store_for(profile_name)
+    pip_size = float(profile.pip_size)
+
+    be_fixed = 0
+    recovery_computed = 0
+    recovery_failed = 0
+
+    with store.connect() as conn:
+        # --- Pass 1: fix exit_reason for BE trades ---
+        rows = conn.execute(
+            """SELECT trade_id, exit_price, stop_price, target_price,
+                      side, breakeven_sl_price, breakeven_applied
+               FROM trades
+               WHERE exit_reason IN ('broker_closed','broker_closed_sync','hit_stop_loss')
+                 AND breakeven_applied = 1
+                 AND breakeven_sl_price IS NOT NULL
+                 AND exit_price IS NOT NULL
+                 AND profile = ?""",
+            [profile_name],
+        ).fetchall()
+
+        for row in rows:
+            exit_price = float(row["exit_price"])
+            be_sl = float(row["breakeven_sl_price"])
+            if abs(exit_price - be_sl) <= pip_size * 3:
+                conn.execute(
+                    "UPDATE trades SET exit_reason='hit_breakeven' WHERE trade_id=?",
+                    [row["trade_id"]],
+                )
+                be_fixed += 1
+
+        conn.commit()
+
+        # --- Pass 2: compute post-SL recovery ---
+        sl_rows = conn.execute(
+            """SELECT trade_id, side, exit_price, exit_timestamp_utc
+               FROM trades
+               WHERE exit_reason IN ('hit_stop_loss','hit_breakeven')
+                 AND post_sl_recovery_pips IS NULL
+                 AND exit_timestamp_utc IS NOT NULL
+                 AND exit_price IS NOT NULL
+                 AND profile = ?""",
+            [profile_name],
+        ).fetchall()
+
+    if sl_rows:
+        try:
+            from adapters.broker import get_adapter
+            adapter = get_adapter(profile)
+            adapter.initialize()
+            adapter.ensure_symbol(profile.symbol)
+
+            for row in sl_rows:
+                recovery = compute_post_sl_recovery_pips(
+                    adapter,
+                    profile.symbol,
+                    str(row["side"]),
+                    float(row["exit_price"]),
+                    str(row["exit_timestamp_utc"]),
+                    pip_size,
+                )
+                if recovery is not None:
+                    store.update_trade(row["trade_id"], {"post_sl_recovery_pips": recovery})
+                    recovery_computed += 1
+                else:
+                    recovery_failed += 1
+
+            try:
+                adapter.shutdown()
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[api] backfill-exit-analytics recovery pass failed: {e}")
+            recovery_failed += len(sl_rows) - recovery_computed
+
+    print(f"[api] backfill-exit-analytics: be_fixed={be_fixed}, recovery_computed={recovery_computed}, recovery_failed={recovery_failed}")
+    return {"be_fixed": be_fixed, "recovery_computed": recovery_computed, "recovery_failed": recovery_failed}
 
 
 # ---------------------------------------------------------------------------
