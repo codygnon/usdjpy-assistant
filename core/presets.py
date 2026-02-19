@@ -1360,9 +1360,9 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     # Daily High/Low Filter (blocks BOTH zone entry AND pullback)
                     "daily_hl_filter_enabled": True,
                     "daily_hl_buffer_pips": 15.0,
-                    # Spread-Aware Breakeven (trigger_mode/apply_to hardcoded)
+                    # Spread-Aware Breakeven (Trial #5: spread+buffer)
                     "spread_aware_be_enabled": False,
-                    "spread_aware_be_trigger_mode": "fixed_pips",
+                    "spread_aware_be_trigger_mode": "spread_relative",
                     "spread_aware_be_fixed_trigger_pips": 5.0,
                     "spread_aware_be_spread_buffer_pips": 1.0,
                     "spread_aware_be_apply_to_zone_entry": True,

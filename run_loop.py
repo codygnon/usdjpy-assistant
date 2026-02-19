@@ -187,7 +187,11 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
             elif entry_type == "tiered_pullback" and getattr(t4_spread_be, "spread_aware_be_apply_to_tiered_pullback", True):
                 apply = True
             if apply:
-                trigger_mode = getattr(t4_spread_be, "spread_aware_be_trigger_mode", "fixed_pips")
+                # Trial #5: hardcode spread+buffer; Trial #4 uses policy setting
+                if getattr(t4_spread_be, "type", None) == "kt_cg_trial_5":
+                    trigger_mode = "spread_relative"
+                else:
+                    trigger_mode = getattr(t4_spread_be, "spread_aware_be_trigger_mode", "fixed_pips")
                 if trigger_mode == "spread_relative":
                     trigger_pips = (current_spread / pip) + getattr(t4_spread_be, "spread_aware_be_spread_buffer_pips", 1.0)
                 else:

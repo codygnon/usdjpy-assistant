@@ -493,9 +493,9 @@ class ExecutionPolicyKtCgTrial5(BaseModel):
     daily_hl_filter_enabled: bool = True
     daily_hl_buffer_pips: float = 15.0
 
-    # Spread-Aware Breakeven Stop Loss (trigger_mode and apply_to fields hardcoded)
+    # Spread-Aware Breakeven Stop Loss (Trial #5: default and hardcoded to spread+buffer)
     spread_aware_be_enabled: bool = False
-    spread_aware_be_trigger_mode: Literal["fixed_pips", "spread_relative"] = "fixed_pips"
+    spread_aware_be_trigger_mode: Literal["fixed_pips", "spread_relative"] = "spread_relative"
     spread_aware_be_fixed_trigger_pips: float = 5.0
     spread_aware_be_spread_buffer_pips: float = 1.0
     spread_aware_be_apply_to_zone_entry: bool = True
