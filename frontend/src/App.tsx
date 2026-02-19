@@ -3744,6 +3744,7 @@ interface EditedSettings {
   trend_exhaustion_fresh_max: number;
   trend_exhaustion_mature_max: number;
   trend_exhaustion_extended_max: number;
+  max_open_trades_per_side: number;
 }
 
 function PresetsPage({ profile }: { profile: Profile }) {
@@ -3829,6 +3830,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let trendExhaustionFreshMax = 2.0;
       let trendExhaustionMatureMax = 3.5;
       let trendExhaustionExtendedMax = 5.0;
+      let maxOpenTradesPerSide = 5;
       // Trial #4: Tiered ATR Filter
       let tieredAtrFilterEnabled = true;
       let tieredAtrBlockBelowPips = 4.0;
@@ -3972,6 +3974,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
             trendExhaustionMatureMax = (pol.trend_exhaustion_mature_max as number) ?? 3.5;
             trendExhaustionExtendedMax = (pol.trend_exhaustion_extended_max as number) ?? 5.0;
           }
+          if ('max_open_trades_per_side' in pol) {
+            maxOpenTradesPerSide = (pol.max_open_trades_per_side as number) ?? 5;
+          }
           if (policyCooldown > 0 || policySlPips !== 20) break;
         }
       }
@@ -4019,6 +4024,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         trend_exhaustion_fresh_max: trendExhaustionFreshMax,
         trend_exhaustion_mature_max: trendExhaustionMatureMax,
         trend_exhaustion_extended_max: trendExhaustionExtendedMax,
+        max_open_trades_per_side: maxOpenTradesPerSide,
         // Trial #4: Tiered ATR Filter
         tiered_atr_filter_enabled: tieredAtrFilterEnabled,
         tiered_atr_block_below_pips: tieredAtrBlockBelowPips,
@@ -4214,6 +4220,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.trend_exhaustion_fresh_max = editedSettings.trend_exhaustion_fresh_max;
           updates.trend_exhaustion_mature_max = editedSettings.trend_exhaustion_mature_max;
           updates.trend_exhaustion_extended_max = editedSettings.trend_exhaustion_extended_max;
+          updates.max_open_trades_per_side = Math.max(1, Math.min(20, editedSettings.max_open_trades_per_side));
         }
         return Object.keys(updates).length > 0 ? { ...pol, ...updates } : pol;
       }) || [];
@@ -5474,6 +5481,25 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         When price touches M1 EMA tiers, triggers entry. Each tier fires once per touch and resets when price moves away.
                       </div>
                     </div>
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && (
+                    <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                        Max Open Trades Per Side
+                      </div>
+                      <input
+                        type="number"
+                        step="1"
+                        min="1"
+                        max="20"
+                        value={editedSettings.max_open_trades_per_side}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, max_open_trades_per_side: parseInt(e.target.value) || 5 })}
+                        style={{ width: '100%', padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                      />
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                        Max simultaneous open trades per direction (BUY/SELL independently). Recommended: 5.
+                      </div>
+                    </div>
+                    )}
                   </div>
                   <button
                     className="btn btn-secondary mt-3"

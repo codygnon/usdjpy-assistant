@@ -4634,6 +4634,26 @@ def execute_kt_cg_trial_5_policy_demo_only(
         except Exception:
             pass
 
+    # Per-direction open trade cap
+    max_open_per_side = policy.max_open_trades_per_side
+    if max_open_per_side is not None:
+        try:
+            all_open = store.list_open_trades(profile.profile_name)
+            side_open = sum(1 for row in all_open if row.get("side", "").lower() == side)
+            if side_open >= max_open_per_side:
+                return {
+                    "decision": ExecutionDecision(
+                        attempted=True, placed=False,
+                        reason=f"max_open_trades_per_side: {side_open} {side} trade(s) open (max {max_open_per_side})",
+                    ),
+                    "tier_updates": tier_updates,
+                    "divergence_updates": {},
+                    "exhaustion_state": exhaustion_state,
+                    "exhaustion_result": exhaustion_result,
+                }
+        except Exception:
+            pass
+
     # Idempotency check for zone_entry only
     if trigger_type == "zone_entry":
         within = 2
