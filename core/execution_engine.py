@@ -4350,6 +4350,28 @@ def _passes_fresh_cross_check(m1_df: pd.DataFrame, is_bull: bool) -> tuple[bool,
     return True, None
 
 
+def _find_last_m3_ema_cross(m3_df: pd.DataFrame) -> tuple[Optional[float], Optional[str]]:
+    """Find the most recent M3 EMA9/EMA21 crossover in history. Used to bootstrap exhaustion state.
+
+    Returns (flip_price, direction) with flip_price = close of the bar where cross occurred,
+    direction = "bull" or "bear". Returns (None, None) if no crossover found or insufficient bars.
+    """
+    close = m3_df["close"].astype(float)
+    if len(close) < 3:
+        return None, None
+    ema9 = close.ewm(span=9, adjust=False).mean()
+    ema21 = close.ewm(span=21, adjust=False).mean()
+    n = len(ema9)
+    for i in range(n - 1, 0, -1):
+        bull_now = float(ema9.iloc[i]) > float(ema21.iloc[i])
+        bull_prev = float(ema9.iloc[i - 1]) > float(ema21.iloc[i - 1])
+        if bull_now != bull_prev:
+            flip_price = float(close.iloc[i])
+            direction = "bull" if bull_now else "bear"
+            return flip_price, direction
+    return None, None
+
+
 def _detect_trend_flip_and_compute_exhaustion(
     m3_df: pd.DataFrame,
     current_price: float,
@@ -4494,6 +4516,12 @@ def execute_kt_cg_trial_5_policy_demo_only(
     current_price = (tick.bid + tick.ask) / 2.0
     pip_size = float(profile.pip_size)
     if getattr(policy, "trend_exhaustion_enabled", False) and m3_df is not None and not m3_df.empty:
+        # Bootstrap: if no persisted flip price (e.g. after long pause), find last M3 cross from history
+        if exhaustion_state.get("trend_flip_price") is None:
+            flip_price, flip_dir = _find_last_m3_ema_cross(m3_df)
+            if flip_price is not None and flip_dir is not None:
+                exhaustion_state["trend_flip_price"] = flip_price
+                exhaustion_state["trend_flip_direction"] = flip_dir
         exhaustion_result = _detect_trend_flip_and_compute_exhaustion(
             m3_df, current_price, pip_size, exhaustion_state, policy
         )

@@ -1325,6 +1325,17 @@ def main() -> None:
                     divergence_updates = exec_result.get("divergence_updates", {})
                     t5_trigger_type = exec_result.get("trigger_type")
 
+                    # Exhaustion status (when enabled)
+                    if getattr(pol, "trend_exhaustion_enabled", False):
+                        ex_result = exec_result.get("exhaustion_result")
+                        ex_state = exec_result.get("exhaustion_state", {})
+                        zone = ex_result.get("zone", "—") if ex_result else "—"
+                        flip_price = ex_state.get("trend_flip_price")
+                        last_cross = f"{flip_price:.3f}" if flip_price is not None else "—"
+                        ratio = ex_result.get("extension_ratio")
+                        ratio_str = f"{ratio}x ATR" if ratio is not None else "—"
+                        print(f"[{profile.profile_name}] Exhaustion: {zone} | last M3 cross {last_cross} | {ratio_str}")
+
                     # Persist tier state updates
                     if tier_updates:
                         try:
