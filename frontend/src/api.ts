@@ -500,6 +500,8 @@ export interface OpenTrade {
   timestamp_utc: string;
   mt5_order_id?: number;
   mt5_position_id?: number;
+  unrealized_pl?: number;
+  financing?: number;
 }
 
 export async function getOpenTrades(profileName: string, profilePath?: string): Promise<OpenTrade[]> {

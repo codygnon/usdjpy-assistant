@@ -1741,19 +1741,58 @@ def get_open_trades(profile_name: str, profile_path: Optional[str] = None) -> li
     """Get open trades (trades without exit_price).
 
     Syncs with broker first to detect any trades closed externally.
+    Also includes live unrealized_pl and financing from broker.
     """
     store = _store_for(profile_name)
 
-    # Sync with broker to detect closed trades
+    broker_live: dict[int, dict] = {}
+
     if profile_path:
+        loaded_profile = None
         try:
-            profile = load_profile_v1(profile_path)
-            _sync_open_trades_with_broker(profile, store)
+            loaded_profile = load_profile_v1(profile_path)
+            _sync_open_trades_with_broker(loaded_profile, store)
         except Exception as e:
             print(f"[api] sync error in open-trades: {e}")
 
+        if loaded_profile is not None:
+            try:
+                from adapters.broker import get_adapter
+                adapter = get_adapter(loaded_profile)
+                adapter.initialize()
+                live_positions = adapter.get_open_positions(loaded_profile.symbol)
+                for pos in live_positions:
+                    if isinstance(pos, dict):
+                        pos_id = pos.get("id")
+                        if pos_id is not None:
+                            try:
+                                broker_live[int(pos_id)] = {
+                                    "unrealized_pl": float(pos.get("unrealizedPL") or 0),
+                                    "financing": float(pos.get("financing") or 0),
+                                }
+                            except (TypeError, ValueError):
+                                pass
+                try:
+                    adapter.shutdown()
+                except Exception:
+                    pass
+            except Exception as e:
+                print(f"[api] live data fetch error in open-trades: {e}")
+
     rows = store.list_open_trades(profile_name)
-    return [dict(row) for row in rows]
+    result = []
+    for row in rows:
+        d = dict(row)
+        pos_id = d.get("mt5_position_id")
+        if pos_id is not None and broker_live:
+            try:
+                live = broker_live.get(int(pos_id))
+                if live:
+                    d.update(live)
+            except (TypeError, ValueError):
+                pass
+        result.append(d)
+    return result
 
 
 def _sync_open_trades_with_broker(profile: ProfileV1, store: SqliteStore) -> int:

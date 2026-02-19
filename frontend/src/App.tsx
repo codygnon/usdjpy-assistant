@@ -486,15 +486,26 @@ function RunPage({ profile }: { profile: Profile }) {
   const [state, setState] = useState<api.RuntimeState | null>(null);
   const [log, setLog] = useState<string>('');
   const [loading, setLoading] = useState(false);
+  const [openTrades, setOpenTrades] = useState<api.OpenTrade[]>([]);
 
   const fetchState = () => {
     api.getRuntimeState(profile.name).then(setState).catch(console.error);
     api.getLoopLog(profile.name, 200).then((r) => setLog(r.content)).catch(console.error);
   };
 
+  const fetchOpenTrades = () => {
+    api.getOpenTrades(profile.name, profile.path).then(setOpenTrades).catch(console.error);
+  };
+
   useEffect(() => {
     fetchState();
     const interval = setInterval(fetchState, 3000);
+    return () => clearInterval(interval);
+  }, [profile.name]);
+
+  useEffect(() => {
+    fetchOpenTrades();
+    const interval = setInterval(fetchOpenTrades, 15000);
     return () => clearInterval(interval);
   }, [profile.name]);
 
@@ -596,6 +607,28 @@ function RunPage({ profile }: { profile: Profile }) {
               />
               Kill Switch (disable all execution)
             </label>
+          </div>
+        </div>
+      </div>
+
+      <div className="card mt-4">
+        <h3 className="card-title">Open Positions</h3>
+        <div style={{ display: 'flex', gap: 32 }}>
+          <div>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Total</div>
+            <div style={{ fontSize: '1.4rem', fontWeight: 700 }}>{openTrades.length}</div>
+          </div>
+          <div>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Long</div>
+            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#3b82f6' }}>
+              {openTrades.filter(t => t.side.toLowerCase() === 'buy').length}
+            </div>
+          </div>
+          <div>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Short</div>
+            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#ef4444' }}>
+              {openTrades.filter(t => t.side.toLowerCase() === 'sell').length}
+            </div>
           </div>
         </div>
       </div>
@@ -1271,9 +1304,10 @@ function AnalysisPage({ profile }: { profile: Profile }) {
 
   const fetchTa = async () => {
     try {
-      const [taData, allTradesData] = await Promise.all([
+      const [taData, allTradesData, openTradesData] = await Promise.all([
         api.getTechnicalAnalysis(profile.name, profile.path),
         api.getTrades(profile.name, 250).then((r) => r.trades).catch(() => []),
+        api.getOpenTrades(profile.name, profile.path).catch(() => []),
       ]);
       setTa(taData);
       // Track scalp score history (last 50 per TF)
@@ -1290,9 +1324,26 @@ function AnalysisPage({ profile }: { profile: Profile }) {
           return next;
         });
       }
-      // Build chart trades: open + recently closed (with entry/exit times for markers)
-      const chartTradesList: ChartTrade[] = allTradesData
-        .filter((t: Record<string, unknown>) => t.trade_id && t.entry_price)
+      // Open trades from OANDA (accurate, not limited to 250)
+      const openChartTrades: ChartTrade[] = openTradesData.map((t: api.OpenTrade) => {
+        const entryTime = t.timestamp_utc
+          ? Math.floor(new Date(t.timestamp_utc).getTime() / 1000)
+          : undefined;
+        return {
+          trade_id: String(t.trade_id),
+          entry_price: Number(t.entry_price),
+          stop_price: t.stop_price != null ? Number(t.stop_price) : null,
+          target_price: t.target_price != null ? Number(t.target_price) : null,
+          side: String(t.side || 'buy'),
+          entry_time: entryTime,
+          exit_time: undefined,
+          exit_price: undefined,
+        };
+      });
+      // Closed trades from DB last 250 (sufficient for chart markers)
+      const openIds = new Set(openTradesData.map((t: api.OpenTrade) => String(t.trade_id)));
+      const closedChartTrades: ChartTrade[] = allTradesData
+        .filter((t: Record<string, unknown>) => t.trade_id && t.entry_price && !openIds.has(String(t.trade_id)))
         .map((t: Record<string, unknown>) => {
           const tsUtc = t.timestamp_utc as string | undefined;
           const exitTsUtc = t.exit_timestamp_utc as string | undefined;
@@ -1309,7 +1360,7 @@ function AnalysisPage({ profile }: { profile: Profile }) {
             exit_price: t.exit_price != null ? Number(t.exit_price) : undefined,
           };
         });
-      setChartTrades(chartTradesList);
+      setChartTrades([...openChartTrades, ...closedChartTrades]);
       setError(null);
       setLastUpdate(new Date());
     } catch (e: unknown) {
@@ -7364,6 +7415,7 @@ function LogsPage({ profile }: { profile: Profile }) {
   const [analyticsTradesData, setAnalyticsTradesData] = useState<{ trades: api.TradeDetail[]; displayCurrency: string } | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [visibleTradeCount, setVisibleTradeCount] = useState(50);
+  const [openTradesMap, setOpenTradesMap] = useState<Record<string, api.OpenTrade>>({});
 
   const fetchData = () => {
     api.getQuickStats(profile.name, profile.path).then(setStats).catch(console.error);
@@ -7375,6 +7427,11 @@ function LogsPage({ profile }: { profile: Profile }) {
     api.getExecutions(profile.name, 20).then(setExecutions).catch(console.error);
     api.getStatsByPreset(profile.name, profile.path).then(setPresetStats).catch(console.error);
     api.getMt5Report(profile.name, profile.path).then((r) => setMt5Report(r ?? null)).catch(() => setMt5Report(null));
+    api.getOpenTrades(profile.name, profile.path).then((openTrades) => {
+      const map: Record<string, api.OpenTrade> = {};
+      for (const t of openTrades) map[String(t.trade_id)] = t;
+      setOpenTradesMap(map);
+    }).catch(console.error);
   };
 
   useEffect(() => {
@@ -7966,10 +8023,34 @@ function LogsPage({ profile }: { profile: Profile }) {
                         {typeof t.pips === 'number' ? t.pips.toFixed(2) : '-'}
                       </td>
                       <td>{typeof t.r_multiple === 'number' ? t.r_multiple.toFixed(2) : '-'}</td>
-                      <td style={{ color: typeof t.profit_display === 'number' ? (t.profit_display >= 0 ? 'var(--success)' : 'var(--danger)') : 'inherit' }}>
-                        {typeof t.profit_display === 'number'
-                          ? `${t.profit_display >= 0 ? '+' : ''}${t.profit_display.toFixed(2)} ${tradesDisplayCurrency || (stats as api.QuickStats)?.display_currency || 'USD'}`
-                          : '-'}
+                      <td>
+                        {isOpenTrade(t) ? (() => {
+                          const live = openTradesMap[String(t.trade_id)];
+                          const currency = tradesDisplayCurrency || (stats as api.QuickStats)?.display_currency || 'USD';
+                          if (live?.unrealized_pl != null) {
+                            const pl = live.unrealized_pl;
+                            const fin = live.financing;
+                            return (
+                              <>
+                                <span style={{ color: pl >= 0 ? 'var(--success)' : 'var(--danger)' }}>
+                                  ~{pl >= 0 ? '+' : ''}{pl.toFixed(2)} {currency}
+                                </span>
+                                {fin != null && fin !== 0 && (
+                                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                                    fin: {fin >= 0 ? '+' : ''}{fin.toFixed(2)}
+                                  </span>
+                                )}
+                              </>
+                            );
+                          }
+                          return <span>-</span>;
+                        })() : (
+                          <span style={{ color: typeof t.profit_display === 'number' ? (t.profit_display >= 0 ? 'var(--success)' : 'var(--danger)') : 'inherit' }}>
+                            {typeof t.profit_display === 'number'
+                              ? `${t.profit_display >= 0 ? '+' : ''}${t.profit_display.toFixed(2)} ${tradesDisplayCurrency || (stats as api.QuickStats)?.display_currency || 'USD'}`
+                              : '-'}
+                          </span>
+                        )}
                       </td>
                       <td>
                         <span style={{ 
