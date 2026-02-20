@@ -2457,3 +2457,29 @@ def serve_spa(full_path: str):
 @app.get("/api/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Dashboard endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/data/{profile_name}/dashboard")
+def get_dashboard(profile_name: str) -> dict[str, Any]:
+    """Returns dashboard_state.json contents (filters + context + positions + daily summary)."""
+    from core.dashboard_models import read_dashboard_state
+
+    log_dir = LOGS_DIR / profile_name
+    state = read_dashboard_state(log_dir)
+    if state is None:
+        return {"error": "no_dashboard_data", "timestamp_utc": None}
+    return state
+
+
+@app.get("/api/data/{profile_name}/trade-events")
+def get_trade_events(profile_name: str, limit: int = 50) -> list[dict[str, Any]]:
+    """Returns trade_events.json contents (append-only trade log)."""
+    from core.dashboard_models import read_trade_events
+
+    log_dir = LOGS_DIR / profile_name
+    return read_trade_events(log_dir, limit=limit)

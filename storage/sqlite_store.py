@@ -307,6 +307,15 @@ class SqliteStore:
             conn.execute(q, [*updates.values(), trade_id])
             conn.commit()
 
+    def get_trades_for_date(self, profile: str, date_str: str) -> list[sqlite3.Row]:
+        """Get closed trades for a specific date (YYYY-MM-DD) for daily summary."""
+        with self.connect() as conn:
+            cur = conn.execute(
+                "SELECT * FROM trades WHERE profile=? AND exit_price IS NOT NULL AND timestamp_utc LIKE ? ORDER BY timestamp_utc",
+                [profile, f"{date_str}%"],
+            )
+            return cur.fetchall()
+
     def get_trades_missing_position_id(self, profile: str) -> list[sqlite3.Row]:
         """Get trades that have mt5_deal_id or mt5_order_id but no mt5_position_id (for backfill)."""
         with self.connect() as conn:

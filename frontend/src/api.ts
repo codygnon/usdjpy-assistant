@@ -541,3 +541,81 @@ export async function getAdvancedAnalytics(
 ): Promise<AdvancedAnalyticsResponse> {
   return fetchJson(`${API_BASE}/data/${profileName}/advanced-analytics?profile_path=${encodeURIComponent(profilePath)}&days_back=${daysBack}`);
 }
+
+// Dashboard
+export interface FilterReport {
+  filter_id: string;
+  display_name: string;
+  enabled: boolean;
+  is_clear: boolean;
+  current_value: string;
+  threshold: string;
+  block_reason: string | null;
+  sub_filters: FilterReport[];
+  metadata: Record<string, unknown>;
+}
+
+export interface ContextItem {
+  key: string;
+  value: string;
+  category: string;
+}
+
+export interface PositionInfo {
+  trade_id: string;
+  side: string;
+  entry_price: number;
+  entry_type: string | null;
+  current_price: number;
+  unrealized_pips: number;
+  age_minutes: number;
+  stop_price: number | null;
+  target_price: number | null;
+  breakeven_applied: boolean;
+}
+
+export interface DailySummary {
+  trades_today: number;
+  wins: number;
+  losses: number;
+  total_pips: number;
+  total_profit: number;
+  win_rate: number;
+}
+
+export interface DashboardState {
+  timestamp_utc: string | null;
+  preset_name: string;
+  mode: string;
+  loop_running: boolean;
+  filters: FilterReport[];
+  context: ContextItem[];
+  positions: PositionInfo[];
+  daily_summary: DailySummary | null;
+  bid: number;
+  ask: number;
+  spread_pips: number;
+  error?: string;
+}
+
+export interface TradeEvent {
+  event_type: string;
+  timestamp_utc: string;
+  trade_id: string;
+  side: string;
+  entry_type: string | null;
+  price: number;
+  trigger_type: string | null;
+  pips: number | null;
+  profit: number | null;
+  exit_reason: string | null;
+  context_snapshot: Record<string, unknown>;
+}
+
+export async function getDashboard(profileName: string): Promise<DashboardState> {
+  return fetchJson<DashboardState>(`${API_BASE}/data/${profileName}/dashboard`);
+}
+
+export async function getTradeEvents(profileName: string, limit = 50): Promise<TradeEvent[]> {
+  return fetchJson<TradeEvent[]>(`${API_BASE}/data/${profileName}/trade-events?limit=${limit}`);
+}

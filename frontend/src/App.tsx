@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { createChart, IChartApi, ISeriesApi, CandlestickData, Time, CandlestickSeries, LineSeries, LineStyle, IPriceLine, createSeriesMarkers, ISeriesMarkersPluginApi, SeriesMarker } from 'lightweight-charts';
 import { ComposedChart, Area, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ScatterChart, Scatter, Cell, BarChart, LineChart, AreaChart } from 'recharts';
 import * as api from './api';
+import DashboardPage from './DashboardPage';
 
 // Error boundary to prevent white-screen crashes
 class ErrorBoundary extends React.Component<
@@ -33,7 +34,7 @@ class ErrorBoundary extends React.Component<
   }
 }
 
-type Page = 'run' | 'presets' | 'profile' | 'logs' | 'analysis' | 'guide';
+type Page = 'dashboard' | 'run' | 'presets' | 'profile' | 'logs' | 'analysis' | 'guide';
 
 interface Profile {
   path: string;
@@ -55,7 +56,7 @@ const setUnlockedProfilesStorage = (paths: Set<string>) => {
 };
 
 export default function App() {
-  const [page, setPage] = useState<Page>('run');
+  const [page, setPage] = useState<Page>('dashboard');
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<Profile | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -375,6 +376,12 @@ export default function App() {
 
         <nav style={{ marginTop: 24 }}>
           <button
+            className={`nav-item ${page === 'dashboard' ? 'active' : ''}`}
+            onClick={() => setPage('dashboard')}
+          >
+            Dashboard
+          </button>
+          <button
             className={`nav-item ${page === 'run' ? 'active' : ''}`}
             onClick={() => setPage('run')}
           >
@@ -459,6 +466,7 @@ export default function App() {
           ) : (
             <>
               <ErrorBoundary>
+              {page === 'dashboard' && <DashboardPage profileName={selectedProfile.name} profilePath={selectedProfile.path} />}
               {page === 'run' && <RunPage profile={selectedProfile} />}
               {page === 'analysis' && <AnalysisPage profile={selectedProfile} />}
               {page === 'presets' && <PresetsPage profile={selectedProfile} />}

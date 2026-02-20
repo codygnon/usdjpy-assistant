@@ -42,6 +42,19 @@ from core.signal_engine import (
     evaluate_filters,
 )
 from core.trade_sync import sync_closed_trades, import_mt5_history
+from core.dashboard_models import (
+    DailySummary, DashboardState, PositionInfo, TradeEvent,
+    append_trade_event, write_dashboard_state,
+)
+from core.dashboard_reporters import (
+    collect_trial_2_context, collect_trial_3_context,
+    collect_trial_4_context, collect_trial_5_context,
+    report_cooldown, report_daily_hl_filter, report_dead_zone,
+    report_dual_atr_trial_5, report_ema_zone_filter,
+    report_max_trades, report_rolling_danger_zone,
+    report_rsi_divergence, report_session_filter, report_spread,
+    report_tiered_atr_trial_4, report_trend_exhaustion,
+)
 from storage.sqlite_store import SqliteStore
 
 
@@ -296,6 +309,208 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
             store.update_trade(trade_id, mae_mfe_updates)
 
 
+def _build_and_write_dashboard(
+    *,
+    profile,
+    store,
+    log_dir,
+    tick,
+    data_by_tf: dict,
+    mode: str,
+    policy=None,
+    policy_type: str = "",
+    tier_state: dict | None = None,
+    eval_result: dict | None = None,
+    divergence_state: dict | None = None,
+    daily_reset_state: dict | None = None,
+    exhaustion_result: dict | None = None,
+) -> None:
+    """Assemble and write dashboard state JSON for the current poll cycle."""
+    from datetime import datetime, timezone
+
+    try:
+        pip_size = float(profile.pip_size)
+        now_utc = datetime.now(timezone.utc)
+
+        # --- Filter reports ---
+        filters = []
+        # Extract side from exec_result: decision.side for T4/T5
+        side = "buy"
+        trigger_type = "zone_entry"
+        if eval_result:
+            trigger_type = eval_result.get("trigger_type", "zone_entry") or "zone_entry"
+            dec_obj = eval_result.get("decision")
+            if dec_obj and hasattr(dec_obj, "side") and dec_obj.side:
+                side = dec_obj.side
+            elif eval_result.get("side"):
+                side = eval_result["side"]
+
+        # Session filter (all trials)
+        filters.append(report_session_filter(profile, now_utc))
+
+        # Spread
+        spread_pips = (tick.ask - tick.bid) / pip_size
+        max_spread = getattr(profile.strategy.filters, "max_spread_pips", None) if hasattr(profile.strategy, "filters") else None
+        filters.append(report_spread(spread_pips, max_spread))
+
+        if policy_type in ("kt_cg_trial_4",):
+            filters.append(report_tiered_atr_trial_4(policy, data_by_tf.get("M1"), pip_size, trigger_type))
+            filters.append(report_daily_hl_filter(
+                policy, data_by_tf, tick, side, pip_size,
+            ))
+            m1_df = data_by_tf.get("M1")
+            is_bull = side == "buy"
+            if m1_df is not None and not m1_df.empty:
+                filters.append(report_ema_zone_filter(policy, m1_df, pip_size, is_bull))
+            filters.append(report_rolling_danger_zone(policy, data_by_tf.get("M1"), tick, side, pip_size))
+            filters.append(report_rsi_divergence(policy, divergence_state or {}, side))
+
+        elif policy_type in ("kt_cg_trial_5",):
+            filters.append(report_dual_atr_trial_5(policy, data_by_tf.get("M1"), data_by_tf.get("M3"), pip_size, trigger_type))
+            filters.append(report_daily_hl_filter(
+                policy, data_by_tf, tick, side, pip_size,
+                daily_reset_state.get("daily_reset_high") if daily_reset_state else None,
+                daily_reset_state.get("daily_reset_low") if daily_reset_state else None,
+                daily_reset_state.get("daily_reset_settled", False) if daily_reset_state else False,
+            ))
+            m1_df = data_by_tf.get("M1")
+            is_bull = side == "buy"
+            if m1_df is not None and not m1_df.empty:
+                filters.append(report_ema_zone_filter(policy, m1_df, pip_size, is_bull))
+            filters.append(report_rolling_danger_zone(policy, data_by_tf.get("M1"), tick, side, pip_size))
+            filters.append(report_rsi_divergence(policy, divergence_state or {}, side))
+            filters.append(report_dead_zone(daily_reset_state or {}))
+            filters.append(report_trend_exhaustion(exhaustion_result))
+            # Max trades per side
+            max_per_side = getattr(policy, "max_open_trades_per_side", None)
+            if max_per_side is not None:
+                open_trades = store.list_open_trades(profile.profile_name)
+                side_counts = {"buy": 0, "sell": 0}
+                for t in open_trades:
+                    s = str(dict(t).get("side", "")).lower()
+                    if s in side_counts:
+                        side_counts[s] += 1
+                sc = side_counts.get(side, 0)
+                filters.append(report_max_trades(sc, max_per_side, side, side_counts))
+
+        # --- Context items ---
+        context_items = []
+        if policy_type == "kt_cg_trial_4":
+            context_items = collect_trial_4_context(
+                policy, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
+            )
+        elif policy_type == "kt_cg_trial_5":
+            context_items = collect_trial_5_context(
+                policy, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
+                exhaustion_result=exhaustion_result,
+                daily_reset_state=daily_reset_state,
+            )
+        elif policy_type == "kt_cg_hybrid":
+            context_items = collect_trial_2_context(policy, data_by_tf, tick, pip_size)
+        elif policy_type == "kt_cg_counter_trend_pullback":
+            context_items = collect_trial_3_context(policy, data_by_tf, tick, pip_size)
+
+        # --- Positions ---
+        positions = []
+        try:
+            open_trades = store.list_open_trades(profile.profile_name)
+            mid = (tick.bid + tick.ask) / 2.0
+            for row in open_trades:
+                d = dict(row)
+                entry = float(d.get("entry_price", 0))
+                s = str(d.get("side", "")).lower()
+                if s == "buy":
+                    unrealized = (mid - entry) / pip_size
+                else:
+                    unrealized = (entry - mid) / pip_size
+                age = 0.0
+                ts = d.get("timestamp_utc")
+                if ts:
+                    try:
+                        import pandas as _pd
+                        t0 = _pd.to_datetime(ts, utc=True)
+                        age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
+                    except Exception:
+                        pass
+                positions.append(PositionInfo(
+                    trade_id=str(d.get("trade_id", "")),
+                    side=s,
+                    entry_price=entry,
+                    entry_type=d.get("entry_type"),
+                    current_price=mid,
+                    unrealized_pips=round(unrealized, 1),
+                    age_minutes=round(age, 1),
+                    stop_price=d.get("stop_price"),
+                    target_price=d.get("target_price"),
+                    breakeven_applied=bool(d.get("breakeven_applied")),
+                ))
+        except Exception:
+            pass
+
+        # --- Daily summary ---
+        daily = DailySummary()
+        try:
+            date_str = now_utc.strftime("%Y-%m-%d")
+            closed_today = store.get_trades_for_date(profile.profile_name, date_str)
+            daily.trades_today = len(closed_today)
+            for row in closed_today:
+                d = dict(row)
+                pips = d.get("pips")
+                profit = d.get("profit")
+                if pips is not None:
+                    daily.total_pips += float(pips)
+                    if float(pips) > 0:
+                        daily.wins += 1
+                    else:
+                        daily.losses += 1
+                if profit is not None:
+                    daily.total_profit += float(profit)
+            if daily.trades_today > 0:
+                daily.win_rate = round(daily.wins / daily.trades_today * 100, 1)
+        except Exception:
+            pass
+
+        # --- Assemble state ---
+        state = DashboardState(
+            timestamp_utc=now_utc.isoformat(),
+            preset_name=profile.active_preset_name or "",
+            mode=mode,
+            loop_running=True,
+            filters=filters,
+            context=context_items,
+            positions=positions,
+            daily_summary=daily,
+            bid=tick.bid,
+            ask=tick.ask,
+            spread_pips=round(spread_pips, 1),
+        )
+        write_dashboard_state(log_dir, state)
+    except Exception as e:
+        print(f"[{profile.profile_name}] Dashboard write error: {e}")
+
+
+def _append_trade_open_event(
+    log_dir, trade_id: str, side: str, price: float,
+    trigger_type: str = "", entry_type: str = "",
+    context_snapshot: dict | None = None,
+) -> None:
+    """Append a trade open event for dashboard display."""
+    try:
+        event = TradeEvent(
+            event_type="open",
+            timestamp_utc=pd.Timestamp.now(tz="UTC").isoformat(),
+            trade_id=trade_id,
+            side=side,
+            entry_type=entry_type,
+            price=price,
+            trigger_type=trigger_type,
+            context_snapshot=context_snapshot or {},
+        )
+        append_trade_event(log_dir, event)
+    except Exception:
+        pass
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run v1 loop (M1 cadence).")
     ap.add_argument("--profile", required=True, help="Path to profile JSON (legacy or v1)")
@@ -418,7 +633,7 @@ def main() -> None:
             # Periodic trade sync (detect externally closed trades; import from broker history)
             if loop_count - last_sync_loop >= SYNC_INTERVAL_LOOPS:
                 try:
-                    synced = sync_closed_trades(profile, store)
+                    synced = sync_closed_trades(profile, store, log_dir=log_dir)
                     if synced > 0:
                         print(f"[{profile.profile_name}] synced {synced} externally closed trade(s)")
                     # Import closed trades from broker history (OANDA activity / MT5 history) every sync
@@ -1031,8 +1246,19 @@ def main() -> None:
                                 stop_price=sl_price,
                                 target_price=tp_price,
                             )
+                            _append_trade_open_event(
+                                log_dir, f"kt_cg_hybrid:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
+                                side, entry_price,
+                            )
                         else:
                             print(f"[{profile.profile_name}] kt_cg_hybrid {pol.id} mode={mode} -> {dec.reason}")
+
+                    # Dashboard assembly for Trial #2
+                    _build_and_write_dashboard(
+                        profile=profile, store=store, log_dir=log_dir, tick=tick,
+                        data_by_tf=data_by_tf, mode=mode, policy=pol,
+                        policy_type="kt_cg_hybrid",
+                    )
 
             # KT/CG Counter-Trend Pullback policies (Trial #3)
             if has_kt_cg_ctp and mkt is not None:
@@ -1102,8 +1328,19 @@ def main() -> None:
                                 stop_price=sl_price,
                                 target_price=tp_price,
                             )
+                            _append_trade_open_event(
+                                log_dir, f"kt_cg_ctp:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
+                                side, entry_price,
+                            )
                         else:
                             print(f"[{profile.profile_name}] kt_cg_ctp {pol.id} mode={mode} -> {dec.reason}")
+
+                    # Dashboard assembly for Trial #3
+                    _build_and_write_dashboard(
+                        profile=profile, store=store, log_dir=log_dir, tick=tick,
+                        data_by_tf=data_by_tf, mode=mode, policy=pol,
+                        policy_type="kt_cg_counter_trend_pullback",
+                    )
 
             # Trial #4 execution — runs EVERY poll cycle (not just on M1 bar close)
             # so tiered pullback can detect live price touches between bar closes
@@ -1239,8 +1476,20 @@ def main() -> None:
                                 target_price=tp_price,
                                 entry_type=t4_trigger_type,
                             )
+                            _append_trade_open_event(
+                                log_dir, f"kt_cg_trial_4:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
+                                side, entry_price, trigger_type=t4_trigger_type or "", entry_type=t4_trigger_type or "",
+                            )
                         else:
                             print(f"[{profile.profile_name}] kt_cg_trial_4 {pol.id} mode={mode} -> {dec.reason}")
+
+                    # Dashboard assembly for Trial #4
+                    _build_and_write_dashboard(
+                        profile=profile, store=store, log_dir=log_dir, tick=tick,
+                        data_by_tf=data_by_tf, mode=mode, policy=pol,
+                        policy_type="kt_cg_trial_4", tier_state=tier_state,
+                        eval_result=exec_result, divergence_state=divergence_state,
+                    )
 
             # Trial #5 execution — same structure as Trial #4 with dual ATR filter
             if has_kt_cg_trial_5:
@@ -1434,6 +1683,10 @@ def main() -> None:
                                 target_price=tp_price,
                                 entry_type=t5_trigger_type,
                             )
+                            _append_trade_open_event(
+                                log_dir, f"kt_cg_trial_5:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
+                                side, entry_price, trigger_type=t5_trigger_type or "", entry_type=t5_trigger_type or "",
+                            )
                             # Fix 6: Only persist tier FIRES after trade is confirmed placed
                             if tier_fires:
                                 try:
@@ -1460,6 +1713,16 @@ def main() -> None:
                         fired_tiers = [str(t) for t, v in tier_state.items() if v]
                         avail_tiers = [str(t) for t, v in tier_state.items() if not v]
                         print(f"[{profile.profile_name}] [SUMMARY] zone={ex_zone} | tiers_fired=[{','.join(fired_tiers)}] avail=[{','.join(avail_tiers)}]")
+
+                    # Dashboard assembly for Trial #5
+                    _build_and_write_dashboard(
+                        profile=profile, store=store, log_dir=log_dir, tick=tick,
+                        data_by_tf=data_by_tf, mode=mode, policy=pol,
+                        policy_type="kt_cg_trial_5", tier_state=tier_state,
+                        eval_result=exec_result, divergence_state=divergence_state,
+                        daily_reset_state=daily_reset_state_t5,
+                        exhaustion_result=exec_result.get("exhaustion_result"),
+                    )
 
             if args.once:
                 break

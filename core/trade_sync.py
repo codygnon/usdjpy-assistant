@@ -104,7 +104,7 @@ def compute_post_sl_recovery_pips(
         return None
 
 
-def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore") -> int:
+def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore", log_dir=None) -> int:
     """Check open trades in DB against broker (MT5/OANDA); update any that were closed externally.
     
     Uses mt5_position_id (preferred) or falls back to mt5_order_id for lookups.
@@ -234,6 +234,27 @@ def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore") -> int:
         )
         
         print(f"[trade_sync] Synced closed trade {trade_id}: exit={exit_price}, pips={pips:.2f}, reason={exit_reason}")
+
+        # Append trade close event for dashboard
+        if log_dir is not None:
+            try:
+                from core.dashboard_models import TradeEvent, append_trade_event
+                from pathlib import Path
+                event = TradeEvent(
+                    event_type="close",
+                    timestamp_utc=exit_ts or pd.Timestamp.now(tz="UTC").isoformat(),
+                    trade_id=str(trade_id),
+                    side=side,
+                    entry_type=str(_safe_get(trade_row, "entry_type") or ""),
+                    price=float(exit_price),
+                    pips=float(pips),
+                    profit=float(close_info.profit) if close_info.profit is not None else None,
+                    exit_reason=exit_reason,
+                )
+                append_trade_event(Path(log_dir), event)
+            except Exception as e:
+                print(f"[trade_sync] Failed to append trade close event: {e}")
+
         synced_count += 1
     
     try:
