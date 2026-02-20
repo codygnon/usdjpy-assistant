@@ -1327,7 +1327,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     # Tiered Pullback Configuration (default: 18, 21, 25, 29, 34)
                     "tiered_pullback_enabled": True,
                     "tier_ema_periods": [18, 21, 25, 29, 34],
-                    "tier_reset_buffer_pips": 1.0,
+                    "tier_reset_buffer_pips": 3.0,
                     # Close opposite trades before placing new trade
                     "close_opposite_on_trade": True,
                     # Cooldown REMOVED (replaced by Fresh Cross)

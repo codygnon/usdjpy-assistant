@@ -4538,6 +4538,7 @@ def execute_kt_cg_trial_5_policy_demo_only(
                 "divergence_updates": {},
                 "daily_reset_state": daily_reset_state,
                 "exhaustion_state": exhaustion_state,
+                "exhaustion_result": None,
             }
 
     # --- Trend Extension Exhaustion ---
@@ -4646,6 +4647,21 @@ def execute_kt_cg_trial_5_policy_demo_only(
     if trigger_type == "tiered_pullback" and tiered_pullback_tier:
         rule_id = f"kt_cg_trial_5:{policy.id}:tier_{tiered_pullback_tier}"
 
+    # Fresh Cross Check: zone entry requires M1 EMA5/EMA9 cross within last 10 bars
+    if trigger_type == "zone_entry":
+        m1_df_fc = data_by_tf.get("M1")
+        if m1_df_fc is not None and not m1_df_fc.empty:
+            is_bull = side == "buy"
+            fc_ok, fc_reason = _passes_fresh_cross_check(m1_df_fc, is_bull)
+            if not fc_ok:
+                return {
+                    "decision": ExecutionDecision(attempted=True, placed=False, reason=fc_reason or "fresh_cross_check_failed"),
+                    "tier_updates": tier_updates,
+                    "divergence_updates": {},
+                    "exhaustion_state": exhaustion_state,
+                    "exhaustion_result": exhaustion_result,
+                }
+
     # Max 3 zone entry trades open at once (Trial #5)
     if trigger_type == "zone_entry":
         max_zone_entry_open = getattr(policy, "max_zone_entry_open", 3)
@@ -4675,10 +4691,11 @@ def execute_kt_cg_trial_5_policy_demo_only(
             if open_positions:
                 for pos in open_positions:
                     if isinstance(pos, dict):
-                        pos_side = (pos.get("side") or "").lower()
-                        if pos_side == "long":
+                        # OANDA trades have currentUnits (positive=buy, negative=sell), not "side"
+                        units = float(pos.get("currentUnits") or pos.get("initialUnits") or 0)
+                        if units > 0:
                             pos_side = "buy"
-                        elif pos_side == "short":
+                        elif units < 0:
                             pos_side = "sell"
                         else:
                             continue

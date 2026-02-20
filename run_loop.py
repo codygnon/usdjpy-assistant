@@ -392,6 +392,11 @@ def main() -> None:
             "H4": 14395.0, "D": 300.0,
         }
 
+        # Logging state for Trial #5 — reduce log spam
+        _last_exhaustion_zone: str | None = None
+        _last_summary_time: float = 0.0
+        _SUMMARY_INTERVAL: float = 30.0  # Print periodic summary every 30s
+
         def _get_bars_cached(symbol: str, tf: str, count: int) -> pd.DataFrame:
             """Fetch bars with caching to reduce API calls at fast poll rates."""
             now = time.time()
@@ -1326,34 +1331,40 @@ def main() -> None:
                     divergence_updates = exec_result.get("divergence_updates", {})
                     t5_trigger_type = exec_result.get("trigger_type")
 
-                    # Exhaustion status (when enabled)
+                    # Exhaustion status — only log on zone CHANGE (Fix 3: reduce log spam)
                     if getattr(pol, "trend_exhaustion_enabled", False):
                         ex_result = exec_result.get("exhaustion_result")
-                        ex_state = exec_result.get("exhaustion_state") or {}
-                        zone = ex_result.get("zone", "—") if ex_result else "—"
-                        flip_price = ex_state.get("trend_flip_price")
-                        last_cross = f"{flip_price:.3f}" if flip_price is not None else "—"
-                        ratio_raw = ex_result.get("extension_ratio") if ex_result else None
-                        ratio_adj = ex_result.get("adjusted_ratio") if ex_result else None
-                        tf = ex_result.get("time_factor") if ex_result else None
-                        raw_str = f"{ratio_raw}x" if ratio_raw is not None else "—"
-                        adj_str = f"{ratio_adj}x (tf={tf:.2f})" if ratio_adj is not None and tf is not None else "—"
-                        print(f"[{profile.profile_name}] Exhaustion: {zone} | cross@{last_cross} | raw={raw_str} adj={adj_str}")
+                        if ex_result is not None:
+                            ex_state = exec_result.get("exhaustion_state") or {}
+                            zone = ex_result.get("zone", "FRESH")
+                            if zone != _last_exhaustion_zone:
+                                flip_price = ex_state.get("trend_flip_price")
+                                last_cross = f"{flip_price:.3f}" if flip_price is not None else "—"
+                                ratio_raw = ex_result.get("extension_ratio")
+                                ratio_adj = ex_result.get("adjusted_ratio")
+                                tf_val = ex_result.get("time_factor")
+                                raw_str = f"{ratio_raw}x" if ratio_raw is not None else "—"
+                                adj_str = f"{ratio_adj}x (tf={tf_val:.2f})" if ratio_adj is not None and tf_val is not None else "—"
+                                print(f"[{profile.profile_name}] Exhaustion ZONE CHANGE: {_last_exhaustion_zone} -> {zone} | cross@{last_cross} | raw={raw_str} adj={adj_str}")
+                                _last_exhaustion_zone = zone
 
-                    # Persist tier state updates
-                    if tier_updates:
+                    # Persist tier RESETS immediately (value=False means price moved away).
+                    # Tier FIRES (value=True) are deferred until trade is confirmed placed (Fix 6).
+                    tier_resets = {t: v for t, v in tier_updates.items() if not v}
+                    tier_fires = {t: v for t, v in tier_updates.items() if v}
+                    if tier_resets:
                         try:
                             current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
                             tf_dict = current_state_data.get("tier_fired", {})
                             if not isinstance(tf_dict, dict):
                                 tf_dict = {}
-                            for tier, new_state in tier_updates.items():
+                            for tier, new_state in tier_resets.items():
                                 tf_dict[str(tier)] = new_state
                                 tier_state[tier] = new_state
                             current_state_data["tier_fired"] = tf_dict
                             state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
                         except Exception as e:
-                            print(f"[{profile.profile_name}] Failed to persist tier state: {e}")
+                            print(f"[{profile.profile_name}] Failed to persist tier resets: {e}")
 
                     # Persist divergence state updates
                     if divergence_updates:
@@ -1423,8 +1434,32 @@ def main() -> None:
                                 target_price=tp_price,
                                 entry_type=t5_trigger_type,
                             )
-                        else:
-                            print(f"[{profile.profile_name}] kt_cg_trial_5 {pol.id} mode={mode} -> {dec.reason}")
+                            # Fix 6: Only persist tier FIRES after trade is confirmed placed
+                            if tier_fires:
+                                try:
+                                    current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                                    tf_dict = current_state_data.get("tier_fired", {})
+                                    if not isinstance(tf_dict, dict):
+                                        tf_dict = {}
+                                    for tier, new_state in tier_fires.items():
+                                        tf_dict[str(tier)] = new_state
+                                        tier_state[tier] = new_state
+                                    current_state_data["tier_fired"] = tf_dict
+                                    state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
+                                except Exception as e:
+                                    print(f"[{profile.profile_name}] Failed to persist tier fires: {e}")
+                        elif dec.reason and "dead_zone" not in dec.reason:
+                            # Fix 7: Only log blocks that aren't routine (skip dead zone, skip non-attempted)
+                            print(f"[{profile.profile_name}] kt_cg_trial_5 BLOCKED: {dec.reason}")
+
+                    # Fix 7: Periodic summary every 30 seconds
+                    now_ts = time.time()
+                    if now_ts - _last_summary_time >= _SUMMARY_INTERVAL:
+                        _last_summary_time = now_ts
+                        ex_zone = _last_exhaustion_zone or "—"
+                        fired_tiers = [str(t) for t, v in tier_state.items() if v]
+                        avail_tiers = [str(t) for t, v in tier_state.items() if not v]
+                        print(f"[{profile.profile_name}] [SUMMARY] zone={ex_zone} | tiers_fired=[{','.join(fired_tiers)}] avail=[{','.join(avail_tiers)}]")
 
             if args.once:
                 break
