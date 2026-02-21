@@ -614,42 +614,91 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     }
   }, [loopRunning, profileName, profilePath]);
 
-  // Build context: use loop's context when available, otherwise build from TA data
+  // Build context: use loop's context when available, otherwise build preset-relevant from TA
   const context: ContextItem[] = (() => {
     if (dashState?.context && dashState.context.length > 0) return dashState.context;
     if (!taData) return [];
     const items: ContextItem[] = [];
-    // Price
+    const preset = (dashState?.preset_name || '').toLowerCase();
+    const isTrial4or5 = preset.includes('trial_4') || preset.includes('trial_5') || preset.includes('trial 4') || preset.includes('trial 5');
+    const isTrial2or3 = preset.includes('trial_2') || preset.includes('trial_3') || preset.includes('trial 2') || preset.includes('trial 3') || preset.includes('hybrid') || preset.includes('counter_trend');
+
+    // Price — always relevant
     if (tick) {
       items.push({ key: 'Bid', value: tick.bid.toFixed(3), category: 'price' });
       items.push({ key: 'Ask', value: tick.ask.toFixed(3), category: 'price' });
       items.push({ key: 'Spread', value: `${tick.spread.toFixed(1)}p`, category: 'price' });
     }
-    // Per-timeframe indicators
-    for (const [tf, d] of Object.entries(taData.timeframes)) {
-      if (d.error) continue;
-      items.push({ key: `${tf} Regime`, value: d.regime, category: tf });
-      if (d.rsi?.value != null) items.push({ key: `${tf} RSI`, value: `${d.rsi.value.toFixed(1)} (${d.rsi.zone})`, category: tf });
-      if (d.atr?.value_pips != null) items.push({ key: `${tf} ATR`, value: `${d.atr.value_pips.toFixed(1)}p (${d.atr.state})`, category: tf });
-      if (d.macd?.histogram != null) items.push({ key: `${tf} MACD Hist`, value: d.macd.histogram.toFixed(5), category: tf });
-      // Latest EMA values
-      if (d.all_emas) {
-        for (const [emaName, series] of Object.entries(d.all_emas)) {
-          if (series.length > 0) {
-            items.push({ key: `${tf} ${emaName.toUpperCase()}`, value: series[series.length - 1].value.toFixed(3), category: tf });
+
+    const lastEma = (tf: string, name: string): number | null => {
+      const series = taData.timeframes[tf]?.all_emas?.[name];
+      return series && series.length > 0 ? series[series.length - 1].value : null;
+    };
+    const prevEma = (tf: string, name: string): number | null => {
+      const series = taData.timeframes[tf]?.all_emas?.[name];
+      return series && series.length > 1 ? series[series.length - 2].value : null;
+    };
+    const pip = 0.01;
+
+    if (isTrial4or5) {
+      // M3 Trend
+      const m3 = taData.timeframes['M3'];
+      if (m3 && !m3.error) items.push({ key: 'M3 Regime', value: m3.regime, category: 'trend' });
+      // M1 EMA Zone Entry: EMA5 vs EMA9
+      const e5 = lastEma('M1', 'ema5'), e9 = lastEma('M1', 'ema9');
+      if (e5 != null) items.push({ key: 'M1 EMA5', value: e5.toFixed(3), category: 'zone_entry' });
+      if (e9 != null) items.push({ key: 'M1 EMA9', value: e9.toFixed(3), category: 'zone_entry' });
+      if (e5 != null && e9 != null) items.push({ key: 'EMA5-9 Spread', value: `${((e5 - e9) / pip).toFixed(1)}p`, category: 'zone_entry' });
+      // EMA Zone Filter: EMA9 vs EMA17 spread, direction, change
+      const e17 = lastEma('M1', 'ema17');
+      if (e9 != null && e17 != null) {
+        const spread917 = (e9 - e17) / pip;
+        items.push({ key: 'EMA9-17 Spread', value: `${spread917.toFixed(1)}p`, category: 'ema_zone' });
+        const prev9 = prevEma('M1', 'ema9');
+        if (prev9 != null) {
+          const dir = e9 > prev9 ? 'UP' : e9 < prev9 ? 'DOWN' : 'FLAT';
+          items.push({ key: 'EMA9 Direction', value: dir, category: 'ema_zone' });
+          const prevE17 = prevEma('M1', 'ema17');
+          if (prevE17 != null) {
+            const prevSpread = (prev9 - prevE17) / pip;
+            const change = spread917 - prevSpread;
+            items.push({ key: 'Spread Change', value: `${change > 0 ? '+' : ''}${change.toFixed(1)}p`, category: 'ema_zone' });
           }
         }
+      }
+      // ATR
+      const m1 = taData.timeframes['M1'];
+      if (m1?.atr?.value_pips != null) items.push({ key: 'M1 ATR', value: `${m1.atr.value_pips.toFixed(1)}p`, category: 'filters' });
+      if (m3?.atr?.value_pips != null) items.push({ key: 'M3 ATR', value: `${m3.atr.value_pips.toFixed(1)}p`, category: 'filters' });
+    } else if (isTrial2or3) {
+      // M5 Trend
+      const m5 = taData.timeframes['M5'];
+      if (m5 && !m5.error) items.push({ key: 'M5 Regime', value: m5.regime, category: 'trend' });
+      // M1 EMAs: 9, 13, 21
+      for (const p of ['ema9', 'ema13', 'ema21']) {
+        const v = lastEma('M1', p);
+        if (v != null) items.push({ key: `M1 ${p.toUpperCase()}`, value: v.toFixed(3), category: 'zone_entry' });
+      }
+    } else {
+      // Generic: show regime + RSI + ATR for each timeframe
+      for (const [tf, d] of Object.entries(taData.timeframes)) {
+        if (d.error) continue;
+        items.push({ key: `${tf} Regime`, value: d.regime, category: tf });
+        if (d.rsi?.value != null) items.push({ key: `${tf} RSI`, value: `${d.rsi.value.toFixed(1)} (${d.rsi.zone})`, category: tf });
+        if (d.atr?.value_pips != null) items.push({ key: `${tf} ATR`, value: `${d.atr.value_pips.toFixed(1)}p`, category: tf });
       }
     }
     return items;
   })();
 
-  // Filters: use loop's filters when available, otherwise build basic from TA
+  // Filters: use loop's filters when available, otherwise build preset-relevant from TA
   const filters: FilterReport[] = (() => {
     if (dashState?.filters && dashState.filters.length > 0) return dashState.filters;
     if (!taData || !tick) return [];
+    const preset = (dashState?.preset_name || '').toLowerCase();
+    const isTrial4or5 = preset.includes('trial_4') || preset.includes('trial_5') || preset.includes('trial 4') || preset.includes('trial 5');
     const basic: FilterReport[] = [];
-    // Spread filter
+    // Spread — always relevant
     basic.push({
       filter_id: 'spread', display_name: 'Spread', enabled: true,
       is_clear: tick.spread <= 5.0,
@@ -658,14 +707,27 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
       block_reason: tick.spread > 5.0 ? `Spread ${tick.spread.toFixed(1)}p > 5.0p` : null,
       sub_filters: [], metadata: {},
     });
-    // ATR status per timeframe
-    for (const [tf, d] of Object.entries(taData.timeframes)) {
-      if (d.atr?.value_pips != null) {
+    if (isTrial4or5) {
+      // M1 ATR
+      const m1 = taData.timeframes['M1'];
+      if (m1?.atr?.value_pips != null) {
         basic.push({
-          filter_id: `atr_${tf}`, display_name: `${tf} ATR`, enabled: true,
-          is_clear: d.atr.state !== 'dead',
-          current_value: `${d.atr.value_pips.toFixed(1)}p (${d.atr.state})`,
-          threshold: '', block_reason: d.atr.state === 'dead' ? 'ATR too low' : null,
+          filter_id: 'm1_atr', display_name: 'M1 ATR', enabled: true,
+          is_clear: m1.atr.value_pips >= 2.0,
+          current_value: `${m1.atr.value_pips.toFixed(1)}p`,
+          threshold: 'Min: 2.0p', block_reason: m1.atr.value_pips < 2.0 ? 'ATR too low' : null,
+          sub_filters: [], metadata: {},
+        });
+      }
+      // M3 ATR
+      const m3 = taData.timeframes['M3'];
+      if (m3?.atr?.value_pips != null) {
+        const ok = m3.atr.value_pips >= 4.5 && m3.atr.value_pips <= 11.0;
+        basic.push({
+          filter_id: 'm3_atr', display_name: 'M3 ATR', enabled: true,
+          is_clear: ok,
+          current_value: `${m3.atr.value_pips.toFixed(1)}p`,
+          threshold: '4.5-11.0p', block_reason: !ok ? `${m3.atr.value_pips.toFixed(1)}p outside range` : null,
           sub_filters: [], metadata: {},
         });
       }
