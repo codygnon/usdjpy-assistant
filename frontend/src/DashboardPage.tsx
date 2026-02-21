@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   getDashboard, getTradeEvents, getLoopLog, startLoop, stopLoop, getRuntimeState,
+  getOpenTrades, getTechnicalAnalysis, getTrades,
   type DashboardState, type TradeEvent, type FilterReport, type ContextItem,
-  type PositionInfo, type DailySummary,
+  type DailySummary, type OpenTrade, type RuntimeState,
 } from './api';
 
 // ---------------------------------------------------------------------------
@@ -70,12 +71,14 @@ function PipsValue({ pips }: { pips: number }) {
 // ---------------------------------------------------------------------------
 
 function HeaderBar({
-  state, loopRunning, profileName, onToggleLoop,
+  loopRunning, profileName, mode, tick, onToggleLoop, presetName,
 }: {
-  state: DashboardState | null;
   loopRunning: boolean;
   profileName: string;
+  mode: string;
+  tick: { bid: number; ask: number; spread: number } | null;
   onToggleLoop: () => void;
+  presetName: string;
 }) {
   const [utcTime, setUtcTime] = useState(new Date().toISOString().slice(11, 19));
   useEffect(() => {
@@ -83,7 +86,6 @@ function HeaderBar({
     return () => clearInterval(id);
   }, []);
 
-  const running = loopRunning;
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 12, padding: '8px 16px',
@@ -91,19 +93,19 @@ function HeaderBar({
     }}>
       <button onClick={onToggleLoop} style={{
         padding: '4px 14px', borderRadius: 4, border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 12,
-        backgroundColor: running ? colors.red : colors.green,
+        backgroundColor: loopRunning ? colors.red : colors.green,
         color: '#fff',
-      }}>{running ? 'Stop' : 'Start'}</button>
-      <StatusDot running={running} />
+      }}>{loopRunning ? 'Stop' : 'Start'}</button>
+      <StatusDot running={loopRunning} />
       <span style={{ color: colors.textSecondary, fontSize: 12, ...mono }}>UTC {utcTime}</span>
-      <span style={{ color: colors.textPrimary, fontSize: 13, fontWeight: 600 }}>{state?.preset_name || profileName}</span>
-      <span style={{ color: colors.textSecondary, fontSize: 12 }}>Mode: {state?.mode || '—'}</span>
+      <span style={{ color: colors.textPrimary, fontSize: 13, fontWeight: 600 }}>{presetName || profileName}</span>
+      <span style={{ color: colors.textSecondary, fontSize: 12 }}>Mode: {mode || '—'}</span>
       <div style={{ flex: 1 }} />
-      {state && (
+      {tick && (
         <div style={{ display: 'flex', gap: 12, ...mono, fontSize: 12 }}>
-          <span style={{ color: colors.textSecondary }}>Bid: <span style={{ color: colors.textPrimary }}>{state.bid.toFixed(3)}</span></span>
-          <span style={{ color: colors.textSecondary }}>Ask: <span style={{ color: colors.textPrimary }}>{state.ask.toFixed(3)}</span></span>
-          <span style={{ color: colors.textSecondary }}>Spread: <span style={{ color: colors.textPrimary }}>{state.spread_pips.toFixed(1)}p</span></span>
+          <span style={{ color: colors.textSecondary }}>Bid: <span style={{ color: colors.textPrimary }}>{tick.bid.toFixed(3)}</span></span>
+          <span style={{ color: colors.textSecondary }}>Ask: <span style={{ color: colors.textPrimary }}>{tick.ask.toFixed(3)}</span></span>
+          <span style={{ color: colors.textSecondary }}>Spread: <span style={{ color: colors.textPrimary }}>{tick.spread.toFixed(1)}p</span></span>
         </div>
       )}
     </div>
@@ -138,57 +140,64 @@ function ContextPanel({ items }: { items: ContextItem[] }) {
           ))}
         </div>
       ))}
-      {items.length === 0 && <div style={{ color: colors.textSecondary, fontSize: 12 }}>No context data</div>}
+      {items.length === 0 && <div style={{ color: colors.textSecondary, fontSize: 12 }}>No context data (start loop for live context)</div>}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Positions Panel
+// Positions Panel — uses OpenTrade[] directly from getOpenTrades
 // ---------------------------------------------------------------------------
 
-function PositionsPanel({ positions }: { positions: PositionInfo[] }) {
+function PositionsPanel({ trades, tick }: { trades: OpenTrade[]; tick: { bid: number; ask: number } | null }) {
+  const mid = tick ? (tick.bid + tick.ask) / 2 : null;
   return (
     <div style={{
       backgroundColor: colors.panel, borderRadius: 6, padding: 12,
       border: `1px solid ${colors.border}`, minHeight: 120,
     }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: colors.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
-        Open Positions ({positions.length})
+        Open Positions ({trades.length})
       </div>
-      {positions.length === 0 ? (
+      {trades.length === 0 ? (
         <div style={{ color: colors.textSecondary, fontSize: 12 }}>No open positions</div>
       ) : (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr style={{ color: colors.textSecondary, borderBottom: `1px solid ${colors.border}` }}>
               <th style={{ textAlign: 'left', padding: '2px 4px', fontWeight: 500 }}>Side</th>
-              <th style={{ textAlign: 'left', padding: '2px 4px', fontWeight: 500 }}>Type</th>
               <th style={{ textAlign: 'right', padding: '2px 4px', fontWeight: 500 }}>Entry</th>
               <th style={{ textAlign: 'right', padding: '2px 4px', fontWeight: 500 }}>Current</th>
               <th style={{ textAlign: 'right', padding: '2px 4px', fontWeight: 500 }}>P&L</th>
-              <th style={{ textAlign: 'right', padding: '2px 4px', fontWeight: 500 }}>Age</th>
               <th style={{ textAlign: 'right', padding: '2px 4px', fontWeight: 500 }}>SL</th>
               <th style={{ textAlign: 'right', padding: '2px 4px', fontWeight: 500 }}>TP</th>
-              <th style={{ textAlign: 'center', padding: '2px 4px', fontWeight: 500 }}>BE</th>
+              <th style={{ textAlign: 'right', padding: '2px 4px', fontWeight: 500 }}>Size</th>
             </tr>
           </thead>
           <tbody>
-            {positions.map(pos => (
-              <tr key={pos.trade_id} style={{ borderBottom: `1px solid ${colors.border}22` }}>
-                <td style={{ padding: '3px 4px' }}><SideBadge side={pos.side} /></td>
-                <td style={{ padding: '3px 4px' }}><EntryTypePill type={pos.entry_type} /></td>
-                <td style={{ padding: '3px 4px', textAlign: 'right', ...mono, color: colors.textPrimary }}>{pos.entry_price.toFixed(3)}</td>
-                <td style={{ padding: '3px 4px', textAlign: 'right', ...mono, color: colors.textPrimary }}>{pos.current_price.toFixed(3)}</td>
-                <td style={{ padding: '3px 4px', textAlign: 'right' }}><PipsValue pips={pos.unrealized_pips} /></td>
-                <td style={{ padding: '3px 4px', textAlign: 'right', color: colors.textSecondary, ...mono }}>{pos.age_minutes.toFixed(0)}m</td>
-                <td style={{ padding: '3px 4px', textAlign: 'right', color: colors.textSecondary, ...mono }}>{pos.stop_price?.toFixed(3) ?? '—'}</td>
-                <td style={{ padding: '3px 4px', textAlign: 'right', color: colors.textSecondary, ...mono }}>{pos.target_price?.toFixed(3) ?? '—'}</td>
-                <td style={{ padding: '3px 4px', textAlign: 'center', fontSize: 10, color: pos.breakeven_applied ? colors.green : colors.textSecondary }}>
-                  {pos.breakeven_applied ? 'YES' : '—'}
-                </td>
-              </tr>
-            ))}
+            {trades.map(t => {
+              const isBuy = t.side.toLowerCase() === 'buy';
+              const currentPrice = mid ?? t.entry_price;
+              const plPips = isBuy
+                ? (currentPrice - t.entry_price) / 0.01
+                : (t.entry_price - currentPrice) / 0.01;
+              return (
+                <tr key={t.trade_id} style={{ borderBottom: `1px solid ${colors.border}22` }}>
+                  <td style={{ padding: '3px 4px' }}><SideBadge side={t.side} /></td>
+                  <td style={{ padding: '3px 4px', textAlign: 'right', ...mono, color: colors.textPrimary }}>{t.entry_price.toFixed(3)}</td>
+                  <td style={{ padding: '3px 4px', textAlign: 'right', ...mono, color: colors.textPrimary }}>{currentPrice.toFixed(3)}</td>
+                  <td style={{ padding: '3px 4px', textAlign: 'right' }}>
+                    {t.unrealized_pl != null
+                      ? <span style={{ color: t.unrealized_pl >= 0 ? colors.green : colors.red, ...mono }}>{t.unrealized_pl >= 0 ? '+' : ''}{t.unrealized_pl.toFixed(2)}</span>
+                      : <PipsValue pips={plPips} />
+                    }
+                  </td>
+                  <td style={{ padding: '3px 4px', textAlign: 'right', color: colors.textSecondary, ...mono }}>{t.stop_price?.toFixed(3) ?? '—'}</td>
+                  <td style={{ padding: '3px 4px', textAlign: 'right', color: colors.textSecondary, ...mono }}>{t.target_price?.toFixed(3) ?? '—'}</td>
+                  <td style={{ padding: '3px 4px', textAlign: 'right', color: colors.textSecondary, ...mono }}>{t.size_lots}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -241,6 +250,17 @@ function FilterRow({ filter, depth = 0 }: { filter: FilterReport; depth?: number
 
 function FilterTable({ filters }: { filters: FilterReport[] }) {
   const enabledFilters = filters.filter(f => f.enabled);
+  if (enabledFilters.length === 0) {
+    return (
+      <div style={{
+        backgroundColor: colors.panel, borderRadius: 6, padding: 12,
+        border: `1px solid ${colors.border}`,
+      }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: colors.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Filter Status</div>
+        <div style={{ color: colors.textSecondary, fontSize: 12 }}>No active filters (start loop for live filter status)</div>
+      </div>
+    );
+  }
   const allClear = enabledFilters.every(f => f.is_clear);
   const blockers = enabledFilters.filter(f => !f.is_clear).map(f => f.display_name);
 
@@ -279,7 +299,81 @@ function FilterTable({ filters }: { filters: FilterReport[] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Trade Execution Log
+// Recent Trades (from DB)
+// ---------------------------------------------------------------------------
+
+function RecentTradesPanel({ profileName, profilePath }: { profileName: string; profilePath: string }) {
+  const [trades, setTrades] = useState<Record<string, unknown>[]>([]);
+
+  useEffect(() => {
+    const fetch = () => {
+      getTrades(profileName, 20, profilePath)
+        .then(r => setTrades(r.trades))
+        .catch(() => {});
+    };
+    fetch();
+    const id = setInterval(fetch, 10000);
+    return () => clearInterval(id);
+  }, [profileName, profilePath]);
+
+  return (
+    <div style={{
+      backgroundColor: colors.panel, borderRadius: 6, padding: 12,
+      border: `1px solid ${colors.border}`,
+    }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: colors.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
+        Recent Trades ({trades.length})
+      </div>
+      {trades.length === 0 ? (
+        <div style={{ color: colors.textSecondary, fontSize: 12, padding: 8 }}>No trades recorded yet</div>
+      ) : (
+        <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ color: colors.textSecondary, borderBottom: `1px solid ${colors.border}`, fontSize: 11 }}>
+                <th style={{ textAlign: 'left', padding: '2px 4px', fontWeight: 500 }}>Time</th>
+                <th style={{ textAlign: 'left', padding: '2px 4px', fontWeight: 500 }}>Side</th>
+                <th style={{ textAlign: 'right', padding: '2px 4px', fontWeight: 500 }}>Entry</th>
+                <th style={{ textAlign: 'right', padding: '2px 4px', fontWeight: 500 }}>Exit</th>
+                <th style={{ textAlign: 'right', padding: '2px 4px', fontWeight: 500 }}>Pips</th>
+                <th style={{ textAlign: 'right', padding: '2px 4px', fontWeight: 500 }}>Profit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {trades.map((t, i) => {
+                const pips = t.pips != null ? Number(t.pips) : null;
+                const profit = t.profit != null ? Number(t.profit) : null;
+                const ts = String(t.timestamp_utc || '').slice(5, 16);
+                return (
+                  <tr key={String(t.trade_id || i)} style={{ borderBottom: `1px solid ${colors.border}22` }}>
+                    <td style={{ padding: '3px 4px', color: colors.textSecondary, ...mono, fontSize: 11 }}>{ts}</td>
+                    <td style={{ padding: '3px 4px' }}><SideBadge side={String(t.side || '')} /></td>
+                    <td style={{ padding: '3px 4px', textAlign: 'right', ...mono, color: colors.textPrimary }}>{Number(t.entry_price || 0).toFixed(3)}</td>
+                    <td style={{ padding: '3px 4px', textAlign: 'right', ...mono, color: colors.textPrimary }}>
+                      {t.exit_price != null ? Number(t.exit_price).toFixed(3) : '—'}
+                    </td>
+                    <td style={{ padding: '3px 4px', textAlign: 'right' }}>
+                      {pips != null ? <PipsValue pips={pips} /> : <span style={{ color: colors.textSecondary }}>—</span>}
+                    </td>
+                    <td style={{ padding: '3px 4px', textAlign: 'right', ...mono }}>
+                      {profit != null
+                        ? <span style={{ color: profit >= 0 ? colors.green : colors.red }}>{profit >= 0 ? '+' : ''}{profit.toFixed(2)}</span>
+                        : <span style={{ color: colors.textSecondary }}>—</span>
+                      }
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Trade Execution Log (from trade_events.json)
 // ---------------------------------------------------------------------------
 
 function TradeCard({ event, isNew }: { event: TradeEvent; isNew: boolean }) {
@@ -428,54 +522,109 @@ interface DashboardPageProps {
 }
 
 export default function DashboardPage({ profileName, profilePath }: DashboardPageProps) {
-  const [state, setState] = useState<DashboardState | null>(null);
+  // Independently fetched data — same endpoints Run/Status uses
+  const [runtime, setRuntime] = useState<RuntimeState | null>(null);
+  const [openTrades, setOpenTrades] = useState<OpenTrade[]>([]);
+  const [tick, setTick] = useState<{ bid: number; ask: number; spread: number } | null>(null);
   const [events, setEvents] = useState<TradeEvent[]>([]);
-  const [loopRunning, setLoopRunning] = useState(false);
 
-  // Poll dashboard state at 2000ms (broker cache is 2s, so faster polling is redundant)
+  // Dashboard-specific data (only available when loop is running and writes dashboard_state.json)
+  const [dashState, setDashState] = useState<DashboardState | null>(null);
+
+  const loopRunning = runtime?.loop_running ?? false;
+
+  // Poll runtime state (mode, loop_running) — 3s, same as Run/Status
   useEffect(() => {
     let mounted = true;
     const poll = () => {
-      getDashboard(profileName, profilePath)
-        .then(s => { if (mounted && s && !s.error) setState(s); })
+      getRuntimeState(profileName)
+        .then(s => { if (mounted) setRuntime(s); })
         .catch(() => {});
     };
     poll();
-    const id = setInterval(poll, 2000);
+    const id = setInterval(poll, 3000);
     return () => { mounted = false; clearInterval(id); };
   }, [profileName]);
 
-  // Poll trade events + loop status at 2000ms
+  // Poll open positions — 5s (uses same getOpenTrades as Run/Status)
+  useEffect(() => {
+    let mounted = true;
+    const poll = () => {
+      getOpenTrades(profileName, profilePath)
+        .then(t => { if (mounted) setOpenTrades(t); })
+        .catch(() => {});
+    };
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => { mounted = false; clearInterval(id); };
+  }, [profileName, profilePath]);
+
+  // Poll tick data for header (bid/ask/spread) — 3s
+  useEffect(() => {
+    let mounted = true;
+    const poll = () => {
+      getTechnicalAnalysis(profileName, profilePath)
+        .then(ta => {
+          if (mounted && ta.current_tick) {
+            setTick({
+              bid: ta.current_tick.bid,
+              ask: ta.current_tick.ask,
+              spread: ta.current_tick.spread_pips,
+            });
+          }
+        })
+        .catch(() => {});
+    };
+    poll();
+    const id = setInterval(poll, 3000);
+    return () => { mounted = false; clearInterval(id); };
+  }, [profileName, profilePath]);
+
+  // Poll trade events — 5s
   useEffect(() => {
     let mounted = true;
     const poll = () => {
       getTradeEvents(profileName, 100)
         .then(e => { if (mounted) setEvents(e); })
         .catch(() => {});
-      getRuntimeState(profileName)
-        .then(s => { if (mounted) setLoopRunning(s.loop_running); })
+    };
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => { mounted = false; clearInterval(id); };
+  }, [profileName]);
+
+  // Poll dashboard state for filters/context (only useful when loop is running) — 3s
+  useEffect(() => {
+    let mounted = true;
+    const poll = () => {
+      getDashboard(profileName, profilePath)
+        .then(s => { if (mounted && s && !s.error) setDashState(s); })
         .catch(() => {});
     };
     poll();
-    const id = setInterval(poll, 2000);
+    const id = setInterval(poll, 3000);
     return () => { mounted = false; clearInterval(id); };
-  }, [profileName]);
+  }, [profileName, profilePath]);
 
   const handleToggleLoop = useCallback(async () => {
     try {
       if (loopRunning) {
         await stopLoop(profileName);
-        setLoopRunning(false);
       } else {
         await startLoop(profileName, profilePath);
-        setLoopRunning(true);
       }
+      // Refresh runtime state immediately
+      getRuntimeState(profileName).then(setRuntime).catch(() => {});
     } catch (e) {
       console.error('Loop toggle error:', e);
     }
   }, [loopRunning, profileName, profilePath]);
 
-  const effectiveState = state ? { ...state, loop_running: loopRunning } : null;
+  // Use dashboard state's filters/context when available, otherwise empty
+  const filters = dashState?.filters || [];
+  const context = dashState?.context || [];
+  const dailySummary = dashState?.daily_summary || null;
+  const presetName = dashState?.preset_name || '';
 
   return (
     <div style={{ backgroundColor: colors.bg, color: colors.textPrimary, minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -486,49 +635,39 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
         }
       `}</style>
 
-      {/* Header */}
-      <HeaderBar state={effectiveState} loopRunning={loopRunning} profileName={profileName} onToggleLoop={handleToggleLoop} />
+      {/* Header — always works since tick comes from getTechnicalAnalysis */}
+      <HeaderBar
+        loopRunning={loopRunning}
+        profileName={profileName}
+        mode={runtime?.mode || ''}
+        tick={tick}
+        onToggleLoop={handleToggleLoop}
+        presetName={presetName}
+      />
 
       {/* Main content */}
       <div style={{ flex: 1, padding: 12, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto' }}>
-        {/* Waiting banner: loop running but no data yet */}
-        {loopRunning && !state && (
-          <div style={{
-            padding: '10px 16px', borderRadius: 6, fontSize: 13,
-            backgroundColor: colors.amber + '11', color: colors.amber,
-            border: `1px solid ${colors.amber}33`,
-          }}>
-            Loop started — waiting for first poll cycle...
-          </div>
-        )}
-        {/* Not running banner */}
-        {!loopRunning && !state && (
-          <div style={{
-            padding: '10px 16px', borderRadius: 6, fontSize: 13,
-            backgroundColor: colors.textSecondary + '11', color: colors.textSecondary,
-            border: `1px solid ${colors.textSecondary}33`,
-          }}>
-            Loop is not running. Press Start to begin.
-          </div>
-        )}
         {/* Two-column: Context + Positions */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <ContextPanel items={state?.context || []} />
-          <PositionsPanel positions={state?.positions || []} />
+          <ContextPanel items={context} />
+          <PositionsPanel trades={openTrades} tick={tick} />
         </div>
 
         {/* Filter Status */}
-        <FilterTable filters={state?.filters || []} />
+        <FilterTable filters={filters} />
 
-        {/* Trade Log */}
-        <TradeLog events={events} />
+        {/* Recent Trades from DB */}
+        <RecentTradesPanel profileName={profileName} profilePath={profilePath} />
+
+        {/* Trade Log (from trade_events.json, written by loop) */}
+        {events.length > 0 && <TradeLog events={events} />}
 
         {/* Raw Logs */}
         <RawLogs profileName={profileName} />
       </div>
 
       {/* Daily Summary Bar */}
-      <DailySummaryBar summary={state?.daily_summary || null} />
+      <DailySummaryBar summary={dailySummary} />
     </div>
   );
 }
