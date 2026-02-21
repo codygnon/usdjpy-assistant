@@ -49,11 +49,6 @@ from core.dashboard_models import (
 from core.dashboard_reporters import (
     collect_trial_2_context, collect_trial_3_context,
     collect_trial_4_context, collect_trial_5_context,
-    report_cooldown, report_daily_hl_filter, report_dead_zone,
-    report_dual_atr_trial_5, report_ema_zone_filter,
-    report_max_trades, report_rolling_danger_zone,
-    report_rsi_divergence, report_session_filter, report_spread,
-    report_tiered_atr_trial_4, report_trend_exhaustion,
 )
 from storage.sqlite_store import SqliteStore
 
@@ -333,66 +328,20 @@ def _build_and_write_dashboard(
         pip_size = float(profile.pip_size)
         now_utc = datetime.now(timezone.utc)
 
-        # --- Filter reports ---
-        filters = []
-        # Extract side from exec_result: decision.side for T4/T5
-        side = "buy"
-        trigger_type = "zone_entry"
-        if eval_result:
-            trigger_type = eval_result.get("trigger_type", "zone_entry") or "zone_entry"
-            dec_obj = eval_result.get("decision")
-            if dec_obj and hasattr(dec_obj, "side") and dec_obj.side:
-                side = dec_obj.side
-            elif eval_result.get("side"):
-                side = eval_result["side"]
-
-        # Session filter (all trials)
-        filters.append(report_session_filter(profile, now_utc))
-
-        # Spread
-        spread_pips = (tick.ask - tick.bid) / pip_size
-        max_spread = getattr(profile.strategy.filters, "max_spread_pips", None) if hasattr(profile.strategy, "filters") else None
-        filters.append(report_spread(spread_pips, max_spread))
-
-        if policy_type in ("kt_cg_trial_4",):
-            filters.append(report_tiered_atr_trial_4(policy, data_by_tf.get("M1"), pip_size, trigger_type))
-            filters.append(report_daily_hl_filter(
-                policy, data_by_tf, tick, side, pip_size,
-            ))
-            m1_df = data_by_tf.get("M1")
-            is_bull = side == "buy"
-            if m1_df is not None and not m1_df.empty:
-                filters.append(report_ema_zone_filter(policy, m1_df, pip_size, is_bull))
-            filters.append(report_rolling_danger_zone(policy, data_by_tf.get("M1"), tick, side, pip_size))
-            filters.append(report_rsi_divergence(policy, divergence_state or {}, side))
-
-        elif policy_type in ("kt_cg_trial_5",):
-            filters.append(report_dual_atr_trial_5(policy, data_by_tf.get("M1"), data_by_tf.get("M3"), pip_size, trigger_type))
-            filters.append(report_daily_hl_filter(
-                policy, data_by_tf, tick, side, pip_size,
-                daily_reset_state.get("daily_reset_high") if daily_reset_state else None,
-                daily_reset_state.get("daily_reset_low") if daily_reset_state else None,
-                daily_reset_state.get("daily_reset_settled", False) if daily_reset_state else False,
-            ))
-            m1_df = data_by_tf.get("M1")
-            is_bull = side == "buy"
-            if m1_df is not None and not m1_df.empty:
-                filters.append(report_ema_zone_filter(policy, m1_df, pip_size, is_bull))
-            filters.append(report_rolling_danger_zone(policy, data_by_tf.get("M1"), tick, side, pip_size))
-            filters.append(report_rsi_divergence(policy, divergence_state or {}, side))
-            filters.append(report_dead_zone(daily_reset_state or {}))
-            filters.append(report_trend_exhaustion(exhaustion_result))
-            # Max trades per side
-            max_per_side = getattr(policy, "max_open_trades_per_side", None)
-            if max_per_side is not None:
-                open_trades = store.list_open_trades(profile.profile_name)
-                side_counts = {"buy": 0, "sell": 0}
-                for t in open_trades:
-                    s = str(dict(t).get("side", "")).lower()
-                    if s in side_counts:
-                        side_counts[s] += 1
-                sc = side_counts.get(side, 0)
-                filters.append(report_max_trades(sc, max_per_side, side, side_counts))
+        # --- Filter reports (shared with API via core.dashboard_builder) ---
+        from core.dashboard_builder import build_dashboard_filters
+        filters = build_dashboard_filters(
+            profile=profile,
+            tick=tick,
+            data_by_tf=data_by_tf,
+            policy=policy,
+            policy_type=policy_type,
+            eval_result=eval_result,
+            divergence_state=divergence_state,
+            daily_reset_state=daily_reset_state,
+            exhaustion_result=exhaustion_result,
+            store=store,
+        )
 
         # --- Context items ---
         context_items = []

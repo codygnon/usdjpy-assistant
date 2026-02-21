@@ -2526,6 +2526,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
     bid = ask = spread_pips = 0.0
     positions: list[dict] = []
     filters: list[dict] = []
+    tick = None
 
     try:
         import pandas as _pd_dash
@@ -2572,15 +2573,87 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
     except Exception as e:
         print(f"[api] dashboard build error for '{profile_name}': {e}")
 
-    # --- Basic filters (session + spread) ---
+    # --- Filters: same logic as run loop (shared build_dashboard_filters) ---
     try:
-        from core.dashboard_reporters import report_session_filter, report_spread
         from dataclasses import asdict
-        session_report = report_session_filter(profile, now_utc)
-        filters.append(asdict(session_report))
-        max_spread = getattr(profile.risk, "max_spread_pips", None) if hasattr(profile, "risk") else None
-        spread_report = report_spread(spread_pips, max_spread)
-        filters.append(asdict(spread_report))
+        from core.dashboard_builder import build_dashboard_filters
+
+        # Need tick for filter build (may already have from block above)
+        _tick = tick
+        if _tick is None:
+            try:
+                _adapter = _get_dashboard_adapter(profile)
+                _tick = _adapter.get_tick(profile.symbol)
+            except Exception:
+                _tick = None
+        if _tick is not None:
+            # First enabled KT/CG Trial #4 or #5 for rich filters
+            _policy = None
+            _policy_type = ""
+            for pol in getattr(profile.execution, "policies", []) or []:
+                if not getattr(pol, "enabled", True):
+                    continue
+                pt = getattr(pol, "type", "") or ""
+                if pt in ("kt_cg_trial_4", "kt_cg_trial_5"):
+                    _policy = pol
+                    _policy_type = pt
+                    break
+            data_by_tf: dict = {}
+            daily_reset_state: Optional[dict] = None
+            exhaustion_state: Optional[dict] = None
+            divergence_state: Optional[dict] = None
+            exhaustion_result: Optional[dict] = None
+            if _policy is not None:
+                try:
+                    _adapter = _get_dashboard_adapter(profile)
+                    data_by_tf["M1"] = _get_bars_cached(_adapter, profile.symbol, "M1", 3000)
+                    data_by_tf["M3"] = _get_bars_cached(_adapter, profile.symbol, "M3", 3000)
+                    data_by_tf["D"] = _get_bars_cached(_adapter, profile.symbol, "D", 2)
+                except Exception:
+                    pass
+                try:
+                    _state = load_state(_runtime_state_path(profile_name))
+                    daily_reset_state = {
+                        "daily_reset_date": _state.daily_reset_date,
+                        "daily_reset_high": _state.daily_reset_high,
+                        "daily_reset_low": _state.daily_reset_low,
+                        "daily_reset_block_active": _state.daily_reset_block_active,
+                        "daily_reset_settled": _state.daily_reset_settled,
+                    }
+                    exhaustion_state = {
+                        "trend_flip_price": _state.trend_flip_price,
+                        "trend_flip_direction": _state.trend_flip_direction,
+                        "trend_flip_time": _state.trend_flip_time,
+                    }
+                    divergence_state = {}
+                    if _state.divergence_block_buy_until:
+                        divergence_state["block_buy_until"] = _state.divergence_block_buy_until
+                    if _state.divergence_block_sell_until:
+                        divergence_state["block_sell_until"] = _state.divergence_block_sell_until
+                    if _policy_type == "kt_cg_trial_5" and getattr(_policy, "trend_exhaustion_enabled", False):
+                        m3_df = data_by_tf.get("M3")
+                        if m3_df is not None and not m3_df.empty:
+                            from core.execution_engine import _detect_trend_flip_and_compute_exhaustion
+                            mid = (_tick.bid + _tick.ask) / 2.0
+                            exhaustion_result = _detect_trend_flip_and_compute_exhaustion(
+                                m3_df, mid, pip_size, exhaustion_state or {}, _policy
+                            )
+                except Exception:
+                    pass
+            store = _store_for(profile_name)
+            filter_reports = build_dashboard_filters(
+                profile=profile,
+                tick=_tick,
+                data_by_tf=data_by_tf,
+                policy=_policy,
+                policy_type=_policy_type,
+                eval_result=None,
+                divergence_state=divergence_state,
+                daily_reset_state=daily_reset_state,
+                exhaustion_result=exhaustion_result,
+                store=store,
+            )
+            filters.extend(asdict(f) for f in filter_reports)
     except Exception as e:
         print(f"[api] dashboard filters error for '{profile_name}': {e}")
 
