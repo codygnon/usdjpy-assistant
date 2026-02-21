@@ -436,7 +436,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
   useEffect(() => {
     let mounted = true;
     const poll = () => {
-      getDashboard(profileName)
+      getDashboard(profileName, profilePath)
         .then(s => { if (mounted && s && !s.error) setState(s); })
         .catch(() => {});
     };

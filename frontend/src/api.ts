@@ -612,8 +612,9 @@ export interface TradeEvent {
   context_snapshot: Record<string, unknown>;
 }
 
-export async function getDashboard(profileName: string): Promise<DashboardState> {
-  return fetchJson<DashboardState>(`${API_BASE}/data/${profileName}/dashboard`);
+export async function getDashboard(profileName: string, profilePath?: string): Promise<DashboardState> {
+  const params = profilePath ? `?profile_path=${encodeURIComponent(profilePath)}` : '';
+  return fetchJson<DashboardState>(`${API_BASE}/data/${profileName}/dashboard${params}`);
 }
 
 export async function getTradeEvents(profileName: string, limit = 50): Promise<TradeEvent[]> {

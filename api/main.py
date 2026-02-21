@@ -2464,16 +2464,131 @@ def health_check() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
+_dashboard_live_cache: dict[str, tuple[float, dict]] = {}
+_DASHBOARD_LIVE_TTL = 2.0  # seconds
+
+
+def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
+    """Build a live dashboard state directly from the broker (no run-loop file required)."""
+    from datetime import datetime, timezone
+
+    # Find the profile JSON
+    resolved_path: Optional[Path] = None
+    if profile_path:
+        try:
+            p = _resolve_profile_path(profile_path)
+            if p.exists():
+                resolved_path = p
+        except Exception:
+            pass
+    if resolved_path is None:
+        for p in _list_profile_paths():
+            if p.stem == profile_name:
+                resolved_path = p
+                break
+    if resolved_path is None:
+        return {"error": "no_dashboard_data", "timestamp_utc": None}
+
+    try:
+        profile = load_profile_v1(str(resolved_path))
+    except Exception:
+        return {"error": "no_dashboard_data", "timestamp_utc": None}
+
+    runtime = load_state(_runtime_state_path(profile_name))
+    now_utc = datetime.now(timezone.utc)
+    pip_size = float(profile.pip_size)
+
+    bid = ask = spread_pips = 0.0
+    positions: list[dict] = []
+
+    try:
+        from adapters.broker import get_adapter
+        import pandas as _pd_dash
+        adapter = get_adapter(profile)
+        adapter.initialize()
+        try:
+            tick = adapter.get_tick(profile.symbol)
+            bid, ask = tick.bid, tick.ask
+            spread_pips = (ask - bid) / pip_size
+            mid = (bid + ask) / 2.0
+
+            for t in adapter.get_open_positions(profile.symbol):
+                units = float(t.get("currentUnits", 0) or 0)
+                s = "buy" if units > 0 else "sell"
+                entry = float(t.get("price", 0) or 0)
+                unrealized = (mid - entry) / pip_size if s == "buy" else (entry - mid) / pip_size
+                age = 0.0
+                try:
+                    t0 = _pd_dash.to_datetime(t.get("openTime"), utc=True)
+                    age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
+                except Exception:
+                    pass
+                sl = tp = None
+                try:
+                    if t.get("stopLossOrder"):
+                        sl = float(t["stopLossOrder"]["price"])
+                except Exception:
+                    pass
+                try:
+                    if t.get("takeProfitOrder"):
+                        tp = float(t["takeProfitOrder"]["price"])
+                except Exception:
+                    pass
+                positions.append({
+                    "trade_id": str(t.get("id", "")),
+                    "side": s,
+                    "entry_price": entry,
+                    "entry_type": None,
+                    "current_price": mid,
+                    "unrealized_pips": round(unrealized, 1),
+                    "age_minutes": round(age, 1),
+                    "stop_price": sl,
+                    "target_price": tp,
+                    "breakeven_applied": False,
+                })
+        finally:
+            try:
+                adapter.shutdown()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return {
+        "timestamp_utc": now_utc.isoformat(),
+        "preset_name": getattr(profile, "active_preset_name", "") or "",
+        "mode": runtime.mode,
+        "loop_running": _is_loop_running(profile_name),
+        "filters": [],
+        "context": [],
+        "positions": positions,
+        "daily_summary": None,
+        "bid": bid,
+        "ask": ask,
+        "spread_pips": round(spread_pips, 1),
+    }
+
+
 @app.get("/api/data/{profile_name}/dashboard")
-def get_dashboard(profile_name: str) -> dict[str, Any]:
-    """Returns dashboard_state.json contents (filters + context + positions + daily summary)."""
+def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
+    """Returns dashboard state. Uses run-loop file when available, else builds live from broker."""
     from core.dashboard_models import read_dashboard_state
 
     log_dir = LOGS_DIR / profile_name
     state = read_dashboard_state(log_dir)
-    if state is None:
-        return {"error": "no_dashboard_data", "timestamp_utc": None}
-    return state
+    if state is not None:
+        return state
+
+    # No run-loop file: check live cache, then build from broker
+    now = _time.monotonic()
+    cached = _dashboard_live_cache.get(profile_name)
+    if cached and (now - cached[0]) < _DASHBOARD_LIVE_TTL:
+        return cached[1]
+
+    result = _build_live_dashboard_state(profile_name, profile_path)
+    if "error" not in result:
+        _dashboard_live_cache[profile_name] = (now, result)
+    return result
 
 
 @app.get("/api/data/{profile_name}/trade-events")
