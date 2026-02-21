@@ -24,6 +24,42 @@ from core.dashboard_reporters import (
     report_max_trades,
 )
 
+# Attribute names that can be overridden by Apply Temporary Settings (same as execution engine).
+# T4/T5: m3_trend_ema_*, m1_zone_entry_ema_*. T3: m5_trend_ema_*, m1_zone_entry_ema_slow, m1_pullback_cross_ema_slow.
+_TEMP_OVERRIDE_ATTRS = (
+    "m3_trend_ema_fast",
+    "m3_trend_ema_slow",
+    "m1_zone_entry_ema_fast",
+    "m1_zone_entry_ema_slow",
+    "m5_trend_ema_fast",
+    "m5_trend_ema_slow",
+    "m1_zone_entry_ema_slow",
+    "m1_pullback_cross_ema_slow",
+)
+
+
+class _EffectivePolicy:
+    """Wraps a policy and applies temp_overrides so dashboard uses same EMAs as execution."""
+
+    def __init__(self, policy: Any, overrides: dict[str, int]) -> None:
+        self._policy = policy
+        self._overrides = overrides
+
+    def __getattr__(self, name: str) -> Any:
+        if name in self._overrides:
+            return self._overrides[name]
+        return getattr(self._policy, name)
+
+
+def effective_policy_for_dashboard(policy: Any, temp_overrides: Optional[dict]) -> Any:
+    """Return a policy wrapper that applies temp_overrides (Apply Temporary Settings), or policy unchanged."""
+    if policy is None or not temp_overrides:
+        return policy
+    overrides_clean = {k: int(v) for k, v in temp_overrides.items() if v is not None and k in _TEMP_OVERRIDE_ATTRS}
+    if not overrides_clean:
+        return policy
+    return _EffectivePolicy(policy, overrides_clean)
+
 
 def _side_from_eval_result(eval_result: Optional[dict]) -> str:
     side = "buy"
@@ -68,16 +104,22 @@ def build_dashboard_filters(
     daily_reset_state: Optional[dict] = None,
     exhaustion_result: Optional[dict] = None,
     store: Optional[Any] = None,
+    temp_overrides: Optional[dict[str, int]] = None,
 ) -> list[FilterReport]:
     """Build the filter report list the same way the run loop does.
 
     Call with the same profile, tick, data_by_tf, and (when available)
     policy, policy_type, eval_result, and state. If policy/eval_result
     are missing (e.g. API without a recent eval), side is derived from M3 trend.
+    When temp_overrides is provided (from Apply Temporary Settings), the
+    dashboard uses the same effective EMA periods as the execution engine.
     """
     now_utc = datetime.now(timezone.utc)
     pip_size = float(profile.pip_size)
     filters: list[FilterReport] = []
+
+    # Apply temp overrides so dashboard reflects same EMAs as run loop execution.
+    policy = effective_policy_for_dashboard(policy, temp_overrides)
 
     side = _side_from_eval_result(eval_result) if eval_result else "buy"
     trigger_type = "zone_entry"

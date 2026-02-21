@@ -2603,6 +2603,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
             exhaustion_state: Optional[dict] = None
             divergence_state: Optional[dict] = None
             exhaustion_result: Optional[dict] = None
+            temp_overrides_api: Optional[dict] = None
             if _policy is not None:
                 try:
                     _adapter = _get_dashboard_adapter(profile)
@@ -2630,6 +2631,26 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         divergence_state["block_buy_until"] = _state.divergence_block_buy_until
                     if _state.divergence_block_sell_until:
                         divergence_state["block_sell_until"] = _state.divergence_block_sell_until
+                    # Apply Temporary Settings: same mapping as run loop (runtime_state temp_* -> policy attr names)
+                    temp_overrides_api = {}
+                    if _state.temp_m3_trend_ema_fast is not None:
+                        temp_overrides_api["m3_trend_ema_fast"] = _state.temp_m3_trend_ema_fast
+                    if _state.temp_m3_trend_ema_slow is not None:
+                        temp_overrides_api["m3_trend_ema_slow"] = _state.temp_m3_trend_ema_slow
+                    if _state.temp_m1_t4_zone_entry_ema_fast is not None:
+                        temp_overrides_api["m1_zone_entry_ema_fast"] = _state.temp_m1_t4_zone_entry_ema_fast
+                    if _state.temp_m1_t4_zone_entry_ema_slow is not None:
+                        temp_overrides_api["m1_zone_entry_ema_slow"] = _state.temp_m1_t4_zone_entry_ema_slow
+                    if _state.temp_m5_trend_ema_fast is not None:
+                        temp_overrides_api["m5_trend_ema_fast"] = _state.temp_m5_trend_ema_fast
+                    if _state.temp_m5_trend_ema_slow is not None:
+                        temp_overrides_api["m5_trend_ema_slow"] = _state.temp_m5_trend_ema_slow
+                    if _state.temp_m1_zone_entry_ema_slow is not None:
+                        temp_overrides_api["m1_zone_entry_ema_slow"] = _state.temp_m1_zone_entry_ema_slow
+                    if _state.temp_m1_pullback_cross_ema_slow is not None:
+                        temp_overrides_api["m1_pullback_cross_ema_slow"] = _state.temp_m1_pullback_cross_ema_slow
+                    if not temp_overrides_api:
+                        temp_overrides_api = None
                     if _policy_type == "kt_cg_trial_5" and getattr(_policy, "trend_exhaustion_enabled", False):
                         m3_df = data_by_tf.get("M3")
                         if m3_df is not None and not m3_df.empty:
@@ -2639,6 +2660,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                                 m3_df, mid, pip_size, exhaustion_state or {}, _policy
                             )
                 except Exception:
+                    temp_overrides_api = None
                     pass
             store = _store_for(profile_name)
             filter_reports = build_dashboard_filters(
@@ -2652,6 +2674,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 daily_reset_state=daily_reset_state,
                 exhaustion_result=exhaustion_result,
                 store=store,
+                temp_overrides=temp_overrides_api,
             )
             filters.extend(asdict(f) for f in filter_reports)
     except Exception as e:

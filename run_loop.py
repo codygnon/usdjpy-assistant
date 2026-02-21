@@ -320,6 +320,7 @@ def _build_and_write_dashboard(
     divergence_state: dict | None = None,
     daily_reset_state: dict | None = None,
     exhaustion_result: dict | None = None,
+    temp_overrides: dict | None = None,
 ) -> None:
     """Assemble and write dashboard state JSON for the current poll cycle."""
     from datetime import datetime, timezone
@@ -330,7 +331,7 @@ def _build_and_write_dashboard(
         spread_pips = (tick.ask - tick.bid) / pip_size
 
         # --- Filter reports (shared with API via core.dashboard_builder) ---
-        from core.dashboard_builder import build_dashboard_filters
+        from core.dashboard_builder import build_dashboard_filters, effective_policy_for_dashboard
         filters = build_dashboard_filters(
             profile=profile,
             tick=tick,
@@ -342,17 +343,19 @@ def _build_and_write_dashboard(
             daily_reset_state=daily_reset_state,
             exhaustion_result=exhaustion_result,
             store=store,
+            temp_overrides=temp_overrides,
         )
 
-        # --- Context items ---
+        # --- Context items (use effective policy when Apply Temporary Settings active) ---
         context_items = []
+        policy_for_context = effective_policy_for_dashboard(policy, temp_overrides) if policy else policy
         if policy_type == "kt_cg_trial_4":
             context_items = collect_trial_4_context(
-                policy, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
+                policy_for_context, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
             )
         elif policy_type == "kt_cg_trial_5":
             context_items = collect_trial_5_context(
-                policy, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
+                policy_for_context, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
                 exhaustion_result=exhaustion_result,
                 daily_reset_state=daily_reset_state,
             )
@@ -1337,6 +1340,7 @@ def main() -> None:
                         profile=profile, store=store, log_dir=log_dir, tick=tick,
                         data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
                         policy_type="kt_cg_counter_trend_pullback",
+                        temp_overrides=temp_overrides,
                     )
 
             # Trial #4 execution — runs EVERY poll cycle (not just on M1 bar close)
@@ -1486,6 +1490,7 @@ def main() -> None:
                         data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
                         policy_type="kt_cg_trial_4", tier_state=tier_state,
                         eval_result=exec_result, divergence_state=divergence_state,
+                        temp_overrides=temp_overrides,
                     )
 
             # Trial #5 execution — same structure as Trial #4 with dual ATR filter
@@ -1719,6 +1724,7 @@ def main() -> None:
                         eval_result=exec_result, divergence_state=divergence_state,
                         daily_reset_state=daily_reset_state_t5,
                         exhaustion_result=exec_result.get("exhaustion_result"),
+                        temp_overrides=temp_overrides,
                     )
 
             # Catch-all dashboard write for profiles not using KT/CG policy types.
