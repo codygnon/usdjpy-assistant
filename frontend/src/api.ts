@@ -542,6 +542,18 @@ export async function getAdvancedAnalytics(
   return fetchJson(`${API_BASE}/data/${profileName}/advanced-analytics?profile_path=${encodeURIComponent(profilePath)}&days_back=${daysBack}`);
 }
 
+// Filter Config (from profile JSON — used when loop is not running)
+export interface FilterConfig {
+  preset_name: string;
+  filters: Record<string, Record<string, unknown>>;
+}
+
+export async function getFilterConfig(profileName: string, profilePath: string): Promise<FilterConfig> {
+  return fetchJson<FilterConfig>(
+    `${API_BASE}/data/${profileName}/filter-config?profile_path=${encodeURIComponent(profilePath)}`
+  );
+}
+
 // Dashboard
 export interface FilterReport {
   filter_id: string;

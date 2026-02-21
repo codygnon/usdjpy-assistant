@@ -2635,6 +2635,134 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
 _DASHBOARD_FILE_FRESHNESS = 30.0  # seconds — file state considered fresh if < 30s old
 
 
+@app.get("/api/data/{profile_name}/filter-config")
+def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
+    """Return the active preset's filter configuration from the profile JSON."""
+    resolved_path: Optional[Path] = None
+    if profile_path:
+        try:
+            p = _resolve_profile_path(profile_path)
+            if p.exists():
+                resolved_path = p
+        except Exception:
+            pass
+    if resolved_path is None:
+        for p in _list_profile_paths():
+            if p.stem == profile_name:
+                resolved_path = p
+                break
+    if resolved_path is None:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    profile = load_profile_v1(str(resolved_path))
+    risk = profile.effective_risk or profile.risk
+
+    # Find the active kt_cg policy
+    policy = None
+    for pol in profile.execution.policies:
+        if getattr(pol, "enabled", False) and getattr(pol, "type", "").startswith("kt_cg"):
+            policy = pol
+            break
+
+    if policy is None:
+        return {"preset_name": profile.active_preset_name or "", "filters": {}}
+
+    pol_type = getattr(policy, "type", "")
+    is_trial_5 = pol_type == "kt_cg_trial_5"
+    is_trial_4 = pol_type == "kt_cg_trial_4"
+
+    filters: dict[str, Any] = {}
+
+    # Spread (from risk config)
+    filters["spread"] = {"enabled": True, "max_pips": risk.max_spread_pips}
+
+    # Session filter (from strategy filters)
+    sf = profile.strategy.filters.session_filter
+    filters["session_filter"] = {"enabled": sf.enabled, "sessions": sf.sessions}
+
+    # EMA Zone Filter
+    if hasattr(policy, "ema_zone_filter_enabled"):
+        filters["ema_zone_filter"] = {
+            "enabled": getattr(policy, "ema_zone_filter_enabled", False),
+            "threshold": getattr(policy, "ema_zone_filter_block_threshold", 0.35),
+            "lookback": getattr(policy, "ema_zone_filter_lookback_bars", 3),
+        }
+
+    # Rolling Danger Zone (Trial #4 only)
+    if hasattr(policy, "rolling_danger_zone_enabled"):
+        filters["rolling_danger_zone"] = {
+            "enabled": getattr(policy, "rolling_danger_zone_enabled", False),
+            "lookback": getattr(policy, "rolling_danger_lookback_bars", 100),
+            "pct": getattr(policy, "rolling_danger_zone_pct", 0.15),
+        }
+
+    # RSI Divergence (Trial #4 only)
+    if hasattr(policy, "rsi_divergence_enabled"):
+        filters["rsi_divergence"] = {
+            "enabled": getattr(policy, "rsi_divergence_enabled", False),
+        }
+
+    # Tiered ATR (Trial #4)
+    if is_trial_4 and hasattr(policy, "tiered_atr_filter_enabled"):
+        filters["tiered_atr"] = {
+            "enabled": getattr(policy, "tiered_atr_filter_enabled", False),
+            "block_below": getattr(policy, "tiered_atr_block_below_pips", 4.0),
+            "allow_all_max": getattr(policy, "tiered_atr_allow_all_max_pips", 12.0),
+            "pullback_max": getattr(policy, "tiered_atr_pullback_only_max_pips", 15.0),
+        }
+
+    # M1 ATR (Trial #5)
+    if is_trial_5 and hasattr(policy, "m1_atr_filter_enabled"):
+        filters["m1_atr"] = {
+            "enabled": getattr(policy, "m1_atr_filter_enabled", False),
+            "tokyo_min": getattr(policy, "m1_atr_tokyo_min_pips", 3.0),
+            "london_min": getattr(policy, "m1_atr_london_min_pips", 3.0),
+            "ny_min": getattr(policy, "m1_atr_ny_min_pips", 3.5),
+            "tokyo_max": getattr(policy, "m1_atr_tokyo_max_pips", 12.0),
+            "london_max": getattr(policy, "m1_atr_london_max_pips", 14.0),
+            "ny_max": getattr(policy, "m1_atr_ny_max_pips", 16.0),
+        }
+
+    # M3 ATR (Trial #5)
+    if is_trial_5 and hasattr(policy, "m3_atr_filter_enabled"):
+        filters["m3_atr"] = {
+            "enabled": getattr(policy, "m3_atr_filter_enabled", False),
+            "min": getattr(policy, "m3_atr_min_pips", 5.0),
+            "max": getattr(policy, "m3_atr_max_pips", 16.0),
+        }
+
+    # Daily H/L Filter
+    if hasattr(policy, "daily_hl_filter_enabled"):
+        filters["daily_hl"] = {
+            "enabled": getattr(policy, "daily_hl_filter_enabled", False),
+            "buffer": getattr(policy, "daily_hl_buffer_pips", 5.0),
+        }
+
+    # Trend Exhaustion (Trial #5 only)
+    if hasattr(policy, "trend_exhaustion_enabled"):
+        filters["trend_exhaustion"] = {
+            "enabled": getattr(policy, "trend_exhaustion_enabled", False),
+            "fresh_max": getattr(policy, "trend_exhaustion_fresh_max", 2.0),
+            "mature_max": getattr(policy, "trend_exhaustion_mature_max", 3.5),
+        }
+
+    # Dead Zone (Trial #5 only)
+    if hasattr(policy, "daily_reset_block_enabled"):
+        filters["dead_zone"] = {
+            "enabled": getattr(policy, "daily_reset_block_enabled", False),
+        }
+
+    # Max trades per side
+    if hasattr(policy, "max_open_trades_per_side"):
+        val = getattr(policy, "max_open_trades_per_side", None)
+        filters["max_trades"] = {
+            "enabled": val is not None,
+            "per_side": val,
+        }
+
+    return {"preset_name": profile.active_preset_name or "", "filters": filters}
+
+
 @app.get("/api/data/{profile_name}/dashboard")
 def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
     """Returns dashboard state. Always fetches live broker data; merges run-loop file data when fresh."""

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   getDashboard, getTradeEvents, getLoopLog, startLoop, stopLoop, getRuntimeState,
-  getOpenTrades, getTechnicalAnalysis, getTrades,
+  getOpenTrades, getTechnicalAnalysis, getTrades, getFilterConfig,
   type DashboardState, type TradeEvent, type FilterReport, type ContextItem,
   type DailySummary, type OpenTrade, type RuntimeState, type TechnicalAnalysis,
+  type FilterConfig,
 } from './api';
 
 // ---------------------------------------------------------------------------
@@ -531,6 +532,9 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
   // Dashboard-specific data (only available when loop is running and writes dashboard_state.json)
   const [dashState, setDashState] = useState<DashboardState | null>(null);
 
+  // Filter config from profile JSON (used as fallback when loop not running)
+  const [filterConfig, setFilterConfig] = useState<FilterConfig | null>(null);
+
   const loopRunning = runtime?.loop_running ?? false;
   const tick = taData?.current_tick
     ? { bid: taData.current_tick.bid, ask: taData.current_tick.ask, spread: taData.current_tick.spread_pips }
@@ -587,6 +591,19 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     const id = setInterval(poll, 5000);
     return () => { mounted = false; clearInterval(id); };
   }, [profileName]);
+
+  // Poll filter config from profile JSON — 10s (slow, only changes on settings edit)
+  useEffect(() => {
+    let mounted = true;
+    const poll = () => {
+      getFilterConfig(profileName, profilePath)
+        .then(fc => { if (mounted) setFilterConfig(fc); })
+        .catch(() => {});
+    };
+    poll();
+    const id = setInterval(poll, 10000);
+    return () => { mounted = false; clearInterval(id); };
+  }, [profileName, profilePath]);
 
   // Poll dashboard state for filters/context (when loop writes dashboard_state.json) — 3s
   useEffect(() => {
@@ -691,52 +708,152 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     return items;
   })();
 
-  // Filters: use loop's filters when available, otherwise build preset-relevant from TA
+  // Filters: use loop's filters when available, otherwise build from profile filter config + TA
   const filters: FilterReport[] = (() => {
     if (dashState?.filters && dashState.filters.length > 0) return dashState.filters;
-    if (!taData || !tick) return [];
-    const preset = (dashState?.preset_name || '').toLowerCase();
-    const isTrial4or5 = preset.includes('trial_4') || preset.includes('trial_5') || preset.includes('trial 4') || preset.includes('trial 5');
-    const basic: FilterReport[] = [];
-    // Spread — always relevant
-    basic.push({
-      filter_id: 'spread', display_name: 'Spread', enabled: true,
-      is_clear: tick.spread <= 5.0,
-      current_value: `${tick.spread.toFixed(1)}p`,
-      threshold: 'Max: 5.0p',
-      block_reason: tick.spread > 5.0 ? `Spread ${tick.spread.toFixed(1)}p > 5.0p` : null,
+
+    const fc = filterConfig?.filters;
+    if (!fc) return [];
+
+    const result: FilterReport[] = [];
+    const mkFilter = (id: string, name: string, enabled: boolean, isClear: boolean, currentValue: string, threshold: string, blockReason: string | null): FilterReport => ({
+      filter_id: id, display_name: name, enabled, is_clear: isClear,
+      current_value: currentValue, threshold, block_reason: blockReason,
       sub_filters: [], metadata: {},
     });
-    if (isTrial4or5) {
-      // M1 ATR
-      const m1 = taData.timeframes['M1'];
-      if (m1?.atr?.value_pips != null) {
-        basic.push({
-          filter_id: 'm1_atr', display_name: 'M1 ATR', enabled: true,
-          is_clear: m1.atr.value_pips >= 2.0,
-          current_value: `${m1.atr.value_pips.toFixed(1)}p`,
-          threshold: 'Min: 2.0p', block_reason: m1.atr.value_pips < 2.0 ? 'ATR too low' : null,
-          sub_filters: [], metadata: {},
-        });
-      }
-      // M3 ATR
-      const m3 = taData.timeframes['M3'];
-      if (m3?.atr?.value_pips != null) {
-        const ok = m3.atr.value_pips >= 4.5 && m3.atr.value_pips <= 11.0;
-        basic.push({
-          filter_id: 'm3_atr', display_name: 'M3 ATR', enabled: true,
-          is_clear: ok,
-          current_value: `${m3.atr.value_pips.toFixed(1)}p`,
-          threshold: '4.5-11.0p', block_reason: !ok ? `${m3.atr.value_pips.toFixed(1)}p outside range` : null,
-          sub_filters: [], metadata: {},
-        });
-      }
+
+    // Spread
+    if (fc.spread) {
+      const maxPips = Number(fc.spread.max_pips ?? 5);
+      const cur = tick?.spread ?? 0;
+      const ok = cur <= maxPips;
+      result.push(mkFilter('spread', 'Spread', true, tick ? ok : true,
+        tick ? `${cur.toFixed(1)}p` : '—', `Max: ${maxPips.toFixed(1)}p`,
+        tick && !ok ? `${cur.toFixed(1)}p > ${maxPips.toFixed(1)}p` : null));
     }
-    return basic;
+
+    // Session Filter
+    if (fc.session_filter?.enabled) {
+      const sessions = (fc.session_filter.sessions as string[]) || [];
+      const now = new Date();
+      const h = now.getUTCHours();
+      const inTokyo = h >= 0 && h < 9;
+      const inLondon = h >= 7 && h < 16;
+      const inNY = h >= 13 && h < 22;
+      const active: string[] = [];
+      if (inTokyo) active.push('Tokyo');
+      if (inLondon) active.push('London');
+      if (inNY) active.push('NewYork');
+      const ok = active.some(s => sessions.includes(s));
+      result.push(mkFilter('session', 'Session Filter', true, ok,
+        active.length > 0 ? active.join(', ') : 'Off-hours',
+        sessions.join(', '),
+        !ok ? 'Outside allowed sessions' : null));
+    }
+
+    // EMA Zone Filter
+    if (fc.ema_zone_filter?.enabled) {
+      const threshold = Number(fc.ema_zone_filter.threshold ?? 0.35);
+      result.push(mkFilter('ema_zone', 'EMA Zone Filter', true, true,
+        '—', `Score ≥ ${threshold.toFixed(2)}`, null));
+    }
+
+    // Rolling Danger Zone
+    if (fc.rolling_danger_zone?.enabled) {
+      const pct = Number(fc.rolling_danger_zone.pct ?? 0.15);
+      const lookback = Number(fc.rolling_danger_zone.lookback ?? 100);
+      result.push(mkFilter('rolling_danger', 'Rolling Danger Zone', true, true,
+        '—', `${(pct * 100).toFixed(0)}% of ${lookback}-bar range`, null));
+    }
+
+    // RSI Divergence
+    if (fc.rsi_divergence?.enabled) {
+      result.push(mkFilter('rsi_div', 'RSI Divergence', true, true, '—', 'Active', null));
+    }
+
+    // Tiered ATR (Trial #4)
+    if (fc.tiered_atr?.enabled) {
+      const below = Number(fc.tiered_atr.block_below ?? 4);
+      const allMax = Number(fc.tiered_atr.allow_all_max ?? 12);
+      const pbMax = Number(fc.tiered_atr.pullback_max ?? 15);
+      const m3atr = taData?.timeframes['M3']?.atr?.value_pips;
+      let curVal = '—';
+      let ok = true;
+      let reason: string | null = null;
+      if (m3atr != null) {
+        curVal = `${m3atr.toFixed(1)}p`;
+        if (m3atr < below || m3atr > pbMax) { ok = false; reason = `${curVal} outside ${below}-${pbMax}p`; }
+        else if (m3atr > allMax) { reason = `${curVal} > ${allMax}p (pullback only)`; }
+      }
+      result.push(mkFilter('tiered_atr', 'Tiered ATR', true, ok, curVal,
+        `<${below}p block, ${below}-${allMax}p all, ${allMax}-${pbMax}p PB only, >${pbMax}p block`, reason));
+    }
+
+    // M1 ATR (Trial #5)
+    if (fc.m1_atr?.enabled) {
+      const m1atr = taData?.timeframes['M1']?.atr?.value_pips;
+      const tokyoMin = Number(fc.m1_atr.tokyo_min ?? 3);
+      const londonMin = Number(fc.m1_atr.london_min ?? 3);
+      const nyMin = Number(fc.m1_atr.ny_min ?? 3.5);
+      const tokyoMax = Number(fc.m1_atr.tokyo_max ?? 12);
+      const londonMax = Number(fc.m1_atr.london_max ?? 14);
+      const nyMax = Number(fc.m1_atr.ny_max ?? 16);
+      result.push(mkFilter('m1_atr', 'M1 ATR(7)', true, true,
+        m1atr != null ? `${m1atr.toFixed(1)}p` : '—',
+        `T: ${tokyoMin}-${tokyoMax}p, L: ${londonMin}-${londonMax}p, NY: ${nyMin}-${nyMax}p`, null));
+    }
+
+    // M3 ATR (Trial #5)
+    if (fc.m3_atr?.enabled) {
+      const m3atr = taData?.timeframes['M3']?.atr?.value_pips;
+      const min = Number(fc.m3_atr.min ?? 5);
+      const max = Number(fc.m3_atr.max ?? 16);
+      let ok = true;
+      let reason: string | null = null;
+      if (m3atr != null) {
+        ok = m3atr >= min && m3atr <= max;
+        if (!ok) reason = `${m3atr.toFixed(1)}p outside ${min}-${max}p`;
+      }
+      result.push(mkFilter('m3_atr', 'M3 ATR(14)', true, ok,
+        m3atr != null ? `${m3atr.toFixed(1)}p` : '—', `${min}-${max}p`, reason));
+    }
+
+    // Daily H/L
+    if (fc.daily_hl?.enabled) {
+      const buffer = Number(fc.daily_hl.buffer ?? 5);
+      result.push(mkFilter('daily_hl', 'Daily H/L Filter', true, true,
+        '—', `Buffer: ${buffer.toFixed(1)}p`, null));
+    }
+
+    // Trend Exhaustion
+    if (fc.trend_exhaustion?.enabled) {
+      const fresh = Number(fc.trend_exhaustion.fresh_max ?? 2);
+      const mature = Number(fc.trend_exhaustion.mature_max ?? 3.5);
+      result.push(mkFilter('trend_exhaustion', 'Trend Exhaustion', true, true,
+        '—', `Fresh: ${fresh.toFixed(1)}p, Mature: ${mature.toFixed(1)}p`, null));
+    }
+
+    // Dead Zone
+    if (fc.dead_zone?.enabled) {
+      const h = new Date().getUTCHours();
+      const inDeadZone = h >= 21 || h < 2;
+      result.push(mkFilter('dead_zone', 'Dead Zone (21-02 UTC)', true, !inDeadZone,
+        inDeadZone ? 'IN DEAD ZONE' : 'Clear',
+        '21:00-02:00 UTC', inDeadZone ? 'Currently in dead zone' : null));
+    }
+
+    // Max Trades Per Side
+    if (fc.max_trades?.enabled) {
+      const perSide = Number(fc.max_trades.per_side ?? 5);
+      result.push(mkFilter('max_trades', 'Max Trades/Side', true, true,
+        '—', `${perSide} per side`, null));
+    }
+
+    return result;
   })();
 
   const dailySummary = dashState?.daily_summary || null;
-  const presetName = dashState?.preset_name || '';
+  const presetName = dashState?.preset_name || filterConfig?.preset_name || '';
 
   return (
     <div style={{ backgroundColor: colors.bg, color: colors.textPrimary, minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
