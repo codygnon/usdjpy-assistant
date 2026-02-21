@@ -708,9 +708,15 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     return items;
   })();
 
-  // Filters: use loop's filters when available, otherwise build from profile filter config + TA
+  // Filters: use loop's rich filters when available (has trial-specific filters like ATR, EMA zone, etc.),
+  // otherwise build from profile filter config + TA data.
+  // The live dashboard fallback only produces session+spread (2 filters), so we detect that and use filterConfig instead.
   const filters: FilterReport[] = (() => {
-    if (dashState?.filters && dashState.filters.some(f => f.enabled)) return dashState.filters;
+    const loopFilters = dashState?.filters?.filter(f => f.enabled) ?? [];
+    const hasRichFilters = loopFilters.length > 2 || loopFilters.some(f =>
+      !['session_filter', 'spread'].includes(f.filter_id)
+    );
+    if (hasRichFilters) return dashState!.filters;
 
     const fc = filterConfig?.filters;
     if (!fc) return [];
