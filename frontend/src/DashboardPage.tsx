@@ -70,9 +70,10 @@ function PipsValue({ pips }: { pips: number }) {
 // ---------------------------------------------------------------------------
 
 function HeaderBar({
-  state, profileName, onToggleLoop,
+  state, loopRunning, profileName, onToggleLoop,
 }: {
   state: DashboardState | null;
+  loopRunning: boolean;
   profileName: string;
   onToggleLoop: () => void;
 }) {
@@ -82,7 +83,7 @@ function HeaderBar({
     return () => clearInterval(id);
   }, []);
 
-  const running = state?.loop_running ?? false;
+  const running = loopRunning;
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 12, padding: '8px 16px',
@@ -486,10 +487,30 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
       `}</style>
 
       {/* Header */}
-      <HeaderBar state={effectiveState} profileName={profileName} onToggleLoop={handleToggleLoop} />
+      <HeaderBar state={effectiveState} loopRunning={loopRunning} profileName={profileName} onToggleLoop={handleToggleLoop} />
 
       {/* Main content */}
       <div style={{ flex: 1, padding: 12, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto' }}>
+        {/* Waiting banner: loop running but no data yet */}
+        {loopRunning && !state && (
+          <div style={{
+            padding: '10px 16px', borderRadius: 6, fontSize: 13,
+            backgroundColor: colors.amber + '11', color: colors.amber,
+            border: `1px solid ${colors.amber}33`,
+          }}>
+            Loop started — waiting for first poll cycle...
+          </div>
+        )}
+        {/* Not running banner */}
+        {!loopRunning && !state && (
+          <div style={{
+            padding: '10px 16px', borderRadius: 6, fontSize: 13,
+            backgroundColor: colors.textSecondary + '11', color: colors.textSecondary,
+            border: `1px solid ${colors.textSecondary}33`,
+          }}>
+            Loop is not running. Press Start to begin.
+          </div>
+        )}
         {/* Two-column: Context + Positions */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <ContextPanel items={state?.context || []} />
