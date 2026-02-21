@@ -317,6 +317,7 @@ def _build_and_write_dashboard(
     tick,
     data_by_tf: dict,
     mode: str,
+    adapter=None,
     policy=None,
     policy_type: str = "",
     tier_state: dict | None = None,
@@ -446,6 +447,52 @@ def _build_and_write_dashboard(
                 ))
         except Exception:
             pass
+
+        # Fallback: fetch positions directly from broker when local DB has none
+        if not positions and adapter is not None:
+            try:
+                mid = (tick.bid + tick.ask) / 2.0
+                live_trades = adapter.get_open_positions(profile.symbol)
+                for t in live_trades:
+                    units = float(t.get("currentUnits", 0) or 0)
+                    s = "buy" if units > 0 else "sell"
+                    entry = float(t.get("price", 0) or 0)
+                    unrealized = (mid - entry) / pip_size if s == "buy" else (entry - mid) / pip_size
+                    age = 0.0
+                    open_time_str = t.get("openTime")
+                    if open_time_str:
+                        try:
+                            import pandas as _pd2
+                            t0 = _pd2.to_datetime(open_time_str, utc=True)
+                            age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
+                        except Exception:
+                            pass
+                    sl = None
+                    tp = None
+                    try:
+                        if t.get("stopLossOrder"):
+                            sl = float(t["stopLossOrder"]["price"])
+                    except Exception:
+                        pass
+                    try:
+                        if t.get("takeProfitOrder"):
+                            tp = float(t["takeProfitOrder"]["price"])
+                    except Exception:
+                        pass
+                    positions.append(PositionInfo(
+                        trade_id=str(t.get("id", "")),
+                        side=s,
+                        entry_price=entry,
+                        entry_type=None,
+                        current_price=mid,
+                        unrealized_pips=round(unrealized, 1),
+                        age_minutes=round(age, 1),
+                        stop_price=sl,
+                        target_price=tp,
+                        breakeven_applied=False,
+                    ))
+            except Exception:
+                pass
 
         # --- Daily summary ---
         daily = DailySummary()
@@ -1256,7 +1303,7 @@ def main() -> None:
                     # Dashboard assembly for Trial #2
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,
-                        data_by_tf=data_by_tf, mode=mode, policy=pol,
+                        data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
                         policy_type="kt_cg_hybrid",
                     )
 
@@ -1338,7 +1385,7 @@ def main() -> None:
                     # Dashboard assembly for Trial #3
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,
-                        data_by_tf=data_by_tf, mode=mode, policy=pol,
+                        data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
                         policy_type="kt_cg_counter_trend_pullback",
                     )
 
@@ -1486,7 +1533,7 @@ def main() -> None:
                     # Dashboard assembly for Trial #4
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,
-                        data_by_tf=data_by_tf, mode=mode, policy=pol,
+                        data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
                         policy_type="kt_cg_trial_4", tier_state=tier_state,
                         eval_result=exec_result, divergence_state=divergence_state,
                     )
@@ -1717,11 +1764,20 @@ def main() -> None:
                     # Dashboard assembly for Trial #5
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,
-                        data_by_tf=data_by_tf, mode=mode, policy=pol,
+                        data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
                         policy_type="kt_cg_trial_5", tier_state=tier_state,
                         eval_result=exec_result, divergence_state=divergence_state,
                         daily_reset_state=daily_reset_state_t5,
                         exhaustion_result=exec_result.get("exhaustion_result"),
+                    )
+
+            # Catch-all dashboard write for profiles not using KT/CG policy types.
+            # Runs every poll cycle so positions + prices are always fresh.
+            if not (has_kt_cg_hybrid or has_kt_cg_ctp or has_kt_cg_trial_4 or has_kt_cg_trial_5):
+                if tick is not None and data_by_tf is not None:
+                    _build_and_write_dashboard(
+                        profile=profile, store=store, log_dir=log_dir, tick=tick,
+                        data_by_tf=data_by_tf, mode=mode, adapter=adapter,
                     )
 
             if args.once:
