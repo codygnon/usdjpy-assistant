@@ -2474,7 +2474,7 @@ _DASHBOARD_ADAPTER_TTL = 300.0  # re-init every 5 min
 
 def _get_dashboard_adapter(profile):
     """Get or create a cached adapter for dashboard use."""
-    key = getattr(profile, "oanda_token", "") or str(id(profile))
+    key = getattr(profile, "profile_name", "") or str(id(profile))
     now = _time.monotonic()
     cached = _dashboard_adapters.get(key)
     if cached:
@@ -2578,7 +2578,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
         from dataclasses import asdict
         session_report = report_session_filter(profile, now_utc)
         filters.append(asdict(session_report))
-        max_spread = getattr(profile.strategy.filters, "max_spread_pips", None) if hasattr(profile.strategy, "filters") else None
+        max_spread = getattr(profile.risk, "max_spread_pips", None) if hasattr(profile, "risk") else None
         spread_report = report_spread(spread_pips, max_spread)
         filters.append(asdict(spread_report))
     except Exception as e:
