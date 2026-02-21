@@ -2467,6 +2467,30 @@ def health_check() -> dict[str, str]:
 _dashboard_live_cache: dict[str, tuple[float, dict]] = {}
 _DASHBOARD_LIVE_TTL = 2.0  # seconds
 
+# Cached adapters for dashboard use — avoids init/shutdown every poll
+_dashboard_adapters: dict[str, tuple[Any, float]] = {}  # {key: (adapter, init_time)}
+_DASHBOARD_ADAPTER_TTL = 300.0  # re-init every 5 min
+
+
+def _get_dashboard_adapter(profile):
+    """Get or create a cached adapter for dashboard use."""
+    key = getattr(profile, "oanda_token", "") or str(id(profile))
+    now = _time.monotonic()
+    cached = _dashboard_adapters.get(key)
+    if cached:
+        adapter, init_time = cached
+        if now - init_time < _DASHBOARD_ADAPTER_TTL:
+            return adapter
+        try:
+            adapter.shutdown()
+        except Exception:
+            pass
+    from adapters.broker import get_adapter
+    adapter = get_adapter(profile)
+    adapter.initialize()
+    _dashboard_adapters[key] = (adapter, now)
+    return adapter
+
 
 def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
     """Build a live dashboard state directly from the broker (no run-loop file required)."""
@@ -2491,7 +2515,8 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
 
     try:
         profile = load_profile_v1(str(resolved_path))
-    except Exception:
+    except Exception as e:
+        print(f"[api] dashboard: failed to load profile '{profile_name}': {e}")
         return {"error": "no_dashboard_data", "timestamp_utc": None}
 
     runtime = load_state(_runtime_state_path(profile_name))
@@ -2500,94 +2525,166 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
 
     bid = ask = spread_pips = 0.0
     positions: list[dict] = []
+    filters: list[dict] = []
 
     try:
-        from adapters.broker import get_adapter
         import pandas as _pd_dash
-        adapter = get_adapter(profile)
-        adapter.initialize()
-        try:
-            tick = adapter.get_tick(profile.symbol)
-            bid, ask = tick.bid, tick.ask
-            spread_pips = (ask - bid) / pip_size
-            mid = (bid + ask) / 2.0
+        adapter = _get_dashboard_adapter(profile)
+        tick = adapter.get_tick(profile.symbol)
+        bid, ask = tick.bid, tick.ask
+        spread_pips = (ask - bid) / pip_size
+        mid = (bid + ask) / 2.0
 
-            for t in adapter.get_open_positions(profile.symbol):
-                units = float(t.get("currentUnits", 0) or 0)
-                s = "buy" if units > 0 else "sell"
-                entry = float(t.get("price", 0) or 0)
-                unrealized = (mid - entry) / pip_size if s == "buy" else (entry - mid) / pip_size
-                age = 0.0
-                try:
-                    t0 = _pd_dash.to_datetime(t.get("openTime"), utc=True)
-                    age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
-                except Exception:
-                    pass
-                sl = tp = None
-                try:
-                    if t.get("stopLossOrder"):
-                        sl = float(t["stopLossOrder"]["price"])
-                except Exception:
-                    pass
-                try:
-                    if t.get("takeProfitOrder"):
-                        tp = float(t["takeProfitOrder"]["price"])
-                except Exception:
-                    pass
-                positions.append({
-                    "trade_id": str(t.get("id", "")),
-                    "side": s,
-                    "entry_price": entry,
-                    "entry_type": None,
-                    "current_price": mid,
-                    "unrealized_pips": round(unrealized, 1),
-                    "age_minutes": round(age, 1),
-                    "stop_price": sl,
-                    "target_price": tp,
-                    "breakeven_applied": False,
-                })
-        finally:
+        for t in adapter.get_open_positions(profile.symbol):
+            units = float(t.get("currentUnits", 0) or 0)
+            s = "buy" if units > 0 else "sell"
+            entry = float(t.get("price", 0) or 0)
+            unrealized = (mid - entry) / pip_size if s == "buy" else (entry - mid) / pip_size
+            age = 0.0
             try:
-                adapter.shutdown()
+                t0 = _pd_dash.to_datetime(t.get("openTime"), utc=True)
+                age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
             except Exception:
                 pass
-    except Exception:
-        pass
+            sl = tp = None
+            try:
+                if t.get("stopLossOrder"):
+                    sl = float(t["stopLossOrder"]["price"])
+            except Exception:
+                pass
+            try:
+                if t.get("takeProfitOrder"):
+                    tp = float(t["takeProfitOrder"]["price"])
+            except Exception:
+                pass
+            positions.append({
+                "trade_id": str(t.get("id", "")),
+                "side": s,
+                "entry_price": entry,
+                "entry_type": None,
+                "current_price": mid,
+                "unrealized_pips": round(unrealized, 1),
+                "age_minutes": round(age, 1),
+                "stop_price": sl,
+                "target_price": tp,
+                "breakeven_applied": False,
+            })
+    except Exception as e:
+        print(f"[api] dashboard build error for '{profile_name}': {e}")
+
+    # --- Basic filters (session + spread) ---
+    try:
+        from core.dashboard_reporters import report_session_filter, report_spread
+        from dataclasses import asdict
+        session_report = report_session_filter(profile, now_utc)
+        filters.append(asdict(session_report))
+        max_spread = getattr(profile.strategy.filters, "max_spread_pips", None) if hasattr(profile.strategy, "filters") else None
+        spread_report = report_spread(spread_pips, max_spread)
+        filters.append(asdict(spread_report))
+    except Exception as e:
+        print(f"[api] dashboard filters error for '{profile_name}': {e}")
+
+    # --- Daily summary from store ---
+    daily_summary = None
+    try:
+        store = _store_for(profile_name)
+        date_str = now_utc.strftime("%Y-%m-%d")
+        closed_today = store.get_trades_for_date(profile_name, date_str)
+        trades_today = len(closed_today)
+        wins = losses = 0
+        total_pips = total_profit = 0.0
+        for row in closed_today:
+            d = dict(row)
+            pips = d.get("pips")
+            profit = d.get("profit")
+            if pips is not None:
+                total_pips += float(pips)
+                if float(pips) > 0:
+                    wins += 1
+                else:
+                    losses += 1
+            if profit is not None:
+                total_profit += float(profit)
+        win_rate = round(wins / trades_today * 100, 1) if trades_today > 0 else 0.0
+        daily_summary = {
+            "trades_today": trades_today,
+            "wins": wins,
+            "losses": losses,
+            "total_pips": round(total_pips, 1),
+            "total_profit": round(total_profit, 2),
+            "win_rate": win_rate,
+        }
+    except Exception as e:
+        print(f"[api] dashboard daily summary error for '{profile_name}': {e}")
 
     return {
         "timestamp_utc": now_utc.isoformat(),
         "preset_name": getattr(profile, "active_preset_name", "") or "",
         "mode": runtime.mode,
         "loop_running": _is_loop_running(profile_name),
-        "filters": [],
+        "filters": filters,
         "context": [],
         "positions": positions,
-        "daily_summary": None,
+        "daily_summary": daily_summary,
         "bid": bid,
         "ask": ask,
         "spread_pips": round(spread_pips, 1),
     }
 
 
+_DASHBOARD_FILE_FRESHNESS = 30.0  # seconds — file state considered fresh if < 30s old
+
+
 @app.get("/api/data/{profile_name}/dashboard")
 def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
-    """Returns dashboard state. Uses run-loop file when available, else builds live from broker."""
+    """Returns dashboard state. Always fetches live broker data; merges run-loop file data when fresh."""
     from core.dashboard_models import read_dashboard_state
 
-    log_dir = LOGS_DIR / profile_name
-    state = read_dashboard_state(log_dir)
-    if state is not None:
-        return state
-
-    # No run-loop file: check live cache, then build from broker
+    # Check live cache first
     now = _time.monotonic()
     cached = _dashboard_live_cache.get(profile_name)
     if cached and (now - cached[0]) < _DASHBOARD_LIVE_TTL:
         return cached[1]
 
-    result = _build_live_dashboard_state(profile_name, profile_path)
-    if "error" not in result:
-        _dashboard_live_cache[profile_name] = (now, result)
+    # Build live state (positions, tick, daily summary, basic filters)
+    live = _build_live_dashboard_state(profile_name, profile_path)
+    if "error" in live:
+        return live
+
+    # Read file state from run loop (if it exists)
+    log_dir = LOGS_DIR / profile_name
+    file_state = read_dashboard_state(log_dir)
+
+    if file_state is not None:
+        # Check freshness
+        file_ts = file_state.get("timestamp_utc")
+        is_fresh = False
+        if file_ts:
+            try:
+                from datetime import datetime, timezone
+                ft = datetime.fromisoformat(file_ts.replace("Z", "+00:00"))
+                age = (datetime.now(timezone.utc) - ft).total_seconds()
+                is_fresh = age < _DASHBOARD_FILE_FRESHNESS
+            except Exception:
+                pass
+
+        if is_fresh:
+            # Use file's rich filters/context (trial-specific), but override
+            # positions, prices, and daily summary with live broker data
+            file_state["positions"] = live["positions"]
+            file_state["bid"] = live["bid"]
+            file_state["ask"] = live["ask"]
+            file_state["spread_pips"] = live["spread_pips"]
+            if live["daily_summary"] is not None:
+                file_state["daily_summary"] = live["daily_summary"]
+            result = file_state
+        else:
+            # Stale file — use pure live state
+            result = live
+    else:
+        result = live
+
+    _dashboard_live_cache[profile_name] = (now, result)
     return result
 
 

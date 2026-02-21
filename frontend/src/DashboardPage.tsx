@@ -432,7 +432,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
   const [events, setEvents] = useState<TradeEvent[]>([]);
   const [loopRunning, setLoopRunning] = useState(false);
 
-  // Poll dashboard state at 500ms
+  // Poll dashboard state at 2000ms (broker cache is 2s, so faster polling is redundant)
   useEffect(() => {
     let mounted = true;
     const poll = () => {
@@ -441,7 +441,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
         .catch(() => {});
     };
     poll();
-    const id = setInterval(poll, 500);
+    const id = setInterval(poll, 2000);
     return () => { mounted = false; clearInterval(id); };
   }, [profileName]);
 
