@@ -3,7 +3,7 @@ import {
   getDashboard, getTradeEvents, getLoopLog, startLoop, stopLoop, getRuntimeState,
   getOpenTrades, getTechnicalAnalysis, getTrades,
   type DashboardState, type TradeEvent, type FilterReport, type ContextItem,
-  type DailySummary, type OpenTrade, type RuntimeState,
+  type DailySummary, type OpenTrade, type RuntimeState, type TechnicalAnalysis,
 } from './api';
 
 // ---------------------------------------------------------------------------
@@ -525,15 +525,18 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
   // Independently fetched data — same endpoints Run/Status uses
   const [runtime, setRuntime] = useState<RuntimeState | null>(null);
   const [openTrades, setOpenTrades] = useState<OpenTrade[]>([]);
-  const [tick, setTick] = useState<{ bid: number; ask: number; spread: number } | null>(null);
+  const [taData, setTaData] = useState<TechnicalAnalysis | null>(null);
   const [events, setEvents] = useState<TradeEvent[]>([]);
 
   // Dashboard-specific data (only available when loop is running and writes dashboard_state.json)
   const [dashState, setDashState] = useState<DashboardState | null>(null);
 
   const loopRunning = runtime?.loop_running ?? false;
+  const tick = taData?.current_tick
+    ? { bid: taData.current_tick.bid, ask: taData.current_tick.ask, spread: taData.current_tick.spread_pips }
+    : null;
 
-  // Poll runtime state (mode, loop_running) — 3s, same as Run/Status
+  // Poll runtime state — 3s
   useEffect(() => {
     let mounted = true;
     const poll = () => {
@@ -546,7 +549,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     return () => { mounted = false; clearInterval(id); };
   }, [profileName]);
 
-  // Poll open positions — 5s (uses same getOpenTrades as Run/Status)
+  // Poll open positions — 5s
   useEffect(() => {
     let mounted = true;
     const poll = () => {
@@ -559,20 +562,12 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     return () => { mounted = false; clearInterval(id); };
   }, [profileName, profilePath]);
 
-  // Poll tick data for header (bid/ask/spread) — 3s
+  // Poll TA data (tick + indicators) — 3s
   useEffect(() => {
     let mounted = true;
     const poll = () => {
       getTechnicalAnalysis(profileName, profilePath)
-        .then(ta => {
-          if (mounted && ta.current_tick) {
-            setTick({
-              bid: ta.current_tick.bid,
-              ask: ta.current_tick.ask,
-              spread: ta.current_tick.spread_pips,
-            });
-          }
-        })
+        .then(ta => { if (mounted) setTaData(ta); })
         .catch(() => {});
     };
     poll();
@@ -593,7 +588,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     return () => { mounted = false; clearInterval(id); };
   }, [profileName]);
 
-  // Poll dashboard state for filters/context (only useful when loop is running) — 3s
+  // Poll dashboard state for filters/context (when loop writes dashboard_state.json) — 3s
   useEffect(() => {
     let mounted = true;
     const poll = () => {
@@ -613,16 +608,71 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
       } else {
         await startLoop(profileName, profilePath);
       }
-      // Refresh runtime state immediately
       getRuntimeState(profileName).then(setRuntime).catch(() => {});
     } catch (e) {
       console.error('Loop toggle error:', e);
     }
   }, [loopRunning, profileName, profilePath]);
 
-  // Use dashboard state's filters/context when available, otherwise empty
-  const filters = dashState?.filters || [];
-  const context = dashState?.context || [];
+  // Build context: use loop's context when available, otherwise build from TA data
+  const context: ContextItem[] = (() => {
+    if (dashState?.context && dashState.context.length > 0) return dashState.context;
+    if (!taData) return [];
+    const items: ContextItem[] = [];
+    // Price
+    if (tick) {
+      items.push({ key: 'Bid', value: tick.bid.toFixed(3), category: 'price' });
+      items.push({ key: 'Ask', value: tick.ask.toFixed(3), category: 'price' });
+      items.push({ key: 'Spread', value: `${tick.spread.toFixed(1)}p`, category: 'price' });
+    }
+    // Per-timeframe indicators
+    for (const [tf, d] of Object.entries(taData.timeframes)) {
+      if (d.error) continue;
+      items.push({ key: `${tf} Regime`, value: d.regime, category: tf });
+      if (d.rsi?.value != null) items.push({ key: `${tf} RSI`, value: `${d.rsi.value.toFixed(1)} (${d.rsi.zone})`, category: tf });
+      if (d.atr?.value_pips != null) items.push({ key: `${tf} ATR`, value: `${d.atr.value_pips.toFixed(1)}p (${d.atr.state})`, category: tf });
+      if (d.macd?.histogram != null) items.push({ key: `${tf} MACD Hist`, value: d.macd.histogram.toFixed(5), category: tf });
+      // Latest EMA values
+      if (d.all_emas) {
+        for (const [emaName, series] of Object.entries(d.all_emas)) {
+          if (series.length > 0) {
+            items.push({ key: `${tf} ${emaName.toUpperCase()}`, value: series[series.length - 1].value.toFixed(3), category: tf });
+          }
+        }
+      }
+    }
+    return items;
+  })();
+
+  // Filters: use loop's filters when available, otherwise build basic from TA
+  const filters: FilterReport[] = (() => {
+    if (dashState?.filters && dashState.filters.length > 0) return dashState.filters;
+    if (!taData || !tick) return [];
+    const basic: FilterReport[] = [];
+    // Spread filter
+    basic.push({
+      filter_id: 'spread', display_name: 'Spread', enabled: true,
+      is_clear: tick.spread <= 5.0,
+      current_value: `${tick.spread.toFixed(1)}p`,
+      threshold: 'Max: 5.0p',
+      block_reason: tick.spread > 5.0 ? `Spread ${tick.spread.toFixed(1)}p > 5.0p` : null,
+      sub_filters: [], metadata: {},
+    });
+    // ATR status per timeframe
+    for (const [tf, d] of Object.entries(taData.timeframes)) {
+      if (d.atr?.value_pips != null) {
+        basic.push({
+          filter_id: `atr_${tf}`, display_name: `${tf} ATR`, enabled: true,
+          is_clear: d.atr.state !== 'dead',
+          current_value: `${d.atr.value_pips.toFixed(1)}p (${d.atr.state})`,
+          threshold: '', block_reason: d.atr.state === 'dead' ? 'ATR too low' : null,
+          sub_filters: [], metadata: {},
+        });
+      }
+    }
+    return basic;
+  })();
+
   const dailySummary = dashState?.daily_summary || null;
   const presetName = dashState?.preset_name || '';
 
