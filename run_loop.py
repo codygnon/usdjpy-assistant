@@ -327,6 +327,7 @@ def _build_and_write_dashboard(
     try:
         pip_size = float(profile.pip_size)
         now_utc = datetime.now(timezone.utc)
+        spread_pips = (tick.ask - tick.bid) / pip_size
 
         # --- Filter reports (shared with API via core.dashboard_builder) ---
         from core.dashboard_builder import build_dashboard_filters
