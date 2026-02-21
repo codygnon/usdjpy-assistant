@@ -710,7 +710,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
 
   // Filters: use loop's filters when available, otherwise build from profile filter config + TA
   const filters: FilterReport[] = (() => {
-    if (dashState?.filters && dashState.filters.length > 0) return dashState.filters;
+    if (dashState?.filters && dashState.filters.some(f => f.enabled)) return dashState.filters;
 
     const fc = filterConfig?.filters;
     if (!fc) return [];
