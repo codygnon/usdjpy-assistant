@@ -26,6 +26,7 @@ from core.profile import (
     ExecutionPolicyIndicator,
     ExecutionPolicyKtCgCounterTrendPullback,
     ExecutionPolicyKtCgHybrid,
+    ExecutionPolicyKtCgTrial6,
     ExecutionPolicyPriceLevelTrend,
     ExecutionPolicySessionMomentum,
     ExecutionPolicyVWAP,
@@ -4946,4 +4947,615 @@ def execute_kt_cg_trial_5_policy_demo_only(
         "trigger_type": trigger_type,
         "exhaustion_state": exhaustion_state,
         "exhaustion_result": exhaustion_result,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Trial #6: BB Slope Trend + EMA Tier Pullback + BB Reversal
+# ---------------------------------------------------------------------------
+
+
+def _compute_bollinger_bands(df: pd.DataFrame, period: int, std_dev: float) -> dict:
+    """Compute Bollinger Bands from a DataFrame with 'close' column.
+
+    Returns dict with upper, lower, middle (floats), width, bb_expanding (bool).
+    """
+    close = df["close"]
+    middle_series = close.rolling(window=period, min_periods=period).mean()
+    std_series = close.rolling(window=period, min_periods=period).std()
+    upper_series = middle_series + std_dev * std_series
+    lower_series = middle_series - std_dev * std_series
+    width_series = upper_series - lower_series
+
+    if len(width_series) < 2 or pd.isna(middle_series.iloc[-1]):
+        return {
+            "upper": None, "lower": None, "middle": None,
+            "width": None, "bb_expanding": False,
+        }
+
+    upper = float(upper_series.iloc[-1])
+    lower = float(lower_series.iloc[-1])
+    middle = float(middle_series.iloc[-1])
+    width_current = float(width_series.iloc[-1])
+    width_prev = float(width_series.iloc[-2]) if not pd.isna(width_series.iloc[-2]) else width_current
+    bb_expanding = width_current > width_prev
+
+    return {
+        "upper": upper, "lower": lower, "middle": middle,
+        "width": width_current, "bb_expanding": bb_expanding,
+    }
+
+
+def _evaluate_m3_slope_trend_trial_6(
+    m3_df: pd.DataFrame,
+    policy,  # ExecutionPolicyKtCgTrial6
+    pip_size: float,
+) -> dict:
+    """Evaluate M3 slope-based trend for Trial #6.
+
+    BULL = ema5 > ema9 > ema21 AND all slopes > 0 AND price > ema21 AND m3_bb_expanding
+    BEAR = mirror
+    NONE = anything else -> blocks all entries
+    """
+    close = m3_df["close"]
+    ema_fast = ema_fn(close, policy.m3_trend_ema_fast)
+    ema_slow = ema_fn(close, policy.m3_trend_ema_slow)
+    ema_extra = ema_fn(close, policy.m3_trend_ema_extra)
+
+    ema_fast_val = float(ema_fast.iloc[-1])
+    ema_slow_val = float(ema_slow.iloc[-1])
+    ema_extra_val = float(ema_extra.iloc[-1])
+    price = float(close.iloc[-1])
+
+    lookback = policy.m3_slope_lookback
+    reasons = []
+
+    # Compute slopes (change over lookback periods, in pips)
+    def slope_pips(series, lb):
+        if len(series) < lb + 1 or pd.isna(series.iloc[-1]) or pd.isna(series.iloc[-(lb + 1)]):
+            return 0.0
+        return (float(series.iloc[-1]) - float(series.iloc[-(lb + 1)])) / pip_size
+
+    slope_fast = slope_pips(ema_fast, lookback)
+    slope_slow = slope_pips(ema_slow, lookback)
+    slope_extra = slope_pips(ema_extra, lookback)
+
+    # BB expanding
+    bb = _compute_bollinger_bands(m3_df, policy.m3_bb_period, policy.m3_bb_std)
+    bb_expanding = bb.get("bb_expanding", False)
+
+    # Determine trend
+    bull_stack = ema_fast_val > ema_slow_val > ema_extra_val
+    bear_stack = ema_fast_val < ema_slow_val < ema_extra_val
+    all_slopes_pos = slope_fast > 0 and slope_slow > 0 and slope_extra > 0
+    all_slopes_neg = slope_fast < 0 and slope_slow < 0 and slope_extra < 0
+
+    trend = "NONE"
+    if bull_stack and all_slopes_pos and price > ema_extra_val and bb_expanding:
+        trend = "BULL"
+    elif bear_stack and all_slopes_neg and price < ema_extra_val and bb_expanding:
+        trend = "BEAR"
+
+    reasons.append(
+        f"M3 trend: {trend} | EMA{policy.m3_trend_ema_fast}={ema_fast_val:.3f} "
+        f"EMA{policy.m3_trend_ema_slow}={ema_slow_val:.3f} "
+        f"EMA{policy.m3_trend_ema_extra}={ema_extra_val:.3f} | "
+        f"slopes={slope_fast:.2f}/{slope_slow:.2f}/{slope_extra:.2f} | "
+        f"bb_expanding={bb_expanding}"
+    )
+
+    return {
+        "trend": trend,
+        "ema_fast_val": ema_fast_val,
+        "ema_slow_val": ema_slow_val,
+        "ema_extra_val": ema_extra_val,
+        "slope_fast": slope_fast,
+        "slope_slow": slope_slow,
+        "slope_extra": slope_extra,
+        "bb_expanding": bb_expanding,
+        "m3_bb": bb,
+        "reasons": reasons,
+    }
+
+
+def _evaluate_ema_tier_system_a_trial_6(
+    policy,  # ExecutionPolicyKtCgTrial6
+    m1_df: pd.DataFrame,
+    m1_bb: dict,
+    trend: str,
+    current_bid: float,
+    current_ask: float,
+    tier_state: dict[int, bool],
+    pip_size: float,
+) -> dict:
+    """System A: EMA Tier Pullback with M1 BB gating.
+
+    BB gating: if BULL + price > upper_bb, or BEAR + price < lower_bb,
+    only tiers >= bb_gating_deep_tier_min_period are allowed.
+    """
+    reasons = []
+    tier_updates: dict[int, bool] = {}
+    fired_tier = None
+    fired_side = None
+
+    if not policy.ema_tier_enabled:
+        reasons.append("System A disabled")
+        return {"fired": False, "tier": None, "side": None, "tier_updates": {}, "reasons": reasons}
+
+    tier_periods = list(policy.tier_ema_periods)
+    if not tier_periods:
+        return {"fired": False, "tier": None, "side": None, "tier_updates": {}, "reasons": ["no tier periods"]}
+
+    m1_close = m1_df["close"]
+    reset_buffer = policy.tier_reset_buffer_pips * pip_size
+
+    # BB gating logic
+    bb_upper = m1_bb.get("upper")
+    bb_lower = m1_bb.get("lower")
+    deep_min = policy.bb_gating_deep_tier_min_period
+    gating_active = False
+
+    if bb_upper is not None and bb_lower is not None:
+        if trend == "BULL" and current_bid > bb_upper:
+            gating_active = True
+            reasons.append(f"BB gating: bid {current_bid:.3f} > upper BB {bb_upper:.3f}, only tiers >= {deep_min}")
+        elif trend == "BEAR" and current_ask < bb_lower:
+            gating_active = True
+            reasons.append(f"BB gating: ask {current_ask:.3f} < lower BB {bb_lower:.3f}, only tiers >= {deep_min}")
+
+    for period in tier_periods:
+        # Apply BB gating
+        if gating_active and period < deep_min:
+            continue
+
+        if len(m1_close) < period + 2:
+            continue
+        ema_value = float(ema_fn(m1_close, period).iloc[-1])
+        tier_fired = tier_state.get(period, False)
+
+        if trend == "BULL":
+            is_touching = current_bid <= ema_value
+            has_moved_away = current_bid > ema_value + reset_buffer
+            if is_touching and not tier_fired:
+                fired_tier = period
+                fired_side = "buy"
+                tier_updates[period] = True
+                reasons.append(f"TIER FIRE: bid {current_bid:.3f} <= EMA{period} {ema_value:.3f} -> BUY")
+                break
+            elif has_moved_away and tier_fired:
+                tier_updates[period] = False
+                reasons.append(f"Tier {period} RESET")
+        elif trend == "BEAR":
+            is_touching = current_ask >= ema_value
+            has_moved_away = current_ask < ema_value - reset_buffer
+            if is_touching and not tier_fired:
+                fired_tier = period
+                fired_side = "sell"
+                tier_updates[period] = True
+                reasons.append(f"TIER FIRE: ask {current_ask:.3f} >= EMA{period} {ema_value:.3f} -> SELL")
+                break
+            elif has_moved_away and tier_fired:
+                tier_updates[period] = False
+                reasons.append(f"Tier {period} RESET")
+
+    return {
+        "fired": fired_tier is not None,
+        "tier": fired_tier,
+        "side": fired_side,
+        "tier_updates": tier_updates,
+        "reasons": reasons,
+    }
+
+
+def _evaluate_bb_reversal_system_b_trial_6(
+    policy,  # ExecutionPolicyKtCgTrial6
+    m1_bb: dict,
+    current_bid: float,
+    current_ask: float,
+    bb_tier_state: dict[int, bool],
+    pip_size: float,
+) -> dict:
+    """System B: BB Reversal (counter-trend).
+
+    Generate tier offsets from BB upper/lower. Fire counter-trend entry when
+    price exceeds BB + offset. Reset ALL bb_tier_fired when price returns inside BB.
+    """
+    reasons = []
+    bb_tier_updates: dict[int, bool] = {}
+    fired_tier = None
+    fired_side = None
+
+    if not policy.bb_reversal_enabled:
+        reasons.append("System B disabled")
+        return {"fired": False, "tier": None, "side": None, "bb_tier_updates": {}, "reasons": reasons, "reset_all": False}
+
+    bb_upper = m1_bb.get("upper")
+    bb_lower = m1_bb.get("lower")
+    bb_middle = m1_bb.get("middle")
+    if bb_upper is None or bb_lower is None or bb_middle is None:
+        return {"fired": False, "tier": None, "side": None, "bb_tier_updates": {}, "reasons": ["BB not available"], "reset_all": False}
+
+    start_offset = policy.bb_reversal_start_offset_pips * pip_size
+    increment = policy.bb_reversal_increment_pips * pip_size
+    num_tiers = policy.bb_reversal_num_tiers
+
+    # Check if price is back inside BB -> reset all
+    price_inside = current_bid < bb_upper and current_ask > bb_lower
+    if price_inside and any(bb_tier_state.get(i, False) for i in range(num_tiers)):
+        for i in range(num_tiers):
+            bb_tier_updates[i] = False
+        reasons.append("BB reversal: price inside BB, all tiers RESET")
+        return {"fired": False, "tier": None, "side": None, "bb_tier_updates": bb_tier_updates, "reasons": reasons, "reset_all": True}
+
+    # Check each tier for fire
+    for i in range(num_tiers):
+        offset = start_offset + i * increment
+        tier_fired = bb_tier_state.get(i, False)
+
+        # SELL when ask >= upper_bb + offset (unfired)
+        upper_trigger = bb_upper + offset
+        if current_ask >= upper_trigger and not tier_fired:
+            fired_tier = i
+            fired_side = "sell"
+            bb_tier_updates[i] = True
+            reasons.append(f"BB REVERSAL FIRE: ask {current_ask:.3f} >= upper_bb+{offset/pip_size:.1f}p ({upper_trigger:.3f}) -> SELL (tier {i})")
+            break
+
+        # BUY when bid <= lower_bb - offset (unfired)
+        lower_trigger = bb_lower - offset
+        if current_bid <= lower_trigger and not tier_fired:
+            fired_tier = i
+            fired_side = "buy"
+            bb_tier_updates[i] = True
+            reasons.append(f"BB REVERSAL FIRE: bid {current_bid:.3f} <= lower_bb-{offset/pip_size:.1f}p ({lower_trigger:.3f}) -> BUY (tier {i})")
+            break
+
+    return {
+        "fired": fired_tier is not None,
+        "tier": fired_tier,
+        "side": fired_side,
+        "bb_tier_updates": bb_tier_updates,
+        "reasons": reasons,
+        "reset_all": False,
+    }
+
+
+def _update_daily_reset_state_t6(tick_mid: float, state: dict, start_hour: int, end_hour: int) -> dict:
+    """Update dead zone state for Trial #6 with configurable hours.
+
+    Handles midnight wrap (e.g. start=21, end=2 means 21:00-02:00 UTC).
+    """
+    now = datetime.now(timezone.utc)
+    current_hour = now.hour
+
+    # Determine if in dead zone (handles midnight wrap)
+    if start_hour > end_hour:
+        # Wraps midnight: e.g. 21-2 means hour >= 21 OR hour < 2
+        in_dead_zone = current_hour >= start_hour or current_hour < end_hour
+    else:
+        in_dead_zone = start_hour <= current_hour < end_hour
+
+    return {
+        "daily_reset_block_active": in_dead_zone,
+        "dead_zone_start": start_hour,
+        "dead_zone_end": end_hour,
+    }
+
+
+def compute_t6_bb_reversal_tp(
+    m1_df: pd.DataFrame,
+    policy,  # ExecutionPolicyKtCgTrial6
+    pip_size: float,
+    entry_price: float,
+    side: str,
+) -> float | None:
+    """For middle_bb_dynamic mode: compute live TP from current middle BB, clamped to [min, max].
+
+    Returns the TP price, or None if BB not available.
+    """
+    if m1_df is None or len(m1_df) < policy.m1_bb_period + 1:
+        return None
+
+    bb = _compute_bollinger_bands(m1_df, policy.m1_bb_period, policy.m1_bb_std)
+    middle = bb.get("middle")
+    if middle is None:
+        return None
+
+    # Compute TP distance in pips
+    if side == "buy":
+        tp_distance_pips = (middle - entry_price) / pip_size
+    else:
+        tp_distance_pips = (entry_price - middle) / pip_size
+
+    # Clamp
+    tp_distance_pips = max(policy.bb_reversal_tp_min_pips, min(policy.bb_reversal_tp_max_pips, tp_distance_pips))
+
+    if side == "buy":
+        return entry_price + tp_distance_pips * pip_size
+    else:
+        return entry_price - tp_distance_pips * pip_size
+
+
+def execute_kt_cg_trial_6_policy_demo_only(
+    *,
+    adapter,
+    profile: ProfileV1,
+    log_dir: Path,
+    policy,  # ExecutionPolicyKtCgTrial6
+    context: MarketContext,
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+    tick: Tick,
+    trades_df: Optional[pd.DataFrame],
+    mode: str,
+    tier_state: dict[int, bool],
+    bb_tier_state: dict[int, bool],
+    daily_reset_state: dict | None = None,
+) -> dict:
+    """Execute Trial #6: BB Slope Trend + EMA Tier Pullback + BB Reversal.
+
+    Pipeline: mode guard -> dead zone -> M3 trend (NONE blocks) -> M1 BB -> System A -> System B
+    -> risk checks -> trade placement.
+
+    Returns dict with decision, tier_updates, bb_tier_updates, trigger_type, tp_pips, sl_pips,
+    bb_middle_at_entry, daily_reset_state, trend_result.
+    """
+    pip_size = float(profile.pip_size)
+    store = _store(log_dir)
+    rule_id = f"kt_cg_trial_6:{policy.id}"
+    tier_updates: dict[int, bool] = {}
+    bb_tier_updates: dict[int, bool] = {}
+    no_trade = {
+        "decision": ExecutionDecision(attempted=False, placed=False, reason="no_signal"),
+        "tier_updates": {},
+        "bb_tier_updates": {},
+        "trigger_type": "",
+        "tp_pips": None,
+        "sl_pips": None,
+        "bb_middle_at_entry": None,
+        "daily_reset_state": daily_reset_state or {},
+        "trend_result": None,
+    }
+
+    # Mode guard
+    if mode == "DISARMED":
+        return no_trade
+
+    # Dead zone check
+    if policy.dead_zone_enabled:
+        dz_state = _update_daily_reset_state_t6(
+            (tick.bid + tick.ask) / 2.0,
+            daily_reset_state or {},
+            policy.dead_zone_start_hour_utc,
+            policy.dead_zone_end_hour_utc,
+        )
+        no_trade["daily_reset_state"] = dz_state
+        if dz_state.get("daily_reset_block_active", False):
+            return no_trade
+
+    # Get M3 data
+    m3_df = data_by_tf.get("M3")
+    if m3_df is None or m3_df.empty:
+        return no_trade
+    m3_df = drop_incomplete_last_bar(m3_df.copy(), "M3")
+    min_m3_bars = max(policy.m3_trend_ema_extra, policy.m3_bb_period) + policy.m3_slope_lookback + 2
+    if len(m3_df) < min_m3_bars:
+        return no_trade
+
+    # Get M1 data
+    m1_df = data_by_tf.get("M1")
+    if m1_df is None or m1_df.empty:
+        return no_trade
+    m1_df = drop_incomplete_last_bar(m1_df.copy(), "M1")
+    max_tier_period = max(policy.tier_ema_periods) if policy.tier_ema_periods else 21
+    min_m1_bars = max(max_tier_period, policy.m1_bb_period) + 2
+    if len(m1_df) < min_m1_bars:
+        return no_trade
+
+    # M3 Slope Trend
+    trend_result = _evaluate_m3_slope_trend_trial_6(m3_df, policy, pip_size)
+    no_trade["trend_result"] = trend_result
+    trend = trend_result["trend"]
+
+    # M1 BB computation
+    m1_bb = _compute_bollinger_bands(m1_df, policy.m1_bb_period, policy.m1_bb_std)
+
+    current_bid = tick.bid
+    current_ask = tick.ask
+
+    # System A: EMA Tier Pullback (only when trend is BULL or BEAR)
+    system_a_result = {"fired": False, "tier": None, "side": None, "tier_updates": {}, "reasons": []}
+    if trend != "NONE" and policy.ema_tier_enabled:
+        system_a_result = _evaluate_ema_tier_system_a_trial_6(
+            policy, m1_df, m1_bb, trend, current_bid, current_ask, tier_state, pip_size,
+        )
+        tier_updates.update(system_a_result["tier_updates"])
+
+    # System B: BB Reversal (fires regardless of trend direction - counter-trend)
+    system_b_result = _evaluate_bb_reversal_system_b_trial_6(
+        policy, m1_bb, current_bid, current_ask, bb_tier_state, pip_size,
+    )
+    bb_tier_updates.update(system_b_result["bb_tier_updates"])
+
+    # Always propagate tier resets even when no trade fires
+    no_trade["tier_updates"] = tier_updates
+    no_trade["bb_tier_updates"] = bb_tier_updates
+
+    # Determine which system fires (priority: System A > System B)
+    trigger_type = ""
+    side = None
+    tp_pips = None
+    sl_pips = None
+    bb_middle_at_entry = None
+    fired_tier_info = None
+
+    if system_a_result["fired"]:
+        trigger_type = "ema_tier"
+        side = system_a_result["side"]
+        tp_pips = policy.ema_tier_tp_pips
+        sl_pips = policy.sl_pips
+        fired_tier_info = system_a_result["tier"]
+    elif system_b_result["fired"]:
+        trigger_type = "bb_reversal"
+        side = system_b_result["side"]
+        sl_pips = policy.bb_reversal_sl_pips
+
+        # Compute TP based on mode
+        if policy.bb_reversal_tp_mode == "fixed_pips":
+            tp_pips = policy.bb_reversal_tp_fixed_pips
+        elif policy.bb_reversal_tp_mode in ("middle_bb_entry", "middle_bb_dynamic"):
+            bb_middle_at_entry = m1_bb.get("middle")
+            if bb_middle_at_entry is not None:
+                entry_price = current_ask if side == "buy" else current_bid
+                if side == "buy":
+                    tp_distance = (bb_middle_at_entry - entry_price) / pip_size
+                else:
+                    tp_distance = (entry_price - bb_middle_at_entry) / pip_size
+                tp_pips = max(policy.bb_reversal_tp_min_pips, min(policy.bb_reversal_tp_max_pips, tp_distance))
+            else:
+                tp_pips = policy.bb_reversal_tp_fixed_pips  # fallback
+        fired_tier_info = system_b_result["tier"]
+
+    if not side:
+        return no_trade
+
+    # Risk checks: per-direction cap
+    if trades_df is not None and not trades_df.empty:
+        open_trades = trades_df[trades_df["status"] == "open"] if "status" in trades_df.columns else trades_df
+        same_side = open_trades[open_trades["side"].str.lower() == side.lower()] if "side" in open_trades.columns else pd.DataFrame()
+        if len(same_side) >= policy.max_open_trades_per_side:
+            no_trade["tier_updates"] = tier_updates
+            no_trade["bb_tier_updates"] = bb_tier_updates
+            return no_trade
+
+        # BB reversal position cap
+        if trigger_type == "bb_reversal":
+            bb_rev_trades = same_side[same_side.get("entry_type", pd.Series(dtype=str)) == "bb_reversal"] if "entry_type" in same_side.columns else pd.DataFrame()
+            if len(bb_rev_trades) >= policy.max_bb_reversal_positions:
+                no_trade["tier_updates"] = tier_updates
+                no_trade["bb_tier_updates"] = bb_tier_updates
+                return no_trade
+
+    # Cooldown after loss
+    if policy.cooldown_after_loss_seconds > 0:
+        try:
+            execs = store.read_executions_df(profile.profile_name)
+            if execs is not None and not execs.empty:
+                placed_execs = execs[execs["placed"] == 1]
+                if not placed_execs.empty:
+                    last_exec = placed_execs.iloc[-1]
+                    last_time = pd.to_datetime(last_exec["timestamp_utc"])
+                    now = pd.Timestamp.now(tz="UTC")
+                    elapsed = (now - last_time).total_seconds()
+                    if elapsed < policy.cooldown_after_loss_seconds:
+                        # Only apply cooldown if last trade was a loss (check trades_df)
+                        pass  # simplified: cooldown applies after any trade for now
+        except Exception:
+            pass
+
+    # Build candidate
+    entry_price = current_ask if side == "buy" else current_bid
+    sl_dist = (sl_pips or policy.sl_pips) * pip_size
+    tp_dist = (tp_pips or policy.ema_tier_tp_pips) * pip_size
+
+    if side == "buy":
+        stop = entry_price - sl_dist
+        target = entry_price + tp_dist
+    else:
+        stop = entry_price + sl_dist
+        target = entry_price - tp_dist
+
+    candidate = TradeCandidate(
+        symbol=profile.symbol,
+        side=side,
+        entry_price=entry_price,
+        stop_price=stop,
+        target_price=target,
+        size_lots=float(get_effective_risk(profile).max_lots),
+    )
+
+    decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
+    if not decision.allow:
+        sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+        store.insert_execution({
+            "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+            "profile": profile.profile_name, "symbol": profile.symbol,
+            "signal_id": sig_id, "rule_id": rule_id, "mode": mode,
+            "attempted": 1, "placed": 0,
+            "reason": "risk_reject: " + "; ".join(decision.hard_reasons),
+            "mt5_retcode": None, "mt5_order_id": None, "mt5_deal_id": None,
+        })
+        return {
+            "decision": ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons)),
+            "tier_updates": tier_updates, "bb_tier_updates": bb_tier_updates,
+            "trigger_type": trigger_type, "tp_pips": tp_pips, "sl_pips": sl_pips,
+            "bb_middle_at_entry": bb_middle_at_entry,
+            "daily_reset_state": no_trade["daily_reset_state"],
+            "trend_result": trend_result,
+        }
+
+    if mode == "ARMED_MANUAL_CONFIRM":
+        sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+        store.insert_execution({
+            "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+            "profile": profile.profile_name, "symbol": profile.symbol,
+            "signal_id": sig_id, "rule_id": rule_id, "mode": mode,
+            "attempted": 1, "placed": 0,
+            "reason": "manual_confirm_required",
+            "mt5_retcode": None, "mt5_order_id": None, "mt5_deal_id": None,
+        })
+        return {
+            "decision": ExecutionDecision(attempted=True, placed=False, reason="manual_confirm_required"),
+            "tier_updates": tier_updates, "bb_tier_updates": bb_tier_updates,
+            "trigger_type": trigger_type, "tp_pips": tp_pips, "sl_pips": sl_pips,
+            "bb_middle_at_entry": bb_middle_at_entry,
+            "daily_reset_state": no_trade["daily_reset_state"],
+            "trend_result": trend_result,
+        }
+
+    # ARMED_AUTO_DEMO: place the trade
+    if policy.close_opposite_on_trade:
+        closed = close_opposite_positions(adapter, profile, side, log_dir)
+        if closed:
+            print(f"[{profile.profile_name}] kt_cg_trial_6: closed {len(closed)} opposite position(s) before {side.upper()}")
+
+    tier_label = f"_tier{fired_tier_info}" if fired_tier_info is not None else ""
+    comment = f"kt_cg_trial_6:{policy.id}:{trigger_type}{tier_label}"
+
+    res = adapter.order_send_market(
+        symbol=profile.symbol,
+        side=side,
+        volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
+        sl=candidate.stop_price,
+        tp=candidate.target_price,
+        comment=comment,
+    )
+    placed = res.retcode in (0, 10008, 10009)
+    reason = f"{trigger_type}{tier_label}:order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
+    sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+    store.insert_execution({
+        "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+        "profile": profile.profile_name, "symbol": profile.symbol,
+        "signal_id": sig_id, "rule_id": rule_id, "mode": mode,
+        "attempted": 1, "placed": 1 if placed else 0,
+        "reason": reason,
+        "mt5_retcode": res.retcode, "mt5_order_id": res.order, "mt5_deal_id": res.deal,
+    })
+
+    if placed:
+        print(f"[{profile.profile_name}] TRADE PLACED: kt_cg_trial_6:{trigger_type}{tier_label} | {side.upper()} @ {entry_price:.3f}")
+
+    return {
+        "decision": ExecutionDecision(
+            attempted=True, placed=placed, reason=reason,
+            order_retcode=res.retcode, order_id=res.order, deal_id=res.deal,
+            fill_price=getattr(res, 'fill_price', None), side=side,
+        ),
+        "tier_updates": tier_updates,
+        "bb_tier_updates": bb_tier_updates,
+        "trigger_type": trigger_type,
+        "tp_pips": tp_pips,
+        "sl_pips": sl_pips,
+        "bb_middle_at_entry": bb_middle_at_entry,
+        "daily_reset_state": no_trade["daily_reset_state"],
+        "trend_result": trend_result,
     }

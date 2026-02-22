@@ -26,6 +26,8 @@ from core.execution_engine import (
     execute_kt_cg_hybrid_policy_demo_only,
     execute_kt_cg_trial_4_policy_demo_only,
     execute_kt_cg_trial_5_policy_demo_only,
+    execute_kt_cg_trial_6_policy_demo_only,
+    compute_t6_bb_reversal_tp,
     execute_price_level_policy_demo_only,
     execute_session_momentum_policy_demo_only,
     execute_signal_demo_only,
@@ -49,6 +51,7 @@ from core.dashboard_models import (
 from core.dashboard_reporters import (
     collect_trial_2_context, collect_trial_3_context,
     collect_trial_4_context, collect_trial_5_context,
+    collect_trial_6_context,
 )
 from storage.sqlite_store import SqliteStore
 
@@ -141,10 +144,10 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
     breakeven = getattr(tm, "breakeven", None)
     target = getattr(tm, "target", None)
 
-    # Find Trial #4 spread-aware BE config if present
+    # Find Trial #4/#5/#6 spread-aware BE config if present
     t4_spread_be = None
     for pol in profile.execution.policies:
-        if getattr(pol, "type", None) in ("kt_cg_trial_4", "kt_cg_trial_5") and getattr(pol, "enabled", True):
+        if getattr(pol, "type", None) in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6") and getattr(pol, "enabled", True):
             if getattr(pol, "spread_aware_be_enabled", False):
                 t4_spread_be = pol
             break
@@ -193,6 +196,10 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
             if entry_type == "zone_entry" and getattr(t4_spread_be, "spread_aware_be_apply_to_zone_entry", True):
                 apply = True
             elif entry_type == "tiered_pullback" and getattr(t4_spread_be, "spread_aware_be_apply_to_tiered_pullback", True):
+                apply = True
+            elif entry_type == "ema_tier" and getattr(t4_spread_be, "spread_aware_be_apply_to_ema_tier", True):
+                apply = True
+            elif entry_type == "bb_reversal" and getattr(t4_spread_be, "spread_aware_be_apply_to_bb_reversal", True):
                 apply = True
             if apply:
                 # Trial #5: hardcode spread+buffer; Trial #4 uses policy setting
@@ -358,6 +365,10 @@ def _build_and_write_dashboard(
                 policy_for_context, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
                 exhaustion_result=exhaustion_result,
                 daily_reset_state=daily_reset_state,
+            )
+        elif policy_type == "kt_cg_trial_6":
+            context_items = collect_trial_6_context(
+                policy_for_context, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
             )
         elif policy_type == "kt_cg_hybrid":
             context_items = collect_trial_2_context(policy, data_by_tf, tick, pip_size)
@@ -581,6 +592,10 @@ def main() -> None:
             getattr(p, "type", None) == "kt_cg_trial_5" and getattr(p, "enabled", True)
             for p in profile.execution.policies
         )
+        has_kt_cg_trial_6 = any(
+            getattr(p, "type", None) == "kt_cg_trial_6" and getattr(p, "enabled", True)
+            for p in profile.execution.policies
+        )
         # Confirmed-cross setups can now use M5; detect if any do so we fetch M5 bars.
         m5_cross_setup_ids = {
             sid
@@ -663,8 +678,8 @@ def main() -> None:
                     # Fetch M5 data when needed by ema_pullback, kt_cg_ctp, kt_cg_hybrid, or M5 confirmed-cross setups.
                     if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid:
                         data_by_tf["M5"] = _get_bars_cached(profile.symbol, "M5", 2000)
-                    # Fetch M3 data when needed by kt_cg_trial_4/5 (trend detection).
-                    if has_kt_cg_trial_4 or has_kt_cg_trial_5:
+                    # Fetch M3 data when needed by kt_cg_trial_4/5/6 (trend detection).
+                    if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6:
                         data_by_tf["M3"] = _get_bars_cached(profile.symbol, "M3", 3000)
                     # Fetch D1 data when needed by daily H/L filter (Trial #4/5).
                     if has_kt_cg_trial_4 or has_kt_cg_trial_5:
@@ -1727,9 +1742,171 @@ def main() -> None:
                         temp_overrides=temp_overrides,
                     )
 
+            # Trial #6 execution — BB Slope Trend + EMA Tier Pullback + BB Reversal
+            if has_kt_cg_trial_6:
+                t6_mkt = mkt
+                if t6_mkt is None:
+                    spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
+                    t6_mkt = MarketContext(spread_pips=float(spread_pips), alignment_score=0)
+                trades_df = store.read_trades_df(profile.profile_name)
+                # Load tier state + bb_tier_state from runtime_state.json
+                t6_tier_state: dict[int, bool] = {}
+                t6_bb_tier_state: dict[int, bool] = {}
+                t6_daily_reset_state: dict = {}
+                try:
+                    state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                    # EMA tier state (reuse tier_fired dict)
+                    tier_fired_raw = state_data.get("tier_fired")
+                    if isinstance(tier_fired_raw, dict):
+                        t6_tier_state = {int(k): bool(v) for k, v in tier_fired_raw.items()}
+                    # BB tier state
+                    bb_tier_raw = state_data.get("bb_tier_fired")
+                    if isinstance(bb_tier_raw, dict):
+                        t6_bb_tier_state = {int(k): bool(v) for k, v in bb_tier_raw.items()}
+                    # Daily reset / dead zone state
+                    t6_daily_reset_state = {
+                        "daily_reset_block_active": bool(state_data.get("daily_reset_block_active", False)),
+                    }
+                except Exception:
+                    t6_tier_state = {}
+                    t6_bb_tier_state = {}
+                    t6_daily_reset_state = {}
+
+                for pol in profile.execution.policies:
+                    if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "kt_cg_trial_6":
+                        continue
+                    m1_df = data_by_tf.get("M1")
+                    if m1_df is None or m1_df.empty:
+                        continue
+
+                    exec_result = execute_kt_cg_trial_6_policy_demo_only(
+                        adapter=adapter,
+                        profile=profile,
+                        log_dir=log_dir,
+                        policy=pol,
+                        context=t6_mkt,
+                        data_by_tf=data_by_tf,
+                        tick=tick,
+                        trades_df=trades_df,
+                        mode=mode,
+                        tier_state=t6_tier_state,
+                        bb_tier_state=t6_bb_tier_state,
+                        daily_reset_state=t6_daily_reset_state,
+                    )
+                    dec = exec_result["decision"]
+                    tier_updates = exec_result.get("tier_updates", {})
+                    bb_tier_updates = exec_result.get("bb_tier_updates", {})
+                    t6_trigger_type = exec_result.get("trigger_type")
+                    t6_daily_reset_state = exec_result.get("daily_reset_state", t6_daily_reset_state)
+
+                    # Persist tier RESETS immediately, tier FIRES after trade placed
+                    tier_resets = {t: v for t, v in tier_updates.items() if not v}
+                    tier_fires = {t: v for t, v in tier_updates.items() if v}
+                    if tier_resets:
+                        try:
+                            current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                            tf_dict = current_state_data.get("tier_fired", {})
+                            if not isinstance(tf_dict, dict):
+                                tf_dict = {}
+                            for tier, new_state in tier_resets.items():
+                                tf_dict[str(tier)] = new_state
+                                t6_tier_state[tier] = new_state
+                            current_state_data["tier_fired"] = tf_dict
+                            state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
+                        except Exception as e:
+                            print(f"[{profile.profile_name}] Failed to persist T6 tier resets: {e}")
+
+                    # Persist BB tier updates (resets and fires both immediately for BB reversal)
+                    if bb_tier_updates:
+                        try:
+                            current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                            bb_dict = current_state_data.get("bb_tier_fired", {})
+                            if not isinstance(bb_dict, dict):
+                                bb_dict = {}
+                            # If reset_all, clear entire dict
+                            if exec_result.get("bb_tier_updates") and all(not v for v in bb_tier_updates.values()):
+                                bb_dict = {str(k): False for k in bb_tier_updates}
+                            else:
+                                for tier, new_state in bb_tier_updates.items():
+                                    bb_dict[str(tier)] = new_state
+                                    t6_bb_tier_state[tier] = new_state
+                            current_state_data["bb_tier_fired"] = bb_dict
+                            state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
+                        except Exception as e:
+                            print(f"[{profile.profile_name}] Failed to persist T6 bb_tier state: {e}")
+
+                    # Persist dead zone state
+                    if t6_daily_reset_state:
+                        try:
+                            current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                            current_state_data["daily_reset_block_active"] = t6_daily_reset_state.get("daily_reset_block_active", False)
+                            state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
+                        except Exception as e:
+                            print(f"[{profile.profile_name}] Failed to persist T6 dead zone state: {e}")
+
+                    if dec.attempted:
+                        if dec.placed:
+                            side = dec.side or "buy"
+                            entry_price = tick.ask if side == "buy" else tick.bid
+                            pip = float(profile.pip_size)
+                            t6_tp_pips = exec_result.get("tp_pips") or pol.ema_tier_tp_pips
+                            t6_sl_pips = exec_result.get("sl_pips") or pol.sl_pips
+                            if side == "buy":
+                                tp_price = entry_price + t6_tp_pips * pip
+                                sl_price = entry_price - t6_sl_pips * pip
+                            else:
+                                tp_price = entry_price - t6_tp_pips * pip
+                                sl_price = entry_price + t6_sl_pips * pip
+                            print(f"[{profile.profile_name}] TRADE PLACED: kt_cg_trial_6:{pol.id}:{t6_trigger_type} | side={side} | entry={entry_price:.3f} | {dec.reason}")
+                            extra_fields = {}
+                            bb_middle = exec_result.get("bb_middle_at_entry")
+                            if bb_middle is not None:
+                                extra_fields["bb_middle_at_entry"] = bb_middle
+                            _insert_trade_for_policy(
+                                profile=profile,
+                                adapter=adapter,
+                                store=store,
+                                policy_type="kt_cg_trial_6",
+                                policy_id=pol.id,
+                                side=side,
+                                entry_price=entry_price,
+                                dec=dec,
+                                stop_price=sl_price,
+                                target_price=tp_price,
+                                entry_type=t6_trigger_type,
+                            )
+                            _append_trade_open_event(
+                                log_dir, f"kt_cg_trial_6:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
+                                side, entry_price, trigger_type=t6_trigger_type or "", entry_type=t6_trigger_type or "",
+                            )
+                            # Persist tier FIRES after trade confirmed placed
+                            if tier_fires:
+                                try:
+                                    current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                                    tf_dict = current_state_data.get("tier_fired", {})
+                                    if not isinstance(tf_dict, dict):
+                                        tf_dict = {}
+                                    for tier, new_state in tier_fires.items():
+                                        tf_dict[str(tier)] = new_state
+                                        t6_tier_state[tier] = new_state
+                                    current_state_data["tier_fired"] = tf_dict
+                                    state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
+                                except Exception as e:
+                                    print(f"[{profile.profile_name}] Failed to persist T6 tier fires: {e}")
+                        elif dec.reason and "dead_zone" not in dec.reason and dec.reason != "no_signal":
+                            print(f"[{profile.profile_name}] kt_cg_trial_6 BLOCKED: {dec.reason}")
+
+                    # Dashboard assembly for Trial #6
+                    _build_and_write_dashboard(
+                        profile=profile, store=store, log_dir=log_dir, tick=tick,
+                        data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
+                        policy_type="kt_cg_trial_6", tier_state=t6_tier_state,
+                        eval_result=exec_result,
+                    )
+
             # Catch-all dashboard write for profiles not using KT/CG policy types.
             # Runs every poll cycle so positions + prices are always fresh.
-            if not (has_kt_cg_hybrid or has_kt_cg_ctp or has_kt_cg_trial_4 or has_kt_cg_trial_5):
+            if not (has_kt_cg_hybrid or has_kt_cg_ctp or has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6):
                 if tick is not None and data_by_tf is not None:
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,

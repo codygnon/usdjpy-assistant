@@ -527,3 +527,67 @@ def collect_trial_3_context(
     """Collect context items for Trial #3."""
     # Trial #3 is similar to Trial #2 but with different EMA periods
     return collect_trial_2_context(policy, data_by_tf, tick, pip_size)
+
+
+def collect_trial_6_context(
+    policy, data_by_tf: dict, tick, tier_state: dict,
+    eval_result: Optional[dict], pip_size: float,
+) -> list[ContextItem]:
+    """Collect context items for Trial #6 dashboard display."""
+    from core.execution_engine import _compute_bollinger_bands
+    from core.indicators import ema as ema_fn
+
+    items: list[ContextItem] = []
+
+    # M3 Trend (from eval_result or computed)
+    trend_result = eval_result.get("trend_result") if eval_result else None
+    if trend_result:
+        trend = trend_result.get("trend", "N/A")
+        items.append(ContextItem("M3 Trend", trend, "trend"))
+        items.append(ContextItem(f"M3 EMA{getattr(policy, 'm3_trend_ema_fast', 5)}", f"{trend_result.get('ema_fast_val', 0):.3f}", "trend"))
+        items.append(ContextItem(f"M3 EMA{getattr(policy, 'm3_trend_ema_slow', 9)}", f"{trend_result.get('ema_slow_val', 0):.3f}", "trend"))
+        items.append(ContextItem(f"M3 EMA{getattr(policy, 'm3_trend_ema_extra', 21)}", f"{trend_result.get('ema_extra_val', 0):.3f}", "trend"))
+        items.append(ContextItem("Slopes", f"{trend_result.get('slope_fast', 0):.2f}/{trend_result.get('slope_slow', 0):.2f}/{trend_result.get('slope_extra', 0):.2f}", "trend"))
+        items.append(ContextItem("BB Expanding", str(trend_result.get("bb_expanding", False)), "trend"))
+    else:
+        items.append(ContextItem("M3 Trend", "N/A", "trend"))
+
+    # M1 Bollinger Bands
+    m1_df = data_by_tf.get("M1")
+    if m1_df is not None and not m1_df.empty:
+        bb_period = getattr(policy, "m1_bb_period", 20)
+        bb_std = getattr(policy, "m1_bb_std", 2.0)
+        if len(m1_df) >= bb_period + 2:
+            bb = _compute_bollinger_bands(m1_df, bb_period, bb_std)
+            if bb.get("upper") is not None:
+                items.append(ContextItem("M1 BB Upper", f"{bb['upper']:.3f}", "bollinger"))
+                items.append(ContextItem("M1 BB Middle", f"{bb['middle']:.3f}", "bollinger"))
+                items.append(ContextItem("M1 BB Lower", f"{bb['lower']:.3f}", "bollinger"))
+                items.append(ContextItem("M1 BB Width", f"{bb['width']/pip_size:.1f}p", "bollinger"))
+
+    # Bid/Ask/Spread
+    items.append(ContextItem("Bid", f"{tick.bid:.3f}", "price"))
+    items.append(ContextItem("Ask", f"{tick.ask:.3f}", "price"))
+    items.append(ContextItem("Spread", f"{(tick.ask - tick.bid) / pip_size:.1f}p", "price"))
+
+    # EMA Tier state (System A)
+    fired = [str(t) for t, v in sorted(tier_state.items()) if v]
+    avail = [str(t) for t, v in sorted(tier_state.items()) if not v]
+    items.append(ContextItem("EMA Tiers Fired", ", ".join(fired) if fired else "None", "tiers"))
+    items.append(ContextItem("EMA Tiers Available", ", ".join(avail) if avail else "None", "tiers"))
+
+    # BB Reversal tier state (System B) — from runtime state
+    # Note: bb_tier_state is in exec_result but not passed here directly
+    # The eval_result may contain bb_tier_updates
+    bb_updates = eval_result.get("bb_tier_updates", {}) if eval_result else {}
+    bb_fired = [str(t) for t, v in sorted(bb_updates.items()) if v]
+    items.append(ContextItem("BB Rev Tiers Fired", ", ".join(bb_fired) if bb_fired else "None", "bb_reversal"))
+
+    # Dead zone
+    daily_reset = eval_result.get("daily_reset_state", {}) if eval_result else {}
+    block_active = daily_reset.get("daily_reset_block_active", False)
+    utc_hour = datetime.now(timezone.utc).hour
+    items.append(ContextItem("Dead Zone", "ACTIVE" if block_active else "Clear", "dead_zone"))
+    items.append(ContextItem("UTC Hour", f"{utc_hour:02d}:00", "dead_zone"))
+
+    return items

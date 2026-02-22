@@ -38,6 +38,7 @@ class PresetId(str, Enum):
     KT_CG_TRIAL_3 = "kt_cg_trial_3"
     KT_CG_TRIAL_4 = "kt_cg_trial_4"
     KT_CG_TRIAL_5 = "kt_cg_trial_5"
+    KT_CG_TRIAL_6 = "kt_cg_trial_6"
     M5_M1_EMA_CROSS_9_21 = "m5_m1_ema_cross_9_21"
 
 
@@ -1388,6 +1389,107 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "trend_exhaustion_ramp_minutes": 12.0,
                     # Per-direction open trade cap
                     "max_open_trades_per_side": 5,
+                },
+            ],
+        },
+    },
+    # -----------------------------------------------------------------------
+    # KT/CG Trial #6 (BB Slope Trend + EMA Tier Pullback + BB Reversal)
+    # Clean rebuild: M3 slope-based trend gated by BB expansion,
+    # EMA tier pullback with M1 BB gating, BB reversal counter-trend.
+    # -----------------------------------------------------------------------
+    PresetId.KT_CG_TRIAL_6: {
+        "name": "KT/CG Trial #6 (BB Slope Trend + EMA Tier + BB Reversal)",
+        "description": "Trial #6: M3 slope trend (EMA 5>9>21 + BB expanding), EMA tier pullback with M1 BB gating (System A), and BB reversal counter-trend entries (System B). Spread-aware BE with 7p trigger.",
+        "pros": [
+            "M3 slope + BB expansion = strong trend confirmation before entries",
+            "12 EMA tiers (9-21) with BB gating prevents overtrading in extended moves",
+            "BB reversal catches mean-reversion at Bollinger extremes",
+            "Configurable dead zone blocks low-liquidity hours",
+        ],
+        "cons": [
+            "More complex system = more parameters to tune",
+            "NONE trend blocks all entries; may miss early moves",
+            "BB reversal counter-trend carries inherent risk",
+            "Testing preset - expect tuning needed",
+        ],
+        "risk": {
+            "max_lots": 0.1,
+            "require_stop": True,
+            "min_stop_pips": 10.0,
+            "max_spread_pips": 6.0,
+            "max_trades_per_day": 60,
+            "max_open_trades": 10,
+            "cooldown_minutes_after_loss": 3,
+        },
+        "strategy": {
+            "filters": {
+                "alignment": {"enabled": False},
+                "ema_stack_filter": {"enabled": False},
+                "atr_filter": {"enabled": False},
+                "session_filter": {"enabled": False},
+            },
+            "setups": {},
+        },
+        "trade_management": {
+            "target": {
+                "mode": "fixed_pips",
+                "pips_default": 7.0,
+            },
+            "stop_loss": None,
+            "breakeven": {"enabled": False},
+        },
+        "execution": {
+            "loop_poll_seconds": 0.25,
+            "loop_poll_seconds_fast": 0.25,
+            "policies": [
+                {
+                    "type": "kt_cg_trial_6",
+                    "id": "kt_cg_trial_6",
+                    "enabled": True,
+                    # M3 Slope Trend Engine
+                    "m3_trend_ema_fast": 5,
+                    "m3_trend_ema_slow": 9,
+                    "m3_trend_ema_extra": 21,
+                    "m3_slope_lookback": 2,
+                    "m3_bb_period": 20,
+                    "m3_bb_std": 2.0,
+                    # M1 Bollinger Bands
+                    "m1_bb_period": 20,
+                    "m1_bb_std": 2.0,
+                    # System A: EMA Tier Pullback
+                    "ema_tier_enabled": True,
+                    "tier_ema_periods": [9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
+                    "tier_reset_buffer_pips": 1.0,
+                    "ema_tier_tp_pips": 7.0,
+                    "sl_pips": 10.0,
+                    "bb_gating_deep_tier_min_period": 21,
+                    # System B: BB Reversal
+                    "bb_reversal_enabled": True,
+                    "bb_reversal_start_offset_pips": 0.5,
+                    "bb_reversal_increment_pips": 0.5,
+                    "bb_reversal_num_tiers": 10,
+                    "max_bb_reversal_positions": 3,
+                    "bb_reversal_tp_mode": "middle_bb_entry",
+                    "bb_reversal_tp_fixed_pips": 8.0,
+                    "bb_reversal_tp_min_pips": 4.0,
+                    "bb_reversal_tp_max_pips": 15.0,
+                    "bb_reversal_sl_pips": 10.0,
+                    # Dead Zone
+                    "dead_zone_enabled": True,
+                    "dead_zone_start_hour_utc": 21,
+                    "dead_zone_end_hour_utc": 2,
+                    # Risk
+                    "cooldown_after_loss_seconds": 180.0,
+                    "close_opposite_on_trade": False,
+                    "max_open_trades_per_side": 15,
+                    # Spread-Aware Breakeven
+                    "spread_aware_be_enabled": True,
+                    "spread_aware_be_trigger_mode": "fixed_pips",
+                    "spread_aware_be_fixed_trigger_pips": 7.0,
+                    "spread_aware_be_spread_buffer_pips": 1.5,
+                    "spread_aware_be_apply_to_ema_tier": True,
+                    "spread_aware_be_apply_to_bb_reversal": True,
                 },
             ],
         },

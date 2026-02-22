@@ -49,6 +49,9 @@ class RuntimeState:
     trend_flip_direction: Optional[str] = None     # "bull" or "bear"
     trend_flip_time: Optional[str] = None          # ISO UTC timestamp of last M3 EMA9/21 flip
 
+    # Trial #6 BB Reversal Tier State (offset_index -> fired bool)
+    bb_tier_fired: dict = field(default_factory=dict)
+
 
 def _load_tier_fired(data: dict) -> dict:
     """Load tier_fired from JSON data with backward compat for old tier_X_fired keys."""
@@ -95,6 +98,7 @@ def load_state(path: str | Path) -> RuntimeState:
         trend_flip_price=data.get("trend_flip_price"),
         trend_flip_direction=data.get("trend_flip_direction"),
         trend_flip_time=data.get("trend_flip_time"),
+        bb_tier_fired={int(k): bool(v) for k, v in data.get("bb_tier_fired", {}).items()},
     )
 
 
@@ -126,6 +130,7 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "trend_flip_price": state.trend_flip_price,
                 "trend_flip_direction": state.trend_flip_direction,
                 "trend_flip_time": state.trend_flip_time,
+                "bb_tier_fired": state.bb_tier_fired,
             },
             indent=2,
             sort_keys=False,

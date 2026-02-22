@@ -621,6 +621,79 @@ class ExecutionPolicyKtCgTrial4(BaseModel):
     ema_zone_filter_block_threshold: float = 0.35  # Block if weighted score below this
 
 
+class ExecutionPolicyKtCgTrial6(BaseModel):
+    """KT/CG Trial #6 (BB Slope Trend + EMA Tier Pullback + BB Reversal).
+
+    Two INDEPENDENT entry systems:
+
+    System A: EMA Tier Pullback
+      - M3 slope trend (EMA 5>9>21, all slopes>0, BB expanding) determines direction
+      - Live price touches M1 EMA tiers -> entry
+      - BB gating: when price outside M1 BB, only deep tiers allowed
+
+    System B: BB Reversal (counter-trend)
+      - Price exceeds M1 BB upper/lower by tiered offsets -> counter-trend entry
+      - TP targets middle BB (snapshot or dynamic)
+      - Resets when price returns inside BB
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["kt_cg_trial_6"] = "kt_cg_trial_6"
+    id: str = "kt_cg_trial_6_default"
+    enabled: bool = False
+
+    # M3 Slope Trend Engine
+    m3_trend_ema_fast: int = 5
+    m3_trend_ema_slow: int = 9
+    m3_trend_ema_extra: int = 21
+    m3_slope_lookback: int = 2
+    m3_bb_period: int = 20
+    m3_bb_std: float = 2.0
+
+    # M1 Bollinger Bands
+    m1_bb_period: int = 20
+    m1_bb_std: float = 2.0
+
+    # System A: EMA Tier Pullback
+    ema_tier_enabled: bool = True
+    tier_ema_periods: tuple[int, ...] = (9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21)
+    tier_reset_buffer_pips: float = 1.0
+    ema_tier_tp_pips: float = 7.0
+    sl_pips: float = 10.0
+    bb_gating_deep_tier_min_period: int = 21
+
+    # System B: BB Reversal
+    bb_reversal_enabled: bool = True
+    bb_reversal_start_offset_pips: float = 0.5
+    bb_reversal_increment_pips: float = 0.5
+    bb_reversal_num_tiers: int = 10
+    max_bb_reversal_positions: int = 3
+    bb_reversal_tp_mode: Literal["middle_bb_entry", "middle_bb_dynamic", "fixed_pips"] = "middle_bb_entry"
+    bb_reversal_tp_fixed_pips: float = 8.0
+    bb_reversal_tp_min_pips: float = 4.0
+    bb_reversal_tp_max_pips: float = 15.0
+    bb_reversal_sl_pips: float = 10.0
+
+    # Dead Zone (configurable hours)
+    dead_zone_enabled: bool = True
+    dead_zone_start_hour_utc: int = 21
+    dead_zone_end_hour_utc: int = 2
+
+    # Risk
+    cooldown_after_loss_seconds: float = 180.0
+    close_opposite_on_trade: bool = False
+    max_open_trades_per_side: int = 15
+
+    # Spread-Aware Breakeven (reused from T5)
+    spread_aware_be_enabled: bool = True
+    spread_aware_be_trigger_mode: Literal["fixed_pips", "spread_relative"] = "fixed_pips"
+    spread_aware_be_fixed_trigger_pips: float = 7.0
+    spread_aware_be_spread_buffer_pips: float = 1.5
+    spread_aware_be_apply_to_ema_tier: bool = True
+    spread_aware_be_apply_to_bb_reversal: bool = True
+
+
 ExecutionPolicy = Annotated[
     Union[
         ExecutionPolicyConfirmedCross,
@@ -636,6 +709,7 @@ ExecutionPolicy = Annotated[
         ExecutionPolicyKtCgCounterTrendPullback,
         ExecutionPolicyKtCgTrial4,
         ExecutionPolicyKtCgTrial5,
+        ExecutionPolicyKtCgTrial6,
     ],
     Field(discriminator="type"),
 ]

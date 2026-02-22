@@ -462,6 +462,7 @@ def update_runtime_state(profile_name: str, req: RuntimeStateUpdate) -> dict[str
         daily_reset_settled=old.daily_reset_settled,
         trend_flip_price=old.trend_flip_price,
         trend_flip_direction=old.trend_flip_direction,
+        bb_tier_fired=old.bb_tier_fired,
     )
     save_state(state_path, new_state)
     return {"status": "saved"}
@@ -516,6 +517,8 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
         trend_flip_price=old.trend_flip_price,
         trend_flip_direction=old.trend_flip_direction,
         trend_flip_time=old.trend_flip_time,
+        # Preserve BB tier state (Trial #6)
+        bb_tier_fired=old.bb_tier_fired,
     )
     save_state(state_path, new_state)
     return {"status": "saved"}
@@ -2594,7 +2597,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 if not getattr(pol, "enabled", True):
                     continue
                 pt = getattr(pol, "type", "") or ""
-                if pt in ("kt_cg_trial_4", "kt_cg_trial_5"):
+                if pt in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6"):
                     _policy = pol
                     _policy_type = pt
                     break
@@ -2842,10 +2845,27 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
             "mature_max": getattr(policy, "trend_exhaustion_mature_max", 3.5),
         }
 
-    # Dead Zone (Trial #5 only)
+    # Dead Zone (Trial #5)
     if hasattr(policy, "daily_reset_block_enabled"):
         filters["dead_zone"] = {
             "enabled": getattr(policy, "daily_reset_block_enabled", False),
+        }
+
+    # Dead Zone (Trial #6 — configurable hours)
+    if hasattr(policy, "dead_zone_enabled"):
+        filters["dead_zone"] = {
+            "enabled": getattr(policy, "dead_zone_enabled", False),
+            "start_hour": getattr(policy, "dead_zone_start_hour_utc", 21),
+            "end_hour": getattr(policy, "dead_zone_end_hour_utc", 2),
+        }
+
+    # BB Reversal (Trial #6)
+    if hasattr(policy, "bb_reversal_enabled"):
+        filters["bb_reversal"] = {
+            "enabled": getattr(policy, "bb_reversal_enabled", False),
+            "num_tiers": getattr(policy, "bb_reversal_num_tiers", 10),
+            "max_positions": getattr(policy, "max_bb_reversal_positions", 3),
+            "tp_mode": getattr(policy, "bb_reversal_tp_mode", "middle_bb_entry"),
         }
 
     # Max trades per side

@@ -3754,6 +3754,36 @@ interface EditedSettings {
   trend_exhaustion_extended_max: number;
   trend_exhaustion_ramp_minutes: number;
   max_open_trades_per_side: number;
+  // Trial #6: M3 Slope Trend Engine
+  t6_m3_slope_lookback: number;
+  t6_m3_bb_period: number;
+  t6_m3_bb_std: number;
+  // Trial #6: M1 Bollinger Bands
+  t6_m1_bb_period: number;
+  t6_m1_bb_std: number;
+  // Trial #6: System A - EMA Tier Pullback
+  t6_ema_tier_enabled: boolean;
+  t6_tier_ema_periods: number[];
+  t6_ema_tier_tp_pips: number;
+  t6_bb_gating_deep_tier_min_period: number;
+  // Trial #6: System B - BB Reversal
+  t6_bb_reversal_enabled: boolean;
+  t6_bb_reversal_start_offset_pips: number;
+  t6_bb_reversal_increment_pips: number;
+  t6_bb_reversal_num_tiers: number;
+  t6_max_bb_reversal_positions: number;
+  t6_bb_reversal_tp_mode: string;
+  t6_bb_reversal_tp_fixed_pips: number;
+  t6_bb_reversal_tp_min_pips: number;
+  t6_bb_reversal_tp_max_pips: number;
+  t6_bb_reversal_sl_pips: number;
+  // Trial #6: Dead Zone
+  t6_dead_zone_enabled: boolean;
+  t6_dead_zone_start_hour_utc: number;
+  t6_dead_zone_end_hour_utc: number;
+  // Trial #6: Spread-Aware BE scope
+  t6_spread_aware_be_apply_to_ema_tier: boolean;
+  t6_spread_aware_be_apply_to_bb_reversal: boolean;
 }
 
 function PresetsPage({ profile }: { profile: Profile }) {
@@ -3879,8 +3909,70 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let m1AtrTokyoMaxPips = 8.0;
       let m1AtrLondonMaxPips = 10.0;
       let m1AtrNyMaxPips = 11.0;
+      // Trial #6 defaults
+      let t6SlopeLookback = 2;
+      let t6BbPeriod = 20;
+      let t6BbStd = 2.0;
+      let t6M1BbPeriod = 20;
+      let t6M1BbStd = 2.0;
+      let t6EmaTierEnabled = true;
+      let t6TierEmaPeriods: number[] = [9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
+      let t6EmaTierTpPips = 7.0;
+      let t6BbGatingDeepTierMinPeriod = 21;
+      let t6BbReversalEnabled = true;
+      let t6BbReversalStartOffsetPips = 0.5;
+      let t6BbReversalIncrementPips = 0.5;
+      let t6BbReversalNumTiers = 10;
+      let t6MaxBbReversalPositions = 3;
+      let t6BbReversalTpMode = 'middle_bb_entry';
+      let t6BbReversalTpFixedPips = 8.0;
+      let t6BbReversalTpMinPips = 4.0;
+      let t6BbReversalTpMaxPips = 15.0;
+      let t6BbReversalSlPips = 10.0;
+      let t6DeadZoneEnabled = true;
+      let t6DeadZoneStartHourUtc = 21;
+      let t6DeadZoneEndHourUtc = 2;
+      let t6SpreadAwareBeApplyToEmaTier = true;
+      let t6SpreadAwareBeApplyToBbReversal = true;
+
       if (policies) {
         for (const pol of policies) {
+          // Trial #6 settings
+          if (pol.type === 'kt_cg_trial_6') {
+            t6SlopeLookback = (pol.m3_slope_lookback as number) ?? 2;
+            t6BbPeriod = (pol.m3_bb_period as number) ?? 20;
+            t6BbStd = (pol.m3_bb_std as number) ?? 2.0;
+            t6M1BbPeriod = (pol.m1_bb_period as number) ?? 20;
+            t6M1BbStd = (pol.m1_bb_std as number) ?? 2.0;
+            t6EmaTierEnabled = (pol.ema_tier_enabled as boolean) ?? true;
+            t6TierEmaPeriods = (pol.tier_ema_periods as number[]) ?? [9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
+            t6EmaTierTpPips = (pol.ema_tier_tp_pips as number) ?? 7.0;
+            t6BbGatingDeepTierMinPeriod = (pol.bb_gating_deep_tier_min_period as number) ?? 21;
+            t6BbReversalEnabled = (pol.bb_reversal_enabled as boolean) ?? true;
+            t6BbReversalStartOffsetPips = (pol.bb_reversal_start_offset_pips as number) ?? 0.5;
+            t6BbReversalIncrementPips = (pol.bb_reversal_increment_pips as number) ?? 0.5;
+            t6BbReversalNumTiers = (pol.bb_reversal_num_tiers as number) ?? 10;
+            t6MaxBbReversalPositions = (pol.max_bb_reversal_positions as number) ?? 3;
+            t6BbReversalTpMode = (pol.bb_reversal_tp_mode as string) ?? 'middle_bb_entry';
+            t6BbReversalTpFixedPips = (pol.bb_reversal_tp_fixed_pips as number) ?? 8.0;
+            t6BbReversalTpMinPips = (pol.bb_reversal_tp_min_pips as number) ?? 4.0;
+            t6BbReversalTpMaxPips = (pol.bb_reversal_tp_max_pips as number) ?? 15.0;
+            t6BbReversalSlPips = (pol.bb_reversal_sl_pips as number) ?? 10.0;
+            t6DeadZoneEnabled = (pol.dead_zone_enabled as boolean) ?? true;
+            t6DeadZoneStartHourUtc = (pol.dead_zone_start_hour_utc as number) ?? 21;
+            t6DeadZoneEndHourUtc = (pol.dead_zone_end_hour_utc as number) ?? 2;
+            t6SpreadAwareBeApplyToEmaTier = (pol.spread_aware_be_apply_to_ema_tier as boolean) ?? true;
+            t6SpreadAwareBeApplyToBbReversal = (pol.spread_aware_be_apply_to_bb_reversal as boolean) ?? true;
+            // Also read shared fields
+            if ('sl_pips' in pol) policySlPips = pol.sl_pips as number;
+            if ('spread_aware_be_enabled' in pol) {
+              spreadAwareBeEnabled = pol.spread_aware_be_enabled as boolean;
+              spreadAweareBeTriggerMode = (pol.spread_aware_be_trigger_mode as string) ?? 'fixed_pips';
+              spreadAwareBeFixedTriggerPips = (pol.spread_aware_be_fixed_trigger_pips as number) ?? 7.0;
+              spreadAwareBeSpreadBufferPips = (pol.spread_aware_be_spread_buffer_pips as number) ?? 1.5;
+            }
+            if ('max_open_trades_per_side' in pol) maxOpenTradesPerSide = (pol.max_open_trades_per_side as number) ?? 15;
+          }
           if ('cooldown_minutes' in pol) {
             policyCooldown = pol.cooldown_minutes as number;
           }
@@ -4086,6 +4178,31 @@ function PresetsPage({ profile }: { profile: Profile }) {
         m3_atr_period: m3AtrPeriod,
         m3_atr_min_pips: m3AtrMinPips,
         m3_atr_max_pips: m3AtrMaxPips,
+        // Trial #6
+        t6_m3_slope_lookback: t6SlopeLookback,
+        t6_m3_bb_period: t6BbPeriod,
+        t6_m3_bb_std: t6BbStd,
+        t6_m1_bb_period: t6M1BbPeriod,
+        t6_m1_bb_std: t6M1BbStd,
+        t6_ema_tier_enabled: t6EmaTierEnabled,
+        t6_tier_ema_periods: t6TierEmaPeriods,
+        t6_ema_tier_tp_pips: t6EmaTierTpPips,
+        t6_bb_gating_deep_tier_min_period: t6BbGatingDeepTierMinPeriod,
+        t6_bb_reversal_enabled: t6BbReversalEnabled,
+        t6_bb_reversal_start_offset_pips: t6BbReversalStartOffsetPips,
+        t6_bb_reversal_increment_pips: t6BbReversalIncrementPips,
+        t6_bb_reversal_num_tiers: t6BbReversalNumTiers,
+        t6_max_bb_reversal_positions: t6MaxBbReversalPositions,
+        t6_bb_reversal_tp_mode: t6BbReversalTpMode,
+        t6_bb_reversal_tp_fixed_pips: t6BbReversalTpFixedPips,
+        t6_bb_reversal_tp_min_pips: t6BbReversalTpMinPips,
+        t6_bb_reversal_tp_max_pips: t6BbReversalTpMaxPips,
+        t6_bb_reversal_sl_pips: t6BbReversalSlPips,
+        t6_dead_zone_enabled: t6DeadZoneEnabled,
+        t6_dead_zone_start_hour_utc: t6DeadZoneStartHourUtc,
+        t6_dead_zone_end_hour_utc: t6DeadZoneEndHourUtc,
+        t6_spread_aware_be_apply_to_ema_tier: t6SpreadAwareBeApplyToEmaTier,
+        t6_spread_aware_be_apply_to_bb_reversal: t6SpreadAwareBeApplyToBbReversal,
       });
     }
   }, [showActiveSettings, currentProfile, tempSettings]);
@@ -4234,6 +4351,45 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.trend_exhaustion_extended_max = editedSettings.trend_exhaustion_extended_max;
           updates.trend_exhaustion_ramp_minutes = Math.max(1, Math.min(60, editedSettings.trend_exhaustion_ramp_minutes ?? 12));
           updates.max_open_trades_per_side = Math.max(1, Math.min(20, editedSettings.max_open_trades_per_side));
+        }
+        // Update Trial #6 settings
+        if (pol.type === 'kt_cg_trial_6') {
+          // M3 Slope Trend
+          updates.m3_slope_lookback = Math.max(1, Math.min(10, editedSettings.t6_m3_slope_lookback));
+          updates.m3_bb_period = Math.max(5, Math.min(50, editedSettings.t6_m3_bb_period));
+          updates.m3_bb_std = Math.max(0.5, Math.min(4.0, editedSettings.t6_m3_bb_std));
+          // M1 BB
+          updates.m1_bb_period = Math.max(5, Math.min(50, editedSettings.t6_m1_bb_period));
+          updates.m1_bb_std = Math.max(0.5, Math.min(4.0, editedSettings.t6_m1_bb_std));
+          // System A: EMA Tier
+          updates.ema_tier_enabled = editedSettings.t6_ema_tier_enabled;
+          updates.tier_ema_periods = editedSettings.t6_tier_ema_periods;
+          updates.ema_tier_tp_pips = Math.max(0.1, editedSettings.t6_ema_tier_tp_pips);
+          updates.bb_gating_deep_tier_min_period = Math.max(9, Math.min(30, editedSettings.t6_bb_gating_deep_tier_min_period));
+          // System B: BB Reversal
+          updates.bb_reversal_enabled = editedSettings.t6_bb_reversal_enabled;
+          updates.bb_reversal_start_offset_pips = Math.max(0.1, editedSettings.t6_bb_reversal_start_offset_pips);
+          updates.bb_reversal_increment_pips = Math.max(0.1, editedSettings.t6_bb_reversal_increment_pips);
+          updates.bb_reversal_num_tiers = Math.max(1, Math.min(20, editedSettings.t6_bb_reversal_num_tiers));
+          updates.max_bb_reversal_positions = Math.max(1, Math.min(10, editedSettings.t6_max_bb_reversal_positions));
+          updates.bb_reversal_tp_mode = editedSettings.t6_bb_reversal_tp_mode;
+          updates.bb_reversal_tp_fixed_pips = Math.max(1, editedSettings.t6_bb_reversal_tp_fixed_pips);
+          updates.bb_reversal_tp_min_pips = Math.max(1, editedSettings.t6_bb_reversal_tp_min_pips);
+          updates.bb_reversal_tp_max_pips = Math.max(1, editedSettings.t6_bb_reversal_tp_max_pips);
+          updates.bb_reversal_sl_pips = Math.max(1, editedSettings.t6_bb_reversal_sl_pips);
+          // Dead Zone
+          updates.dead_zone_enabled = editedSettings.t6_dead_zone_enabled;
+          updates.dead_zone_start_hour_utc = Math.max(0, Math.min(23, editedSettings.t6_dead_zone_start_hour_utc));
+          updates.dead_zone_end_hour_utc = Math.max(0, Math.min(23, editedSettings.t6_dead_zone_end_hour_utc));
+          // Spread-Aware BE (shared fields + T6-specific scope)
+          updates.spread_aware_be_enabled = editedSettings.spread_aware_be_enabled;
+          updates.spread_aware_be_trigger_mode = editedSettings.spread_aware_be_trigger_mode;
+          updates.spread_aware_be_fixed_trigger_pips = editedSettings.spread_aware_be_fixed_trigger_pips;
+          updates.spread_aware_be_spread_buffer_pips = editedSettings.spread_aware_be_spread_buffer_pips;
+          updates.spread_aware_be_apply_to_ema_tier = editedSettings.t6_spread_aware_be_apply_to_ema_tier;
+          updates.spread_aware_be_apply_to_bb_reversal = editedSettings.t6_spread_aware_be_apply_to_bb_reversal;
+          // Risk
+          updates.max_open_trades_per_side = Math.max(1, Math.min(30, editedSettings.max_open_trades_per_side));
         }
         return Object.keys(updates).length > 0 ? { ...pol, ...updates } : pol;
       }) || [];
@@ -5534,6 +5690,200 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   >
                     Reset EMAs to Defaults
                   </button>
+                </div>
+              )}
+              {/* View Settings (Trial #6) */}
+              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_6') && (
+                <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
+                    View Settings (Trial #6)
+                  </div>
+
+                  {/* Section 1: M3 Slope Trend Engine */}
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, fontWeight: 600 }}>M3 Slope Trend Engine</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 16 }}>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Slope Lookback</div>
+                      <input type="number" step="1" min="1" max="10" value={editedSettings.t6_m3_slope_lookback} onChange={(e) => setEditedSettings({ ...editedSettings, t6_m3_slope_lookback: parseInt(e.target.value) || 2 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                    </div>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>BB Period</div>
+                      <input type="number" step="1" min="5" max="50" value={editedSettings.t6_m3_bb_period} onChange={(e) => setEditedSettings({ ...editedSettings, t6_m3_bb_period: parseInt(e.target.value) || 20 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                    </div>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>BB Std Dev</div>
+                      <input type="number" step="0.1" min="0.5" max="4.0" value={editedSettings.t6_m3_bb_std} onChange={(e) => setEditedSettings({ ...editedSettings, t6_m3_bb_std: parseFloat(e.target.value) || 2.0 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
+                    BULL = EMA5{'>'} EMA9{'>'} EMA21, all slopes positive, BB expanding. BEAR = mirror. NONE blocks all entries.
+                  </div>
+
+                  {/* Section 2: M1 Bollinger Bands */}
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, fontWeight: 600 }}>M1 Bollinger Bands</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 16 }}>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Period</div>
+                      <input type="number" step="1" min="5" max="50" value={editedSettings.t6_m1_bb_period} onChange={(e) => setEditedSettings({ ...editedSettings, t6_m1_bb_period: parseInt(e.target.value) || 20 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                    </div>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Std Dev</div>
+                      <input type="number" step="0.1" min="0.5" max="4.0" value={editedSettings.t6_m1_bb_std} onChange={(e) => setEditedSettings({ ...editedSettings, t6_m1_bb_std: parseFloat(e.target.value) || 2.0 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                    </div>
+                  </div>
+
+                  {/* Section 3: System A – EMA Tier Pullback */}
+                  <div style={{ marginTop: 8, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600 }}>System A: EMA Tier Pullback</div>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={editedSettings.t6_ema_tier_enabled} onChange={(e) => setEditedSettings({ ...editedSettings, t6_ema_tier_enabled: e.target.checked })} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                        <span style={{ fontSize: '0.7rem', fontWeight: 600, color: editedSettings.t6_ema_tier_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>{editedSettings.t6_ema_tier_enabled ? 'ON' : 'OFF'}</span>
+                      </label>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                      {[9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21].map(tier => (
+                        <label key={tier} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '2px 6px', background: editedSettings.t6_tier_ema_periods.includes(tier) ? 'var(--success)' : 'var(--bg-secondary)', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600, color: editedSettings.t6_tier_ema_periods.includes(tier) ? '#fff' : 'var(--text-secondary)' }}>
+                          <input type="checkbox" checked={editedSettings.t6_tier_ema_periods.includes(tier)} onChange={(e) => { const periods = e.target.checked ? [...editedSettings.t6_tier_ema_periods, tier].sort((a, b) => a - b) : editedSettings.t6_tier_ema_periods.filter(t => t !== tier); setEditedSettings({ ...editedSettings, t6_tier_ema_periods: periods }); }} style={{ width: 14, height: 14, cursor: 'pointer' }} />
+                          EMA {tier}
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 8 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>TP (pips)</div>
+                        <input type="number" step="0.5" min="0.1" max="50" value={editedSettings.t6_ema_tier_tp_pips} onChange={(e) => setEditedSettings({ ...editedSettings, t6_ema_tier_tp_pips: parseFloat(e.target.value) || 7.0 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>BB Gating Min Period</div>
+                        <input type="number" step="1" min="9" max="30" value={editedSettings.t6_bb_gating_deep_tier_min_period} onChange={(e) => setEditedSettings({ ...editedSettings, t6_bb_gating_deep_tier_min_period: parseInt(e.target.value) || 21 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                      When price is outside M1 BB, only tiers {'>'}= BB Gating Min Period can fire. Tiers reset when price moves away by buffer.
+                    </div>
+                  </div>
+
+                  {/* Section 4: System B – BB Reversal */}
+                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600 }}>System B: BB Reversal</div>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={editedSettings.t6_bb_reversal_enabled} onChange={(e) => setEditedSettings({ ...editedSettings, t6_bb_reversal_enabled: e.target.checked })} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                        <span style={{ fontSize: '0.7rem', fontWeight: 600, color: editedSettings.t6_bb_reversal_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>{editedSettings.t6_bb_reversal_enabled ? 'ON' : 'OFF'}</span>
+                      </label>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 8 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Start Offset (pips)</div>
+                        <input type="number" step="0.1" min="0.1" max="5" value={editedSettings.t6_bb_reversal_start_offset_pips} onChange={(e) => setEditedSettings({ ...editedSettings, t6_bb_reversal_start_offset_pips: parseFloat(e.target.value) || 0.5 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Increment (pips)</div>
+                        <input type="number" step="0.1" min="0.1" max="5" value={editedSettings.t6_bb_reversal_increment_pips} onChange={(e) => setEditedSettings({ ...editedSettings, t6_bb_reversal_increment_pips: parseFloat(e.target.value) || 0.5 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Num Tiers</div>
+                        <input type="number" step="1" min="1" max="20" value={editedSettings.t6_bb_reversal_num_tiers} onChange={(e) => setEditedSettings({ ...editedSettings, t6_bb_reversal_num_tiers: parseInt(e.target.value) || 10 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max Positions</div>
+                        <input type="number" step="1" min="1" max="10" value={editedSettings.t6_max_bb_reversal_positions} onChange={(e) => setEditedSettings({ ...editedSettings, t6_max_bb_reversal_positions: parseInt(e.target.value) || 3 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 8 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>TP Mode</div>
+                        <select value={editedSettings.t6_bb_reversal_tp_mode} onChange={(e) => setEditedSettings({ ...editedSettings, t6_bb_reversal_tp_mode: e.target.value })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}>
+                          <option value="middle_bb_entry">Middle BB (Entry)</option>
+                          <option value="middle_bb_dynamic">Middle BB (Dynamic)</option>
+                          <option value="fixed_pips">Fixed Pips</option>
+                        </select>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Fixed TP (pips)</div>
+                        <input type="number" step="0.5" min="1" max="50" value={editedSettings.t6_bb_reversal_tp_fixed_pips} onChange={(e) => setEditedSettings({ ...editedSettings, t6_bb_reversal_tp_fixed_pips: parseFloat(e.target.value) || 8.0 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>TP Min (pips)</div>
+                        <input type="number" step="0.5" min="1" max="50" value={editedSettings.t6_bb_reversal_tp_min_pips} onChange={(e) => setEditedSettings({ ...editedSettings, t6_bb_reversal_tp_min_pips: parseFloat(e.target.value) || 4.0 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>TP Max (pips)</div>
+                        <input type="number" step="0.5" min="1" max="50" value={editedSettings.t6_bb_reversal_tp_max_pips} onChange={(e) => setEditedSettings({ ...editedSettings, t6_bb_reversal_tp_max_pips: parseFloat(e.target.value) || 15.0 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 8 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>SL (pips)</div>
+                        <input type="number" step="0.5" min="1" max="50" value={editedSettings.t6_bb_reversal_sl_pips} onChange={(e) => setEditedSettings({ ...editedSettings, t6_bb_reversal_sl_pips: parseFloat(e.target.value) || 10.0 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                      Counter-trend entries at BB upper/lower + tiered offsets. All tiers reset when price returns inside BB.
+                    </div>
+                  </div>
+
+                  {/* Section 5: Dead Zone */}
+                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Dead Zone</div>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={editedSettings.t6_dead_zone_enabled} onChange={(e) => setEditedSettings({ ...editedSettings, t6_dead_zone_enabled: e.target.checked })} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                        <span style={{ fontSize: '0.7rem', fontWeight: 600, color: editedSettings.t6_dead_zone_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>{editedSettings.t6_dead_zone_enabled ? 'ON' : 'OFF'}</span>
+                      </label>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 8 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Start Hour (UTC)</div>
+                        <input type="number" step="1" min="0" max="23" value={editedSettings.t6_dead_zone_start_hour_utc} onChange={(e) => setEditedSettings({ ...editedSettings, t6_dead_zone_start_hour_utc: parseInt(e.target.value) || 0 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>End Hour (UTC)</div>
+                        <input type="number" step="1" min="0" max="23" value={editedSettings.t6_dead_zone_end_hour_utc} onChange={(e) => setEditedSettings({ ...editedSettings, t6_dead_zone_end_hour_utc: parseInt(e.target.value) || 0 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                      Blocks all entries between start and end hours UTC. Handles midnight wrap.
+                    </div>
+                  </div>
+
+                  {/* Section 6: Spread-Aware BE + Risk */}
+                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, fontWeight: 600 }}>Spread-Aware Breakeven</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 8 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={editedSettings.spread_aware_be_enabled} onChange={(e) => setEditedSettings({ ...editedSettings, spread_aware_be_enabled: e.target.checked })} style={{ width: 18, height: 18, cursor: 'pointer' }} />
+                          <span style={{ fontWeight: 600, color: editedSettings.spread_aware_be_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>{editedSettings.spread_aware_be_enabled ? 'ON' : 'OFF'}</span>
+                        </label>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Trigger (pips)</div>
+                        <input type="number" step="0.5" min="1" max="30" value={editedSettings.spread_aware_be_fixed_trigger_pips} onChange={(e) => setEditedSettings({ ...editedSettings, spread_aware_be_fixed_trigger_pips: parseFloat(e.target.value) || 7 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Buffer (pips)</div>
+                        <input type="number" step="0.5" min="0" max="10" value={editedSettings.spread_aware_be_spread_buffer_pips} onChange={(e) => setEditedSettings({ ...editedSettings, spread_aware_be_spread_buffer_pips: parseFloat(e.target.value) || 1.5 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: '0.7rem' }}>
+                        <input type="checkbox" checked={editedSettings.t6_spread_aware_be_apply_to_ema_tier} onChange={(e) => setEditedSettings({ ...editedSettings, t6_spread_aware_be_apply_to_ema_tier: e.target.checked })} style={{ width: 14, height: 14, cursor: 'pointer' }} />
+                        Apply to EMA Tier
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: '0.7rem' }}>
+                        <input type="checkbox" checked={editedSettings.t6_spread_aware_be_apply_to_bb_reversal} onChange={(e) => setEditedSettings({ ...editedSettings, t6_spread_aware_be_apply_to_bb_reversal: e.target.checked })} style={{ width: 14, height: 14, cursor: 'pointer' }} />
+                        Apply to BB Reversal
+                      </label>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max Open Trades Per Side</div>
+                        <input type="number" step="1" min="1" max="30" value={editedSettings.max_open_trades_per_side} onChange={(e) => setEditedSettings({ ...editedSettings, max_open_trades_per_side: parseInt(e.target.value) || 15 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
               {(execution?.policies as Record<string, unknown>[])?.length > 0 && (
