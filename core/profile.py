@@ -685,9 +685,9 @@ class ExecutionPolicyKtCgTrial6(BaseModel):
     close_opposite_on_trade: bool = False
     max_open_trades_per_side: int = 15
 
-    # Spread-Aware Breakeven (reused from T5)
+    # Spread-Aware Breakeven (Spread + Buffer only)
     spread_aware_be_enabled: bool = True
-    spread_aware_be_trigger_mode: Literal["fixed_pips", "spread_relative"] = "fixed_pips"
+    spread_aware_be_trigger_mode: Literal["fixed_pips", "spread_relative"] = "spread_relative"
     spread_aware_be_fixed_trigger_pips: float = 7.0
     spread_aware_be_spread_buffer_pips: float = 1.5
     spread_aware_be_apply_to_ema_tier: bool = True

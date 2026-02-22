@@ -3967,7 +3967,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
             if ('sl_pips' in pol) policySlPips = pol.sl_pips as number;
             if ('spread_aware_be_enabled' in pol) {
               spreadAwareBeEnabled = pol.spread_aware_be_enabled as boolean;
-              spreadAweareBeTriggerMode = (pol.spread_aware_be_trigger_mode as string) ?? 'fixed_pips';
+              spreadAweareBeTriggerMode = 'spread_relative'; // Trial #6 uses Spread + Buffer only
               spreadAwareBeFixedTriggerPips = (pol.spread_aware_be_fixed_trigger_pips as number) ?? 7.0;
               spreadAwareBeSpreadBufferPips = (pol.spread_aware_be_spread_buffer_pips as number) ?? 1.5;
             }
@@ -4381,9 +4381,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.dead_zone_enabled = editedSettings.t6_dead_zone_enabled;
           updates.dead_zone_start_hour_utc = Math.max(0, Math.min(23, editedSettings.t6_dead_zone_start_hour_utc));
           updates.dead_zone_end_hour_utc = Math.max(0, Math.min(23, editedSettings.t6_dead_zone_end_hour_utc));
-          // Spread-Aware BE (shared fields + T6-specific scope)
+          // Spread-Aware BE (Trial #6: Spread + Buffer only; no fixed trigger)
           updates.spread_aware_be_enabled = editedSettings.spread_aware_be_enabled;
-          updates.spread_aware_be_trigger_mode = editedSettings.spread_aware_be_trigger_mode;
+          updates.spread_aware_be_trigger_mode = 'spread_relative';
           updates.spread_aware_be_fixed_trigger_pips = editedSettings.spread_aware_be_fixed_trigger_pips;
           updates.spread_aware_be_spread_buffer_pips = editedSettings.spread_aware_be_spread_buffer_pips;
           updates.spread_aware_be_apply_to_ema_tier = editedSettings.t6_spread_aware_be_apply_to_ema_tier;
@@ -5857,10 +5857,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
                           <input type="checkbox" checked={editedSettings.spread_aware_be_enabled} onChange={(e) => setEditedSettings({ ...editedSettings, spread_aware_be_enabled: e.target.checked })} style={{ width: 18, height: 18, cursor: 'pointer' }} />
                           <span style={{ fontWeight: 600, color: editedSettings.spread_aware_be_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>{editedSettings.spread_aware_be_enabled ? 'ON' : 'OFF'}</span>
                         </label>
-                      </div>
-                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Trigger (pips)</div>
-                        <input type="number" step="0.5" min="1" max="30" value={editedSettings.spread_aware_be_fixed_trigger_pips} onChange={(e) => setEditedSettings({ ...editedSettings, spread_aware_be_fixed_trigger_pips: parseFloat(e.target.value) || 7 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                       </div>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Buffer (pips)</div>

@@ -571,6 +571,8 @@ export interface ContextItem {
   key: string;
   value: string;
   category: string;
+  /** Slope-directed coloring: green = increasing, red = decreasing */
+  valueColor?: 'green' | 'red';
 }
 
 export interface PositionInfo {

@@ -1483,9 +1483,9 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "cooldown_after_loss_seconds": 180.0,
                     "close_opposite_on_trade": False,
                     "max_open_trades_per_side": 15,
-                    # Spread-Aware Breakeven
+                    # Spread-Aware Breakeven (Spread + Buffer only; no fixed trigger)
                     "spread_aware_be_enabled": True,
-                    "spread_aware_be_trigger_mode": "fixed_pips",
+                    "spread_aware_be_trigger_mode": "spread_relative",
                     "spread_aware_be_fixed_trigger_pips": 7.0,
                     "spread_aware_be_spread_buffer_pips": 1.5,
                     "spread_aware_be_apply_to_ema_tier": True,

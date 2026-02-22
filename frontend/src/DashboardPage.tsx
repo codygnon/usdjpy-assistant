@@ -142,11 +142,15 @@ function ContextPanel({ items }: { items: ContextItem[] }) {
       <div style={{ fontSize: 15, fontWeight: 700, color: colors.textSecondary, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Context</div>
       {Object.entries(grouped).map(([cat, catItems]) => (
         <div key={cat} style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 13, color: colors.blue, fontWeight: 600, marginBottom: 4, textTransform: 'uppercase' }}>{CONTEXT_CATEGORY_LABELS[cat] ?? cat}</div>
+          <div style={{ fontSize: 16, color: colors.blue, fontWeight: 600, marginBottom: 4, textTransform: 'uppercase' }}>{CONTEXT_CATEGORY_LABELS[cat] ?? cat}</div>
           {catItems.map(item => (
             <div key={item.key} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
               <span style={{ color: colors.textSecondary, fontSize: 15 }}>{item.key}</span>
-              <span style={{ color: colors.textPrimary, fontSize: 15, ...mono }}>{item.value}</span>
+              <span style={{
+                color: item.valueColor === 'green' ? colors.green : item.valueColor === 'red' ? colors.red : colors.textPrimary,
+                fontSize: 15,
+                ...mono,
+              }}>{item.value}</span>
             </div>
           ))}
         </div>
@@ -671,7 +675,8 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     if (!taData) return [];
     const items: ContextItem[] = [];
     const preset = (dashState?.preset_name || '').toLowerCase();
-    const isTrial4or5or6 = preset.includes('trial_4') || preset.includes('trial_5') || preset.includes('trial_6') || preset.includes('trial 4') || preset.includes('trial 5') || preset.includes('trial 6');
+    const isTrial4or5or6 = preset.includes('trial_4') || preset.includes('trial_5') || preset.includes('trial_6') || preset.includes('trial 4') || preset.includes('trial 5') || preset.includes('trial 6') || preset.includes('#6');
+    const isTrial6 = preset.includes('trial_6') || preset.includes('trial 6') || preset.includes('#6');
     const isTrial2or3 = preset.includes('trial_2') || preset.includes('trial_3') || preset.includes('trial 2') || preset.includes('trial 3') || preset.includes('hybrid') || preset.includes('counter_trend');
 
     // Price — always relevant
@@ -691,8 +696,43 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     };
     const pip = 0.01;
 
-    if (isTrial4or5or6) {
-      // M3 Trend block: regime + EMAs that determine it + slope + 20 SMA
+    if (isTrial6) {
+      // Trial #6: PRICE + M3 Trend (slopes, colored EMA 5, BB Expanding) + M1 EMAs only
+      const m3 = taData.timeframes['M3'];
+      if (m3 && !m3.error) {
+        const m3Regime = (m3.regime || 'unknown').toUpperCase();
+        items.push({ key: 'M3 Trend', value: m3Regime, category: 'm3_trend' });
+        const m3e5 = lastEma('M3', 'ema5'), m3e9 = lastEma('M3', 'ema9'), m3e21 = lastEma('M3', 'ema21');
+        const m3prev5 = prevEma('M3', 'ema5'), m3prev9 = prevEma('M3', 'ema9'), m3prev21 = prevEma('M3', 'ema21');
+        const slope5 = m3e5 != null && m3prev5 != null ? m3e5 - m3prev5 : null;
+        const slope9 = m3e9 != null && m3prev9 != null ? m3e9 - m3prev9 : null;
+        const slope21 = m3e21 != null && m3prev21 != null ? m3e21 - m3prev21 : null;
+        if (m3e5 != null) {
+          const valueColor: 'green' | 'red' | undefined = slope5 != null ? (slope5 > 0 ? 'green' : slope5 < 0 ? 'red' : undefined) : undefined;
+          items.push({ key: 'M3 EMA 5', value: m3e5.toFixed(3), category: 'm3_trend', valueColor });
+        }
+        if (m3e9 != null) items.push({ key: 'M3 EMA 9', value: m3e9.toFixed(3), category: 'm3_trend' });
+        if (m3e21 != null) items.push({ key: 'M3 EMA 21', value: m3e21.toFixed(3), category: 'm3_trend' });
+        items.push({ key: 'M3 Slope 5', value: slope5 != null ? (slope5 > 0 ? '+' : slope5 < 0 ? '-' : '0') : '—', category: 'm3_trend' });
+        items.push({ key: 'M3 Slope 9', value: slope9 != null ? (slope9 > 0 ? '+' : slope9 < 0 ? '-' : '0') : '—', category: 'm3_trend' });
+        items.push({ key: 'M3 Slope 21', value: slope21 != null ? (slope21 > 0 ? '+' : slope21 < 0 ? '-' : '0') : '—', category: 'm3_trend' });
+        const upper = m3.bollinger_series?.upper;
+        const lower = m3.bollinger_series?.lower;
+        if (upper && lower && upper.length >= 2 && lower.length >= 2) {
+          const wCur = upper[upper.length - 1].value - lower[lower.length - 1].value;
+          const wPrev = upper[upper.length - 2].value - lower[lower.length - 2].value;
+          items.push({ key: 'BB Expanding', value: wCur > wPrev ? 'Yes' : 'No', category: 'm3_trend' });
+        }
+        const m3Sma20 = m3.bollinger_series?.middle;
+        const m3Sma20Val = m3Sma20 && m3Sma20.length > 0 ? m3Sma20[m3Sma20.length - 1].value : null;
+        if (m3Sma20Val != null) items.push({ key: 'M3 20 SMA', value: m3Sma20Val.toFixed(3), category: 'm3_trend' });
+      }
+      for (const p of ['ema5', 'ema9', 'ema21', 'ema34']) {
+        const v = lastEma('M1', p);
+        if (v != null) items.push({ key: `M1 ${p.replace('ema', 'EMA ')}`, value: v.toFixed(3), category: 'm1_emas' });
+      }
+    } else if (isTrial4or5or6) {
+      // Trial #4/#5: M3 Trend + M1 EMAs + Zone Entry + EMA Zone + ATR
       const m3 = taData.timeframes['M3'];
       if (m3 && !m3.error) {
         const m3Regime = (m3.regime || 'unknown').toUpperCase();
@@ -710,15 +750,12 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
         const m3Sma20Val = m3Sma20 && m3Sma20.length > 0 ? m3Sma20[m3Sma20.length - 1].value : null;
         if (m3Sma20Val != null) items.push({ key: 'M3 20 SMA', value: m3Sma20Val.toFixed(3), category: 'm3_trend' });
       }
-      // M1 EMAs 5/9/21/34
       for (const p of ['ema5', 'ema9', 'ema21', 'ema34']) {
         const v = lastEma('M1', p);
         if (v != null) items.push({ key: `M1 ${p.replace('ema', 'EMA ')}`, value: v.toFixed(3), category: 'm1_emas' });
       }
-      // M1 EMA Zone Entry: EMA5 vs EMA9 (legacy)
       const e5 = lastEma('M1', 'ema5'), e9 = lastEma('M1', 'ema9');
       if (e5 != null && e9 != null) items.push({ key: 'EMA5-9 Spread', value: `${((e5 - e9) / pip).toFixed(1)}p`, category: 'zone_entry' });
-      // EMA Zone Filter: EMA9 vs EMA17 spread, direction, change
       const e17 = lastEma('M1', 'ema17');
       if (e9 != null && e17 != null) {
         const spread917 = (e9 - e17) / pip;
@@ -735,7 +772,6 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
           }
         }
       }
-      // ATR
       const m1 = taData.timeframes['M1'];
       if (m1?.atr?.value_pips != null) items.push({ key: 'M1 ATR', value: `${m1.atr.value_pips.toFixed(1)}p`, category: 'filters' });
       if (m3?.atr?.value_pips != null) items.push({ key: 'M3 ATR', value: `${m3.atr.value_pips.toFixed(1)}p`, category: 'filters' });
