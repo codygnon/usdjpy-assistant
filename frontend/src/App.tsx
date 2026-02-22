@@ -3916,7 +3916,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t6M1BbPeriod = 20;
       let t6M1BbStd = 2.0;
       let t6EmaTierEnabled = true;
-      let t6TierEmaPeriods: number[] = [9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
+      let t6TierEmaPeriods: number[] = [9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34];
       let t6EmaTierTpPips = 7.0;
       let t6BbGatingDeepTierMinPeriod = 21;
       let t6BbReversalEnabled = true;
@@ -3945,7 +3945,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
             t6M1BbPeriod = (pol.m1_bb_period as number) ?? 20;
             t6M1BbStd = (pol.m1_bb_std as number) ?? 2.0;
             t6EmaTierEnabled = (pol.ema_tier_enabled as boolean) ?? true;
-            t6TierEmaPeriods = (pol.tier_ema_periods as number[]) ?? [9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
+            t6TierEmaPeriods = (pol.tier_ema_periods as number[]) ?? [9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34];
             t6EmaTierTpPips = (pol.ema_tier_tp_pips as number) ?? 7.0;
             t6BbGatingDeepTierMinPeriod = (pol.bb_gating_deep_tier_min_period as number) ?? 21;
             t6BbReversalEnabled = (pol.bb_reversal_enabled as boolean) ?? true;
@@ -5742,7 +5742,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       </label>
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-                      {[9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21].map(tier => (
+                      {[9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34].map(tier => (
                         <label key={tier} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '2px 6px', background: editedSettings.t6_tier_ema_periods.includes(tier) ? 'var(--success)' : 'var(--bg-secondary)', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600, color: editedSettings.t6_tier_ema_periods.includes(tier) ? '#fff' : 'var(--text-secondary)' }}>
                           <input type="checkbox" checked={editedSettings.t6_tier_ema_periods.includes(tier)} onChange={(e) => { const periods = e.target.checked ? [...editedSettings.t6_tier_ema_periods, tier].sort((a, b) => a - b) : editedSettings.t6_tier_ema_periods.filter(t => t !== tier); setEditedSettings({ ...editedSettings, t6_tier_ema_periods: periods }); }} style={{ width: 14, height: 14, cursor: 'pointer' }} />
                           EMA {tier}

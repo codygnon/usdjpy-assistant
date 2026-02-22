@@ -1459,7 +1459,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "m1_bb_std": 2.0,
                     # System A: EMA Tier Pullback
                     "ema_tier_enabled": True,
-                    "tier_ema_periods": [9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
+                    "tier_ema_periods": [9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34],
                     "tier_reset_buffer_pips": 1.0,
                     "ema_tier_tp_pips": 7.0,
                     "sl_pips": 10.0,
