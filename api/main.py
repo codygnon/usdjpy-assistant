@@ -2438,20 +2438,6 @@ if FRONTEND_DIR.exists():
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
 
-# Catch-all for SPA routing (must be last)
-@app.get("/{full_path:path}")
-def serve_spa(full_path: str):
-    """Serve index.html for SPA client-side routing."""
-    # Don't intercept API routes
-    if full_path.startswith("api/"):
-        raise HTTPException(status_code=404, detail="Not found")
-    
-    index = FRONTEND_DIR / "index.html"
-    if index.exists():
-        return FileResponse(index)
-    raise HTTPException(status_code=404, detail="Frontend not built")
-
-
 # ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------
@@ -2950,3 +2936,15 @@ def get_trade_events(profile_name: str, limit: int = 50) -> list[dict[str, Any]]
 
     log_dir = LOGS_DIR / profile_name
     return read_trade_events(log_dir, limit=limit)
+
+
+# Catch-all for SPA routing (must be last so API routes match first)
+@app.get("/{full_path:path}")
+def serve_spa(full_path: str):
+    """Serve index.html for SPA client-side routing."""
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Not found")
+    index = FRONTEND_DIR / "index.html"
+    if index.exists():
+        return FileResponse(index)
+    raise HTTPException(status_code=404, detail="Frontend not built")
