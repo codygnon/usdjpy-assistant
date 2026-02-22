@@ -117,6 +117,16 @@ function HeaderBar({
 // Context Panel
 // ---------------------------------------------------------------------------
 
+const CONTEXT_CATEGORY_LABELS: Record<string, string> = {
+  m3_trend: 'M3 Trend',
+  m1_emas: 'M1 EMAs',
+  trend: 'Trend',
+  zone_entry: 'Zone Entry',
+  ema_zone: 'EMA Zone',
+  filters: 'Filters',
+  price: 'Price',
+};
+
 function ContextPanel({ items }: { items: ContextItem[] }) {
   const grouped: Record<string, ContextItem[]> = {};
   items.forEach(item => {
@@ -126,22 +136,22 @@ function ContextPanel({ items }: { items: ContextItem[] }) {
 
   return (
     <div style={{
-      backgroundColor: colors.panel, borderRadius: 6, padding: 12,
+      backgroundColor: colors.panel, borderRadius: 6, padding: 14,
       border: `1px solid ${colors.border}`, minHeight: 120,
     }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: colors.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Context</div>
+      <div style={{ fontSize: 15, fontWeight: 700, color: colors.textSecondary, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Context</div>
       {Object.entries(grouped).map(([cat, catItems]) => (
-        <div key={cat} style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 10, color: colors.blue, fontWeight: 600, marginBottom: 2, textTransform: 'uppercase' }}>{cat}</div>
+        <div key={cat} style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 13, color: colors.blue, fontWeight: 600, marginBottom: 4, textTransform: 'uppercase' }}>{CONTEXT_CATEGORY_LABELS[cat] ?? cat}</div>
           {catItems.map(item => (
-            <div key={item.key} style={{ display: 'flex', justifyContent: 'space-between', padding: '1px 0' }}>
-              <span style={{ color: colors.textSecondary, fontSize: 12 }}>{item.key}</span>
-              <span style={{ color: colors.textPrimary, fontSize: 12, ...mono }}>{item.value}</span>
+            <div key={item.key} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+              <span style={{ color: colors.textSecondary, fontSize: 15 }}>{item.key}</span>
+              <span style={{ color: colors.textPrimary, fontSize: 15, ...mono }}>{item.value}</span>
             </div>
           ))}
         </div>
       ))}
-      {items.length === 0 && <div style={{ color: colors.textSecondary, fontSize: 12 }}>No context data (start loop for live context)</div>}
+      {items.length === 0 && <div style={{ color: colors.textSecondary, fontSize: 15 }}>No context data (start loop for live context)</div>}
     </div>
   );
 }
@@ -152,55 +162,79 @@ function ContextPanel({ items }: { items: ContextItem[] }) {
 
 function PositionsPanel({ trades, tick }: { trades: OpenTrade[]; tick: { bid: number; ask: number } | null }) {
   const mid = tick ? (tick.bid + tick.ask) / 2 : null;
+  const longs = trades.filter(t => t.side.toLowerCase() === 'buy').length;
+  const shorts = trades.filter(t => t.side.toLowerCase() === 'sell').length;
+  const [expanded, setExpanded] = useState(true);
+  useEffect(() => {
+    setExpanded(trades.length <= 3);
+  }, [trades.length]);
+
   return (
     <div style={{
-      backgroundColor: colors.panel, borderRadius: 6, padding: 12,
+      backgroundColor: colors.panel, borderRadius: 6, padding: 14,
       border: `1px solid ${colors.border}`, minHeight: 120,
     }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: colors.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
-        Open Positions ({trades.length})
+      <div style={{ fontSize: 15, fontWeight: 700, color: colors.textSecondary, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>
+        Open Positions
       </div>
       {trades.length === 0 ? (
-        <div style={{ color: colors.textSecondary, fontSize: 12 }}>No open positions</div>
+        <div style={{ color: colors.textSecondary, fontSize: 15 }}>No open positions</div>
       ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-          <thead>
-            <tr style={{ color: colors.textSecondary, borderBottom: `1px solid ${colors.border}` }}>
-              <th style={{ textAlign: 'left', padding: '2px 4px', fontWeight: 500 }}>Side</th>
-              <th style={{ textAlign: 'right', padding: '2px 4px', fontWeight: 500 }}>Entry</th>
-              <th style={{ textAlign: 'right', padding: '2px 4px', fontWeight: 500 }}>Current</th>
-              <th style={{ textAlign: 'right', padding: '2px 4px', fontWeight: 500 }}>P&L</th>
-              <th style={{ textAlign: 'right', padding: '2px 4px', fontWeight: 500 }}>SL</th>
-              <th style={{ textAlign: 'right', padding: '2px 4px', fontWeight: 500 }}>TP</th>
-              <th style={{ textAlign: 'right', padding: '2px 4px', fontWeight: 500 }}>Size</th>
-            </tr>
-          </thead>
-          <tbody>
-            {trades.map(t => {
-              const isBuy = t.side.toLowerCase() === 'buy';
-              const currentPrice = mid ?? t.entry_price;
-              const plPips = isBuy
-                ? (currentPrice - t.entry_price) / 0.01
-                : (t.entry_price - currentPrice) / 0.01;
-              return (
-                <tr key={t.trade_id} style={{ borderBottom: `1px solid ${colors.border}22` }}>
-                  <td style={{ padding: '3px 4px' }}><SideBadge side={t.side} /></td>
-                  <td style={{ padding: '3px 4px', textAlign: 'right', ...mono, color: colors.textPrimary }}>{t.entry_price.toFixed(3)}</td>
-                  <td style={{ padding: '3px 4px', textAlign: 'right', ...mono, color: colors.textPrimary }}>{currentPrice.toFixed(3)}</td>
-                  <td style={{ padding: '3px 4px', textAlign: 'right' }}>
-                    {t.unrealized_pl != null
-                      ? <span style={{ color: t.unrealized_pl >= 0 ? colors.green : colors.red, ...mono }}>{t.unrealized_pl >= 0 ? '+' : ''}{t.unrealized_pl.toFixed(2)}</span>
-                      : <PipsValue pips={plPips} />
-                    }
-                  </td>
-                  <td style={{ padding: '3px 4px', textAlign: 'right', color: colors.textSecondary, ...mono }}>{t.stop_price?.toFixed(3) ?? '—'}</td>
-                  <td style={{ padding: '3px 4px', textAlign: 'right', color: colors.textSecondary, ...mono }}>{t.target_price?.toFixed(3) ?? '—'}</td>
-                  <td style={{ padding: '3px 4px', textAlign: 'right', color: colors.textSecondary, ...mono }}>{t.size_lots}</td>
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <span style={{ color: colors.textPrimary, fontSize: 15 }}>{longs} Longs | {shorts} Shorts</span>
+            <button
+              type="button"
+              onClick={() => setExpanded(e => !e)}
+              style={{
+                background: 'none', border: `1px solid ${colors.border}`, borderRadius: 4, padding: '4px 8px',
+                color: colors.blue, fontSize: 13, cursor: 'pointer',
+              }}
+            >
+              {expanded ? '▼ Hide table' : '▶ Show table'}
+            </button>
+          </div>
+          {expanded && (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 15, marginTop: 10 }}>
+              <thead>
+                <tr style={{ color: colors.textSecondary, borderBottom: `1px solid ${colors.border}` }}>
+                  <th style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 500 }}>Side</th>
+                  <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 500 }}>Entry</th>
+                  <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 500 }}>Current</th>
+                  <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 500 }}>P&L</th>
+                  <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 500 }}>SL</th>
+                  <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 500 }}>TP</th>
+                  <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 500 }}>Size</th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              </thead>
+              <tbody>
+                {trades.map(t => {
+                  const isBuy = t.side.toLowerCase() === 'buy';
+                  const currentPrice = mid ?? t.entry_price;
+                  const plPips = isBuy
+                    ? (currentPrice - t.entry_price) / 0.01
+                    : (t.entry_price - currentPrice) / 0.01;
+                  return (
+                    <tr key={t.trade_id} style={{ borderBottom: `1px solid ${colors.border}22` }}>
+                      <td style={{ padding: '4px 6px' }}><SideBadge side={t.side} /></td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right', ...mono, color: colors.textPrimary }}>{t.entry_price.toFixed(3)}</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right', ...mono, color: colors.textPrimary }}>{currentPrice.toFixed(3)}</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right' }}>
+                        {t.unrealized_pl != null
+                          ? <span style={{ color: t.unrealized_pl >= 0 ? colors.green : colors.red, ...mono }}>{t.unrealized_pl >= 0 ? '+' : ''}{t.unrealized_pl.toFixed(2)}</span>
+                          : <PipsValue pips={plPips} />
+                        }
+                      </td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right', color: colors.textSecondary, ...mono }}>{t.stop_price?.toFixed(3) ?? '—'}</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right', color: colors.textSecondary, ...mono }}>{t.target_price?.toFixed(3) ?? '—'}</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right', color: colors.textSecondary, ...mono }}>{t.size_lots}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </>
       )}
     </div>
   );
@@ -637,7 +671,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     if (!taData) return [];
     const items: ContextItem[] = [];
     const preset = (dashState?.preset_name || '').toLowerCase();
-    const isTrial4or5 = preset.includes('trial_4') || preset.includes('trial_5') || preset.includes('trial 4') || preset.includes('trial 5');
+    const isTrial4or5or6 = preset.includes('trial_4') || preset.includes('trial_5') || preset.includes('trial_6') || preset.includes('trial 4') || preset.includes('trial 5') || preset.includes('trial 6');
     const isTrial2or3 = preset.includes('trial_2') || preset.includes('trial_3') || preset.includes('trial 2') || preset.includes('trial 3') || preset.includes('hybrid') || preset.includes('counter_trend');
 
     // Price — always relevant
@@ -657,14 +691,32 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     };
     const pip = 0.01;
 
-    if (isTrial4or5) {
-      // M3 Trend
+    if (isTrial4or5or6) {
+      // M3 Trend block: regime + EMAs that determine it + slope + 20 SMA
       const m3 = taData.timeframes['M3'];
-      if (m3 && !m3.error) items.push({ key: 'M3 Regime', value: m3.regime, category: 'trend' });
-      // M1 EMA Zone Entry: EMA5 vs EMA9
+      if (m3 && !m3.error) {
+        const m3Regime = (m3.regime || 'unknown').toUpperCase();
+        items.push({ key: 'M3 Trend', value: m3Regime, category: 'm3_trend' });
+        const m3e5 = lastEma('M3', 'ema5'), m3e9 = lastEma('M3', 'ema9'), m3e21 = lastEma('M3', 'ema21');
+        if (m3e5 != null) items.push({ key: 'M3 EMA 5', value: m3e5.toFixed(3), category: 'm3_trend' });
+        if (m3e9 != null) items.push({ key: 'M3 EMA 9', value: m3e9.toFixed(3), category: 'm3_trend' });
+        if (m3e21 != null) items.push({ key: 'M3 EMA 21', value: m3e21.toFixed(3), category: 'm3_trend' });
+        const m3Ema9Series = m3.all_emas?.ema9;
+        const m3Slope = m3Ema9Series && m3Ema9Series.length >= 2
+          ? m3Ema9Series[m3Ema9Series.length - 1].value - m3Ema9Series[m3Ema9Series.length - 2].value
+          : null;
+        items.push({ key: 'M3 Slope', value: m3Slope != null ? (m3Slope > 0 ? '+' : m3Slope < 0 ? '-' : '0') : '—', category: 'm3_trend' });
+        const m3Sma20 = m3.bollinger_series?.middle;
+        const m3Sma20Val = m3Sma20 && m3Sma20.length > 0 ? m3Sma20[m3Sma20.length - 1].value : null;
+        if (m3Sma20Val != null) items.push({ key: 'M3 20 SMA', value: m3Sma20Val.toFixed(3), category: 'm3_trend' });
+      }
+      // M1 EMAs 5/9/21/34
+      for (const p of ['ema5', 'ema9', 'ema21', 'ema34']) {
+        const v = lastEma('M1', p);
+        if (v != null) items.push({ key: `M1 ${p.replace('ema', 'EMA ')}`, value: v.toFixed(3), category: 'm1_emas' });
+      }
+      // M1 EMA Zone Entry: EMA5 vs EMA9 (legacy)
       const e5 = lastEma('M1', 'ema5'), e9 = lastEma('M1', 'ema9');
-      if (e5 != null) items.push({ key: 'M1 EMA5', value: e5.toFixed(3), category: 'zone_entry' });
-      if (e9 != null) items.push({ key: 'M1 EMA9', value: e9.toFixed(3), category: 'zone_entry' });
       if (e5 != null && e9 != null) items.push({ key: 'EMA5-9 Spread', value: `${((e5 - e9) / pip).toFixed(1)}p`, category: 'zone_entry' });
       // EMA Zone Filter: EMA9 vs EMA17 spread, direction, change
       const e17 = lastEma('M1', 'ema17');

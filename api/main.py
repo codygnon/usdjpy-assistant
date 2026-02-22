@@ -1405,7 +1405,7 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
                     close = df["close"]
                     tail_idx = df_tail.index
                     all_emas_arrs: dict[str, list[dict[str, Any]]] = {}
-                    for p in [5, 7, 9, 11, 13, 15, 17, 21, 50, 200]:
+                    for p in [5, 7, 9, 11, 13, 15, 17, 21, 34, 50, 200]:
                         s = ema(close, p)
                         s_tail = s.reindex(tail_idx).dropna()
                         ts_arr = df_tail.loc[s_tail.index, "time"].apply(lambda t: int(t.timestamp()))
