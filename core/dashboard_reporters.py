@@ -386,6 +386,67 @@ def report_spread(spread_pips: float, max_spread: Optional[float]) -> FilterRepo
     )
 
 
+def report_t6_dead_zone(policy, daily_reset_state: dict) -> FilterReport:
+    """Report Trial #6 Dead Zone status (configurable hours)."""
+    block_active = daily_reset_state.get("daily_reset_block_active", False) if daily_reset_state else False
+    utc_hour = datetime.now(timezone.utc).hour
+    start_h = getattr(policy, "dead_zone_start_hour_utc", 21)
+    end_h = getattr(policy, "dead_zone_end_hour_utc", 2)
+    enabled = getattr(policy, "dead_zone_enabled", True)
+    return FilterReport(
+        filter_id="t6_dead_zone", display_name=f"Dead Zone ({start_h:02d}-{end_h:02d} UTC)",
+        enabled=enabled, is_clear=not block_active,
+        current_value=f"UTC {utc_hour:02d}:00",
+        threshold=f"{start_h:02d}:00-{end_h:02d}:00 UTC",
+        block_reason="Inside dead zone" if block_active else None,
+    )
+
+
+def report_t6_m3_trend(eval_result: Optional[dict]) -> FilterReport:
+    """Report Trial #6 M3 Slope Trend status."""
+    trend_result = eval_result.get("trend_result") if eval_result else None
+    if not trend_result:
+        return FilterReport(
+            filter_id="t6_m3_trend", display_name="M3 Slope Trend",
+            enabled=True, is_clear=True,
+            current_value="No data",
+        )
+    trend = trend_result.get("trend", "NONE")
+    bb_exp = trend_result.get("bb_expanding", False)
+    is_clear = trend != "NONE"
+    reasons = trend_result.get("reasons", [])
+    reason_str = "; ".join(reasons) if reasons else None
+    return FilterReport(
+        filter_id="t6_m3_trend", display_name="M3 Slope Trend",
+        enabled=True, is_clear=is_clear,
+        current_value=f"{trend} | BB {'expanding' if bb_exp else 'contracting'}",
+        block_reason=f"NONE – {reason_str}" if not is_clear and reason_str else ("NONE – no trend" if not is_clear else None),
+        metadata={"trend": trend, "bb_expanding": bb_exp},
+    )
+
+
+def report_t6_bb_reversal_cap(policy, store, profile_name: str) -> FilterReport:
+    """Report Trial #6 BB Reversal position cap."""
+    max_pos = getattr(policy, "max_bb_reversal_positions", 3)
+    bb_count = 0
+    try:
+        open_trades = store.list_open_trades(profile_name)
+        for t in open_trades:
+            row = dict(t) if hasattr(t, "keys") else t
+            if row.get("entry_type") == "bb_reversal":
+                bb_count += 1
+    except Exception:
+        pass
+    is_clear = bb_count < max_pos
+    return FilterReport(
+        filter_id="t6_bb_reversal_cap", display_name="BB Reversal Positions",
+        enabled=getattr(policy, "bb_reversal_enabled", True),
+        is_clear=is_clear,
+        current_value=f"{bb_count}/{max_pos}",
+        block_reason=f"At max ({bb_count}/{max_pos})" if not is_clear else None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Context collectors
 # ---------------------------------------------------------------------------

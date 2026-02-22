@@ -2665,6 +2665,17 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 except Exception:
                     temp_overrides_api = None
                     pass
+            # Compute Trial #6 M3 trend for filter display
+            t6_eval_result = None
+            if _policy_type == "kt_cg_trial_6" and _policy is not None:
+                try:
+                    m3_df = data_by_tf.get("M3")
+                    if m3_df is not None and not m3_df.empty:
+                        from core.execution_engine import _evaluate_m3_slope_trend_trial_6
+                        trend_result = _evaluate_m3_slope_trend_trial_6(m3_df, _policy, pip_size)
+                        t6_eval_result = {"trend_result": trend_result}
+                except Exception:
+                    pass
             store = _store_for(profile_name)
             filter_reports = build_dashboard_filters(
                 profile=profile,
@@ -2672,7 +2683,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 data_by_tf=data_by_tf,
                 policy=_policy,
                 policy_type=_policy_type,
-                eval_result=None,
+                eval_result=t6_eval_result,
                 divergence_state=divergence_state,
                 daily_reset_state=daily_reset_state,
                 exhaustion_result=exhaustion_result,

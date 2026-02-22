@@ -22,6 +22,9 @@ from core.dashboard_reporters import (
     report_dead_zone,
     report_trend_exhaustion,
     report_max_trades,
+    report_t6_dead_zone,
+    report_t6_m3_trend,
+    report_t6_bb_reversal_cap,
 )
 
 # Attribute names that can be overridden by Apply Temporary Settings (same as execution engine).
@@ -166,6 +169,26 @@ def build_dashboard_filters(
         filters.append(report_rsi_divergence(policy, divergence_state or {}, side))
         filters.append(report_dead_zone(daily_reset_state or {}))
         filters.append(report_trend_exhaustion(exhaustion_result))
+        max_per_side = getattr(policy, "max_open_trades_per_side", None)
+        if max_per_side is not None and store is not None:
+            try:
+                open_trades = store.list_open_trades(profile.profile_name)
+                side_counts: dict[str, int] = {"buy": 0, "sell": 0}
+                for t in open_trades:
+                    row = dict(t) if hasattr(t, "keys") else t
+                    s = str(row.get("side", "")).lower()
+                    if s in side_counts:
+                        side_counts[s] += 1
+                sc = side_counts.get(side, 0)
+                filters.append(report_max_trades(sc, max_per_side, side, side_counts))
+            except Exception:
+                pass
+
+    elif policy_type == "kt_cg_trial_6" and policy is not None:
+        filters.append(report_t6_m3_trend(eval_result))
+        filters.append(report_t6_dead_zone(policy, daily_reset_state or {}))
+        if store is not None:
+            filters.append(report_t6_bb_reversal_cap(policy, store, profile.profile_name))
         max_per_side = getattr(policy, "max_open_trades_per_side", None)
         if max_per_side is not None and store is not None:
             try:
