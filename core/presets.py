@@ -39,6 +39,7 @@ class PresetId(str, Enum):
     KT_CG_TRIAL_4 = "kt_cg_trial_4"
     KT_CG_TRIAL_5 = "kt_cg_trial_5"
     KT_CG_TRIAL_6 = "kt_cg_trial_6"
+    KT_CG_TRIAL_7 = "kt_cg_trial_7"
     M5_M1_EMA_CROSS_9_21 = "m5_m1_ema_cross_9_21"
 
 
@@ -1490,6 +1491,101 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "spread_aware_be_spread_buffer_pips": 1.5,
                     "spread_aware_be_apply_to_ema_tier": True,
                     "spread_aware_be_apply_to_bb_reversal": True,
+                },
+            ],
+        },
+    },
+    # -----------------------------------------------------------------------
+    # KT/CG Trial #7 Recover Account (M5 Trend + Tiered Pullback + Slope Gate)
+    # Clone of Trial #4 with:
+    # - M5 EMA 9/21 trend basis
+    # - M1 tiered pullback levels configurable across EMA 9-34
+    # - Slope-only EMA zone filter (disabled by default)
+    # - Per-side + per-entry-type open trade caps
+    # -----------------------------------------------------------------------
+    PresetId.KT_CG_TRIAL_7: {
+        "name": "KT/CG Trial #7 Recover Account (M5 Trend + Tiered Pullback)",
+        "description": "Trial #7 recover variant: M5 EMA9/21 trend with M1 zone entry + tiered pullback across EMA 9-34. Slope-only EMA zone filter for anti-chop gating on zone entries.",
+        "pros": [
+            "M5 EMA9/21 trend gives smoother directional bias than M3",
+            "Tiered pullback supports the full EMA 9-34 ladder",
+            "Simple slope gate can block choppy/sideways zone entries",
+            "Independent caps for side, zone entries, and tiered pullbacks",
+        ],
+        "cons": [
+            "Higher TP target can reduce hit-rate vs scalp settings",
+            "No ATR/danger/divergence/daily-HL filters in this variant",
+            "Many tiers can increase frequency if caps are too loose",
+            "Testing preset - tune slope thresholds per session volatility",
+        ],
+        "risk": {
+            "max_lots": 0.1,
+            "require_stop": True,
+            "min_stop_pips": 20.0,
+            "max_spread_pips": 6.0,
+            "max_trades_per_day": 100,
+            "max_open_trades": 20,
+            "cooldown_minutes_after_loss": 0,
+        },
+        "strategy": {
+            "filters": {
+                "alignment": {"enabled": False},
+                "ema_stack_filter": {"enabled": False},
+                "atr_filter": {"enabled": False},
+                "session_filter": {"enabled": False},
+            },
+            "setups": {},
+        },
+        "trade_management": {
+            "target": {
+                "mode": "fixed_pips",
+                "pips_default": 4.0,
+            },
+            "stop_loss": None,
+            "breakeven": {"enabled": False},
+        },
+        "execution": {
+            "loop_poll_seconds": 0.25,
+            "loop_poll_seconds_fast": 0.25,
+            "policies": [
+                {
+                    "type": "kt_cg_trial_7",
+                    "id": "kt_cg_trial_7",
+                    "enabled": True,
+                    # M5 Trend EMAs
+                    "m5_trend_ema_fast": 9,
+                    "m5_trend_ema_slow": 21,
+                    # M1 Zone Entry - EMA5 vs EMA9
+                    "zone_entry_enabled": True,
+                    "m1_zone_entry_ema_fast": 5,
+                    "m1_zone_entry_ema_slow": 9,
+                    # Tiered Pullback Configuration (EMA 9-34)
+                    "tiered_pullback_enabled": True,
+                    "tier_ema_periods": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34],
+                    "tier_reset_buffer_pips": 1.0,
+                    # Core controls from Trial #4
+                    "close_opposite_on_trade": True,
+                    "cooldown_minutes": 3.0,
+                    "tp_pips": 4.0,
+                    "sl_pips": 20.0,
+                    "confirm_bars": 1,
+                    # Spread-Aware Breakeven (kept for compatibility)
+                    "spread_aware_be_enabled": False,
+                    "spread_aware_be_trigger_mode": "fixed_pips",
+                    "spread_aware_be_fixed_trigger_pips": 5.0,
+                    "spread_aware_be_spread_buffer_pips": 1.0,
+                    "spread_aware_be_apply_to_zone_entry": True,
+                    "spread_aware_be_apply_to_tiered_pullback": True,
+                    # EMA Zone Entry Filter (slope-only, disabled by default)
+                    "ema_zone_filter_enabled": False,
+                    "ema_zone_filter_lookback_bars": 3,
+                    "ema_zone_filter_ema5_min_slope_pips_per_bar": 0.10,
+                    "ema_zone_filter_ema9_min_slope_pips_per_bar": 0.08,
+                    "ema_zone_filter_ema21_min_slope_pips_per_bar": 0.05,
+                    # Open trade caps
+                    "max_open_trades_per_side": 5,
+                    "max_zone_entry_open": 3,
+                    "max_tiered_pullback_open": 8,
                 },
             ],
         },

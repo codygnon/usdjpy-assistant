@@ -27,6 +27,7 @@ from core.execution_engine import (
     execute_kt_cg_trial_4_policy_demo_only,
     execute_kt_cg_trial_5_policy_demo_only,
     execute_kt_cg_trial_6_policy_demo_only,
+    execute_kt_cg_trial_7_policy_demo_only,
     execute_price_level_policy_demo_only,
     execute_session_momentum_policy_demo_only,
     execute_signal_demo_only,
@@ -50,7 +51,7 @@ from core.dashboard_models import (
 from core.dashboard_reporters import (
     collect_trial_2_context, collect_trial_3_context,
     collect_trial_4_context, collect_trial_5_context,
-    collect_trial_6_context,
+    collect_trial_6_context, collect_trial_7_context,
 )
 from storage.sqlite_store import SqliteStore
 
@@ -143,10 +144,10 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
     breakeven = getattr(tm, "breakeven", None)
     target = getattr(tm, "target", None)
 
-    # Find Trial #4/#5/#6 spread-aware BE config if present
+    # Find Trial #4/#5/#6/#7 spread-aware BE config if present
     t4_spread_be = None
     for pol in profile.execution.policies:
-        if getattr(pol, "type", None) in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6") and getattr(pol, "enabled", True):
+        if getattr(pol, "type", None) in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6", "kt_cg_trial_7") and getattr(pol, "enabled", True):
             if getattr(pol, "spread_aware_be_enabled", False):
                 t4_spread_be = pol
             break
@@ -367,6 +368,10 @@ def _build_and_write_dashboard(
             )
         elif policy_type == "kt_cg_trial_6":
             context_items = collect_trial_6_context(
+                policy_for_context, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
+            )
+        elif policy_type == "kt_cg_trial_7":
+            context_items = collect_trial_7_context(
                 policy_for_context, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
             )
         elif policy_type == "kt_cg_hybrid":
@@ -595,6 +600,10 @@ def main() -> None:
             getattr(p, "type", None) == "kt_cg_trial_6" and getattr(p, "enabled", True)
             for p in profile.execution.policies
         )
+        has_kt_cg_trial_7 = any(
+            getattr(p, "type", None) == "kt_cg_trial_7" and getattr(p, "enabled", True)
+            for p in profile.execution.policies
+        )
         # Confirmed-cross setups can now use M5; detect if any do so we fetch M5 bars.
         m5_cross_setup_ids = {
             sid
@@ -675,7 +684,7 @@ def main() -> None:
                         "M1": _get_bars_cached(profile.symbol, "M1", 3000),
                     }
                     # Fetch M5 data when needed by ema_pullback, kt_cg_ctp, kt_cg_hybrid, or M5 confirmed-cross setups.
-                    if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid:
+                    if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid or has_kt_cg_trial_7:
                         data_by_tf["M5"] = _get_bars_cached(profile.symbol, "M5", 2000)
                     # Fetch M3 data when needed by kt_cg_trial_4/5/6 (trend detection).
                     if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6:
@@ -1741,6 +1750,112 @@ def main() -> None:
                         temp_overrides=temp_overrides,
                     )
 
+            # Trial #7 execution — M5 Trend + Tiered Pullback + Slope Gate
+            if has_kt_cg_trial_7:
+                t7_mkt = mkt
+                if t7_mkt is None:
+                    spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
+                    t7_mkt = MarketContext(spread_pips=float(spread_pips), alignment_score=0)
+                trades_df = store.read_trades_df(profile.profile_name)
+                tier_state: dict[int, bool] = {}
+                try:
+                    state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                    tier_fired_raw = state_data.get("tier_fired")
+                    if isinstance(tier_fired_raw, dict):
+                        tier_state = {int(k): bool(v) for k, v in tier_fired_raw.items()}
+                    else:
+                        tier_state = {}
+                        for key, val in state_data.items():
+                            if key.startswith("tier_") and key.endswith("_fired") and key != "tier_fired":
+                                try:
+                                    period = int(key.replace("tier_", "").replace("_fired", ""))
+                                    tier_state[period] = bool(val)
+                                except ValueError:
+                                    pass
+                except Exception:
+                    tier_state = {}
+
+                for pol in profile.execution.policies:
+                    if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "kt_cg_trial_7":
+                        continue
+                    m1_df = data_by_tf.get("M1")
+                    if m1_df is None or m1_df.empty:
+                        continue
+                    bar_time_utc = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
+                    exec_result = execute_kt_cg_trial_7_policy_demo_only(
+                        adapter=adapter,
+                        profile=profile,
+                        log_dir=log_dir,
+                        policy=pol,
+                        context=t7_mkt,
+                        data_by_tf=data_by_tf,
+                        tick=tick,
+                        trades_df=trades_df,
+                        mode=mode,
+                        bar_time_utc=bar_time_utc,
+                        tier_state=tier_state,
+                    )
+                    dec = exec_result["decision"]
+                    tier_updates = exec_result.get("tier_updates", {})
+                    t7_trigger_type = exec_result.get("trigger_type")
+
+                    # Persist tier state updates to runtime_state.json
+                    if tier_updates:
+                        try:
+                            current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                            tf_dict = current_state_data.get("tier_fired", {})
+                            if not isinstance(tf_dict, dict):
+                                tf_dict = {}
+                            for tier, new_state in tier_updates.items():
+                                tf_dict[str(tier)] = new_state
+                                tier_state[tier] = new_state
+                            current_state_data["tier_fired"] = tf_dict
+                            state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
+                        except Exception as e:
+                            print(f"[{profile.profile_name}] Failed to persist Trial #7 tier state: {e}")
+
+                    if dec.attempted:
+                        if dec.placed:
+                            side = dec.side or "buy"
+                            entry_price = tick.ask if side == "buy" else tick.bid
+                            pip = float(profile.pip_size)
+                            sl_pips = getattr(pol, "sl_pips", None)
+                            if sl_pips is None:
+                                sl_pips = float(get_effective_risk(profile).min_stop_pips)
+                            if side == "buy":
+                                tp_price = entry_price + pol.tp_pips * pip
+                                sl_price = entry_price - sl_pips * pip
+                            else:
+                                tp_price = entry_price - pol.tp_pips * pip
+                                sl_price = entry_price + sl_pips * pip
+                            print(f"[{profile.profile_name}] TRADE PLACED: kt_cg_trial_7:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
+                            _insert_trade_for_policy(
+                                profile=profile,
+                                adapter=adapter,
+                                store=store,
+                                policy_type="kt_cg_trial_7",
+                                policy_id=pol.id,
+                                side=side,
+                                entry_price=entry_price,
+                                dec=dec,
+                                stop_price=sl_price,
+                                target_price=tp_price,
+                                entry_type=t7_trigger_type,
+                            )
+                            _append_trade_open_event(
+                                log_dir, f"kt_cg_trial_7:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
+                                side, entry_price, trigger_type=t7_trigger_type or "", entry_type=t7_trigger_type or "",
+                            )
+                        else:
+                            print(f"[{profile.profile_name}] kt_cg_trial_7 {pol.id} mode={mode} -> {dec.reason}")
+
+                    _build_and_write_dashboard(
+                        profile=profile, store=store, log_dir=log_dir, tick=tick,
+                        data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
+                        policy_type="kt_cg_trial_7", tier_state=tier_state,
+                        eval_result=exec_result,
+                    )
+
             # Trial #6 execution — BB Slope Trend + EMA Tier Pullback + BB Reversal
             if has_kt_cg_trial_6:
                 t6_mkt = mkt
@@ -1874,7 +1989,7 @@ def main() -> None:
 
             # Catch-all dashboard write for profiles not using KT/CG policy types.
             # Runs every poll cycle so positions + prices are always fresh.
-            if not (has_kt_cg_hybrid or has_kt_cg_ctp or has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6):
+            if not (has_kt_cg_hybrid or has_kt_cg_ctp or has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6 or has_kt_cg_trial_7):
                 if tick is not None and data_by_tf is not None:
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,
@@ -1892,4 +2007,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -25,6 +25,8 @@ from core.dashboard_reporters import (
     report_t6_dead_zone,
     report_t6_m3_trend,
     report_t6_bb_reversal_cap,
+    report_ema_zone_slope_filter_trial_7,
+    report_open_trade_cap_by_entry_type,
 )
 
 # Attribute names that can be overridden by Apply Temporary Settings (same as execution engine).
@@ -95,6 +97,25 @@ def _side_from_m3(data_by_tf: dict, policy: Any) -> str:
         return "buy"
 
 
+def _side_from_m5(data_by_tf: dict, policy: Any) -> str:
+    """Derive side (buy/sell) from M5 trend when eval_result is not available."""
+    m5_df = data_by_tf.get("M5")
+    if m5_df is None or m5_df.empty:
+        return "buy"
+    try:
+        from core.indicators import ema as ema_fn
+        fast_p = getattr(policy, "m5_trend_ema_fast", 9)
+        slow_p = getattr(policy, "m5_trend_ema_slow", 21)
+        if len(m5_df) < slow_p + 1:
+            return "buy"
+        close = m5_df["close"]
+        fast_v = float(ema_fn(close, fast_p).iloc[-1])
+        slow_v = float(ema_fn(close, slow_p).iloc[-1])
+        return "buy" if fast_v > slow_v else "sell"
+    except Exception:
+        return "buy"
+
+
 def build_dashboard_filters(
     *,
     profile: Any,
@@ -129,7 +150,10 @@ def build_dashboard_filters(
     if eval_result:
         trigger_type = eval_result.get("trigger_type") or "zone_entry"
     if policy is not None and not eval_result:
-        side = _side_from_m3(data_by_tf, policy)
+        if policy_type == "kt_cg_trial_7":
+            side = _side_from_m5(data_by_tf, policy)
+        else:
+            side = _side_from_m3(data_by_tf, policy)
 
     # Session filter (all)
     filters.append(report_session_filter(profile, now_utc))
@@ -201,6 +225,33 @@ def build_dashboard_filters(
                         side_counts[s] += 1
                 sc = side_counts.get(side, 0)
                 filters.append(report_max_trades(sc, max_per_side, side, side_counts))
+            except Exception:
+                pass
+
+    elif policy_type == "kt_cg_trial_7" and policy is not None:
+        m1_df = data_by_tf.get("M1")
+        if m1_df is not None and not m1_df.empty:
+            filters.append(report_ema_zone_slope_filter_trial_7(policy, m1_df, pip_size, side))
+        max_per_side = getattr(policy, "max_open_trades_per_side", None)
+        if max_per_side is not None and store is not None:
+            try:
+                open_trades = store.list_open_trades(profile.profile_name)
+                side_counts: dict[str, int] = {"buy": 0, "sell": 0}
+                for t in open_trades:
+                    row = dict(t) if hasattr(t, "keys") else t
+                    s = str(row.get("side", "")).lower()
+                    if s in side_counts:
+                        side_counts[s] += 1
+                sc = side_counts.get(side, 0)
+                filters.append(report_max_trades(sc, max_per_side, side, side_counts))
+                zone_cap = getattr(policy, "max_zone_entry_open", None)
+                if zone_cap is not None:
+                    zone_open = sum(1 for t in open_trades if (dict(t) if hasattr(t, "keys") else t).get("entry_type") == "zone_entry")
+                    filters.append(report_open_trade_cap_by_entry_type("zone_entry", zone_open, zone_cap))
+                tier_cap = getattr(policy, "max_tiered_pullback_open", None)
+                if tier_cap is not None:
+                    tier_open = sum(1 for t in open_trades if (dict(t) if hasattr(t, "keys") else t).get("entry_type") == "tiered_pullback")
+                    filters.append(report_open_trade_cap_by_entry_type("tiered_pullback", tier_open, tier_cap))
             except Exception:
                 pass
 

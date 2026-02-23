@@ -201,6 +201,54 @@ def report_ema_zone_filter(policy, m1_df, pip_size: float, is_bull: bool) -> Fil
     )
 
 
+def report_ema_zone_slope_filter_trial_7(policy, m1_df, pip_size: float, side: str) -> FilterReport:
+    """Report Trial #7 slope-only EMA zone filter status."""
+    from core.execution_engine import _passes_ema_zone_slope_filter_trial_7
+
+    enabled = getattr(policy, "ema_zone_filter_enabled", False)
+    if not enabled:
+        return FilterReport(
+            filter_id="ema_zone_slope_filter", display_name="EMA Zone Slope Filter",
+            enabled=False, is_clear=True,
+        )
+
+    ok, reason, details = _passes_ema_zone_slope_filter_trial_7(policy, m1_df, pip_size, side)
+    if "error" in details:
+        return FilterReport(
+            filter_id="ema_zone_slope_filter", display_name="EMA Zone Slope Filter",
+            enabled=True, is_clear=True, current_value="Insufficient data",
+        )
+
+    sub_filters = [
+        FilterReport(
+            filter_id="ema5_slope", display_name="EMA5 Slope",
+            enabled=True, is_clear=True,
+            current_value=f"{details['ema5_slope_pips_per_bar']:.3f} p/b",
+            threshold=f"{'>=' if side == 'buy' else '<='} {details['ema5_min']:.3f}",
+        ),
+        FilterReport(
+            filter_id="ema9_slope", display_name="EMA9 Slope",
+            enabled=True, is_clear=True,
+            current_value=f"{details['ema9_slope_pips_per_bar']:.3f} p/b",
+            threshold=f"{'>=' if side == 'buy' else '<='} {details['ema9_min']:.3f}",
+        ),
+        FilterReport(
+            filter_id="ema21_slope", display_name="EMA21 Slope",
+            enabled=True, is_clear=True,
+            current_value=f"{details['ema21_slope_pips_per_bar']:.3f} p/b",
+            threshold=f"{'>=' if side == 'buy' else '<='} {details['ema21_min']:.3f}",
+        ),
+    ]
+
+    return FilterReport(
+        filter_id="ema_zone_slope_filter", display_name="EMA Zone Slope Filter",
+        enabled=True, is_clear=ok,
+        current_value=f"Lookback: {details['lookback_bars']} bars",
+        block_reason=reason if not ok else None,
+        sub_filters=sub_filters,
+    )
+
+
 def report_rolling_danger_zone(policy, m1_df, tick, side: str, pip_size: float) -> FilterReport:
     """Report Rolling Danger Zone status."""
     enabled = getattr(policy, "rolling_danger_zone_enabled", False)
@@ -364,6 +412,19 @@ def report_max_trades(open_count: int, max_allowed: Optional[int], side: str, si
         filter_id="max_trades", display_name="Max Open Trades",
         enabled=True, is_clear=is_clear,
         current_value=f"{open_count}/{max_allowed}{side_info}",
+        threshold=f"Max: {max_allowed}",
+        block_reason=f"{open_count} >= {max_allowed}" if not is_clear else None,
+    )
+
+
+def report_open_trade_cap_by_entry_type(entry_type: str, open_count: int, max_allowed: int) -> FilterReport:
+    """Report open trade cap for a specific entry type."""
+    label = "Zone Entry Cap" if entry_type == "zone_entry" else "Tiered Pullback Cap"
+    is_clear = open_count < max_allowed
+    return FilterReport(
+        filter_id=f"{entry_type}_cap", display_name=label,
+        enabled=True, is_clear=is_clear,
+        current_value=f"{open_count}/{max_allowed}",
         threshold=f"Max: {max_allowed}",
         block_reason=f"{open_count} >= {max_allowed}" if not is_clear else None,
     )
@@ -536,6 +597,53 @@ def collect_trial_5_context(
         # Hours until 02:00 UTC
         hours_left = (2 - utc_hour) % 24
         items.append(ContextItem("Dead Zone Ends In", f"{hours_left}h", "daily"))
+
+    return items
+
+
+def collect_trial_7_context(
+    policy, data_by_tf: dict, tick, tier_state: dict,
+    eval_result: Optional[dict], pip_size: float,
+) -> list[ContextItem]:
+    """Collect context items for Trial #7 dashboard display."""
+    items: list[ContextItem] = []
+
+    # M5 Trend
+    m5_df = data_by_tf.get("M5")
+    if m5_df is not None and not m5_df.empty:
+        from core.indicators import ema as ema_fn
+        m5_close = m5_df["close"]
+        fast_p = getattr(policy, "m5_trend_ema_fast", 9)
+        slow_p = getattr(policy, "m5_trend_ema_slow", 21)
+        if len(m5_df) > slow_p:
+            fast_v = float(ema_fn(m5_close, fast_p).iloc[-1])
+            slow_v = float(ema_fn(m5_close, slow_p).iloc[-1])
+            trend = "BULL" if fast_v > slow_v else "BEAR"
+            items.append(ContextItem("M5 Trend", trend, "trend"))
+            items.append(ContextItem(f"M5 EMA{fast_p}", f"{fast_v:.3f}", "trend"))
+            items.append(ContextItem(f"M5 EMA{slow_p}", f"{slow_v:.3f}", "trend"))
+
+    # M1 Zone Entry EMAs
+    m1_df = data_by_tf.get("M1")
+    if m1_df is not None and not m1_df.empty:
+        from core.indicators import ema as ema_fn
+        m1_close = m1_df["close"]
+        ze_fast = getattr(policy, "m1_zone_entry_ema_fast", 5)
+        ze_slow = getattr(policy, "m1_zone_entry_ema_slow", 9)
+        if len(m1_df) > max(ze_fast, ze_slow):
+            zf = float(ema_fn(m1_close, ze_fast).iloc[-1])
+            zs = float(ema_fn(m1_close, ze_slow).iloc[-1])
+            items.append(ContextItem(f"M1 EMA{ze_fast}", f"{zf:.3f}", "zone_entry"))
+            items.append(ContextItem(f"M1 EMA{ze_slow}", f"{zs:.3f}", "zone_entry"))
+
+    items.append(ContextItem("Bid", f"{tick.bid:.3f}", "price"))
+    items.append(ContextItem("Ask", f"{tick.ask:.3f}", "price"))
+    items.append(ContextItem("Spread", f"{(tick.ask - tick.bid) / pip_size:.1f}p", "price"))
+
+    fired = [str(t) for t, v in sorted(tier_state.items()) if v]
+    avail = [str(t) for t, v in sorted(tier_state.items()) if not v]
+    items.append(ContextItem("Tiers Fired", ", ".join(fired) if fired else "None", "tiers"))
+    items.append(ContextItem("Tiers Available", ", ".join(avail) if avail else "None", "tiers"))
 
     return items
 

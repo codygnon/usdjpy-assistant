@@ -621,6 +621,63 @@ class ExecutionPolicyKtCgTrial4(BaseModel):
     ema_zone_filter_block_threshold: float = 0.35  # Block if weighted score below this
 
 
+class ExecutionPolicyKtCgTrial7(BaseModel):
+    """KT/CG Trial #7 Recover Account (M5 Trend + Tiered Pullback + Slope Gate)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["kt_cg_trial_7"] = "kt_cg_trial_7"
+    id: str = "kt_cg_trial_7_default"
+    enabled: bool = False
+
+    # M5 Trend EMAs
+    m5_trend_ema_fast: int = 9
+    m5_trend_ema_slow: int = 21
+
+    # M1 Zone Entry - EMA5 vs EMA9
+    zone_entry_enabled: bool = True
+    m1_zone_entry_ema_fast: int = 5
+    m1_zone_entry_ema_slow: int = 9
+
+    # Tiered Pullback Configuration (9-34 subset, configurable)
+    tiered_pullback_enabled: bool = True
+    tier_ema_periods: tuple[int, ...] = (
+        9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+        28, 29, 30, 31, 32, 33, 34
+    )
+    tier_reset_buffer_pips: float = 1.0
+
+    # Close opposite trades before placing new trade
+    close_opposite_on_trade: bool = True
+
+    # Cooldown after trade (Zone Entry respects this, Tiered Pullback has NO cooldown)
+    cooldown_minutes: float = 3.0
+
+    tp_pips: float = 4.0
+    sl_pips: Optional[float] = 20.0
+    confirm_bars: int = 1
+
+    # Spread-Aware Breakeven Stop Loss
+    spread_aware_be_enabled: bool = False
+    spread_aware_be_trigger_mode: Literal["fixed_pips", "spread_relative"] = "fixed_pips"
+    spread_aware_be_fixed_trigger_pips: float = 5.0
+    spread_aware_be_spread_buffer_pips: float = 1.0
+    spread_aware_be_apply_to_zone_entry: bool = True
+    spread_aware_be_apply_to_tiered_pullback: bool = True
+
+    # EMA Zone Entry Filter (slope-only gate; zone entries only)
+    ema_zone_filter_enabled: bool = False
+    ema_zone_filter_lookback_bars: int = 3
+    ema_zone_filter_ema5_min_slope_pips_per_bar: float = 0.10
+    ema_zone_filter_ema9_min_slope_pips_per_bar: float = 0.08
+    ema_zone_filter_ema21_min_slope_pips_per_bar: float = 0.05
+
+    # Open trade caps (all caps enforced together)
+    max_open_trades_per_side: Optional[int] = 5
+    max_zone_entry_open: Optional[int] = 3
+    max_tiered_pullback_open: Optional[int] = 8
+
+
 class ExecutionPolicyKtCgTrial6(BaseModel):
     """KT/CG Trial #6 (BB Slope Trend + EMA Tier Pullback + BB Reversal).
 
@@ -709,6 +766,7 @@ ExecutionPolicy = Annotated[
         ExecutionPolicyKtCgCounterTrendPullback,
         ExecutionPolicyKtCgTrial4,
         ExecutionPolicyKtCgTrial5,
+        ExecutionPolicyKtCgTrial7,
         ExecutionPolicyKtCgTrial6,
     ],
     Field(discriminator="type"),
@@ -870,6 +928,32 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
                         # Migrate cooldown_minutes -> 0 (replaced by Fresh Cross)
                         if "cooldown_minutes" in pol:
                             pol["cooldown_minutes"] = 0.0
+                    if isinstance(pol, dict) and pol.get("type") == "kt_cg_trial_7":
+                        # Remove filters not used by Trial #7
+                        pol.pop("tiered_atr_filter_enabled", None)
+                        pol.pop("tiered_atr_block_below_pips", None)
+                        pol.pop("tiered_atr_allow_all_max_pips", None)
+                        pol.pop("tiered_atr_pullback_only_max_pips", None)
+                        pol.pop("rolling_danger_zone_enabled", None)
+                        pol.pop("rolling_danger_lookback_bars", None)
+                        pol.pop("rolling_danger_zone_pct", None)
+                        pol.pop("rsi_divergence_enabled", None)
+                        pol.pop("rsi_divergence_period", None)
+                        pol.pop("rsi_divergence_lookback_bars", None)
+                        pol.pop("rsi_divergence_block_minutes", None)
+                        pol.pop("daily_hl_filter_enabled", None)
+                        pol.pop("daily_hl_buffer_pips", None)
+                        # Remove legacy scoring fields; Trial #7 uses slope-only gate
+                        pol.pop("ema_zone_filter_block_threshold", None)
+                        pol.pop("ema_zone_filter_spread_weight", None)
+                        pol.pop("ema_zone_filter_slope_weight", None)
+                        pol.pop("ema_zone_filter_direction_weight", None)
+                        pol.pop("ema_zone_filter_spread_min_pips", None)
+                        pol.pop("ema_zone_filter_spread_max_pips", None)
+                        pol.pop("ema_zone_filter_slope_min_pips", None)
+                        pol.pop("ema_zone_filter_slope_max_pips", None)
+                        pol.pop("ema_zone_filter_dir_min_pips", None)
+                        pol.pop("ema_zone_filter_dir_max_pips", None)
         return d
 
     profile_name = d.get("profile_name") or d.get("name") or "default"
@@ -978,4 +1062,3 @@ def save_profile_v1(profile: ProfileV1 | ProfileV1AllowExtra, out_path: str | Pa
 def default_profile_for_name(profile_name: str) -> ProfileV1:
     """Build a ProfileV1 with default settings for a new account."""
     return ProfileV1(profile_name=profile_name, symbol="USDJPY.PRO")
-

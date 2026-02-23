@@ -3688,6 +3688,10 @@ interface EditedSettings {
   ema_zone_filter_enabled: boolean;
   ema_zone_filter_lookback_bars: number;
   ema_zone_filter_block_threshold: number;
+  // Trial #7: EMA Zone slope-only thresholds
+  ema_zone_filter_ema5_min_slope_pips_per_bar: number;
+  ema_zone_filter_ema9_min_slope_pips_per_bar: number;
+  ema_zone_filter_ema21_min_slope_pips_per_bar: number;
   // Trial #4: Tiered ATR(14) Filter
   tiered_atr_filter_enabled: boolean;
   tiered_atr_block_below_pips: number;
@@ -3754,6 +3758,11 @@ interface EditedSettings {
   trend_exhaustion_extended_max: number;
   trend_exhaustion_ramp_minutes: number;
   max_open_trades_per_side: number;
+  max_zone_entry_open: number;
+  max_tiered_pullback_open: number;
+  // Trial #7: M5 trend EMAs
+  t7_m5_trend_ema_fast: number;
+  t7_m5_trend_ema_slow: number;
   // Trial #6: M3 Slope Trend Engine
   t6_m3_slope_lookback: number;
   t6_m3_bb_period: number;
@@ -3841,6 +3850,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let emaZoneFilterEnabled = true;
       let emaZoneFilterLookbackBars = 3;
       let emaZoneFilterBlockThreshold = 0.35;
+      // Trial #7: EMA Zone slope-only thresholds
+      let emaZoneFilterEma5MinSlopePipsPerBar = 0.10;
+      let emaZoneFilterEma9MinSlopePipsPerBar = 0.08;
+      let emaZoneFilterEma21MinSlopePipsPerBar = 0.05;
       // Trial #5: EMA Zone Filter weights/ranges
       let emaZoneFilterSpreadWeight = 0.45;
       let emaZoneFilterSlopeWeight = 0.40;
@@ -3858,6 +3871,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let trendExhaustionExtendedMax = 5.0;
       let trendExhaustionRampMinutes = 12.0;
       let maxOpenTradesPerSide = 5;
+      let maxZoneEntryOpen = 3;
+      let maxTieredPullbackOpen = 8;
+      let t7M5TrendEmaFast = 9;
+      let t7M5TrendEmaSlow = 21;
       // Trial #4: Tiered ATR Filter
       let tieredAtrFilterEnabled = true;
       let tieredAtrBlockBelowPips = 4.0;
@@ -3967,6 +3984,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
             emaZoneFilterLookbackBars = (pol.ema_zone_filter_lookback_bars as number) ?? 3;
             emaZoneFilterBlockThreshold = (pol.ema_zone_filter_block_threshold as number) ?? 0.35;
           }
+          if ('ema_zone_filter_ema5_min_slope_pips_per_bar' in pol) {
+            emaZoneFilterEma5MinSlopePipsPerBar = (pol.ema_zone_filter_ema5_min_slope_pips_per_bar as number) ?? 0.10;
+            emaZoneFilterEma9MinSlopePipsPerBar = (pol.ema_zone_filter_ema9_min_slope_pips_per_bar as number) ?? 0.08;
+            emaZoneFilterEma21MinSlopePipsPerBar = (pol.ema_zone_filter_ema21_min_slope_pips_per_bar as number) ?? 0.05;
+          }
           if ('tiered_atr_filter_enabled' in pol) {
             tieredAtrFilterEnabled = pol.tiered_atr_filter_enabled as boolean;
             tieredAtrBlockBelowPips = (pol.tiered_atr_block_below_pips as number) ?? 4.0;
@@ -4043,6 +4065,17 @@ function PresetsPage({ profile }: { profile: Profile }) {
           if ('max_open_trades_per_side' in pol) {
             maxOpenTradesPerSide = (pol.max_open_trades_per_side as number) ?? 5;
           }
+          if ('max_zone_entry_open' in pol) {
+            maxZoneEntryOpen = (pol.max_zone_entry_open as number) ?? 3;
+          }
+          if ('max_tiered_pullback_open' in pol) {
+            maxTieredPullbackOpen = (pol.max_tiered_pullback_open as number) ?? 8;
+          }
+          if (pol.type === 'kt_cg_trial_7') {
+            t7M5TrendEmaFast = (pol.m5_trend_ema_fast as number) ?? 9;
+            t7M5TrendEmaSlow = (pol.m5_trend_ema_slow as number) ?? 21;
+            policySlPips = (pol.sl_pips as number) ?? 20;
+          }
           if (policyCooldown > 0 || policySlPips !== 20) break;
         }
       }
@@ -4075,6 +4108,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
         ema_zone_filter_enabled: emaZoneFilterEnabled,
         ema_zone_filter_lookback_bars: emaZoneFilterLookbackBars,
         ema_zone_filter_block_threshold: emaZoneFilterBlockThreshold,
+        ema_zone_filter_ema5_min_slope_pips_per_bar: emaZoneFilterEma5MinSlopePipsPerBar,
+        ema_zone_filter_ema9_min_slope_pips_per_bar: emaZoneFilterEma9MinSlopePipsPerBar,
+        ema_zone_filter_ema21_min_slope_pips_per_bar: emaZoneFilterEma21MinSlopePipsPerBar,
         // Trial #5: EMA Zone Filter weights/ranges
         ema_zone_filter_spread_weight: emaZoneFilterSpreadWeight,
         ema_zone_filter_slope_weight: emaZoneFilterSlopeWeight,
@@ -4092,6 +4128,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
         trend_exhaustion_extended_max: trendExhaustionExtendedMax,
         trend_exhaustion_ramp_minutes: trendExhaustionRampMinutes,
         max_open_trades_per_side: maxOpenTradesPerSide,
+        max_zone_entry_open: maxZoneEntryOpen,
+        max_tiered_pullback_open: maxTieredPullbackOpen,
+        t7_m5_trend_ema_fast: t7M5TrendEmaFast,
+        t7_m5_trend_ema_slow: t7M5TrendEmaSlow,
         // Trial #4: Tiered ATR Filter
         tiered_atr_filter_enabled: tieredAtrFilterEnabled,
         tiered_atr_block_below_pips: tieredAtrBlockBelowPips,
@@ -4302,6 +4342,30 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.trend_exhaustion_extended_max = editedSettings.trend_exhaustion_extended_max;
           updates.trend_exhaustion_ramp_minutes = Math.max(1, Math.min(60, editedSettings.trend_exhaustion_ramp_minutes ?? 12));
           updates.max_open_trades_per_side = Math.max(1, Math.min(20, editedSettings.max_open_trades_per_side));
+        }
+        // Update Trial #7 settings
+        if (pol.type === 'kt_cg_trial_7') {
+          updates.m5_trend_ema_fast = Math.max(2, editedSettings.t7_m5_trend_ema_fast);
+          updates.m5_trend_ema_slow = Math.max(3, editedSettings.t7_m5_trend_ema_slow);
+          updates.zone_entry_enabled = editedSettings.zone_entry_enabled;
+          updates.tier_ema_periods = editedSettings.tier_ema_periods;
+          updates.ema_zone_filter_enabled = editedSettings.ema_zone_filter_enabled;
+          updates.ema_zone_filter_lookback_bars = Math.max(1, editedSettings.ema_zone_filter_lookback_bars);
+          updates.ema_zone_filter_ema5_min_slope_pips_per_bar = Math.max(0, editedSettings.ema_zone_filter_ema5_min_slope_pips_per_bar);
+          updates.ema_zone_filter_ema9_min_slope_pips_per_bar = Math.max(0, editedSettings.ema_zone_filter_ema9_min_slope_pips_per_bar);
+          updates.ema_zone_filter_ema21_min_slope_pips_per_bar = Math.max(0, editedSettings.ema_zone_filter_ema21_min_slope_pips_per_bar);
+          updates.spread_aware_be_enabled = editedSettings.spread_aware_be_enabled;
+          updates.spread_aware_be_trigger_mode = editedSettings.spread_aware_be_trigger_mode;
+          updates.spread_aware_be_fixed_trigger_pips = editedSettings.spread_aware_be_fixed_trigger_pips;
+          updates.spread_aware_be_spread_buffer_pips = editedSettings.spread_aware_be_spread_buffer_pips;
+          updates.spread_aware_be_apply_to_zone_entry = editedSettings.spread_aware_be_apply_to_zone_entry;
+          updates.spread_aware_be_apply_to_tiered_pullback = editedSettings.spread_aware_be_apply_to_tiered_pullback;
+          updates.max_open_trades_per_side = Math.max(1, editedSettings.max_open_trades_per_side);
+          updates.max_zone_entry_open = Math.max(1, editedSettings.max_zone_entry_open);
+          updates.max_tiered_pullback_open = Math.max(1, editedSettings.max_tiered_pullback_open);
+          updates.sl_pips = Math.max(0.1, editedSettings.policy_sl_pips);
+          updates.cooldown_minutes = Math.max(0, editedSettings.policy_cooldown_minutes);
+          updates.tp_pips = Math.max(0.1, editedSettings.target_pips);
         }
         // Update Trial #6 settings
         if (pol.type === 'kt_cg_trial_6') {
@@ -4686,11 +4750,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   </div>
                 </div>
               )}
-              {/* Trial #4/#5 shared settings block */}
-              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4' || pol.type === 'kt_cg_trial_5') && (
+              {/* Trial #4/#5/#7 shared settings block */}
+              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4' || pol.type === 'kt_cg_trial_5' || pol.type === 'kt_cg_trial_7') && (
                 <>
                 {/* Rolling Danger Zone + RSI Divergence (Trial #4 only) */}
-                {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && (
+                {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4') && (
                 <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
                     Rolling Danger Zone (blocks trades near M1 rolling high/low extremes)
@@ -4809,7 +4873,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   {/* EMA Zone Entry Filter */}
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                      EMA Zone Entry Filter (M1 EMA 9 vs 17)
+                      {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7')
+                        ? 'EMA Zone Entry Filter (Slope-Only Gate)'
+                        : 'EMA Zone Entry Filter (M1 EMA 9 vs 17)'}
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
@@ -4830,14 +4896,15 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         <input
                           type="number"
                           step="1"
-                          min="2"
+                          min="1"
                           max="10"
                           value={editedSettings.ema_zone_filter_lookback_bars}
                           onChange={(e) => setEditedSettings({ ...editedSettings, ema_zone_filter_lookback_bars: parseInt(e.target.value) || 3 })}
                           style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
                         />
-                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Bars for slope/direction</div>
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Bars for slope calculation</div>
                       </div>
+                      {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Block Threshold</div>
                         <input
@@ -4851,9 +4918,49 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         />
                         <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Block if score below</div>
                       </div>
+                      )}
+                      {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                        <>
+                          <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>EMA5 Min Slope (p/b)</div>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={editedSettings.ema_zone_filter_ema5_min_slope_pips_per_bar}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, ema_zone_filter_ema5_min_slope_pips_per_bar: parseFloat(e.target.value) || 0 })}
+                              style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                            />
+                          </div>
+                          <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>EMA9 Min Slope (p/b)</div>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={editedSettings.ema_zone_filter_ema9_min_slope_pips_per_bar}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, ema_zone_filter_ema9_min_slope_pips_per_bar: parseFloat(e.target.value) || 0 })}
+                              style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                            />
+                          </div>
+                          <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>EMA21 Min Slope (p/b)</div>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={editedSettings.ema_zone_filter_ema21_min_slope_pips_per_bar}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, ema_zone_filter_ema21_min_slope_pips_per_bar: parseFloat(e.target.value) || 0 })}
+                              style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                            />
+                          </div>
+                        </>
+                      )}
                     </div>
                     <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
-                      Blocks zone entries during EMA compression. Tiered pullback unaffected.
+                      {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7')
+                        ? 'BUY requires EMA5/EMA9/EMA21 slopes above mins. SELL requires slopes below negative mins. Tiered pullback unaffected.'
+                        : 'Blocks zone entries during EMA compression. Tiered pullback unaffected.'}
                     </div>
                     {/* Expanded EMA Zone Filter weights + ranges (Trial #5 only) */}
                     {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && editedSettings.ema_zone_filter_enabled && (
@@ -4976,8 +5083,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     </div>
                   </div>
                   )}
-                  {/* Tiered ATR(14) Filter — Trial #4 only (removed from Trial #5) */}
-                  {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && (
+                  {/* Tiered ATR(14) Filter — Trial #4 only */}
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4') && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                       Tiered ATR(14) Filter
@@ -5261,7 +5368,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     </div>
                   </div>
                   )}
-                  {/* Daily High/Low Filter */}
+                  {/* Daily High/Low Filter (Trial #4/#5 only) */}
+                  {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                       Daily High/Low Filter (zone entry + pullback for Trial #5)
@@ -5298,6 +5406,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       Blocks BUY within {editedSettings.daily_hl_buffer_pips}p of daily high • Blocks SELL within {editedSettings.daily_hl_buffer_pips}p of daily low
                     </div>
                   </div>
+                  )}
                   {/* Spread-Aware Breakeven */}
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
@@ -5471,13 +5580,18 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   </button>
                 </div>
               )}
-              {/* EMA Override Settings (for kt_cg_trial_4 / Trial #4 and Trial #5) */}
-              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4' || pol.type === 'kt_cg_trial_5') && (
+              {/* View Settings (for Trial #4 / Trial #5 / Trial #7) */}
+              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4' || pol.type === 'kt_cg_trial_5' || pol.type === 'kt_cg_trial_7') && (
                 <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
-                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') ? 'View Settings (Trial #5)' : 'EMA Override Settings (Trial #4)'}
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7')
+                      ? 'View Settings (Trial #7)'
+                      : ((execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5')
+                        ? 'View Settings (Trial #5)'
+                        : 'EMA Override Settings (Trial #4)')}
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
+                    {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                         M3 Trend – fast / slow EMAs (default 5 / 9)
@@ -5507,8 +5621,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         M3 Trend: fast {'>'} slow = BULL
                       </div>
                     </div>
+                    )}
                     {/* M1 Zone Entry EMA overrides: hidden for Trial #5 (hardcoded to 5/9) */}
-                    {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && (
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4') && (
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                         M1 Zone Entry – fast / slow EMAs (default 5 / 9)
@@ -5595,7 +5710,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         When price touches M1 EMA tiers, triggers entry. Each tier fires once per touch and resets when price moves away.
                       </div>
                     </div>
-                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && (
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5' || pol.type === 'kt_cg_trial_7') && (
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                         Max Open Trades Per Side
@@ -5604,7 +5719,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         type="number"
                         step="1"
                         min="1"
-                        max="20"
                         value={editedSettings.max_open_trades_per_side}
                         onChange={(e) => setEditedSettings({ ...editedSettings, max_open_trades_per_side: parseInt(e.target.value) || 5 })}
                         style={{ width: '100%', padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
@@ -5614,7 +5728,64 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       </div>
                     </div>
                     )}
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                    <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                        Max Zone Entries Open
+                      </div>
+                      <input
+                        type="number"
+                        step="1"
+                        min="1"
+                        value={editedSettings.max_zone_entry_open}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, max_zone_entry_open: parseInt(e.target.value) || 3 })}
+                        style={{ width: '100%', padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                      />
+                    </div>
+                    )}
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                    <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                        Max Tiered Pullback Open
+                      </div>
+                      <input
+                        type="number"
+                        step="1"
+                        min="1"
+                        value={editedSettings.max_tiered_pullback_open}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, max_tiered_pullback_open: parseInt(e.target.value) || 8 })}
+                        style={{ width: '100%', padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                      />
+                    </div>
+                    )}
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                    <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                        M5 Trend EMAs (fast/slow)
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <input
+                          type="number"
+                          step="1"
+                          min="2"
+                          value={editedSettings.t7_m5_trend_ema_fast}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t7_m5_trend_ema_fast: parseInt(e.target.value) || 9 })}
+                          style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        />
+                        <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>/</span>
+                        <input
+                          type="number"
+                          step="1"
+                          min="3"
+                          value={editedSettings.t7_m5_trend_ema_slow}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t7_m5_trend_ema_slow: parseInt(e.target.value) || 21 })}
+                          style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                        />
+                      </div>
+                    </div>
+                    )}
                   </div>
+                  {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
                   <button
                     className="btn btn-secondary mt-3"
                     onClick={() => setEditedSettings({
@@ -5628,6 +5799,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   >
                     Reset EMAs to Defaults
                   </button>
+                  )}
                 </div>
               )}
               {/* View Settings (Trial #6) */}

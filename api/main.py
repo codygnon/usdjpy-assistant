@@ -2576,14 +2576,14 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
             except Exception:
                 _tick = None
         if _tick is not None:
-            # First enabled KT/CG Trial #4 or #5 for rich filters
+            # First enabled KT/CG Trial policy for rich filters
             _policy = None
             _policy_type = ""
             for pol in getattr(profile.execution, "policies", []) or []:
                 if not getattr(pol, "enabled", True):
                     continue
                 pt = getattr(pol, "type", "") or ""
-                if pt in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6"):
+                if pt in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6", "kt_cg_trial_7"):
                     _policy = pol
                     _policy_type = pt
                     break
@@ -2597,8 +2597,12 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 try:
                     _adapter = _get_dashboard_adapter(profile)
                     data_by_tf["M1"] = _get_bars_cached(_adapter, profile.symbol, "M1", 3000)
-                    data_by_tf["M3"] = _get_bars_cached(_adapter, profile.symbol, "M3", 3000)
-                    data_by_tf["D"] = _get_bars_cached(_adapter, profile.symbol, "D", 2)
+                    if _policy_type in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6"):
+                        data_by_tf["M3"] = _get_bars_cached(_adapter, profile.symbol, "M3", 3000)
+                    if _policy_type in ("kt_cg_trial_4", "kt_cg_trial_5"):
+                        data_by_tf["D"] = _get_bars_cached(_adapter, profile.symbol, "D", 2)
+                    if _policy_type == "kt_cg_trial_7":
+                        data_by_tf["M5"] = _get_bars_cached(_adapter, profile.symbol, "M5", 2000)
                 except Exception:
                     pass
                 try:
@@ -2766,6 +2770,7 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
     pol_type = getattr(policy, "type", "")
     is_trial_5 = pol_type == "kt_cg_trial_5"
     is_trial_4 = pol_type == "kt_cg_trial_4"
+    is_trial_7 = pol_type == "kt_cg_trial_7"
 
     filters: dict[str, Any] = {}
 
@@ -2778,11 +2783,20 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
 
     # EMA Zone Filter
     if hasattr(policy, "ema_zone_filter_enabled"):
-        filters["ema_zone_filter"] = {
-            "enabled": getattr(policy, "ema_zone_filter_enabled", False),
-            "threshold": getattr(policy, "ema_zone_filter_block_threshold", 0.35),
-            "lookback": getattr(policy, "ema_zone_filter_lookback_bars", 3),
-        }
+        if is_trial_7:
+            filters["ema_zone_filter"] = {
+                "enabled": getattr(policy, "ema_zone_filter_enabled", False),
+                "lookback": getattr(policy, "ema_zone_filter_lookback_bars", 3),
+                "ema5_min_slope": getattr(policy, "ema_zone_filter_ema5_min_slope_pips_per_bar", 0.10),
+                "ema9_min_slope": getattr(policy, "ema_zone_filter_ema9_min_slope_pips_per_bar", 0.08),
+                "ema21_min_slope": getattr(policy, "ema_zone_filter_ema21_min_slope_pips_per_bar", 0.05),
+            }
+        else:
+            filters["ema_zone_filter"] = {
+                "enabled": getattr(policy, "ema_zone_filter_enabled", False),
+                "threshold": getattr(policy, "ema_zone_filter_block_threshold", 0.35),
+                "lookback": getattr(policy, "ema_zone_filter_lookback_bars", 3),
+            }
 
     # Rolling Danger Zone (Trial #4 only)
     if hasattr(policy, "rolling_danger_zone_enabled"):
@@ -2871,6 +2885,16 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
         filters["max_trades"] = {
             "enabled": val is not None,
             "per_side": val,
+        }
+    if hasattr(policy, "max_zone_entry_open"):
+        filters["max_zone_entry_open"] = {
+            "enabled": getattr(policy, "max_zone_entry_open", None) is not None,
+            "max": getattr(policy, "max_zone_entry_open", None),
+        }
+    if hasattr(policy, "max_tiered_pullback_open"):
+        filters["max_tiered_pullback_open"] = {
+            "enabled": getattr(policy, "max_tiered_pullback_open", None) is not None,
+            "max": getattr(policy, "max_tiered_pullback_open", None),
         }
 
     return {"preset_name": profile.active_preset_name or "", "filters": filters}
