@@ -5639,22 +5639,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
 
                   {/* Section 1: M3 Slope Trend Engine */}
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, fontWeight: 600 }}>M3 Slope Trend Engine</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 16 }}>
-                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Slope Lookback</div>
-                      <input type="number" step="1" min="1" max="10" value={editedSettings.t6_m3_slope_lookback} onChange={(e) => setEditedSettings({ ...editedSettings, t6_m3_slope_lookback: parseInt(e.target.value) || 2 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                    </div>
-                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>BB Period</div>
-                      <input type="number" step="1" min="5" max="50" value={editedSettings.t6_m3_bb_period} onChange={(e) => setEditedSettings({ ...editedSettings, t6_m3_bb_period: parseInt(e.target.value) || 20 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                    </div>
-                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>BB Std Dev</div>
-                      <input type="number" step="0.1" min="0.5" max="4.0" value={editedSettings.t6_m3_bb_std} onChange={(e) => setEditedSettings({ ...editedSettings, t6_m3_bb_std: parseFloat(e.target.value) || 2.0 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                    </div>
-                  </div>
                   <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
-                    BULL = EMA5{'>'} EMA9{'>'} EMA21, all slopes positive. BEAR = mirror. NONE blocks all entries.
+                    BULL = M3 EMA9 {'>'} EMA21. BEAR = M3 EMA9 {'<'} EMA21. NONE blocks all entries.
                   </div>
 
                   {/* Section 3: System A – EMA Tier Pullback */}

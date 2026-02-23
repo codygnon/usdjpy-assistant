@@ -4991,68 +4991,29 @@ def _evaluate_m3_slope_trend_trial_6(
     policy,  # ExecutionPolicyKtCgTrial6
     pip_size: float,
 ) -> dict:
-    """Evaluate M3 slope-based trend for Trial #6.
-
-    BULL = ema5 > ema9 > ema21 AND all slopes > 0 AND price > ema21 AND m3_bb_expanding
-    BEAR = mirror
-    NONE = anything else -> blocks all entries
-    """
+    """BULL = M3 EMA9 > EMA21. BEAR = M3 EMA9 < EMA21. NONE = equal."""
     close = m3_df["close"]
-    ema_fast = ema_fn(close, policy.m3_trend_ema_fast)
-    ema_slow = ema_fn(close, policy.m3_trend_ema_slow)
-    ema_extra = ema_fn(close, policy.m3_trend_ema_extra)
+    ema_slow = ema_fn(close, policy.m3_trend_ema_slow)   # EMA9
+    ema_extra = ema_fn(close, policy.m3_trend_ema_extra)  # EMA21
 
-    ema_fast_val = float(ema_fast.iloc[-1])
     ema_slow_val = float(ema_slow.iloc[-1])
     ema_extra_val = float(ema_extra.iloc[-1])
-    price = float(close.iloc[-1])
-
-    lookback = policy.m3_slope_lookback
-    reasons = []
-
-    # Compute slopes (change over lookback periods, in pips)
-    def slope_pips(series, lb):
-        if len(series) < lb + 1 or pd.isna(series.iloc[-1]) or pd.isna(series.iloc[-(lb + 1)]):
-            return 0.0
-        return (float(series.iloc[-1]) - float(series.iloc[-(lb + 1)])) / pip_size
-
-    slope_fast = slope_pips(ema_fast, lookback)
-    slope_slow = slope_pips(ema_slow, lookback)
-    slope_extra = slope_pips(ema_extra, lookback)
-
-    # BB expanding
-    bb = _compute_bollinger_bands(m3_df, policy.m3_bb_period, policy.m3_bb_std)
-    bb_expanding = bb.get("bb_expanding", False)
-
-    # Determine trend
-    bull_stack = ema_fast_val > ema_slow_val > ema_extra_val
-    bear_stack = ema_fast_val < ema_slow_val < ema_extra_val
-    all_slopes_pos = slope_fast > 0 and slope_slow > 0 and slope_extra > 0
-    all_slopes_neg = slope_fast < 0 and slope_slow < 0 and slope_extra < 0
 
     trend = "NONE"
-    if bull_stack:
+    if ema_slow_val > ema_extra_val:
         trend = "BULL"
-    elif bear_stack:
+    elif ema_slow_val < ema_extra_val:
         trend = "BEAR"
 
-    reasons.append(
-        f"M3 trend: {trend} | EMA{policy.m3_trend_ema_fast}={ema_fast_val:.3f} "
-        f"EMA{policy.m3_trend_ema_slow}={ema_slow_val:.3f} "
-        f"EMA{policy.m3_trend_ema_extra}={ema_extra_val:.3f} | "
-        f"slopes={slope_fast:.2f}/{slope_slow:.2f}/{slope_extra:.2f}"
-    )
+    reasons = [
+        f"M3 trend: {trend} | EMA{policy.m3_trend_ema_slow}={ema_slow_val:.3f} "
+        f"EMA{policy.m3_trend_ema_extra}={ema_extra_val:.3f}"
+    ]
 
     return {
         "trend": trend,
-        "ema_fast_val": ema_fast_val,
         "ema_slow_val": ema_slow_val,
         "ema_extra_val": ema_extra_val,
-        "slope_fast": slope_fast,
-        "slope_slow": slope_slow,
-        "slope_extra": slope_extra,
-        "bb_expanding": bb_expanding,
-        "m3_bb": bb,
         "reasons": reasons,
     }
 
@@ -5312,7 +5273,7 @@ def execute_kt_cg_trial_6_policy_demo_only(
     if m3_df is None or m3_df.empty:
         return no_trade
     m3_df = drop_incomplete_last_bar(m3_df.copy(), "M3")
-    min_m3_bars = max(policy.m3_trend_ema_extra, policy.m3_bb_period) + policy.m3_slope_lookback + 2
+    min_m3_bars = policy.m3_trend_ema_extra + 2
     if len(m3_df) < min_m3_bars:
         return no_trade
 

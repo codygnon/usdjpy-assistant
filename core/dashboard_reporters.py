@@ -601,10 +601,8 @@ def collect_trial_6_context(
     if trend_result:
         trend = trend_result.get("trend", "N/A")
         items.append(ContextItem("M3 Trend", trend, "trend"))
-        items.append(ContextItem(f"M3 EMA{getattr(policy, 'm3_trend_ema_fast', 5)}", f"{trend_result.get('ema_fast_val', 0):.3f}", "trend"))
         items.append(ContextItem(f"M3 EMA{getattr(policy, 'm3_trend_ema_slow', 9)}", f"{trend_result.get('ema_slow_val', 0):.3f}", "trend"))
         items.append(ContextItem(f"M3 EMA{getattr(policy, 'm3_trend_ema_extra', 21)}", f"{trend_result.get('ema_extra_val', 0):.3f}", "trend"))
-        items.append(ContextItem("Slopes", f"{trend_result.get('slope_fast', 0):.2f}/{trend_result.get('slope_slow', 0):.2f}/{trend_result.get('slope_extra', 0):.2f}", "trend"))
     else:
         items.append(ContextItem("M3 Trend", "N/A", "trend"))
 
