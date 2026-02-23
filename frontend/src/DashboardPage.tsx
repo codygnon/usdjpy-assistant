@@ -716,13 +716,6 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
         items.push({ key: 'M3 Slope 5', value: slope5 != null ? (slope5 > 0 ? '+' : slope5 < 0 ? '-' : '0') : '—', category: 'm3_trend' });
         items.push({ key: 'M3 Slope 9', value: slope9 != null ? (slope9 > 0 ? '+' : slope9 < 0 ? '-' : '0') : '—', category: 'm3_trend' });
         items.push({ key: 'M3 Slope 21', value: slope21 != null ? (slope21 > 0 ? '+' : slope21 < 0 ? '-' : '0') : '—', category: 'm3_trend' });
-        const upper = m3.bollinger_series?.upper;
-        const lower = m3.bollinger_series?.lower;
-        if (upper && lower && upper.length >= 2 && lower.length >= 2) {
-          const wCur = upper[upper.length - 1].value - lower[lower.length - 1].value;
-          const wPrev = upper[upper.length - 2].value - lower[lower.length - 2].value;
-          items.push({ key: 'BB Expanding', value: wCur > wPrev ? 'Yes' : 'No', category: 'm3_trend' });
-        }
         const m3Sma20 = m3.bollinger_series?.middle;
         const m3Sma20Val = m3Sma20 && m3Sma20.length > 0 ? m3Sma20[m3Sma20.length - 1].value : null;
         if (m3Sma20Val != null) items.push({ key: 'M3 20 SMA', value: m3Sma20Val.toFixed(3), category: 'm3_trend' });

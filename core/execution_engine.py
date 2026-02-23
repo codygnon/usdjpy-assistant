@@ -5040,8 +5040,7 @@ def _evaluate_m3_slope_trend_trial_6(
         f"M3 trend: {trend} | EMA{policy.m3_trend_ema_fast}={ema_fast_val:.3f} "
         f"EMA{policy.m3_trend_ema_slow}={ema_slow_val:.3f} "
         f"EMA{policy.m3_trend_ema_extra}={ema_extra_val:.3f} | "
-        f"slopes={slope_fast:.2f}/{slope_slow:.2f}/{slope_extra:.2f} | "
-        f"bb_expanding={bb_expanding}"
+        f"slopes={slope_fast:.2f}/{slope_slow:.2f}/{slope_extra:.2f}"
     )
 
     return {
