@@ -594,9 +594,6 @@ def collect_trial_6_context(
     eval_result: Optional[dict], pip_size: float,
 ) -> list[ContextItem]:
     """Collect context items for Trial #6 dashboard display."""
-    from core.execution_engine import _compute_bollinger_bands
-    from core.indicators import ema as ema_fn
-
     items: list[ContextItem] = []
 
     # M3 Trend (from eval_result or computed)
@@ -611,19 +608,6 @@ def collect_trial_6_context(
     else:
         items.append(ContextItem("M3 Trend", "N/A", "trend"))
 
-    # M1 Bollinger Bands
-    m1_df = data_by_tf.get("M1")
-    if m1_df is not None and not m1_df.empty:
-        bb_period = getattr(policy, "m1_bb_period", 20)
-        bb_std = getattr(policy, "m1_bb_std", 2.0)
-        if len(m1_df) >= bb_period + 2:
-            bb = _compute_bollinger_bands(m1_df, bb_period, bb_std)
-            if bb.get("upper") is not None:
-                items.append(ContextItem("M1 BB Upper", f"{bb['upper']:.3f}", "bollinger"))
-                items.append(ContextItem("M1 BB Middle", f"{bb['middle']:.3f}", "bollinger"))
-                items.append(ContextItem("M1 BB Lower", f"{bb['lower']:.3f}", "bollinger"))
-                items.append(ContextItem("M1 BB Width", f"{bb['width']/pip_size:.1f}p", "bollinger"))
-
     # Bid/Ask/Spread
     items.append(ContextItem("Bid", f"{tick.bid:.3f}", "price"))
     items.append(ContextItem("Ask", f"{tick.ask:.3f}", "price"))
@@ -634,13 +618,6 @@ def collect_trial_6_context(
     avail = [str(t) for t, v in sorted(tier_state.items()) if not v]
     items.append(ContextItem("EMA Tiers Fired", ", ".join(fired) if fired else "None", "tiers"))
     items.append(ContextItem("EMA Tiers Available", ", ".join(avail) if avail else "None", "tiers"))
-
-    # BB Reversal tier state (System B) — from runtime state
-    # Note: bb_tier_state is in exec_result but not passed here directly
-    # The eval_result may contain bb_tier_updates
-    bb_updates = eval_result.get("bb_tier_updates", {}) if eval_result else {}
-    bb_fired = [str(t) for t, v in sorted(bb_updates.items()) if v]
-    items.append(ContextItem("BB Rev Tiers Fired", ", ".join(bb_fired) if bb_fired else "None", "bb_reversal"))
 
     # Dead zone
     daily_reset = eval_result.get("daily_reset_state", {}) if eval_result else {}

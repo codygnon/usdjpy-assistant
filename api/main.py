@@ -462,7 +462,7 @@ def update_runtime_state(profile_name: str, req: RuntimeStateUpdate) -> dict[str
         daily_reset_settled=old.daily_reset_settled,
         trend_flip_price=old.trend_flip_price,
         trend_flip_direction=old.trend_flip_direction,
-        bb_tier_fired=old.bb_tier_fired,
+
     )
     save_state(state_path, new_state)
     return {"status": "saved"}
@@ -518,7 +518,7 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
         trend_flip_direction=old.trend_flip_direction,
         trend_flip_time=old.trend_flip_time,
         # Preserve BB tier state (Trial #6)
-        bb_tier_fired=old.bb_tier_fired,
+
     )
     save_state(state_path, new_state)
     return {"status": "saved"}

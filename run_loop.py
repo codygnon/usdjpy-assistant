@@ -27,7 +27,6 @@ from core.execution_engine import (
     execute_kt_cg_trial_4_policy_demo_only,
     execute_kt_cg_trial_5_policy_demo_only,
     execute_kt_cg_trial_6_policy_demo_only,
-    compute_t6_bb_reversal_tp,
     execute_price_level_policy_demo_only,
     execute_session_momentum_policy_demo_only,
     execute_signal_demo_only,
@@ -1749,9 +1748,8 @@ def main() -> None:
                     spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
                     t6_mkt = MarketContext(spread_pips=float(spread_pips), alignment_score=0)
                 trades_df = store.read_trades_df(profile.profile_name)
-                # Load tier state + bb_tier_state from runtime_state.json
+                # Load tier state from runtime_state.json
                 t6_tier_state: dict[int, bool] = {}
-                t6_bb_tier_state: dict[int, bool] = {}
                 t6_daily_reset_state: dict = {}
                 try:
                     state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
@@ -1759,17 +1757,12 @@ def main() -> None:
                     tier_fired_raw = state_data.get("tier_fired")
                     if isinstance(tier_fired_raw, dict):
                         t6_tier_state = {int(k): bool(v) for k, v in tier_fired_raw.items()}
-                    # BB tier state
-                    bb_tier_raw = state_data.get("bb_tier_fired")
-                    if isinstance(bb_tier_raw, dict):
-                        t6_bb_tier_state = {int(k): bool(v) for k, v in bb_tier_raw.items()}
                     # Daily reset / dead zone state
                     t6_daily_reset_state = {
                         "daily_reset_block_active": bool(state_data.get("daily_reset_block_active", False)),
                     }
                 except Exception:
                     t6_tier_state = {}
-                    t6_bb_tier_state = {}
                     t6_daily_reset_state = {}
 
                 for pol in profile.execution.policies:
@@ -1790,12 +1783,10 @@ def main() -> None:
                         trades_df=trades_df,
                         mode=mode,
                         tier_state=t6_tier_state,
-                        bb_tier_state=t6_bb_tier_state,
                         daily_reset_state=t6_daily_reset_state,
                     )
                     dec = exec_result["decision"]
                     tier_updates = exec_result.get("tier_updates", {})
-                    bb_tier_updates = exec_result.get("bb_tier_updates", {})
                     t6_trigger_type = exec_result.get("trigger_type")
                     t6_daily_reset_state = exec_result.get("daily_reset_state", t6_daily_reset_state)
 
@@ -1815,25 +1806,6 @@ def main() -> None:
                             state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
                         except Exception as e:
                             print(f"[{profile.profile_name}] Failed to persist T6 tier resets: {e}")
-
-                    # Persist BB tier updates (resets and fires both immediately for BB reversal)
-                    if bb_tier_updates:
-                        try:
-                            current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
-                            bb_dict = current_state_data.get("bb_tier_fired", {})
-                            if not isinstance(bb_dict, dict):
-                                bb_dict = {}
-                            # If reset_all, clear entire dict
-                            if exec_result.get("bb_tier_updates") and all(not v for v in bb_tier_updates.values()):
-                                bb_dict = {str(k): False for k in bb_tier_updates}
-                            else:
-                                for tier, new_state in bb_tier_updates.items():
-                                    bb_dict[str(tier)] = new_state
-                                    t6_bb_tier_state[tier] = new_state
-                            current_state_data["bb_tier_fired"] = bb_dict
-                            state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
-                        except Exception as e:
-                            print(f"[{profile.profile_name}] Failed to persist T6 bb_tier state: {e}")
 
                     # Persist dead zone state
                     if t6_daily_reset_state:
@@ -1858,10 +1830,6 @@ def main() -> None:
                                 tp_price = entry_price - t6_tp_pips * pip
                                 sl_price = entry_price + t6_sl_pips * pip
                             print(f"[{profile.profile_name}] TRADE PLACED: kt_cg_trial_6:{pol.id}:{t6_trigger_type} | side={side} | entry={entry_price:.3f} | {dec.reason}")
-                            extra_fields = {}
-                            bb_middle = exec_result.get("bb_middle_at_entry")
-                            if bb_middle is not None:
-                                extra_fields["bb_middle_at_entry"] = bb_middle
                             _insert_trade_for_policy(
                                 profile=profile,
                                 adapter=adapter,
