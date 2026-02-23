@@ -3757,6 +3757,38 @@ interface EditedSettings {
   trend_exhaustion_mature_max: number;
   trend_exhaustion_extended_max: number;
   trend_exhaustion_ramp_minutes: number;
+  // Trial #7: Stretch-based trend exhaustion
+  t7_trend_exhaustion_enabled: boolean;
+  t7_trend_exhaustion_mode: 'global' | 'session' | 'session_and_side';
+  t7_trend_exhaustion_use_current_price: boolean;
+  t7_trend_exhaustion_hysteresis_pips: number;
+  t7_trend_exhaustion_p80_global: number;
+  t7_trend_exhaustion_p90_global: number;
+  t7_trend_exhaustion_p80_tokyo: number;
+  t7_trend_exhaustion_p90_tokyo: number;
+  t7_trend_exhaustion_p80_london: number;
+  t7_trend_exhaustion_p90_london: number;
+  t7_trend_exhaustion_p80_ny: number;
+  t7_trend_exhaustion_p90_ny: number;
+  t7_trend_exhaustion_p80_bull_tokyo: number;
+  t7_trend_exhaustion_p90_bull_tokyo: number;
+  t7_trend_exhaustion_p80_bull_london: number;
+  t7_trend_exhaustion_p90_bull_london: number;
+  t7_trend_exhaustion_p80_bull_ny: number;
+  t7_trend_exhaustion_p90_bull_ny: number;
+  t7_trend_exhaustion_p80_bear_tokyo: number;
+  t7_trend_exhaustion_p90_bear_tokyo: number;
+  t7_trend_exhaustion_p80_bear_london: number;
+  t7_trend_exhaustion_p90_bear_london: number;
+  t7_trend_exhaustion_p80_bear_ny: number;
+  t7_trend_exhaustion_p90_bear_ny: number;
+  t7_trend_exhaustion_extended_disable_zone_entry: boolean;
+  t7_trend_exhaustion_very_extended_disable_zone_entry: boolean;
+  t7_trend_exhaustion_extended_min_tier_period: number;
+  t7_trend_exhaustion_very_extended_min_tier_period: number;
+  t7_trend_exhaustion_very_extended_tighten_caps: boolean;
+  t7_trend_exhaustion_very_extended_cap_multiplier: number;
+  t7_trend_exhaustion_very_extended_cap_min: number;
   max_open_trades_per_side: number;
   max_zone_entry_open: number;
   max_tiered_pullback_open: number;
@@ -3870,6 +3902,37 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let trendExhaustionMatureMax = 3.5;
       let trendExhaustionExtendedMax = 5.0;
       let trendExhaustionRampMinutes = 12.0;
+      let t7TrendExhaustionEnabled = false;
+      let t7TrendExhaustionMode: 'global' | 'session' | 'session_and_side' = 'session_and_side';
+      let t7TrendExhaustionUseCurrentPrice = true;
+      let t7TrendExhaustionHysteresisPips = 0.5;
+      let t7TrendExhaustionP80Global = 12.03;
+      let t7TrendExhaustionP90Global = 17.02;
+      let t7TrendExhaustionP80Tokyo = 12.67;
+      let t7TrendExhaustionP90Tokyo = 17.63;
+      let t7TrendExhaustionP80London = 11.06;
+      let t7TrendExhaustionP90London = 14.41;
+      let t7TrendExhaustionP80Ny = 12.66;
+      let t7TrendExhaustionP90Ny = 18.83;
+      let t7TrendExhaustionP80BullTokyo = 11.85;
+      let t7TrendExhaustionP90BullTokyo = 15.52;
+      let t7TrendExhaustionP80BullLondon = 10.21;
+      let t7TrendExhaustionP90BullLondon = 12.97;
+      let t7TrendExhaustionP80BullNy = 11.21;
+      let t7TrendExhaustionP90BullNy = 15.84;
+      let t7TrendExhaustionP80BearTokyo = 13.44;
+      let t7TrendExhaustionP90BearTokyo = 19.73;
+      let t7TrendExhaustionP80BearLondon = 12.01;
+      let t7TrendExhaustionP90BearLondon = 17.44;
+      let t7TrendExhaustionP80BearNy = 13.97;
+      let t7TrendExhaustionP90BearNy = 21.51;
+      let t7TrendExhaustionExtendedDisableZoneEntry = true;
+      let t7TrendExhaustionVeryExtendedDisableZoneEntry = true;
+      let t7TrendExhaustionExtendedMinTierPeriod = 21;
+      let t7TrendExhaustionVeryExtendedMinTierPeriod = 29;
+      let t7TrendExhaustionVeryExtendedTightenCaps = true;
+      let t7TrendExhaustionVeryExtendedCapMultiplier = 0.5;
+      let t7TrendExhaustionVeryExtendedCapMin = 1;
       let maxOpenTradesPerSide = 5;
       let maxZoneEntryOpen = 3;
       let maxTieredPullbackOpen = 8;
@@ -4075,6 +4138,37 @@ function PresetsPage({ profile }: { profile: Profile }) {
             t7M5TrendEmaFast = (pol.m5_trend_ema_fast as number) ?? 9;
             t7M5TrendEmaSlow = (pol.m5_trend_ema_slow as number) ?? 21;
             policySlPips = (pol.sl_pips as number) ?? 20;
+            t7TrendExhaustionEnabled = (pol.trend_exhaustion_enabled as boolean) ?? false;
+            t7TrendExhaustionMode = (pol.trend_exhaustion_mode as 'global' | 'session' | 'session_and_side') ?? 'session_and_side';
+            t7TrendExhaustionUseCurrentPrice = (pol.trend_exhaustion_use_current_price as boolean) ?? true;
+            t7TrendExhaustionHysteresisPips = (pol.trend_exhaustion_hysteresis_pips as number) ?? 0.5;
+            t7TrendExhaustionP80Global = (pol.trend_exhaustion_p80_global as number) ?? 12.03;
+            t7TrendExhaustionP90Global = (pol.trend_exhaustion_p90_global as number) ?? 17.02;
+            t7TrendExhaustionP80Tokyo = (pol.trend_exhaustion_p80_tokyo as number) ?? 12.67;
+            t7TrendExhaustionP90Tokyo = (pol.trend_exhaustion_p90_tokyo as number) ?? 17.63;
+            t7TrendExhaustionP80London = (pol.trend_exhaustion_p80_london as number) ?? 11.06;
+            t7TrendExhaustionP90London = (pol.trend_exhaustion_p90_london as number) ?? 14.41;
+            t7TrendExhaustionP80Ny = (pol.trend_exhaustion_p80_ny as number) ?? 12.66;
+            t7TrendExhaustionP90Ny = (pol.trend_exhaustion_p90_ny as number) ?? 18.83;
+            t7TrendExhaustionP80BullTokyo = (pol.trend_exhaustion_p80_bull_tokyo as number) ?? 11.85;
+            t7TrendExhaustionP90BullTokyo = (pol.trend_exhaustion_p90_bull_tokyo as number) ?? 15.52;
+            t7TrendExhaustionP80BullLondon = (pol.trend_exhaustion_p80_bull_london as number) ?? 10.21;
+            t7TrendExhaustionP90BullLondon = (pol.trend_exhaustion_p90_bull_london as number) ?? 12.97;
+            t7TrendExhaustionP80BullNy = (pol.trend_exhaustion_p80_bull_ny as number) ?? 11.21;
+            t7TrendExhaustionP90BullNy = (pol.trend_exhaustion_p90_bull_ny as number) ?? 15.84;
+            t7TrendExhaustionP80BearTokyo = (pol.trend_exhaustion_p80_bear_tokyo as number) ?? 13.44;
+            t7TrendExhaustionP90BearTokyo = (pol.trend_exhaustion_p90_bear_tokyo as number) ?? 19.73;
+            t7TrendExhaustionP80BearLondon = (pol.trend_exhaustion_p80_bear_london as number) ?? 12.01;
+            t7TrendExhaustionP90BearLondon = (pol.trend_exhaustion_p90_bear_london as number) ?? 17.44;
+            t7TrendExhaustionP80BearNy = (pol.trend_exhaustion_p80_bear_ny as number) ?? 13.97;
+            t7TrendExhaustionP90BearNy = (pol.trend_exhaustion_p90_bear_ny as number) ?? 21.51;
+            t7TrendExhaustionExtendedDisableZoneEntry = (pol.trend_exhaustion_extended_disable_zone_entry as boolean) ?? true;
+            t7TrendExhaustionVeryExtendedDisableZoneEntry = (pol.trend_exhaustion_very_extended_disable_zone_entry as boolean) ?? true;
+            t7TrendExhaustionExtendedMinTierPeriod = (pol.trend_exhaustion_extended_min_tier_period as number) ?? 21;
+            t7TrendExhaustionVeryExtendedMinTierPeriod = (pol.trend_exhaustion_very_extended_min_tier_period as number) ?? 29;
+            t7TrendExhaustionVeryExtendedTightenCaps = (pol.trend_exhaustion_very_extended_tighten_caps as boolean) ?? true;
+            t7TrendExhaustionVeryExtendedCapMultiplier = (pol.trend_exhaustion_very_extended_cap_multiplier as number) ?? 0.5;
+            t7TrendExhaustionVeryExtendedCapMin = (pol.trend_exhaustion_very_extended_cap_min as number) ?? 1;
           }
           if (policyCooldown > 0 || policySlPips !== 20) break;
         }
@@ -4127,6 +4221,37 @@ function PresetsPage({ profile }: { profile: Profile }) {
         trend_exhaustion_mature_max: trendExhaustionMatureMax,
         trend_exhaustion_extended_max: trendExhaustionExtendedMax,
         trend_exhaustion_ramp_minutes: trendExhaustionRampMinutes,
+        t7_trend_exhaustion_enabled: t7TrendExhaustionEnabled,
+        t7_trend_exhaustion_mode: t7TrendExhaustionMode,
+        t7_trend_exhaustion_use_current_price: t7TrendExhaustionUseCurrentPrice,
+        t7_trend_exhaustion_hysteresis_pips: t7TrendExhaustionHysteresisPips,
+        t7_trend_exhaustion_p80_global: t7TrendExhaustionP80Global,
+        t7_trend_exhaustion_p90_global: t7TrendExhaustionP90Global,
+        t7_trend_exhaustion_p80_tokyo: t7TrendExhaustionP80Tokyo,
+        t7_trend_exhaustion_p90_tokyo: t7TrendExhaustionP90Tokyo,
+        t7_trend_exhaustion_p80_london: t7TrendExhaustionP80London,
+        t7_trend_exhaustion_p90_london: t7TrendExhaustionP90London,
+        t7_trend_exhaustion_p80_ny: t7TrendExhaustionP80Ny,
+        t7_trend_exhaustion_p90_ny: t7TrendExhaustionP90Ny,
+        t7_trend_exhaustion_p80_bull_tokyo: t7TrendExhaustionP80BullTokyo,
+        t7_trend_exhaustion_p90_bull_tokyo: t7TrendExhaustionP90BullTokyo,
+        t7_trend_exhaustion_p80_bull_london: t7TrendExhaustionP80BullLondon,
+        t7_trend_exhaustion_p90_bull_london: t7TrendExhaustionP90BullLondon,
+        t7_trend_exhaustion_p80_bull_ny: t7TrendExhaustionP80BullNy,
+        t7_trend_exhaustion_p90_bull_ny: t7TrendExhaustionP90BullNy,
+        t7_trend_exhaustion_p80_bear_tokyo: t7TrendExhaustionP80BearTokyo,
+        t7_trend_exhaustion_p90_bear_tokyo: t7TrendExhaustionP90BearTokyo,
+        t7_trend_exhaustion_p80_bear_london: t7TrendExhaustionP80BearLondon,
+        t7_trend_exhaustion_p90_bear_london: t7TrendExhaustionP90BearLondon,
+        t7_trend_exhaustion_p80_bear_ny: t7TrendExhaustionP80BearNy,
+        t7_trend_exhaustion_p90_bear_ny: t7TrendExhaustionP90BearNy,
+        t7_trend_exhaustion_extended_disable_zone_entry: t7TrendExhaustionExtendedDisableZoneEntry,
+        t7_trend_exhaustion_very_extended_disable_zone_entry: t7TrendExhaustionVeryExtendedDisableZoneEntry,
+        t7_trend_exhaustion_extended_min_tier_period: t7TrendExhaustionExtendedMinTierPeriod,
+        t7_trend_exhaustion_very_extended_min_tier_period: t7TrendExhaustionVeryExtendedMinTierPeriod,
+        t7_trend_exhaustion_very_extended_tighten_caps: t7TrendExhaustionVeryExtendedTightenCaps,
+        t7_trend_exhaustion_very_extended_cap_multiplier: t7TrendExhaustionVeryExtendedCapMultiplier,
+        t7_trend_exhaustion_very_extended_cap_min: t7TrendExhaustionVeryExtendedCapMin,
         max_open_trades_per_side: maxOpenTradesPerSide,
         max_zone_entry_open: maxZoneEntryOpen,
         max_tiered_pullback_open: maxTieredPullbackOpen,
@@ -4366,6 +4491,37 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.sl_pips = Math.max(0.1, editedSettings.policy_sl_pips);
           updates.cooldown_minutes = Math.max(0, editedSettings.policy_cooldown_minutes);
           updates.tp_pips = Math.max(0.1, editedSettings.target_pips);
+          updates.trend_exhaustion_enabled = editedSettings.t7_trend_exhaustion_enabled;
+          updates.trend_exhaustion_mode = editedSettings.t7_trend_exhaustion_mode;
+          updates.trend_exhaustion_use_current_price = editedSettings.t7_trend_exhaustion_use_current_price;
+          updates.trend_exhaustion_hysteresis_pips = Math.max(0, editedSettings.t7_trend_exhaustion_hysteresis_pips);
+          updates.trend_exhaustion_p80_global = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_global);
+          updates.trend_exhaustion_p90_global = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_global);
+          updates.trend_exhaustion_p80_tokyo = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_tokyo);
+          updates.trend_exhaustion_p90_tokyo = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_tokyo);
+          updates.trend_exhaustion_p80_london = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_london);
+          updates.trend_exhaustion_p90_london = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_london);
+          updates.trend_exhaustion_p80_ny = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_ny);
+          updates.trend_exhaustion_p90_ny = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_ny);
+          updates.trend_exhaustion_p80_bull_tokyo = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_bull_tokyo);
+          updates.trend_exhaustion_p90_bull_tokyo = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_bull_tokyo);
+          updates.trend_exhaustion_p80_bull_london = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_bull_london);
+          updates.trend_exhaustion_p90_bull_london = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_bull_london);
+          updates.trend_exhaustion_p80_bull_ny = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_bull_ny);
+          updates.trend_exhaustion_p90_bull_ny = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_bull_ny);
+          updates.trend_exhaustion_p80_bear_tokyo = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_bear_tokyo);
+          updates.trend_exhaustion_p90_bear_tokyo = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_bear_tokyo);
+          updates.trend_exhaustion_p80_bear_london = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_bear_london);
+          updates.trend_exhaustion_p90_bear_london = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_bear_london);
+          updates.trend_exhaustion_p80_bear_ny = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_bear_ny);
+          updates.trend_exhaustion_p90_bear_ny = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_bear_ny);
+          updates.trend_exhaustion_extended_disable_zone_entry = editedSettings.t7_trend_exhaustion_extended_disable_zone_entry;
+          updates.trend_exhaustion_very_extended_disable_zone_entry = editedSettings.t7_trend_exhaustion_very_extended_disable_zone_entry;
+          updates.trend_exhaustion_extended_min_tier_period = Math.max(1, editedSettings.t7_trend_exhaustion_extended_min_tier_period);
+          updates.trend_exhaustion_very_extended_min_tier_period = Math.max(1, editedSettings.t7_trend_exhaustion_very_extended_min_tier_period);
+          updates.trend_exhaustion_very_extended_tighten_caps = editedSettings.t7_trend_exhaustion_very_extended_tighten_caps;
+          updates.trend_exhaustion_very_extended_cap_multiplier = Math.max(0.05, editedSettings.t7_trend_exhaustion_very_extended_cap_multiplier);
+          updates.trend_exhaustion_very_extended_cap_min = Math.max(1, editedSettings.t7_trend_exhaustion_very_extended_cap_min);
         }
         // Update Trial #6 settings
         if (pol.type === 'kt_cg_trial_6') {
@@ -5081,6 +5237,109 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
                       Measures extension from M3 EMA9/21 flip as ratio of M3 ATR(14). FRESH: all entries. MATURE: blocks zone entry + shallowest tier. EXTENDED: only tiers 29,34. EXHAUSTED: blocks ALL.
                     </div>
+                  </div>
+                  )}
+                  {/* Trend Exhaustion (Trial #7: M5 stretch), default OFF */}
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Trial #7 Trend Exhaustion (M5 stretch from EMA21)
+                    </div>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6, marginBottom: 10 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={editedSettings.t7_trend_exhaustion_enabled}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_enabled: e.target.checked })}
+                          style={{ width: 18, height: 18, cursor: 'pointer' }}
+                        />
+                        <span style={{ fontWeight: 600, color: editedSettings.t7_trend_exhaustion_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                          {editedSettings.t7_trend_exhaustion_enabled ? 'ON' : 'OFF'}
+                        </span>
+                      </label>
+                    </div>
+                    {editedSettings.t7_trend_exhaustion_enabled && (
+                    <details style={{ background: 'var(--bg-tertiary)', borderRadius: 8, padding: 10 }}>
+                      <summary style={{ cursor: 'pointer', fontWeight: 700, color: 'var(--text-primary)' }}>Advanced Thresholds & Behavior</summary>
+                      <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+                        <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Threshold Mode</div>
+                          <select
+                            value={editedSettings.t7_trend_exhaustion_mode}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_mode: e.target.value as 'global' | 'session' | 'session_and_side' })}
+                            style={{ width: '100%', padding: '5px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          >
+                            <option value="session_and_side">Session + Side</option>
+                            <option value="session">Session only</option>
+                            <option value="global">Global</option>
+                          </select>
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <input type="checkbox" checked={editedSettings.t7_trend_exhaustion_use_current_price}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_use_current_price: e.target.checked })} />
+                            <span style={{ fontSize: '0.75rem' }}>Use current poll price</span>
+                          </label>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>Else uses last M5 close</div>
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Hysteresis (pips)</div>
+                          <input type="number" step="0.1" min="0" value={editedSettings.t7_trend_exhaustion_hysteresis_pips}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_hysteresis_pips: parseFloat(e.target.value) || 0 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: 12, fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Global thresholds</div>
+                      <div style={{ marginTop: 6, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(110px, 1fr))', gap: 8 }}>
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_global} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_global: parseFloat(e.target.value) || 12.03 })}
+                          style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_global} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_global: parseFloat(e.target.value) || 17.02 })}
+                          style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+
+                      <div style={{ marginTop: 12, fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Session thresholds (Tokyo/London/NY P80 then P90)</div>
+                      <div style={{ marginTop: 6, display: 'grid', gridTemplateColumns: 'repeat(6, minmax(85px, 1fr))', gap: 6 }}>
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_tokyo} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_tokyo: parseFloat(e.target.value) || 12.67 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_tokyo} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_tokyo: parseFloat(e.target.value) || 17.63 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_london} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_london: parseFloat(e.target.value) || 11.06 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_london} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_london: parseFloat(e.target.value) || 14.41 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_ny} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_ny: parseFloat(e.target.value) || 12.66 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_ny} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_ny: parseFloat(e.target.value) || 18.83 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                      </div>
+
+                      <div style={{ marginTop: 12, fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Session + side thresholds (bull then bear, each Tokyo/London/NY P80,P90)</div>
+                      <div style={{ marginTop: 6, display: 'grid', gridTemplateColumns: 'repeat(6, minmax(85px, 1fr))', gap: 6 }}>
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_bull_tokyo} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_bull_tokyo: parseFloat(e.target.value) || 11.85 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_bull_tokyo} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_bull_tokyo: parseFloat(e.target.value) || 15.52 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_bull_london} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_bull_london: parseFloat(e.target.value) || 10.21 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_bull_london} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_bull_london: parseFloat(e.target.value) || 12.97 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_bull_ny} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_bull_ny: parseFloat(e.target.value) || 11.21 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_bull_ny} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_bull_ny: parseFloat(e.target.value) || 15.84 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_bear_tokyo} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_bear_tokyo: parseFloat(e.target.value) || 13.44 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_bear_tokyo} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_bear_tokyo: parseFloat(e.target.value) || 19.73 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_bear_london} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_bear_london: parseFloat(e.target.value) || 12.01 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_bear_london} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_bear_london: parseFloat(e.target.value) || 17.44 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_bear_ny} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_bear_ny: parseFloat(e.target.value) || 13.97 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_bear_ny} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_bear_ny: parseFloat(e.target.value) || 21.51 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                      </div>
+
+                      <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 8 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" checked={editedSettings.t7_trend_exhaustion_extended_disable_zone_entry} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_extended_disable_zone_entry: e.target.checked })} />Extended: block zone</label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" checked={editedSettings.t7_trend_exhaustion_very_extended_disable_zone_entry} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_disable_zone_entry: e.target.checked })} />Very Extended: block zone</label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" checked={editedSettings.t7_trend_exhaustion_very_extended_tighten_caps} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_tighten_caps: e.target.checked })} />Very Extended: tighten caps</label>
+                      </div>
+                      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(4, minmax(100px, 1fr))', gap: 8 }}>
+                        <input type="number" min="1" value={editedSettings.t7_trend_exhaustion_extended_min_tier_period} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_extended_min_tier_period: parseInt(e.target.value) || 21 })} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" min="1" value={editedSettings.t7_trend_exhaustion_very_extended_min_tier_period} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_min_tier_period: parseInt(e.target.value) || 29 })} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" step="0.05" min="0.05" value={editedSettings.t7_trend_exhaustion_very_extended_cap_multiplier} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_cap_multiplier: parseFloat(e.target.value) || 0.5 })} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                        <input type="number" min="1" value={editedSettings.t7_trend_exhaustion_very_extended_cap_min} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_cap_min: parseInt(e.target.value) || 1 })} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+                      </div>
+                      <div style={{ marginTop: 6, fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                        Numeric row order: Extended min tier, Very-Extended min tier, Very-Extended cap multiplier, Very-Extended minimum cap.
+                      </div>
+                    </details>
+                    )}
                   </div>
                   )}
                   {/* Tiered ATR(14) Filter — Trial #4 only */}

@@ -672,6 +672,48 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
     ema_zone_filter_ema9_min_slope_pips_per_bar: float = 0.08
     ema_zone_filter_ema21_min_slope_pips_per_bar: float = 0.05
 
+    # Trend exhaustion (M5 stretch from EMA21), default OFF.
+    # Stretch = abs(current_price - EMA21_M5) / pip_size.
+    trend_exhaustion_enabled: bool = False
+    trend_exhaustion_mode: Literal["global", "session", "session_and_side"] = "session_and_side"
+    trend_exhaustion_use_current_price: bool = True
+    trend_exhaustion_hysteresis_pips: float = 0.5
+
+    # Global thresholds (fallback / global mode)
+    trend_exhaustion_p80_global: float = 12.03
+    trend_exhaustion_p90_global: float = 17.02
+
+    # Session thresholds (session mode)
+    trend_exhaustion_p80_tokyo: float = 12.67
+    trend_exhaustion_p90_tokyo: float = 17.63
+    trend_exhaustion_p80_london: float = 11.06
+    trend_exhaustion_p90_london: float = 14.41
+    trend_exhaustion_p80_ny: float = 12.66
+    trend_exhaustion_p90_ny: float = 18.83
+
+    # Session+side thresholds (session_and_side mode)
+    trend_exhaustion_p80_bull_tokyo: float = 11.85
+    trend_exhaustion_p90_bull_tokyo: float = 15.52
+    trend_exhaustion_p80_bull_london: float = 10.21
+    trend_exhaustion_p90_bull_london: float = 12.97
+    trend_exhaustion_p80_bull_ny: float = 11.21
+    trend_exhaustion_p90_bull_ny: float = 15.84
+    trend_exhaustion_p80_bear_tokyo: float = 13.44
+    trend_exhaustion_p90_bear_tokyo: float = 19.73
+    trend_exhaustion_p80_bear_london: float = 12.01
+    trend_exhaustion_p90_bear_london: float = 17.44
+    trend_exhaustion_p80_bear_ny: float = 13.97
+    trend_exhaustion_p90_bear_ny: float = 21.51
+
+    # Behavior controls by zone
+    trend_exhaustion_extended_disable_zone_entry: bool = True
+    trend_exhaustion_very_extended_disable_zone_entry: bool = True
+    trend_exhaustion_extended_min_tier_period: int = 21
+    trend_exhaustion_very_extended_min_tier_period: int = 29
+    trend_exhaustion_very_extended_tighten_caps: bool = True
+    trend_exhaustion_very_extended_cap_multiplier: float = 0.5
+    trend_exhaustion_very_extended_cap_min: int = 1
+
     # Open trade caps (all caps enforced together)
     max_open_trades_per_side: Optional[int] = 5
     max_zone_entry_open: Optional[int] = 3

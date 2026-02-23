@@ -373,6 +373,7 @@ def _build_and_write_dashboard(
         elif policy_type == "kt_cg_trial_7":
             context_items = collect_trial_7_context(
                 policy_for_context, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
+                exhaustion_result=exhaustion_result,
             )
         elif policy_type == "kt_cg_hybrid":
             context_items = collect_trial_2_context(policy, data_by_tf, tick, pip_size)
@@ -1854,6 +1855,7 @@ def main() -> None:
                         data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
                         policy_type="kt_cg_trial_7", tier_state=tier_state,
                         eval_result=exec_result,
+                        exhaustion_result=exec_result.get("exhaustion_result"),
                     )
 
             # Trial #6 execution — BB Slope Trend + EMA Tier Pullback + BB Reversal

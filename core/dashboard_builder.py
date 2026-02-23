@@ -232,7 +232,20 @@ def build_dashboard_filters(
         m1_df = data_by_tf.get("M1")
         if m1_df is not None and not m1_df.empty:
             filters.append(report_ema_zone_slope_filter_trial_7(policy, m1_df, pip_size, side))
+        if getattr(policy, "trend_exhaustion_enabled", False):
+            filters.append(report_trend_exhaustion(exhaustion_result))
+        cap_multiplier = 1.0
+        cap_min = 1
+        if (
+            exhaustion_result
+            and str(exhaustion_result.get("zone", "")).lower() == "very_extended"
+            and bool(getattr(policy, "trend_exhaustion_very_extended_tighten_caps", True))
+        ):
+            cap_multiplier = max(0.05, float(getattr(policy, "trend_exhaustion_very_extended_cap_multiplier", 0.5)))
+            cap_min = max(1, int(getattr(policy, "trend_exhaustion_very_extended_cap_min", 1)))
         max_per_side = getattr(policy, "max_open_trades_per_side", None)
+        if max_per_side is not None:
+            max_per_side = max(cap_min, int(round(float(max_per_side) * cap_multiplier)))
         if max_per_side is not None and store is not None:
             try:
                 open_trades = store.list_open_trades(profile.profile_name)
@@ -246,10 +259,12 @@ def build_dashboard_filters(
                 filters.append(report_max_trades(sc, max_per_side, side, side_counts))
                 zone_cap = getattr(policy, "max_zone_entry_open", None)
                 if zone_cap is not None:
+                    zone_cap = max(cap_min, int(round(float(zone_cap) * cap_multiplier)))
                     zone_open = sum(1 for t in open_trades if (dict(t) if hasattr(t, "keys") else t).get("entry_type") == "zone_entry")
                     filters.append(report_open_trade_cap_by_entry_type("zone_entry", zone_open, zone_cap))
                 tier_cap = getattr(policy, "max_tiered_pullback_open", None)
                 if tier_cap is not None:
+                    tier_cap = max(cap_min, int(round(float(tier_cap) * cap_multiplier)))
                     tier_open = sum(1 for t in open_trades if (dict(t) if hasattr(t, "keys") else t).get("entry_type") == "tiered_pullback")
                     filters.append(report_open_trade_cap_by_entry_type("tiered_pullback", tier_open, tier_cap))
             except Exception:

@@ -604,6 +604,7 @@ def collect_trial_5_context(
 def collect_trial_7_context(
     policy, data_by_tf: dict, tick, tier_state: dict,
     eval_result: Optional[dict], pip_size: float,
+    exhaustion_result: Optional[dict] = None,
 ) -> list[ContextItem]:
     """Collect context items for Trial #7 dashboard display."""
     items: list[ContextItem] = []
@@ -639,6 +640,20 @@ def collect_trial_7_context(
     items.append(ContextItem("Bid", f"{tick.bid:.3f}", "price"))
     items.append(ContextItem("Ask", f"{tick.ask:.3f}", "price"))
     items.append(ContextItem("Spread", f"{(tick.ask - tick.bid) / pip_size:.1f}p", "price"))
+
+    if exhaustion_result:
+        zone = str(exhaustion_result.get("zone", "normal"))
+        stretch = exhaustion_result.get("stretch_pips")
+        p80 = exhaustion_result.get("threshold_p80")
+        p90 = exhaustion_result.get("threshold_p90")
+        sess = exhaustion_result.get("session")
+        items.append(ContextItem("Exhaustion Zone", zone.upper(), "exhaustion"))
+        if stretch is not None:
+            items.append(ContextItem("Stretch (pips)", f"{float(stretch):.2f}", "exhaustion"))
+        if p80 is not None and p90 is not None:
+            items.append(ContextItem("P80/P90", f"{float(p80):.2f} / {float(p90):.2f}", "exhaustion"))
+        if sess:
+            items.append(ContextItem("Exhaustion Session", str(sess), "exhaustion"))
 
     fired = [str(t) for t, v in sorted(tier_state.items()) if v]
     avail = [str(t) for t, v in sorted(tier_state.items()) if not v]

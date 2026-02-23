@@ -2652,6 +2652,24 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                             exhaustion_result = _detect_trend_flip_and_compute_exhaustion(
                                 m3_df, mid, pip_size, exhaustion_state or {}, _policy
                             )
+                    if _policy_type == "kt_cg_trial_7" and getattr(_policy, "trend_exhaustion_enabled", False):
+                        m5_df = data_by_tf.get("M5")
+                        if m5_df is not None and not m5_df.empty:
+                            from core.execution_engine import _compute_trial7_trend_exhaustion
+                            from core.indicators import ema as ema_fn
+                            m5_local = m5_df
+                            close_m5 = m5_local["close"].astype(float)
+                            fast = ema_fn(close_m5, int(getattr(_policy, "m5_trend_ema_fast", 9)))
+                            slow = ema_fn(close_m5, int(getattr(_policy, "m5_trend_ema_slow", 21)))
+                            trend_side = "bull" if float(fast.iloc[-1]) > float(slow.iloc[-1]) else "bear"
+                            mid = (_tick.bid + _tick.ask) / 2.0
+                            exhaustion_result = _compute_trial7_trend_exhaustion(
+                                policy=_policy,
+                                m5_df=m5_local,
+                                current_price=mid,
+                                pip_size=pip_size,
+                                trend_side=trend_side,
+                            )
                 except Exception:
                     temp_overrides_api = None
                     pass
@@ -2848,13 +2866,48 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
             "buffer": getattr(policy, "daily_hl_buffer_pips", 5.0),
         }
 
-    # Trend Exhaustion (Trial #5 only)
+    # Trend Exhaustion
     if hasattr(policy, "trend_exhaustion_enabled"):
-        filters["trend_exhaustion"] = {
-            "enabled": getattr(policy, "trend_exhaustion_enabled", False),
-            "fresh_max": getattr(policy, "trend_exhaustion_fresh_max", 2.0),
-            "mature_max": getattr(policy, "trend_exhaustion_mature_max", 3.5),
-        }
+        if is_trial_7:
+            filters["trend_exhaustion"] = {
+                "enabled": getattr(policy, "trend_exhaustion_enabled", False),
+                "mode": getattr(policy, "trend_exhaustion_mode", "session_and_side"),
+                "use_current_price": getattr(policy, "trend_exhaustion_use_current_price", True),
+                "hysteresis_pips": getattr(policy, "trend_exhaustion_hysteresis_pips", 0.5),
+                "p80_global": getattr(policy, "trend_exhaustion_p80_global", 12.03),
+                "p90_global": getattr(policy, "trend_exhaustion_p90_global", 17.02),
+                "p80_tokyo": getattr(policy, "trend_exhaustion_p80_tokyo", 12.67),
+                "p90_tokyo": getattr(policy, "trend_exhaustion_p90_tokyo", 17.63),
+                "p80_london": getattr(policy, "trend_exhaustion_p80_london", 11.06),
+                "p90_london": getattr(policy, "trend_exhaustion_p90_london", 14.41),
+                "p80_ny": getattr(policy, "trend_exhaustion_p80_ny", 12.66),
+                "p90_ny": getattr(policy, "trend_exhaustion_p90_ny", 18.83),
+                "p80_bull_tokyo": getattr(policy, "trend_exhaustion_p80_bull_tokyo", 11.85),
+                "p90_bull_tokyo": getattr(policy, "trend_exhaustion_p90_bull_tokyo", 15.52),
+                "p80_bull_london": getattr(policy, "trend_exhaustion_p80_bull_london", 10.21),
+                "p90_bull_london": getattr(policy, "trend_exhaustion_p90_bull_london", 12.97),
+                "p80_bull_ny": getattr(policy, "trend_exhaustion_p80_bull_ny", 11.21),
+                "p90_bull_ny": getattr(policy, "trend_exhaustion_p90_bull_ny", 15.84),
+                "p80_bear_tokyo": getattr(policy, "trend_exhaustion_p80_bear_tokyo", 13.44),
+                "p90_bear_tokyo": getattr(policy, "trend_exhaustion_p90_bear_tokyo", 19.73),
+                "p80_bear_london": getattr(policy, "trend_exhaustion_p80_bear_london", 12.01),
+                "p90_bear_london": getattr(policy, "trend_exhaustion_p90_bear_london", 17.44),
+                "p80_bear_ny": getattr(policy, "trend_exhaustion_p80_bear_ny", 13.97),
+                "p90_bear_ny": getattr(policy, "trend_exhaustion_p90_bear_ny", 21.51),
+                "extended_disable_zone_entry": getattr(policy, "trend_exhaustion_extended_disable_zone_entry", True),
+                "very_extended_disable_zone_entry": getattr(policy, "trend_exhaustion_very_extended_disable_zone_entry", True),
+                "extended_min_tier_period": getattr(policy, "trend_exhaustion_extended_min_tier_period", 21),
+                "very_extended_min_tier_period": getattr(policy, "trend_exhaustion_very_extended_min_tier_period", 29),
+                "very_extended_tighten_caps": getattr(policy, "trend_exhaustion_very_extended_tighten_caps", True),
+                "very_extended_cap_multiplier": getattr(policy, "trend_exhaustion_very_extended_cap_multiplier", 0.5),
+                "very_extended_cap_min": getattr(policy, "trend_exhaustion_very_extended_cap_min", 1),
+            }
+        else:
+            filters["trend_exhaustion"] = {
+                "enabled": getattr(policy, "trend_exhaustion_enabled", False),
+                "fresh_max": getattr(policy, "trend_exhaustion_fresh_max", 2.0),
+                "mature_max": getattr(policy, "trend_exhaustion_mature_max", 3.5),
+            }
 
     # Dead Zone (Trial #5)
     if hasattr(policy, "daily_reset_block_enabled"):

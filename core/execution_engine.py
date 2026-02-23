@@ -3694,6 +3694,96 @@ def _passes_ema_zone_slope_filter_trial_7(
     )
 
 
+def _trial7_session_name_utc(ts_utc: pd.Timestamp) -> str:
+    """Return session label using UTC hour buckets used in calibration."""
+    h = int(ts_utc.hour)
+    if 0 <= h < 8:
+        return "tokyo"
+    if 8 <= h < 13:
+        return "london"
+    return "ny"
+
+
+def _compute_trial7_trend_exhaustion(
+    *,
+    policy,
+    m5_df: pd.DataFrame,
+    current_price: float,
+    pip_size: float,
+    trend_side: str,
+) -> dict:
+    """Compute Trial #7 stretch-based trend exhaustion regime.
+
+    Stretch is measured from EMA21 on M5:
+      stretch_pips = abs(price_ref - EMA21_M5) / pip_size
+    """
+    out = {
+        "zone": "normal",
+        "stretch_pips": None,
+        "threshold_p80": None,
+        "threshold_p90": None,
+        "mode": getattr(policy, "trend_exhaustion_mode", "session_and_side"),
+        "session": None,
+        "trend_side": trend_side,
+    }
+
+    if m5_df is None or m5_df.empty or len(m5_df) < 22:
+        out["reason"] = "insufficient_m5_bars"
+        return out
+
+    m5_local = drop_incomplete_last_bar(m5_df.copy(), "M5")
+    if len(m5_local) < 22:
+        out["reason"] = "insufficient_complete_m5_bars"
+        return out
+
+    close = m5_local["close"].astype(float)
+    ema21 = close.ewm(span=21, adjust=False).mean()
+    ema21_last = float(ema21.iloc[-1])
+    use_current = bool(getattr(policy, "trend_exhaustion_use_current_price", True))
+    price_ref = float(current_price if use_current else close.iloc[-1])
+    stretch_pips = abs(price_ref - ema21_last) / pip_size
+
+    now_utc = pd.Timestamp.now(tz="UTC")
+    session = _trial7_session_name_utc(now_utc)
+    mode = str(getattr(policy, "trend_exhaustion_mode", "session_and_side"))
+
+    if mode == "global":
+        p80 = float(getattr(policy, "trend_exhaustion_p80_global", 12.03))
+        p90 = float(getattr(policy, "trend_exhaustion_p90_global", 17.02))
+    elif mode == "session":
+        p80 = float(getattr(policy, f"trend_exhaustion_p80_{session}", getattr(policy, "trend_exhaustion_p80_global", 12.03)))
+        p90 = float(getattr(policy, f"trend_exhaustion_p90_{session}", getattr(policy, "trend_exhaustion_p90_global", 17.02)))
+    else:
+        side_key = "bull" if trend_side == "bull" else "bear"
+        p80 = float(getattr(policy, f"trend_exhaustion_p80_{side_key}_{session}", getattr(policy, "trend_exhaustion_p80_global", 12.03)))
+        p90 = float(getattr(policy, f"trend_exhaustion_p90_{side_key}_{session}", getattr(policy, "trend_exhaustion_p90_global", 17.02)))
+
+    if p90 < p80:
+        p80, p90 = p90, p80
+
+    # Simple hysteresis widening to reduce noisy boundary flips.
+    hyst = max(0.0, float(getattr(policy, "trend_exhaustion_hysteresis_pips", 0.5)))
+    if stretch_pips >= (p90 + hyst):
+        zone = "very_extended"
+    elif stretch_pips >= (p80 + hyst):
+        zone = "extended"
+    else:
+        zone = "normal"
+
+    out.update(
+        {
+            "zone": zone,
+            "stretch_pips": round(stretch_pips, 2),
+            "threshold_p80": round(p80, 2),
+            "threshold_p90": round(p90, 2),
+            "session": session.upper(),
+            "ema21_m5": round(ema21_last, 5),
+            "price_ref": round(price_ref, 5),
+        }
+    )
+    return out
+
+
 def evaluate_kt_cg_trial_4_conditions(
     profile: ProfileV1,
     policy,  # ExecutionPolicyKtCgTrial4
@@ -4540,12 +4630,60 @@ def execute_kt_cg_trial_7_policy_demo_only(
     store = _store(log_dir)
     rule_id = f"kt_cg_trial_7:{policy.id}:M1:{bar_time_utc}"
 
-    result = evaluate_kt_cg_trial_7_conditions(
-        profile, policy, data_by_tf,
-        current_bid=tick.bid,
-        current_ask=tick.ask,
-        tier_state=tier_state,
-    )
+    exhaustion_result = None
+    effective_tiers = list(getattr(policy, "tier_ema_periods", tuple(range(9, 35))))
+    block_zone_entry_by_exhaustion = False
+    cap_multiplier = 1.0
+    cap_minimum = 1
+
+    if getattr(policy, "trend_exhaustion_enabled", False):
+        m5_df_ex = data_by_tf.get("M5")
+        if m5_df_ex is not None and not m5_df_ex.empty:
+            m5_local = drop_incomplete_last_bar(m5_df_ex.copy(), "M5")
+            if len(m5_local) >= max(getattr(policy, "m5_trend_ema_slow", 21) + 1, 22):
+                close_m5 = m5_local["close"].astype(float)
+                ema_fast = close_m5.ewm(span=getattr(policy, "m5_trend_ema_fast", 9), adjust=False).mean()
+                ema_slow = close_m5.ewm(span=getattr(policy, "m5_trend_ema_slow", 21), adjust=False).mean()
+                trend_side = "bull" if float(ema_fast.iloc[-1]) > float(ema_slow.iloc[-1]) else "bear"
+                current_mid = (tick.bid + tick.ask) / 2.0
+                exhaustion_result = _compute_trial7_trend_exhaustion(
+                    policy=policy,
+                    m5_df=m5_local,
+                    current_price=current_mid,
+                    pip_size=float(profile.pip_size),
+                    trend_side=trend_side,
+                )
+                ex_zone = exhaustion_result.get("zone", "normal")
+                if ex_zone == "extended":
+                    if bool(getattr(policy, "trend_exhaustion_extended_disable_zone_entry", True)):
+                        block_zone_entry_by_exhaustion = True
+                    min_tier = int(getattr(policy, "trend_exhaustion_extended_min_tier_period", 21))
+                    effective_tiers = [t for t in effective_tiers if int(t) >= min_tier]
+                elif ex_zone == "very_extended":
+                    if bool(getattr(policy, "trend_exhaustion_very_extended_disable_zone_entry", True)):
+                        block_zone_entry_by_exhaustion = True
+                    min_tier = int(getattr(policy, "trend_exhaustion_very_extended_min_tier_period", 29))
+                    effective_tiers = [t for t in effective_tiers if int(t) >= min_tier]
+                    if bool(getattr(policy, "trend_exhaustion_very_extended_tighten_caps", True)):
+                        cap_multiplier = max(0.05, float(getattr(policy, "trend_exhaustion_very_extended_cap_multiplier", 0.5)))
+                        cap_minimum = max(1, int(getattr(policy, "trend_exhaustion_very_extended_cap_min", 1)))
+            else:
+                exhaustion_result = {"zone": "normal", "reason": "insufficient_m5_bars"}
+
+    original_tiers = getattr(policy, "tier_ema_periods", tuple(range(9, 35)))
+    if not effective_tiers:
+        effective_tiers = [int(min(original_tiers))] if original_tiers else [29]
+
+    try:
+        object.__setattr__(policy, "tier_ema_periods", tuple(int(x) for x in effective_tiers))
+        result = evaluate_kt_cg_trial_7_conditions(
+            profile, policy, data_by_tf,
+            current_bid=tick.bid,
+            current_ask=tick.ask,
+            tier_state=tier_state,
+        )
+    finally:
+        object.__setattr__(policy, "tier_ema_periods", original_tiers)
     passed = result["passed"]
     side = result["side"]
     eval_reasons = result["reasons"]
@@ -4554,7 +4692,24 @@ def execute_kt_cg_trial_7_policy_demo_only(
     tiered_pullback_tier = result.get("tiered_pullback_tier")
 
     if not passed or side is None:
-        return {"decision": ExecutionDecision(attempted=False, placed=False, reason="; ".join(eval_reasons)), "tier_updates": tier_updates}
+        return {
+            "decision": ExecutionDecision(attempted=False, placed=False, reason="; ".join(eval_reasons)),
+            "tier_updates": tier_updates,
+            "exhaustion_result": exhaustion_result,
+        }
+
+    if trigger_type == "zone_entry" and block_zone_entry_by_exhaustion:
+        ex_zone = (exhaustion_result or {}).get("zone", "normal")
+        stretch = (exhaustion_result or {}).get("stretch_pips")
+        return {
+            "decision": ExecutionDecision(
+                attempted=True,
+                placed=False,
+                reason=f"trend_exhaustion: {ex_zone} blocks zone_entry (stretch={stretch}p)",
+            ),
+            "tier_updates": tier_updates,
+            "exhaustion_result": exhaustion_result,
+        }
 
     if trigger_type == "tiered_pullback" and tiered_pullback_tier:
         rule_id = f"kt_cg_trial_7:{policy.id}:tier_{tiered_pullback_tier}"
@@ -4562,7 +4717,11 @@ def execute_kt_cg_trial_7_policy_demo_only(
     if trigger_type == "zone_entry":
         within = 2
         if store.has_recent_price_level_placement(profile.profile_name, rule_id, within):
-            return {"decision": ExecutionDecision(attempted=False, placed=False, reason="kt_cg_trial_7: recent placement (idempotent)"), "tier_updates": tier_updates}
+            return {
+                "decision": ExecutionDecision(attempted=False, placed=False, reason="kt_cg_trial_7: recent placement (idempotent)"),
+                "tier_updates": tier_updates,
+                "exhaustion_result": exhaustion_result,
+            }
 
         cooldown_ok, cooldown_reason = _check_kt_cg_trial_4_cooldown(
             store, profile.profile_name, policy.id, policy.cooldown_minutes
@@ -4584,7 +4743,11 @@ def execute_kt_cg_trial_7_policy_demo_only(
                     "mt5_deal_id": None,
                 }
             )
-            return {"decision": ExecutionDecision(attempted=True, placed=False, reason=cooldown_reason or "zone_entry_cooldown"), "tier_updates": tier_updates}
+            return {
+                "decision": ExecutionDecision(attempted=True, placed=False, reason=cooldown_reason or "zone_entry_cooldown"),
+                "tier_updates": tier_updates,
+                "exhaustion_result": exhaustion_result,
+            }
 
     if trigger_type == "zone_entry":
         ema_zone_filter_enabled = getattr(policy, "ema_zone_filter_enabled", False)
@@ -4611,9 +4774,15 @@ def execute_kt_cg_trial_7_policy_demo_only(
                             "mt5_deal_id": None,
                         }
                     )
-                    return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "ema_zone_slope_filter"), "tier_updates": tier_updates}
+                    return {
+                        "decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "ema_zone_slope_filter"),
+                        "tier_updates": tier_updates,
+                        "exhaustion_result": exhaustion_result,
+                    }
 
     max_open_per_side = getattr(policy, "max_open_trades_per_side", None)
+    if max_open_per_side is not None:
+        max_open_per_side = max(cap_minimum, int(round(float(max_open_per_side) * cap_multiplier)))
     if max_open_per_side is not None:
         try:
             open_positions = adapter.get_open_positions(profile.symbol)
@@ -4639,7 +4808,11 @@ def execute_kt_cg_trial_7_policy_demo_only(
                     if pos_side == side:
                         side_open += 1
             if side_open >= max_open_per_side:
-                return {"decision": ExecutionDecision(attempted=True, placed=False, reason=f"max_open_trades_per_side: {side_open} {side} trade(s) open (max {max_open_per_side})"), "tier_updates": tier_updates}
+                return {
+                    "decision": ExecutionDecision(attempted=True, placed=False, reason=f"max_open_trades_per_side: {side_open} {side} trade(s) open (max {max_open_per_side})"),
+                    "tier_updates": tier_updates,
+                    "exhaustion_result": exhaustion_result,
+                }
         except Exception:
             pass
 
@@ -4648,6 +4821,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
         if trigger_type == "zone_entry":
             max_zone_entry_open = getattr(policy, "max_zone_entry_open", None)
             if max_zone_entry_open is not None:
+                max_zone_entry_open = max(cap_minimum, int(round(float(max_zone_entry_open) * cap_multiplier)))
                 zone_entry_open = sum(1 for row in open_trades if row.get("entry_type") == "zone_entry")
                 if zone_entry_open >= max_zone_entry_open:
                     return {
@@ -4657,10 +4831,12 @@ def execute_kt_cg_trial_7_policy_demo_only(
                             reason=f"max_zone_entry_open: {zone_entry_open} zone entry trade(s) already open (max {max_zone_entry_open})",
                         ),
                         "tier_updates": tier_updates,
+                        "exhaustion_result": exhaustion_result,
                     }
         if trigger_type == "tiered_pullback":
             max_tiered_pullback_open = getattr(policy, "max_tiered_pullback_open", None)
             if max_tiered_pullback_open is not None:
+                max_tiered_pullback_open = max(cap_minimum, int(round(float(max_tiered_pullback_open) * cap_multiplier)))
                 tiered_open = sum(1 for row in open_trades if row.get("entry_type") == "tiered_pullback")
                 if tiered_open >= max_tiered_pullback_open:
                     return {
@@ -4670,6 +4846,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
                             reason=f"max_tiered_pullback_open: {tiered_open} tiered pullback trade(s) already open (max {max_tiered_pullback_open})",
                         ),
                         "tier_updates": tier_updates,
+                        "exhaustion_result": exhaustion_result,
                     }
     except Exception:
         pass
@@ -4693,7 +4870,11 @@ def execute_kt_cg_trial_7_policy_demo_only(
                 "mt5_deal_id": None,
             }
         )
-        return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter"), "tier_updates": tier_updates}
+        return {
+            "decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter"),
+            "tier_updates": tier_updates,
+            "exhaustion_result": exhaustion_result,
+        }
 
     entry_price = tick.ask if side == "buy" else tick.bid
     candidate = _kt_cg_trial_4_candidate(profile, policy, entry_price, side)
@@ -4716,7 +4897,11 @@ def execute_kt_cg_trial_7_policy_demo_only(
                 "mt5_deal_id": None,
             }
         )
-        return {"decision": ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons)), "tier_updates": tier_updates}
+        return {
+            "decision": ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons)),
+            "tier_updates": tier_updates,
+            "exhaustion_result": exhaustion_result,
+        }
 
     if mode == "ARMED_MANUAL_CONFIRM":
         sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
@@ -4736,7 +4921,11 @@ def execute_kt_cg_trial_7_policy_demo_only(
                 "mt5_deal_id": None,
             }
         )
-        return {"decision": ExecutionDecision(attempted=True, placed=False, reason="manual_confirm_required"), "tier_updates": tier_updates}
+        return {
+            "decision": ExecutionDecision(attempted=True, placed=False, reason="manual_confirm_required"),
+            "tier_updates": tier_updates,
+            "exhaustion_result": exhaustion_result,
+        }
 
     if policy.close_opposite_on_trade:
         closed = close_opposite_positions(adapter, profile, side, log_dir)
@@ -4794,6 +4983,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
         ),
         "tier_updates": tier_updates,
         "trigger_type": trigger_type,
+        "exhaustion_result": exhaustion_result,
     }
 
 
