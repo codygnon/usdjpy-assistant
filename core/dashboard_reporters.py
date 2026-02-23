@@ -412,16 +412,15 @@ def report_t6_m3_trend(eval_result: Optional[dict]) -> FilterReport:
             current_value="No data",
         )
     trend = trend_result.get("trend", "NONE")
-    bb_exp = trend_result.get("bb_expanding", False)
     is_clear = trend != "NONE"
     reasons = trend_result.get("reasons", [])
     reason_str = "; ".join(reasons) if reasons else None
     return FilterReport(
         filter_id="t6_m3_trend", display_name="M3 Slope Trend",
         enabled=True, is_clear=is_clear,
-        current_value=f"{trend} | BB {'expanding' if bb_exp else 'contracting'}",
+        current_value=trend,
         block_reason=f"NONE – {reason_str}" if not is_clear and reason_str else ("NONE – no trend" if not is_clear else None),
-        metadata={"trend": trend, "bb_expanding": bb_exp},
+        metadata={"trend": trend},
     )
 
 
@@ -609,7 +608,6 @@ def collect_trial_6_context(
         items.append(ContextItem(f"M3 EMA{getattr(policy, 'm3_trend_ema_slow', 9)}", f"{trend_result.get('ema_slow_val', 0):.3f}", "trend"))
         items.append(ContextItem(f"M3 EMA{getattr(policy, 'm3_trend_ema_extra', 21)}", f"{trend_result.get('ema_extra_val', 0):.3f}", "trend"))
         items.append(ContextItem("Slopes", f"{trend_result.get('slope_fast', 0):.2f}/{trend_result.get('slope_slow', 0):.2f}/{trend_result.get('slope_extra', 0):.2f}", "trend"))
-        items.append(ContextItem("BB Expanding", str(trend_result.get("bb_expanding", False)), "trend"))
     else:
         items.append(ContextItem("M3 Trend", "N/A", "trend"))
 

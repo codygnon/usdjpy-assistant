@@ -5031,9 +5031,9 @@ def _evaluate_m3_slope_trend_trial_6(
     all_slopes_neg = slope_fast < 0 and slope_slow < 0 and slope_extra < 0
 
     trend = "NONE"
-    if bull_stack and all_slopes_pos and price > ema_extra_val and bb_expanding:
+    if bull_stack and all_slopes_pos and price > ema_extra_val:
         trend = "BULL"
-    elif bear_stack and all_slopes_neg and price < ema_extra_val and bb_expanding:
+    elif bear_stack and all_slopes_neg and price < ema_extra_val:
         trend = "BEAR"
 
     reasons.append(
