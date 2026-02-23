@@ -4389,7 +4389,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.spread_aware_be_apply_to_ema_tier = editedSettings.t6_spread_aware_be_apply_to_ema_tier;
           updates.spread_aware_be_apply_to_bb_reversal = editedSettings.t6_spread_aware_be_apply_to_bb_reversal;
           // Risk
-          updates.max_open_trades_per_side = Math.max(1, Math.min(30, editedSettings.max_open_trades_per_side));
+          updates.max_open_trades_per_side = Math.max(1, editedSettings.max_open_trades_per_side);
         }
         return Object.keys(updates).length > 0 ? { ...pol, ...updates } : pol;
       }) || [];
@@ -5876,7 +5876,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max Open Trades Per Side</div>
-                        <input type="number" step="1" min="1" max="30" value={editedSettings.max_open_trades_per_side} onChange={(e) => setEditedSettings({ ...editedSettings, max_open_trades_per_side: parseInt(e.target.value) || 15 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        <input type="number" step="1" min="1" value={editedSettings.max_open_trades_per_side} onChange={(e) => setEditedSettings({ ...editedSettings, max_open_trades_per_side: parseInt(e.target.value) || 15 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                       </div>
                     </div>
                   </div>
