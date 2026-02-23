@@ -3765,25 +3765,12 @@ interface EditedSettings {
   t6_ema_tier_enabled: boolean;
   t6_tier_ema_periods: number[];
   t6_ema_tier_tp_pips: number;
-  t6_bb_gating_deep_tier_min_period: number;
-  // Trial #6: System B - BB Reversal
-  t6_bb_reversal_enabled: boolean;
-  t6_bb_reversal_start_offset_pips: number;
-  t6_bb_reversal_increment_pips: number;
-  t6_bb_reversal_num_tiers: number;
-  t6_max_bb_reversal_positions: number;
-  t6_bb_reversal_tp_mode: string;
-  t6_bb_reversal_tp_fixed_pips: number;
-  t6_bb_reversal_tp_min_pips: number;
-  t6_bb_reversal_tp_max_pips: number;
-  t6_bb_reversal_sl_pips: number;
   // Trial #6: Dead Zone
   t6_dead_zone_enabled: boolean;
   t6_dead_zone_start_hour_utc: number;
   t6_dead_zone_end_hour_utc: number;
   // Trial #6: Spread-Aware BE scope
   t6_spread_aware_be_apply_to_ema_tier: boolean;
-  t6_spread_aware_be_apply_to_bb_reversal: boolean;
 }
 
 function PresetsPage({ profile }: { profile: Profile }) {
@@ -3918,22 +3905,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t6EmaTierEnabled = true;
       let t6TierEmaPeriods: number[] = [9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34];
       let t6EmaTierTpPips = 7.0;
-      let t6BbGatingDeepTierMinPeriod = 21;
-      let t6BbReversalEnabled = true;
-      let t6BbReversalStartOffsetPips = 0.5;
-      let t6BbReversalIncrementPips = 0.5;
-      let t6BbReversalNumTiers = 10;
-      let t6MaxBbReversalPositions = 3;
-      let t6BbReversalTpMode = 'middle_bb_entry';
-      let t6BbReversalTpFixedPips = 8.0;
-      let t6BbReversalTpMinPips = 4.0;
-      let t6BbReversalTpMaxPips = 15.0;
-      let t6BbReversalSlPips = 10.0;
       let t6DeadZoneEnabled = true;
       let t6DeadZoneStartHourUtc = 21;
       let t6DeadZoneEndHourUtc = 2;
       let t6SpreadAwareBeApplyToEmaTier = true;
-      let t6SpreadAwareBeApplyToBbReversal = true;
 
       if (policies) {
         for (const pol of policies) {
