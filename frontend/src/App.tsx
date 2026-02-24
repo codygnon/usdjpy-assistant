@@ -5468,37 +5468,98 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       )}
 
                       <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginTop: 14, marginBottom: 8 }}>Step 3: Entry Behavior By Regime</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 8 }}>
-                        <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Extended regime</div>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.75rem' }}>
-                            <input type="checkbox" checked={editedSettings.t7_trend_exhaustion_extended_disable_zone_entry} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_extended_disable_zone_entry: e.target.checked })} />
-                            Block zone entries
-                          </label>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-                            <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Only allow tiers from</span>
-                            <input type="number" min="1" value={editedSettings.t7_trend_exhaustion_extended_min_tier_period} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_extended_min_tier_period: parseInt(e.target.value) || 21 })} style={{ width: 85, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 10 }}>
+                        <div style={{ padding: 10, background: 'var(--bg-secondary)', borderRadius: 8 }}>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-primary)', fontWeight: 700, marginBottom: 8 }}>Extended Regime</div>
+                          <div style={{ display: 'grid', gap: 8 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Block zone entries</span>
+                              <input
+                                type="checkbox"
+                                checked={editedSettings.t7_trend_exhaustion_extended_disable_zone_entry}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_extended_disable_zone_entry: e.target.checked })}
+                              />
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Minimum tier allowed</span>
+                              <select
+                                value={editedSettings.t7_trend_exhaustion_extended_min_tier_period}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_extended_min_tier_period: parseInt(e.target.value) || 24 })}
+                                style={{ width: 120, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+                              >
+                                {TRIAL7_DEFAULT_TIER_EMA_PERIODS.map((tier) => (
+                                  <option key={`ext-tier-${tier}`} value={tier}>{tier}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                              When extended, only tiers at or above this value can enter.
+                            </div>
                           </div>
                         </div>
-                        <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Very extended regime</div>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.75rem' }}>
-                            <input type="checkbox" checked={editedSettings.t7_trend_exhaustion_very_extended_disable_zone_entry} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_disable_zone_entry: e.target.checked })} />
-                            Block zone entries
-                          </label>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-                            <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Only allow tiers from</span>
-                            <input type="number" min="1" value={editedSettings.t7_trend_exhaustion_very_extended_min_tier_period} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_min_tier_period: parseInt(e.target.value) || 29 })} style={{ width: 85, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
-                          </div>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.75rem', marginTop: 8 }}>
-                            <input type="checkbox" checked={editedSettings.t7_trend_exhaustion_very_extended_tighten_caps} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_tighten_caps: e.target.checked })} />
-                            Tighten open-trade caps
-                          </label>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-                            <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Cap multiplier</span>
-                            <input type="number" step="0.05" min="0.05" value={editedSettings.t7_trend_exhaustion_very_extended_cap_multiplier} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_cap_multiplier: parseFloat(e.target.value) || 0.5 })} style={{ width: 85, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
-                            <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>minimum cap</span>
-                            <input type="number" min="1" value={editedSettings.t7_trend_exhaustion_very_extended_cap_min} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_cap_min: parseInt(e.target.value) || 1 })} style={{ width: 85, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                        <div style={{ padding: 10, background: 'var(--bg-secondary)', borderRadius: 8 }}>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-primary)', fontWeight: 700, marginBottom: 8 }}>Very Extended Regime</div>
+                          <div style={{ display: 'grid', gap: 8 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Block zone entries</span>
+                              <input
+                                type="checkbox"
+                                checked={editedSettings.t7_trend_exhaustion_very_extended_disable_zone_entry}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_disable_zone_entry: e.target.checked })}
+                              />
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Minimum tier allowed</span>
+                              <select
+                                value={editedSettings.t7_trend_exhaustion_very_extended_min_tier_period}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_min_tier_period: parseInt(e.target.value) || 34 })}
+                                style={{ width: 120, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+                              >
+                                {TRIAL7_DEFAULT_TIER_EMA_PERIODS.map((tier) => (
+                                  <option key={`very-ext-tier-${tier}`} value={tier}>{tier}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Tighten trade caps</span>
+                              <input
+                                type="checkbox"
+                                checked={editedSettings.t7_trend_exhaustion_very_extended_tighten_caps}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_tighten_caps: e.target.checked })}
+                              />
+                            </div>
+                            {editedSettings.t7_trend_exhaustion_very_extended_tighten_caps && (
+                              <>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Cap multiplier</span>
+                                  <input
+                                    type="number"
+                                    step="0.05"
+                                    min="0.05"
+                                    max="1.0"
+                                    value={editedSettings.t7_trend_exhaustion_very_extended_cap_multiplier}
+                                    onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_cap_multiplier: parseFloat(e.target.value) || 0.5 })}
+                                    style={{ width: 120, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+                                  />
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Minimum cap floor</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    value={editedSettings.t7_trend_exhaustion_very_extended_cap_min}
+                                    onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_cap_min: parseInt(e.target.value) || 1 })}
+                                    style={{ width: 120, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+                                  />
+                                </div>
+                                <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                                  Example: base 8, multiplier 0.5, floor 1 gives cap 4.
+                                </div>
+                              </>
+                            )}
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                              Final cap = round(base cap x multiplier), never below floor.
+                            </div>
                           </div>
                         </div>
                       </div>
