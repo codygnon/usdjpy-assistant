@@ -3818,6 +3818,28 @@ interface EditedSettings {
 
 const TRIAL7_DEFAULT_TIER_EMA_PERIODS: number[] = [9, ...Array.from({ length: 24 }, (_, i) => i + 11)];
 const TRIAL7_ALLOWED_TIER_EMA_PERIODS = new Set<number>(TRIAL7_DEFAULT_TIER_EMA_PERIODS);
+const TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS = {
+  p80_global: 12.03,
+  p90_global: 17.02,
+  p80_tokyo: 12.67,
+  p90_tokyo: 17.63,
+  p80_london: 11.06,
+  p90_london: 14.41,
+  p80_ny: 12.66,
+  p90_ny: 18.83,
+  p80_bull_tokyo: 11.85,
+  p90_bull_tokyo: 15.52,
+  p80_bull_london: 10.21,
+  p90_bull_london: 12.97,
+  p80_bull_ny: 11.21,
+  p90_bull_ny: 15.84,
+  p80_bear_tokyo: 13.44,
+  p90_bear_tokyo: 19.73,
+  p80_bear_london: 12.01,
+  p90_bear_london: 17.44,
+  p80_bear_ny: 13.97,
+  p90_bear_ny: 21.51,
+} as const;
 
 function sanitizeTrial7TierPeriods(periods: number[] | null | undefined): number[] {
   if (!Array.isArray(periods)) return [...TRIAL7_DEFAULT_TIER_EMA_PERIODS];
@@ -3844,6 +3866,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
   const [tempSettings, setTempSettings] = useState<api.TempEmaSettings | null>(null);
   const [editedSettings, setEditedSettings] = useState<EditedSettings | null>(null);
   const [applyingSettings, setApplyingSettings] = useState(false);
+  const [t7TrendExhaustionManualThresholds, setT7TrendExhaustionManualThresholds] = useState(false);
 
   // Fetch current profile to get active preset
   const fetchProfile = () => {
@@ -4663,6 +4686,34 @@ function PresetsPage({ profile }: { profile: Profile }) {
   const activePresetName = currentProfile?.active_preset_name as string | undefined;
   const risk = currentProfile?.risk as Record<string, unknown> | undefined;
   const effectiveRisk = currentProfile?.effective_risk as Record<string, unknown> | undefined;
+
+  const applyTrial7ExhaustionThresholdPreset = (mode: 'conservative' | 'balanced' | 'aggressive') => {
+    if (!editedSettings) return;
+    const scale = mode === 'conservative' ? 1.15 : mode === 'aggressive' ? 0.9 : 1.0;
+    setEditedSettings({
+      ...editedSettings,
+      t7_trend_exhaustion_p80_global: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p80_global * scale).toFixed(2)),
+      t7_trend_exhaustion_p90_global: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p90_global * scale).toFixed(2)),
+      t7_trend_exhaustion_p80_tokyo: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p80_tokyo * scale).toFixed(2)),
+      t7_trend_exhaustion_p90_tokyo: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p90_tokyo * scale).toFixed(2)),
+      t7_trend_exhaustion_p80_london: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p80_london * scale).toFixed(2)),
+      t7_trend_exhaustion_p90_london: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p90_london * scale).toFixed(2)),
+      t7_trend_exhaustion_p80_ny: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p80_ny * scale).toFixed(2)),
+      t7_trend_exhaustion_p90_ny: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p90_ny * scale).toFixed(2)),
+      t7_trend_exhaustion_p80_bull_tokyo: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p80_bull_tokyo * scale).toFixed(2)),
+      t7_trend_exhaustion_p90_bull_tokyo: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p90_bull_tokyo * scale).toFixed(2)),
+      t7_trend_exhaustion_p80_bull_london: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p80_bull_london * scale).toFixed(2)),
+      t7_trend_exhaustion_p90_bull_london: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p90_bull_london * scale).toFixed(2)),
+      t7_trend_exhaustion_p80_bull_ny: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p80_bull_ny * scale).toFixed(2)),
+      t7_trend_exhaustion_p90_bull_ny: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p90_bull_ny * scale).toFixed(2)),
+      t7_trend_exhaustion_p80_bear_tokyo: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p80_bear_tokyo * scale).toFixed(2)),
+      t7_trend_exhaustion_p90_bear_tokyo: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p90_bear_tokyo * scale).toFixed(2)),
+      t7_trend_exhaustion_p80_bear_london: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p80_bear_london * scale).toFixed(2)),
+      t7_trend_exhaustion_p90_bear_london: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p90_bear_london * scale).toFixed(2)),
+      t7_trend_exhaustion_p80_bear_ny: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p80_bear_ny * scale).toFixed(2)),
+      t7_trend_exhaustion_p90_bear_ny: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p90_bear_ny * scale).toFixed(2)),
+    });
+  };
   const execution = currentProfile?.execution as Record<string, unknown> | undefined;
 
   return (
@@ -5288,9 +5339,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       </label>
                     </div>
                     {editedSettings.t7_trend_exhaustion_enabled && (
-                    <details style={{ background: 'var(--bg-tertiary)', borderRadius: 8, padding: 10 }}>
-                      <summary style={{ cursor: 'pointer', fontWeight: 700, color: 'var(--text-primary)' }}>Advanced Thresholds & Behavior</summary>
-                      <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+                    <div style={{ background: 'var(--bg-tertiary)', borderRadius: 8, padding: 10 }}>
+                      <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Step 1: Detection Method</div>
+                      <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10 }}>
                         <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
                           <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Threshold Mode</div>
                           <select
@@ -5298,76 +5349,160 @@ function PresetsPage({ profile }: { profile: Profile }) {
                             onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_mode: e.target.value as 'global' | 'session' | 'session_and_side' })}
                             style={{ width: '100%', padding: '5px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: 600 }}
                           >
-                            <option value="session_and_side">Session + Side</option>
-                            <option value="session">Session only</option>
-                            <option value="global">Global</option>
+                            <option value="global">Simple (Global)</option>
+                            <option value="session">Session-Aware</option>
+                            <option value="session_and_side">Advanced (Session + Side)</option>
                           </select>
+                          <div style={{ marginTop: 4, fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                            Choose one threshold set; hidden sets are ignored.
+                          </div>
                         </div>
                         <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
                           <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <input type="checkbox" checked={editedSettings.t7_trend_exhaustion_use_current_price}
                               onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_use_current_price: e.target.checked })} />
-                            <span style={{ fontSize: '0.75rem' }}>Use current poll price</span>
+                            <span style={{ fontSize: '0.75rem' }}>Use live poll price</span>
                           </label>
-                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>Else uses last M5 close</div>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>If off, uses last completed M5 close.</div>
                         </div>
                         <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
-                          <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Hysteresis (pips)</div>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Buffer to avoid rapid switching (pips)</div>
                           <input type="number" step="0.1" min="0" value={editedSettings.t7_trend_exhaustion_hysteresis_pips}
                             onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_hysteresis_pips: parseFloat(e.target.value) || 0 })}
                             style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                         </div>
                       </div>
 
-                      <div style={{ marginTop: 12, fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Global thresholds</div>
-                      <div style={{ marginTop: 6, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(110px, 1fr))', gap: 8 }}>
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_global} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_global: parseFloat(e.target.value) || 12.03 })}
-                          style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_global} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_global: parseFloat(e.target.value) || 17.02 })}
-                          style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginTop: 14, marginBottom: 8 }}>Step 2: Extension Thresholds</div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                        <button type="button" onClick={() => applyTrial7ExhaustionThresholdPreset('conservative')}
+                          style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '0.72rem', cursor: 'pointer' }}>
+                          Conservative
+                        </button>
+                        <button type="button" onClick={() => applyTrial7ExhaustionThresholdPreset('balanced')}
+                          style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '0.72rem', cursor: 'pointer' }}>
+                          Balanced
+                        </button>
+                        <button type="button" onClick={() => applyTrial7ExhaustionThresholdPreset('aggressive')}
+                          style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '0.72rem', cursor: 'pointer' }}>
+                          Aggressive
+                        </button>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', color: 'var(--text-secondary)', marginLeft: 4 }}>
+                          <input type="checkbox" checked={t7TrendExhaustionManualThresholds}
+                            onChange={(e) => setT7TrendExhaustionManualThresholds(e.target.checked)} />
+                          Manual threshold editing
+                        </label>
+                      </div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                        Labels: "Extended starts at" = P80, "Very extended starts at" = P90.
                       </div>
 
-                      <div style={{ marginTop: 12, fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Session thresholds (Tokyo/London/NY P80 then P90)</div>
-                      <div style={{ marginTop: 6, display: 'grid', gridTemplateColumns: 'repeat(6, minmax(85px, 1fr))', gap: 6 }}>
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_tokyo} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_tokyo: parseFloat(e.target.value) || 12.67 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_tokyo} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_tokyo: parseFloat(e.target.value) || 17.63 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_london} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_london: parseFloat(e.target.value) || 11.06 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_london} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_london: parseFloat(e.target.value) || 14.41 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_ny} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_ny: parseFloat(e.target.value) || 12.66 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_ny} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_ny: parseFloat(e.target.value) || 18.83 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                      </div>
+                      {editedSettings.t7_trend_exhaustion_mode === 'global' && (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(150px, 1fr))', gap: 8 }}>
+                          <div>
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Extended starts at (pips)</div>
+                            <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_global}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_global: parseFloat(e.target.value) || 12.03 })}
+                              style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Very extended starts at (pips)</div>
+                            <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_global}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_global: parseFloat(e.target.value) || 17.02 })}
+                              style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                          </div>
+                        </div>
+                      )}
 
-                      <div style={{ marginTop: 12, fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Session + side thresholds (bull then bear, each Tokyo/London/NY P80,P90)</div>
-                      <div style={{ marginTop: 6, display: 'grid', gridTemplateColumns: 'repeat(6, minmax(85px, 1fr))', gap: 6 }}>
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_bull_tokyo} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_bull_tokyo: parseFloat(e.target.value) || 11.85 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_bull_tokyo} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_bull_tokyo: parseFloat(e.target.value) || 15.52 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_bull_london} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_bull_london: parseFloat(e.target.value) || 10.21 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_bull_london} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_bull_london: parseFloat(e.target.value) || 12.97 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_bull_ny} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_bull_ny: parseFloat(e.target.value) || 11.21 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_bull_ny} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_bull_ny: parseFloat(e.target.value) || 15.84 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_bear_tokyo} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_bear_tokyo: parseFloat(e.target.value) || 13.44 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_bear_tokyo} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_bear_tokyo: parseFloat(e.target.value) || 19.73 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_bear_london} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_bear_london: parseFloat(e.target.value) || 12.01 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_bear_london} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_bear_london: parseFloat(e.target.value) || 17.44 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_bear_ny} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_bear_ny: parseFloat(e.target.value) || 13.97 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_bear_ny} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_bear_ny: parseFloat(e.target.value) || 21.51 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                      </div>
+                      {editedSettings.t7_trend_exhaustion_mode === 'session' && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '130px repeat(2, minmax(120px, 1fr))', gap: 8, alignItems: 'center' }}>
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }} />
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }}>Extended starts at</div>
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }}>Very extended starts at</div>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-primary)' }}>Tokyo</div>
+                          <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_tokyo} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_tokyo: parseFloat(e.target.value) || 12.67 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                          <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_tokyo} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_tokyo: parseFloat(e.target.value) || 17.63 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-primary)' }}>London</div>
+                          <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_london} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_london: parseFloat(e.target.value) || 11.06 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                          <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_london} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_london: parseFloat(e.target.value) || 14.41 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-primary)' }}>New York</div>
+                          <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_ny} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_ny: parseFloat(e.target.value) || 12.66 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                          <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_ny} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_ny: parseFloat(e.target.value) || 18.83 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                        </div>
+                      )}
 
-                      <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 8 }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" checked={editedSettings.t7_trend_exhaustion_extended_disable_zone_entry} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_extended_disable_zone_entry: e.target.checked })} />Extended: block zone</label>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" checked={editedSettings.t7_trend_exhaustion_very_extended_disable_zone_entry} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_disable_zone_entry: e.target.checked })} />Very Extended: block zone</label>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" checked={editedSettings.t7_trend_exhaustion_very_extended_tighten_caps} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_tighten_caps: e.target.checked })} />Very Extended: tighten caps</label>
+                      {editedSettings.t7_trend_exhaustion_mode === 'session_and_side' && (
+                        <div style={{ display: 'grid', gap: 10 }}>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Bull Trend Thresholds</div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '130px repeat(2, minmax(120px, 1fr))', gap: 8, alignItems: 'center' }}>
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }} />
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }}>Extended starts at</div>
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }}>Very extended starts at</div>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-primary)' }}>Tokyo</div>
+                            <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_bull_tokyo} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_bull_tokyo: parseFloat(e.target.value) || 11.85 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                            <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_bull_tokyo} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_bull_tokyo: parseFloat(e.target.value) || 15.52 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-primary)' }}>London</div>
+                            <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_bull_london} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_bull_london: parseFloat(e.target.value) || 10.21 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                            <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_bull_london} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_bull_london: parseFloat(e.target.value) || 12.97 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-primary)' }}>New York</div>
+                            <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_bull_ny} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_bull_ny: parseFloat(e.target.value) || 11.21 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                            <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_bull_ny} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_bull_ny: parseFloat(e.target.value) || 15.84 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                          </div>
+
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Bear Trend Thresholds</div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '130px repeat(2, minmax(120px, 1fr))', gap: 8, alignItems: 'center' }}>
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }} />
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }}>Extended starts at</div>
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }}>Very extended starts at</div>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-primary)' }}>Tokyo</div>
+                            <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_bear_tokyo} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_bear_tokyo: parseFloat(e.target.value) || 13.44 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                            <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_bear_tokyo} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_bear_tokyo: parseFloat(e.target.value) || 19.73 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-primary)' }}>London</div>
+                            <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_bear_london} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_bear_london: parseFloat(e.target.value) || 12.01 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                            <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_bear_london} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_bear_london: parseFloat(e.target.value) || 17.44 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-primary)' }}>New York</div>
+                            <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p80_bear_ny} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p80_bear_ny: parseFloat(e.target.value) || 13.97 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                            <input disabled={!t7TrendExhaustionManualThresholds} type="number" step="0.1" value={editedSettings.t7_trend_exhaustion_p90_bear_ny} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_p90_bear_ny: parseFloat(e.target.value) || 21.51 })} style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', opacity: t7TrendExhaustionManualThresholds ? 1 : 0.6 }} />
+                          </div>
+                        </div>
+                      )}
+
+                      <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginTop: 14, marginBottom: 8 }}>Step 3: Entry Behavior By Regime</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 8 }}>
+                        <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Extended regime</div>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.75rem' }}>
+                            <input type="checkbox" checked={editedSettings.t7_trend_exhaustion_extended_disable_zone_entry} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_extended_disable_zone_entry: e.target.checked })} />
+                            Block zone entries
+                          </label>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                            <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Only allow tiers from</span>
+                            <input type="number" min="1" value={editedSettings.t7_trend_exhaustion_extended_min_tier_period} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_extended_min_tier_period: parseInt(e.target.value) || 21 })} style={{ width: 85, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                          </div>
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Very extended regime</div>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.75rem' }}>
+                            <input type="checkbox" checked={editedSettings.t7_trend_exhaustion_very_extended_disable_zone_entry} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_disable_zone_entry: e.target.checked })} />
+                            Block zone entries
+                          </label>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                            <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Only allow tiers from</span>
+                            <input type="number" min="1" value={editedSettings.t7_trend_exhaustion_very_extended_min_tier_period} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_min_tier_period: parseInt(e.target.value) || 29 })} style={{ width: 85, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                          </div>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.75rem', marginTop: 8 }}>
+                            <input type="checkbox" checked={editedSettings.t7_trend_exhaustion_very_extended_tighten_caps} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_tighten_caps: e.target.checked })} />
+                            Tighten open-trade caps
+                          </label>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                            <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Cap multiplier</span>
+                            <input type="number" step="0.05" min="0.05" value={editedSettings.t7_trend_exhaustion_very_extended_cap_multiplier} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_cap_multiplier: parseFloat(e.target.value) || 0.5 })} style={{ width: 85, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>minimum cap</span>
+                            <input type="number" min="1" value={editedSettings.t7_trend_exhaustion_very_extended_cap_min} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_cap_min: parseInt(e.target.value) || 1 })} style={{ width: 85, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                          </div>
+                        </div>
                       </div>
-                      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(4, minmax(100px, 1fr))', gap: 8 }}>
-                        <input type="number" min="1" value={editedSettings.t7_trend_exhaustion_extended_min_tier_period} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_extended_min_tier_period: parseInt(e.target.value) || 21 })} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" min="1" value={editedSettings.t7_trend_exhaustion_very_extended_min_tier_period} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_min_tier_period: parseInt(e.target.value) || 29 })} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" step="0.05" min="0.05" value={editedSettings.t7_trend_exhaustion_very_extended_cap_multiplier} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_cap_multiplier: parseFloat(e.target.value) || 0.5 })} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                        <input type="number" min="1" value={editedSettings.t7_trend_exhaustion_very_extended_cap_min} onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_very_extended_cap_min: parseInt(e.target.value) || 1 })} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
-                      </div>
-                      <div style={{ marginTop: 6, fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
-                        Numeric row order: Extended min tier, Very-Extended min tier, Very-Extended cap multiplier, Very-Extended minimum cap.
-                      </div>
-                    </details>
+                    </div>
                     )}
                   </div>
                   )}
