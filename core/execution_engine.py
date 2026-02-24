@@ -4008,6 +4008,9 @@ def evaluate_kt_cg_trial_7_conditions(
     m5_ema_fast = getattr(policy, "m5_trend_ema_fast", 9)
     m5_ema_slow = getattr(policy, "m5_trend_ema_slow", 21)
     min_ema_gap_pips = float(getattr(policy, "m5_min_ema_distance_pips", 1.0))
+    zone_entry_mode = str(getattr(policy, "zone_entry_mode", "ema_cross"))
+    if zone_entry_mode not in ("ema_cross", "price_vs_ema5"):
+        zone_entry_mode = "ema_cross"
     m1_zone_ema_fast = getattr(policy, "m1_zone_entry_ema_fast", 5)
     m1_zone_ema_slow = getattr(policy, "m1_zone_entry_ema_slow", 9)
 
@@ -4055,8 +4058,10 @@ def evaluate_kt_cg_trial_7_conditions(
     m1_close = m1_df["close"]
     m1_ema_zone_fast = ema_fn(m1_close, m1_zone_ema_fast)
     m1_ema_zone_slow = ema_fn(m1_close, m1_zone_ema_slow)
+    m1_ema5 = ema_fn(m1_close, 5)
     m1_zone_fast_val = float(m1_ema_zone_fast.iloc[-1])
     m1_zone_slow_val = float(m1_ema_zone_slow.iloc[-1])
+    m1_ema5_val = float(m1_ema5.iloc[-1])
 
     tiered_pullback_enabled = getattr(policy, "tiered_pullback_enabled", True)
     tiered_pullback_triggered = False
@@ -4114,14 +4119,32 @@ def evaluate_kt_cg_trial_7_conditions(
     zone_side: Optional[str] = None
     zone_entry_enabled = getattr(policy, "zone_entry_enabled", True)
     if zone_entry_enabled:
-        if is_bull and m1_zone_fast_val > m1_zone_slow_val:
-            zone_entry_triggered = True
-            zone_side = "buy"
-            reasons.append(f"ZONE ENTRY: BULL + M1 EMA{m1_zone_ema_fast} ({m1_zone_fast_val:.3f}) > EMA{m1_zone_ema_slow} ({m1_zone_slow_val:.3f}) -> BUY")
-        elif (not is_bull) and m1_zone_fast_val < m1_zone_slow_val:
-            zone_entry_triggered = True
-            zone_side = "sell"
-            reasons.append(f"ZONE ENTRY: BEAR + M1 EMA{m1_zone_ema_fast} ({m1_zone_fast_val:.3f}) < EMA{m1_zone_ema_slow} ({m1_zone_slow_val:.3f}) -> SELL")
+        if zone_entry_mode == "price_vs_ema5":
+            if is_bull and current_bid > m1_ema5_val:
+                zone_entry_triggered = True
+                zone_side = "buy"
+                reasons.append(
+                    f"ZONE ENTRY [price_vs_ema5]: BULL + bid ({current_bid:.3f}) > M1 EMA5 ({m1_ema5_val:.3f}) -> BUY"
+                )
+            elif (not is_bull) and current_ask < m1_ema5_val:
+                zone_entry_triggered = True
+                zone_side = "sell"
+                reasons.append(
+                    f"ZONE ENTRY [price_vs_ema5]: BEAR + ask ({current_ask:.3f}) < M1 EMA5 ({m1_ema5_val:.3f}) -> SELL"
+                )
+        else:
+            if is_bull and m1_zone_fast_val > m1_zone_slow_val:
+                zone_entry_triggered = True
+                zone_side = "buy"
+                reasons.append(
+                    f"ZONE ENTRY [ema_cross]: BULL + M1 EMA{m1_zone_ema_fast} ({m1_zone_fast_val:.3f}) > EMA{m1_zone_ema_slow} ({m1_zone_slow_val:.3f}) -> BUY"
+                )
+            elif (not is_bull) and m1_zone_fast_val < m1_zone_slow_val:
+                zone_entry_triggered = True
+                zone_side = "sell"
+                reasons.append(
+                    f"ZONE ENTRY [ema_cross]: BEAR + M1 EMA{m1_zone_ema_fast} ({m1_zone_fast_val:.3f}) < EMA{m1_zone_ema_slow} ({m1_zone_slow_val:.3f}) -> SELL"
+                )
     else:
         reasons.append("ZONE ENTRY: disabled by zone_entry_enabled=False")
 
@@ -4136,7 +4159,10 @@ def evaluate_kt_cg_trial_7_conditions(
             "m5_trend": trend,
         }
 
-    reasons.append(f"No trigger: Zone={m1_zone_fast_val:.3f} vs EMA{m1_zone_ema_slow}={m1_zone_slow_val:.3f}, no tier touch")
+    if zone_entry_mode == "price_vs_ema5":
+        reasons.append(f"No trigger: bid={current_bid:.3f}, ask={current_ask:.3f}, EMA5={m1_ema5_val:.3f}, no tier touch")
+    else:
+        reasons.append(f"No trigger: Zone={m1_zone_fast_val:.3f} vs EMA{m1_zone_ema_slow}={m1_zone_slow_val:.3f}, no tier touch")
     return {
         "passed": False,
         "side": None,

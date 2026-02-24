@@ -638,6 +638,7 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
 
     # M1 Zone Entry - EMA5 vs EMA9
     zone_entry_enabled: bool = True
+    zone_entry_mode: Literal["ema_cross", "price_vs_ema5"] = "ema_cross"
     m1_zone_entry_ema_fast: int = 5
     m1_zone_entry_ema_slow: int = 9
 
@@ -1001,6 +1002,10 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
                         # Ensure required Trial #7 defaults
                         if "m5_min_ema_distance_pips" not in pol:
                             pol["m5_min_ema_distance_pips"] = 1.0
+                        if "zone_entry_mode" not in pol:
+                            pol["zone_entry_mode"] = "ema_cross"
+                        elif pol.get("zone_entry_mode") not in ("ema_cross", "price_vs_ema5"):
+                            pol["zone_entry_mode"] = "ema_cross"
                         # Canonical tier set for Trial #7: EMA 9 and 11..34 (no EMA10)
                         raw_tiers = pol.get("tier_ema_periods")
                         allowed = {9, *range(11, 35)}

@@ -664,6 +664,10 @@ def collect_trial_7_context(
 
     # M1 Zone Entry EMAs
     m1_df = data_by_tf.get("M1")
+    zone_mode = str(getattr(policy, "zone_entry_mode", "ema_cross"))
+    if zone_mode not in ("ema_cross", "price_vs_ema5"):
+        zone_mode = "ema_cross"
+    items.append(ContextItem("Zone Entry Mode", zone_mode, "zone_entry"))
     if m1_df is not None and not m1_df.empty:
         from core.indicators import ema as ema_fn
         m1_close = m1_df["close"]
@@ -674,6 +678,23 @@ def collect_trial_7_context(
             zs = float(ema_fn(m1_close, ze_slow).iloc[-1])
             items.append(ContextItem(f"M1 EMA{ze_fast}", f"{zf:.3f}", "zone_entry"))
             items.append(ContextItem(f"M1 EMA{ze_slow}", f"{zs:.3f}", "zone_entry"))
+            if zone_mode == "price_vs_ema5":
+                ema5 = float(ema_fn(m1_close, 5).iloc[-1])
+                items.append(
+                    ContextItem(
+                        "Zone Condition Snapshot",
+                        f"bid/ask {tick.bid:.3f}/{tick.ask:.3f} vs EMA5 {ema5:.3f}",
+                        "zone_entry",
+                    )
+                )
+            else:
+                items.append(
+                    ContextItem(
+                        "Zone Condition Snapshot",
+                        f"EMA{ze_fast} {zf:.3f} vs EMA{ze_slow} {zs:.3f}",
+                        "zone_entry",
+                    )
+                )
 
     items.append(ContextItem("Bid", f"{tick.bid:.3f}", "price"))
     items.append(ContextItem("Ask", f"{tick.ask:.3f}", "price"))

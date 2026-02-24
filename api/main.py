@@ -2802,12 +2802,24 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
     # EMA Zone Filter
     if hasattr(policy, "ema_zone_filter_enabled"):
         if is_trial_7:
+            zone_entry_mode = getattr(policy, "zone_entry_mode", "ema_cross")
+            if zone_entry_mode not in ("ema_cross", "price_vs_ema5"):
+                zone_entry_mode = "ema_cross"
             filters["ema_zone_filter"] = {
                 "enabled": getattr(policy, "ema_zone_filter_enabled", False),
                 "lookback": getattr(policy, "ema_zone_filter_lookback_bars", 3),
                 "ema5_min_slope": getattr(policy, "ema_zone_filter_ema5_min_slope_pips_per_bar", 0.10),
                 "ema9_min_slope": getattr(policy, "ema_zone_filter_ema9_min_slope_pips_per_bar", 0.08),
                 "ema21_min_slope": getattr(policy, "ema_zone_filter_ema21_min_slope_pips_per_bar", 0.05),
+            }
+            filters["zone_entry"] = {
+                "enabled": getattr(policy, "zone_entry_enabled", True),
+                "mode": zone_entry_mode,
+                "mode_description": (
+                    "M5 trend + M1 EMA fast/slow cross"
+                    if zone_entry_mode == "ema_cross"
+                    else "M5 trend + live price vs M1 EMA5"
+                ),
             }
             filters["m5_ema_distance_gate"] = {
                 "enabled": True,

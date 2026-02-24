@@ -3796,6 +3796,7 @@ interface EditedSettings {
   t7_m5_trend_ema_fast: number;
   t7_m5_trend_ema_slow: number;
   t7_m5_min_ema_distance_pips: number;
+  t7_zone_entry_mode: 'ema_cross' | 'price_vs_ema5';
   // Trial #6: M3 Slope Trend Engine
   t6_m3_slope_lookback: number;
   t6_m3_bb_period: number;
@@ -3955,6 +3956,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t7M5TrendEmaFast = 9;
       let t7M5TrendEmaSlow = 21;
       let t7M5MinEmaDistancePips = 1.0;
+      let t7ZoneEntryMode: 'ema_cross' | 'price_vs_ema5' = 'ema_cross';
       // Trial #4: Tiered ATR Filter
       let tieredAtrFilterEnabled = true;
       let tieredAtrBlockBelowPips = 4.0;
@@ -4155,6 +4157,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
             t7M5TrendEmaFast = (pol.m5_trend_ema_fast as number) ?? 9;
             t7M5TrendEmaSlow = (pol.m5_trend_ema_slow as number) ?? 21;
             t7M5MinEmaDistancePips = (pol.m5_min_ema_distance_pips as number) ?? 1.0;
+            t7ZoneEntryMode = (pol.zone_entry_mode as 'ema_cross' | 'price_vs_ema5') ?? 'ema_cross';
+            if (t7ZoneEntryMode !== 'ema_cross' && t7ZoneEntryMode !== 'price_vs_ema5') {
+              t7ZoneEntryMode = 'ema_cross';
+            }
             tierEmaPeriods = sanitizeTrial7TierPeriods(pol.tier_ema_periods as number[] | undefined);
             policySlPips = (pol.sl_pips as number) ?? 20;
             t7TrendExhaustionEnabled = (pol.trend_exhaustion_enabled as boolean) ?? false;
@@ -4277,6 +4283,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t7_m5_trend_ema_fast: t7M5TrendEmaFast,
         t7_m5_trend_ema_slow: t7M5TrendEmaSlow,
         t7_m5_min_ema_distance_pips: t7M5MinEmaDistancePips,
+        t7_zone_entry_mode: t7ZoneEntryMode,
         // Trial #4: Tiered ATR Filter
         tiered_atr_filter_enabled: tieredAtrFilterEnabled,
         tiered_atr_block_below_pips: tieredAtrBlockBelowPips,
@@ -4493,6 +4500,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.m5_trend_ema_fast = Math.max(2, editedSettings.t7_m5_trend_ema_fast);
           updates.m5_trend_ema_slow = Math.max(3, editedSettings.t7_m5_trend_ema_slow);
           updates.m5_min_ema_distance_pips = Math.max(0, editedSettings.t7_m5_min_ema_distance_pips);
+          updates.zone_entry_mode = editedSettings.t7_zone_entry_mode;
           updates.zone_entry_enabled = editedSettings.zone_entry_enabled;
           updates.tier_ema_periods = sanitizeTrial7TierPeriods(editedSettings.tier_ema_periods);
           updates.ema_zone_filter_enabled = editedSettings.ema_zone_filter_enabled;
@@ -5942,6 +5950,31 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
                         When OFF, only tiered pullback entries are active (zone entry trades are blocked).
                       </div>
+                      {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                        <div style={{ marginTop: 10 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 6 }}>
+                            Zone Entry Type
+                          </div>
+                          <select
+                            value={editedSettings.t7_zone_entry_mode}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_zone_entry_mode: e.target.value as 'ema_cross' | 'price_vs_ema5' })}
+                            style={{ width: '100%', padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          >
+                            <option value="ema_cross">EMA Cross (M1 EMA fast vs slow)</option>
+                            <option value="price_vs_ema5">Price vs M1 EMA5</option>
+                          </select>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 6 }}>
+                            {editedSettings.t7_zone_entry_mode === 'ema_cross'
+                              ? 'EMA Cross: Uses M1 EMA fast/slow relationship in M5 trend direction.'
+                              : 'Price vs EMA5: Uses live poll price relative to M1 EMA5 in M5 trend direction.'}
+                          </div>
+                          {!editedSettings.zone_entry_enabled && (
+                            <div style={{ fontSize: '0.65rem', color: 'var(--warning)', marginTop: 4 }}>
+                              Inactive while Zone Entry Enabled is OFF.
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
