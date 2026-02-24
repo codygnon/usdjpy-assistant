@@ -57,7 +57,15 @@ def _is_oanda_invalid_time_range_error(err: Exception) -> bool:
 
 def _symbol_to_instrument(symbol: str) -> str:
     """USDJPY or USDJPY.PRO -> USD_JPY."""
-    base = re.sub(r"[^A-Za-z]", "", symbol.upper())
+    raw = (symbol or "").upper().strip()
+    # Strip common broker suffixes, e.g. "USDJPY.PRO" -> "USDJPY"
+    for sep in (".", " "):
+        if sep in raw:
+            raw = raw.split(sep)[0]
+    base = re.sub(r"[^A-Za-z]", "", raw)
+    # For forex pairs we only want the first 6 chars (e.g., USDJPY from USDJPYPRO)
+    if len(base) > 6:
+        base = base[:6]
     if len(base) == 6:
         return f"{base[:3]}_{base[3:]}"
     return base
@@ -285,7 +293,12 @@ class OandaAdapter:
         trades = data.get("trades", [])
         if symbol:
             inst = _symbol_to_instrument(symbol)
-            trades = [t for t in trades if t.get("instrument") == inst]
+            want_base = _instrument_to_symbol(inst).split(".")[0]
+            # Match by normalized base symbol to avoid suffix mismatches.
+            trades = [
+                t for t in trades
+                if _instrument_to_symbol(str(t.get("instrument") or "")).split(".")[0] == want_base
+            ]
         return trades
 
     def order_send_market(
@@ -541,7 +554,7 @@ class OandaAdapter:
                 closed = t.get("tradeClosed") or {}
                 if closed.get("tradeID"):
                     tid_str = str(closed.get("tradeID"))
-                    pl = float(t.get("pl") or closed.get("realizedPL") or 0)
+                    pl = float(closed.get("realizedPL") or t.get("pl") or 0)
                     closes[tid_str] = {
                         "price": float(t.get("price") or 0),
                         "time": str(t.get("time") or ""),
@@ -552,7 +565,8 @@ class OandaAdapter:
                     tid_str = str(tc.get("tradeID") or "")
                     if not tid_str:
                         continue
-                    pl = float(t.get("pl") or tc.get("realizedPL") or 0)
+                    # Prefer per-trade realizedPL; transaction-level pl can be total across multiple closed trades.
+                    pl = float(tc.get("realizedPL") or t.get("pl") or 0)
                     closes[tid_str] = {
                         "price": float(t.get("price") or 0),
                         "time": str(t.get("time") or ""),
