@@ -506,17 +506,6 @@ class OandaAdapter:
         from_ts = to_ts - timedelta(days=days_back)
         from_param = from_ts.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
         to_param = to_ts.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
-        try:
-            data = self._req(
-                "GET",
-                f"/v3/accounts/{aid}/transactions",
-                params={"from": from_param, "to": to_param, "pageSize": 500},
-            )
-        except Exception as e:
-            print(f"[oanda] get_closed_positions_from_history: API request failed: {e}")
-            return []
-        pages = data.get("pages") or []
-        count = data.get("count", 0)
         opens: dict[str, dict] = {}   # tradeID -> { instrument, price, time, units }
         closes: dict[str, dict] = {}  # tradeID -> { price, time, pl, units }
 
@@ -559,24 +548,70 @@ class OandaAdapter:
                         "units": int(float(tc.get("units") or 0)),
                     }
 
-        # Process initial response transactions if present (some APIs return first page in body)
-        process_transactions(data.get("transactions") or [])
-        for page_path in pages:
-            if not page_path:
-                continue
-            try:
-                req_path = page_path
-                if page_path.startswith(self._base):
-                    req_path = page_path[len(self._base):]
-                elif not page_path.startswith("/"):
-                    req_path = "/" + page_path
-                page_data = self._req("GET", req_path)
-                process_transactions(page_data.get("transactions") or [])
-            except Exception as e:
-                print(f"[oanda] get_closed_positions_from_history: page fetch failed: {e}")
-                continue
-        if not pages and count == 0 and not data.get("transactions"):
+        def process_response_pages(data: dict) -> None:
+            # Process initial response transactions if present (some APIs return first page in body)
+            process_transactions(data.get("transactions") or [])
+            pages = data.get("pages") or []
+            for page_path in pages:
+                if not page_path:
+                    continue
+                try:
+                    req_path = page_path
+                    if page_path.startswith(self._base):
+                        req_path = page_path[len(self._base):]
+                    elif not page_path.startswith("/"):
+                        req_path = "/" + page_path
+                    page_data = self._req("GET", req_path)
+                    process_transactions(page_data.get("transactions") or [])
+                except Exception as e:
+                    print(f"[oanda] get_closed_positions_from_history: page fetch failed: {e}")
+                    continue
+
+        full_range_ok = False
+        try:
+            data = self._req(
+                "GET",
+                f"/v3/accounts/{aid}/transactions",
+                params={"from": from_param, "to": to_param, "pageSize": 500},
+            )
+            process_response_pages(data)
+            full_range_ok = True
+        except Exception as e:
+            print(f"[oanda] get_closed_positions_from_history: full-range fetch failed ({e}); retrying in smaller windows")
+
+        # Fallback for transient 50x/API gateway issues: fetch in small windows.
+        # This greatly reduces payload size and improves reliability on OANDA history endpoint.
+        if not full_range_ok:
+            window_days = 3 if days_back > 7 else 1
+            cur_from = from_ts
+            chunk_failures = 0
+            chunk_successes = 0
+            while cur_from < to_ts:
+                cur_to = min(cur_from + timedelta(days=window_days), to_ts)
+                chunk_from = cur_from.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+                chunk_to = cur_to.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+                try:
+                    chunk_data = self._req(
+                        "GET",
+                        f"/v3/accounts/{aid}/transactions",
+                        params={"from": chunk_from, "to": chunk_to, "pageSize": 200},
+                    )
+                    process_response_pages(chunk_data)
+                    chunk_successes += 1
+                except Exception as e:
+                    chunk_failures += 1
+                    print(f"[oanda] get_closed_positions_from_history: chunk fetch failed ({chunk_from} -> {chunk_to}): {e}")
+                cur_from = cur_to
+
+            if chunk_successes == 0:
+                print("[oanda] get_closed_positions_from_history: no chunk succeeded; returning empty history")
+                return []
+            if chunk_failures > 0:
+                print(f"[oanda] get_closed_positions_from_history: completed with partial data ({chunk_failures} failed chunks)")
+
+        if not opens and not closes:
             print(f"[oanda] get_closed_positions_from_history: no transactions in range {from_param} to {to_param}")
+
         results: list[OandaClosedPositionInfo] = []
         # Compare base symbol so "USDJPY.PRO" profile matches OANDA instrument "USD_JPY" -> USDJPY
         want_symbol = (_instrument_to_symbol(symbol) if symbol else "").upper()
@@ -620,7 +655,7 @@ class OandaAdapter:
             ))
         # Sort by exit time descending (most recent first)
         results.sort(key=lambda p: p.exit_time_utc or "", reverse=True)
-        if count > 0 and len(results) == 0 and (opens or closes):
+        if len(results) == 0 and (opens or closes):
             print(f"[oanda] get_closed_positions_from_history: {len(opens)} opens, {len(closes)} closes -> 0 matched (check symbol filter or open/close pairing)")
         return results
 

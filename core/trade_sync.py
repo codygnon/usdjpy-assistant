@@ -128,6 +128,7 @@ def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore", log_dir=None)
         return 0
     
     synced_count = 0
+    oanda_missing_close_info_warned = False
     pip_size = profile.pip_size
     is_oanda = getattr(profile, "broker_type", None) == "oanda"
     oanda_closed_map: dict[int, Any] | None = None
@@ -195,7 +196,12 @@ def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore", log_dir=None)
 
         if close_info is None:
             # No close info found - might be a different issue
-            print(f"[trade_sync] No close info for position {position_ticket}, trade_id={trade_id}")
+            if is_oanda:
+                if not oanda_missing_close_info_warned:
+                    print("[trade_sync] OANDA close info temporarily unavailable (history endpoint may be delayed/transient); will retry next sync cycle.")
+                    oanda_missing_close_info_warned = True
+            else:
+                print(f"[trade_sync] No close info for position {position_ticket}, trade_id={trade_id}")
             continue
         
         # Position was closed - update our database
