@@ -611,18 +611,22 @@ def collect_trial_7_context(
 
     # M5 Trend
     m5_df = data_by_tf.get("M5")
+    trend_added = False
     if m5_df is not None and not m5_df.empty:
         from core.indicators import ema as ema_fn
         m5_close = m5_df["close"]
         fast_p = getattr(policy, "m5_trend_ema_fast", 9)
         slow_p = getattr(policy, "m5_trend_ema_slow", 21)
-        if len(m5_df) > slow_p:
+        if len(m5_df) >= max(fast_p, slow_p):
             fast_v = float(ema_fn(m5_close, fast_p).iloc[-1])
             slow_v = float(ema_fn(m5_close, slow_p).iloc[-1])
             trend = "BULL" if fast_v > slow_v else "BEAR"
             items.append(ContextItem("M5 Trend", trend, "trend"))
             items.append(ContextItem(f"M5 EMA{fast_p}", f"{fast_v:.3f}", "trend"))
             items.append(ContextItem(f"M5 EMA{slow_p}", f"{slow_v:.3f}", "trend"))
+            trend_added = True
+    if not trend_added:
+        items.append(ContextItem("M5 Trend", "N/A (warming up)", "trend"))
 
     # M1 Zone Entry EMAs
     m1_df = data_by_tf.get("M1")
@@ -641,6 +645,12 @@ def collect_trial_7_context(
     items.append(ContextItem("Ask", f"{tick.ask:.3f}", "price"))
     items.append(ContextItem("Spread", f"{(tick.ask - tick.bid) / pip_size:.1f}p", "price"))
 
+    ex_enabled = bool(getattr(policy, "trend_exhaustion_enabled", False))
+    ex_mode = str(getattr(policy, "trend_exhaustion_mode", "session_and_side"))
+    items.append(ContextItem("Trend Exhaustion", "ON" if ex_enabled else "OFF", "exhaustion"))
+    if ex_enabled:
+        items.append(ContextItem("Exhaustion Mode", ex_mode, "exhaustion"))
+
     if exhaustion_result:
         zone = str(exhaustion_result.get("zone", "normal"))
         stretch = exhaustion_result.get("stretch_pips")
@@ -654,6 +664,8 @@ def collect_trial_7_context(
             items.append(ContextItem("P80/P90", f"{float(p80):.2f} / {float(p90):.2f}", "exhaustion"))
         if sess:
             items.append(ContextItem("Exhaustion Session", str(sess), "exhaustion"))
+    elif ex_enabled:
+        items.append(ContextItem("Exhaustion Zone", "PENDING", "exhaustion"))
 
     fired = [str(t) for t, v in sorted(tier_state.items()) if v]
     avail = [str(t) for t, v in sorted(tier_state.items()) if not v]
