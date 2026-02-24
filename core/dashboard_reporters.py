@@ -224,19 +224,19 @@ def report_ema_zone_slope_filter_trial_7(policy, m1_df, pip_size: float, side: s
             filter_id="ema5_slope", display_name="EMA5 Slope",
             enabled=True, is_clear=True,
             current_value=f"{details['ema5_slope_pips_per_bar']:.3f} p/b",
-            threshold=f"{'>=' if side == 'buy' else '<='} {details['ema5_min']:.3f}",
+            threshold=f"{'>=' if side == 'buy' else '<='} {details['ema5_min']:.3f}" if side == "buy" else f"<= -{details['ema5_min']:.3f}",
         ),
         FilterReport(
             filter_id="ema9_slope", display_name="EMA9 Slope",
             enabled=True, is_clear=True,
             current_value=f"{details['ema9_slope_pips_per_bar']:.3f} p/b",
-            threshold=f"{'>=' if side == 'buy' else '<='} {details['ema9_min']:.3f}",
+            threshold=f"{'>=' if side == 'buy' else '<='} {details['ema9_min']:.3f}" if side == "buy" else f"<= -{details['ema9_min']:.3f}",
         ),
         FilterReport(
             filter_id="ema21_slope", display_name="EMA21 Slope",
             enabled=True, is_clear=True,
             current_value=f"{details['ema21_slope_pips_per_bar']:.3f} p/b",
-            threshold=f"{'>=' if side == 'buy' else '<='} {details['ema21_min']:.3f}",
+            threshold=f"{'>=' if side == 'buy' else '<='} {details['ema21_min']:.3f}" if side == "buy" else f"<= -{details['ema21_min']:.3f}",
         ),
     ]
 

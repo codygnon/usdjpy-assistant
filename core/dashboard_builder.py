@@ -150,11 +150,12 @@ def build_dashboard_filters(
     trigger_type = "zone_entry"
     if eval_result:
         trigger_type = eval_result.get("trigger_type") or "zone_entry"
-    if policy is not None and not eval_result:
-        if policy_type == "kt_cg_trial_7":
-            side = _side_from_m5(data_by_tf, policy)
-        else:
-            side = _side_from_m3(data_by_tf, policy)
+    # Trial #7 dashboard filter context should follow current M5 trend direction,
+    # not a stale/missing eval_result side (which can default to BUY).
+    if policy is not None and policy_type == "kt_cg_trial_7":
+        side = _side_from_m5(data_by_tf, policy)
+    elif policy is not None and not eval_result:
+        side = _side_from_m3(data_by_tf, policy)
 
     # Session filter (all)
     filters.append(report_session_filter(profile, now_utc))

@@ -218,6 +218,12 @@ function PositionsPanel({ trades, tick }: { trades: OpenTrade[]; tick: { bid: nu
                   const plPips = isBuy
                     ? (currentPrice - t.entry_price) / 0.01
                     : (t.entry_price - currentPrice) / 0.01;
+                  const slPipsAway = t.stop_price != null
+                    ? Math.abs(currentPrice - t.stop_price) / 0.01
+                    : null;
+                  const tpPipsAway = t.target_price != null
+                    ? Math.abs(t.target_price - currentPrice) / 0.01
+                    : null;
                   return (
                     <tr key={t.trade_id} style={{ borderBottom: `1px solid ${colors.border}22` }}>
                       <td style={{ padding: '4px 6px' }}><SideBadge side={t.side} /></td>
@@ -229,8 +235,16 @@ function PositionsPanel({ trades, tick }: { trades: OpenTrade[]; tick: { bid: nu
                           : <PipsValue pips={plPips} />
                         }
                       </td>
-                      <td style={{ padding: '4px 6px', textAlign: 'right', color: colors.textSecondary, ...mono }}>{t.stop_price?.toFixed(3) ?? '—'}</td>
-                      <td style={{ padding: '4px 6px', textAlign: 'right', color: colors.textSecondary, ...mono }}>{t.target_price?.toFixed(3) ?? '—'}</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right', color: colors.textSecondary, ...mono }}>
+                        {t.stop_price != null
+                          ? `${t.stop_price.toFixed(3)} (${Math.round(slPipsAway ?? 0)}p)`
+                          : '—'}
+                      </td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right', color: colors.textSecondary, ...mono }}>
+                        {t.target_price != null
+                          ? `${t.target_price.toFixed(3)} (${Math.round(tpPipsAway ?? 0)}p)`
+                          : '—'}
+                      </td>
                       <td style={{ padding: '4px 6px', textAlign: 'right', color: colors.textSecondary, ...mono }}>{t.size_lots}</td>
                     </tr>
                   );
