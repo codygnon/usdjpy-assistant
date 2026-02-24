@@ -6,6 +6,7 @@ Also supports importing closed positions from MT5 history.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -128,6 +129,8 @@ def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore", log_dir=None)
     
     synced_count = 0
     pip_size = profile.pip_size
+    is_oanda = getattr(profile, "broker_type", None) == "oanda"
+    oanda_closed_map: dict[int, Any] | None = None
     
     for trade_row in open_trades:
         trade_id = trade_row["trade_id"]
@@ -165,7 +168,31 @@ def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore", log_dir=None)
         
         # Position is not open - check if it was closed
         close_info = adapter.get_position_close_info(position_ticket)
-        
+
+        if close_info is None:
+            # OANDA fallback: query recent closed positions once and match by trade/position id.
+            if is_oanda:
+                if oanda_closed_map is None:
+                    try:
+                        closed_positions = adapter.get_closed_positions_from_history(
+                            days_back=30, symbol=profile.symbol, pip_size=float(profile.pip_size)
+                        )
+                        oanda_closed_map = {
+                            int(getattr(pos, "position_id")): pos
+                            for pos in (closed_positions or [])
+                            if getattr(pos, "position_id", None) is not None
+                        }
+                    except Exception:
+                        oanda_closed_map = {}
+                matched = (oanda_closed_map or {}).get(int(position_ticket))
+                if matched is not None:
+                    close_info = SimpleNamespace(
+                        exit_price=float(getattr(matched, "exit_price", 0.0)),
+                        exit_time_utc=str(getattr(matched, "exit_time_utc", "")),
+                        profit=float(getattr(matched, "profit", 0.0)),
+                        volume=float(getattr(matched, "volume", 0.0)),
+                    )
+
         if close_info is None:
             # No close info found - might be a different issue
             print(f"[trade_sync] No close info for position {position_ticket}, trade_id={trade_id}")

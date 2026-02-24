@@ -137,7 +137,7 @@ class OandaAdapter:
                     time.sleep(delay)
                     continue
                 raise RuntimeError(f"OANDA API {method} {path}: connection error after {max_attempts} attempts: {e}") from e
-            if resp.status_code in (502, 503, 429):
+            if resp.status_code in (502, 503, 504, 429):
                 last_err = RuntimeError(f"OANDA API {method} {path}: {resp.status_code}")
                 if attempt < max_attempts - 1:
                     delay = min(2 ** (attempt + 1), 60)
@@ -462,33 +462,39 @@ class OandaAdapter:
             )
         except Exception:
             return None
+
+        def _match_close(tx_list: list) -> PositionCloseInfo | None:
+            for t in tx_list or []:
+                if t.get("type") != "ORDER_FILL":
+                    continue
+                closed = t.get("tradeClosed") or {}
+                if str(closed.get("tradeID") or "") == ticket_str:
+                    return _close_info_from_fill(ticket, t, closed)
+                for tc in t.get("tradesClosed") or []:
+                    if str(tc.get("tradeID") or "") == ticket_str:
+                        return _close_info_from_fill(ticket, t, tc)
+            return None
+
+        hit = _match_close(data.get("transactions") or [])
+        if hit is not None:
+            return hit
+
         pages = data.get("pages") or []
         for page_path in pages:
             if not page_path:
                 continue
-            if page_path.startswith("http"):
-                page_url = page_path
-            elif page_path.startswith("/"):
-                page_url = self._base + page_path
-            else:
-                page_url = self._base + "/" + page_path
             try:
-                page_resp = self._session.get(page_url)
-                if page_resp.status_code != 200:
-                    continue
-                page_data = page_resp.json()
+                req_path = page_path
+                if page_path.startswith(self._base):
+                    req_path = page_path[len(self._base):]
+                elif not page_path.startswith("/"):
+                    req_path = "/" + page_path
+                page_data = self._req("GET", req_path)
             except Exception:
                 continue
-            for t in page_data.get("transactions") or []:
-                if t.get("type") != "ORDER_FILL":
-                    continue
-                # ORDER_FILL that closed a trade has tradeClosed (single) or tradesClosed (array)
-                closed = t.get("tradeClosed") or {}
-                if closed.get("tradeID") == ticket_str:
-                    return _close_info_from_fill(ticket, t, closed)
-                for tc in t.get("tradesClosed") or []:
-                    if tc.get("tradeID") == ticket_str:
-                        return _close_info_from_fill(ticket, t, tc)
+            hit = _match_close(page_data.get("transactions") or [])
+            if hit is not None:
+                return hit
         return None
 
     def get_closed_positions_from_history(self, days_back: int = 30, symbol: str | None = None, pip_size: float | None = None) -> list:
@@ -558,18 +564,13 @@ class OandaAdapter:
         for page_path in pages:
             if not page_path:
                 continue
-            if page_path.startswith("http"):
-                page_url = page_path
-            elif page_path.startswith("/"):
-                page_url = self._base + page_path
-            else:
-                page_url = self._base + "/" + page_path
             try:
-                page_resp = self._session.get(page_url)
-                if page_resp.status_code != 200:
-                    print(f"[oanda] get_closed_positions_from_history: page returned {page_resp.status_code}")
-                    continue
-                page_data = page_resp.json()
+                req_path = page_path
+                if page_path.startswith(self._base):
+                    req_path = page_path[len(self._base):]
+                elif not page_path.startswith("/"):
+                    req_path = "/" + page_path
+                page_data = self._req("GET", req_path)
                 process_transactions(page_data.get("transactions") or [])
             except Exception as e:
                 print(f"[oanda] get_closed_positions_from_history: page fetch failed: {e}")
