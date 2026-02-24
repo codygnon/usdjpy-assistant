@@ -3789,6 +3789,10 @@ interface EditedSettings {
   t7_trend_exhaustion_very_extended_tighten_caps: boolean;
   t7_trend_exhaustion_very_extended_cap_multiplier: number;
   t7_trend_exhaustion_very_extended_cap_min: number;
+  t7_trend_exhaustion_adaptive_tp_enabled: boolean;
+  t7_trend_exhaustion_tp_extended_offset_pips: number;
+  t7_trend_exhaustion_tp_very_extended_offset_pips: number;
+  t7_trend_exhaustion_tp_min_pips: number;
   max_open_trades_per_side: number;
   max_zone_entry_open: number;
   max_tiered_pullback_open: number;
@@ -3973,6 +3977,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t7TrendExhaustionVeryExtendedTightenCaps = true;
       let t7TrendExhaustionVeryExtendedCapMultiplier = 0.5;
       let t7TrendExhaustionVeryExtendedCapMin = 1;
+      let t7TrendExhaustionAdaptiveTpEnabled = false;
+      let t7TrendExhaustionTpExtendedOffsetPips = 1.0;
+      let t7TrendExhaustionTpVeryExtendedOffsetPips = 2.0;
+      let t7TrendExhaustionTpMinPips = 0.5;
       let maxOpenTradesPerSide = 5;
       let maxZoneEntryOpen = 3;
       let maxTieredPullbackOpen = 8;
@@ -4217,6 +4225,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
             t7TrendExhaustionVeryExtendedTightenCaps = (pol.trend_exhaustion_very_extended_tighten_caps as boolean) ?? true;
             t7TrendExhaustionVeryExtendedCapMultiplier = (pol.trend_exhaustion_very_extended_cap_multiplier as number) ?? 0.5;
             t7TrendExhaustionVeryExtendedCapMin = (pol.trend_exhaustion_very_extended_cap_min as number) ?? 1;
+            t7TrendExhaustionAdaptiveTpEnabled = (pol.trend_exhaustion_adaptive_tp_enabled as boolean) ?? false;
+            t7TrendExhaustionTpExtendedOffsetPips = (pol.trend_exhaustion_tp_extended_offset_pips as number) ?? 1.0;
+            t7TrendExhaustionTpVeryExtendedOffsetPips = (pol.trend_exhaustion_tp_very_extended_offset_pips as number) ?? 2.0;
+            t7TrendExhaustionTpMinPips = (pol.trend_exhaustion_tp_min_pips as number) ?? 0.5;
           }
           if (policyCooldown > 0 || policySlPips !== 20) break;
         }
@@ -4300,6 +4312,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t7_trend_exhaustion_very_extended_tighten_caps: t7TrendExhaustionVeryExtendedTightenCaps,
         t7_trend_exhaustion_very_extended_cap_multiplier: t7TrendExhaustionVeryExtendedCapMultiplier,
         t7_trend_exhaustion_very_extended_cap_min: t7TrendExhaustionVeryExtendedCapMin,
+        t7_trend_exhaustion_adaptive_tp_enabled: t7TrendExhaustionAdaptiveTpEnabled,
+        t7_trend_exhaustion_tp_extended_offset_pips: t7TrendExhaustionTpExtendedOffsetPips,
+        t7_trend_exhaustion_tp_very_extended_offset_pips: t7TrendExhaustionTpVeryExtendedOffsetPips,
+        t7_trend_exhaustion_tp_min_pips: t7TrendExhaustionTpMinPips,
         max_open_trades_per_side: maxOpenTradesPerSide,
         max_zone_entry_open: maxZoneEntryOpen,
         max_tiered_pullback_open: maxTieredPullbackOpen,
@@ -4574,6 +4590,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.trend_exhaustion_very_extended_tighten_caps = editedSettings.t7_trend_exhaustion_very_extended_tighten_caps;
           updates.trend_exhaustion_very_extended_cap_multiplier = Math.max(0.05, editedSettings.t7_trend_exhaustion_very_extended_cap_multiplier);
           updates.trend_exhaustion_very_extended_cap_min = Math.max(1, editedSettings.t7_trend_exhaustion_very_extended_cap_min);
+          updates.trend_exhaustion_adaptive_tp_enabled = editedSettings.t7_trend_exhaustion_adaptive_tp_enabled;
+          updates.trend_exhaustion_tp_extended_offset_pips = Math.max(0, editedSettings.t7_trend_exhaustion_tp_extended_offset_pips);
+          updates.trend_exhaustion_tp_very_extended_offset_pips = Math.max(0, editedSettings.t7_trend_exhaustion_tp_very_extended_offset_pips);
+          updates.trend_exhaustion_tp_min_pips = Math.max(0.1, editedSettings.t7_trend_exhaustion_tp_min_pips);
         }
         // Update Trial #6 settings
         if (pol.type === 'kt_cg_trial_6') {
@@ -6308,6 +6328,57 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       />
                       <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
                         Blocks all Trial #7 entries while |EMA9-EMA21| on M5 is below this threshold.
+                      </div>
+                    </div>
+                    )}
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                    <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 8 }}>
+                        <input
+                          type="checkbox"
+                          checked={editedSettings.t7_trend_exhaustion_adaptive_tp_enabled}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_adaptive_tp_enabled: e.target.checked })}
+                          style={{ width: 16, height: 16, cursor: 'pointer' }}
+                        />
+                        <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>Adaptive TP By Exhaustion</span>
+                      </label>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(90px, 1fr))', gap: 8 }}>
+                        <div>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Extended Offset</div>
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            value={editedSettings.t7_trend_exhaustion_tp_extended_offset_pips}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_tp_extended_offset_pips: parseFloat(e.target.value) || 0 })}
+                            style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Very Extended Offset</div>
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            value={editedSettings.t7_trend_exhaustion_tp_very_extended_offset_pips}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_tp_very_extended_offset_pips: parseFloat(e.target.value) || 0 })}
+                            style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Minimum TP</div>
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="0.1"
+                            value={editedSettings.t7_trend_exhaustion_tp_min_pips}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_tp_min_pips: parseFloat(e.target.value) || 0.1 })}
+                            style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          />
+                        </div>
+                      </div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 6 }}>
+                        Base TP from Target Pips. Effective TP = base, base-offset, or base-very-offset by exhaustion zone, floored by Minimum TP.
                       </div>
                     </div>
                     )}

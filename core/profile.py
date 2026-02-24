@@ -716,6 +716,11 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
     trend_exhaustion_very_extended_tighten_caps: bool = True
     trend_exhaustion_very_extended_cap_multiplier: float = 0.5
     trend_exhaustion_very_extended_cap_min: int = 1
+    # Adaptive TP based on exhaustion zone (offsets from base tp_pips)
+    trend_exhaustion_adaptive_tp_enabled: bool = False
+    trend_exhaustion_tp_extended_offset_pips: float = 1.0
+    trend_exhaustion_tp_very_extended_offset_pips: float = 2.0
+    trend_exhaustion_tp_min_pips: float = 0.5
 
     # Open trade caps (all caps enforced together)
     max_open_trades_per_side: Optional[int] = 5
@@ -1006,6 +1011,28 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
                             pol["zone_entry_mode"] = "ema_cross"
                         elif pol.get("zone_entry_mode") not in ("ema_cross", "price_vs_ema5"):
                             pol["zone_entry_mode"] = "ema_cross"
+                        if "trend_exhaustion_adaptive_tp_enabled" not in pol:
+                            pol["trend_exhaustion_adaptive_tp_enabled"] = False
+                        if "trend_exhaustion_tp_extended_offset_pips" not in pol:
+                            pol["trend_exhaustion_tp_extended_offset_pips"] = 1.0
+                        if "trend_exhaustion_tp_very_extended_offset_pips" not in pol:
+                            pol["trend_exhaustion_tp_very_extended_offset_pips"] = 2.0
+                        if "trend_exhaustion_tp_min_pips" not in pol:
+                            pol["trend_exhaustion_tp_min_pips"] = 0.5
+                        try:
+                            pol["trend_exhaustion_tp_extended_offset_pips"] = max(
+                                0.0, float(pol.get("trend_exhaustion_tp_extended_offset_pips", 1.0))
+                            )
+                            pol["trend_exhaustion_tp_very_extended_offset_pips"] = max(
+                                0.0, float(pol.get("trend_exhaustion_tp_very_extended_offset_pips", 2.0))
+                            )
+                            pol["trend_exhaustion_tp_min_pips"] = max(
+                                0.1, float(pol.get("trend_exhaustion_tp_min_pips", 0.5))
+                            )
+                        except Exception:
+                            pol["trend_exhaustion_tp_extended_offset_pips"] = 1.0
+                            pol["trend_exhaustion_tp_very_extended_offset_pips"] = 2.0
+                            pol["trend_exhaustion_tp_min_pips"] = 0.5
                         # Canonical tier set for Trial #7: EMA 9 and 11..34 (no EMA10)
                         raw_tiers = pol.get("tier_ema_periods")
                         allowed = {9, *range(11, 35)}

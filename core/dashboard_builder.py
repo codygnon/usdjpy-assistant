@@ -27,6 +27,7 @@ from core.dashboard_reporters import (
     report_t6_bb_reversal_cap,
     report_ema_zone_slope_filter_trial_7,
     report_trial7_m5_ema_distance_gate,
+    report_trial7_adaptive_tp,
     report_open_trade_cap_by_entry_type,
 )
 
@@ -238,6 +239,7 @@ def build_dashboard_filters(
             filters.append(report_ema_zone_slope_filter_trial_7(policy, m1_df, pip_size, side))
         if getattr(policy, "trend_exhaustion_enabled", False):
             filters.append(report_trend_exhaustion(exhaustion_result))
+        filters.append(report_trial7_adaptive_tp(policy, exhaustion_result))
         cap_multiplier = 1.0
         cap_min = 1
         if (

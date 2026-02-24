@@ -426,6 +426,33 @@ def report_trend_exhaustion(exhaustion_result: Optional[dict]) -> FilterReport:
     )
 
 
+def report_trial7_adaptive_tp(policy, exhaustion_result: Optional[dict]) -> FilterReport:
+    """Report Trial #7 adaptive TP status and currently effective TP."""
+    base_tp = max(0.1, float(getattr(policy, "tp_pips", 4.0)))
+    enabled = bool(getattr(policy, "trend_exhaustion_adaptive_tp_enabled", False))
+    ext_off = max(0.0, float(getattr(policy, "trend_exhaustion_tp_extended_offset_pips", 1.0)))
+    very_off = max(0.0, float(getattr(policy, "trend_exhaustion_tp_very_extended_offset_pips", 2.0)))
+    min_tp = max(0.1, float(getattr(policy, "trend_exhaustion_tp_min_pips", 0.5)))
+    zone = str((exhaustion_result or {}).get("zone", "normal")).lower()
+    if not enabled:
+        return FilterReport(
+            filter_id="trial7_adaptive_tp", display_name="Trial #7 Adaptive TP",
+            enabled=False, is_clear=True, current_value=f"Base {base_tp:.2f}p",
+        )
+    if zone == "very_extended":
+        effective = max(min_tp, base_tp - very_off)
+    elif zone == "extended":
+        effective = max(min_tp, base_tp - ext_off)
+    else:
+        effective = base_tp
+    return FilterReport(
+        filter_id="trial7_adaptive_tp", display_name="Trial #7 Adaptive TP",
+        enabled=True, is_clear=True,
+        current_value=f"{effective:.2f}p (base {base_tp:.2f}p, zone {zone})",
+        threshold=f"extended:-{ext_off:.2f}p | very:-{very_off:.2f}p | min:{min_tp:.2f}p",
+    )
+
+
 def report_max_trades(open_count: int, max_allowed: Optional[int], side: str, side_counts: Optional[dict] = None) -> FilterReport:
     """Report max open trades status."""
     if max_allowed is None:
@@ -705,6 +732,29 @@ def collect_trial_7_context(
     items.append(ContextItem("Trend Exhaustion", "ON" if ex_enabled else "OFF", "exhaustion"))
     if ex_enabled:
         items.append(ContextItem("Exhaustion Mode", ex_mode, "exhaustion"))
+    base_tp = max(0.1, float(getattr(policy, "tp_pips", 4.0)))
+    adaptive_tp_enabled = bool(getattr(policy, "trend_exhaustion_adaptive_tp_enabled", False))
+    ext_off = max(0.0, float(getattr(policy, "trend_exhaustion_tp_extended_offset_pips", 1.0)))
+    very_off = max(0.0, float(getattr(policy, "trend_exhaustion_tp_very_extended_offset_pips", 2.0)))
+    min_tp = max(0.1, float(getattr(policy, "trend_exhaustion_tp_min_pips", 0.5)))
+    zone_for_tp = str((exhaustion_result or {}).get("zone", "normal")).lower()
+    if adaptive_tp_enabled and zone_for_tp == "very_extended":
+        active_tp = max(min_tp, base_tp - very_off)
+    elif adaptive_tp_enabled and zone_for_tp == "extended":
+        active_tp = max(min_tp, base_tp - ext_off)
+    else:
+        active_tp = base_tp
+    items.append(ContextItem("Base TP (pips)", f"{base_tp:.2f}", "tp"))
+    items.append(ContextItem("Adaptive TP", "ON" if adaptive_tp_enabled else "OFF", "tp"))
+    items.append(ContextItem("Active TP (pips)", f"{active_tp:.2f}", "tp"))
+    if adaptive_tp_enabled:
+        items.append(
+            ContextItem(
+                "Adaptive TP Rule",
+                f"extended:-{ext_off:.2f} very:-{very_off:.2f} min:{min_tp:.2f}",
+                "tp",
+            )
+        )
 
     if exhaustion_result:
         zone = str(exhaustion_result.get("zone", "normal"))

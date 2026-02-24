@@ -2917,6 +2917,10 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
                 "very_extended_tighten_caps": getattr(policy, "trend_exhaustion_very_extended_tighten_caps", True),
                 "very_extended_cap_multiplier": getattr(policy, "trend_exhaustion_very_extended_cap_multiplier", 0.5),
                 "very_extended_cap_min": getattr(policy, "trend_exhaustion_very_extended_cap_min", 1),
+                "adaptive_tp_enabled": getattr(policy, "trend_exhaustion_adaptive_tp_enabled", False),
+                "tp_extended_offset_pips": getattr(policy, "trend_exhaustion_tp_extended_offset_pips", 1.0),
+                "tp_very_extended_offset_pips": getattr(policy, "trend_exhaustion_tp_very_extended_offset_pips", 2.0),
+                "tp_min_pips": getattr(policy, "trend_exhaustion_tp_min_pips", 0.5),
             }
         else:
             filters["trend_exhaustion"] = {

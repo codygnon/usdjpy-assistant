@@ -3804,6 +3804,27 @@ def _compute_trial7_trend_exhaustion(
     return out
 
 
+def _compute_trial7_effective_tp_pips(
+    policy,
+    exhaustion_result: Optional[dict],
+) -> tuple[float, str]:
+    """Compute Trial #7 effective TP from base tp_pips and exhaustion zone offsets."""
+    base_tp = max(0.1, float(getattr(policy, "tp_pips", 4.0)))
+    adaptive = bool(getattr(policy, "trend_exhaustion_adaptive_tp_enabled", False))
+    zone = str((exhaustion_result or {}).get("zone", "normal")).lower()
+    if not adaptive:
+        return base_tp, zone
+    extended_offset = max(0.0, float(getattr(policy, "trend_exhaustion_tp_extended_offset_pips", 1.0)))
+    very_extended_offset = max(0.0, float(getattr(policy, "trend_exhaustion_tp_very_extended_offset_pips", 2.0)))
+    min_tp = max(0.1, float(getattr(policy, "trend_exhaustion_tp_min_pips", 0.5)))
+
+    if zone == "very_extended":
+        return max(min_tp, base_tp - very_extended_offset), zone
+    if zone == "extended":
+        return max(min_tp, base_tp - extended_offset), zone
+    return base_tp, zone
+
+
 def evaluate_kt_cg_trial_4_conditions(
     profile: ProfileV1,
     policy,  # ExecutionPolicyKtCgTrial4
@@ -4731,6 +4752,13 @@ def execute_kt_cg_trial_7_policy_demo_only(
             else:
                 exhaustion_result = {"zone": "normal", "reason": "insufficient_m5_bars"}
 
+    effective_tp_pips, tp_zone = _compute_trial7_effective_tp_pips(policy, exhaustion_result)
+    if exhaustion_result is None:
+        exhaustion_result = {"zone": tp_zone}
+    exhaustion_result["tp_base_pips"] = round(float(getattr(policy, "tp_pips", 4.0)), 3)
+    exhaustion_result["tp_effective_pips"] = round(float(effective_tp_pips), 3)
+    exhaustion_result["tp_adaptive_enabled"] = bool(getattr(policy, "trend_exhaustion_adaptive_tp_enabled", False))
+
     original_tiers = getattr(policy, "tier_ema_periods", tuple(range(9, 35)))
     if not effective_tiers:
         effective_tiers = [int(min(original_tiers))] if original_tiers else [29]
@@ -4938,7 +4966,12 @@ def execute_kt_cg_trial_7_policy_demo_only(
         }
 
     entry_price = tick.ask if side == "buy" else tick.bid
-    candidate = _kt_cg_trial_4_candidate(profile, policy, entry_price, side)
+    original_tp_pips = float(getattr(policy, "tp_pips", 4.0))
+    try:
+        object.__setattr__(policy, "tp_pips", float(effective_tp_pips))
+        candidate = _kt_cg_trial_4_candidate(profile, policy, entry_price, side)
+    finally:
+        object.__setattr__(policy, "tp_pips", original_tp_pips)
     decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
     if not decision.allow:
         sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
@@ -5029,7 +5062,11 @@ def execute_kt_cg_trial_7_policy_demo_only(
 
     if placed:
         tier_info = f" tier_{tiered_pullback_tier}" if tiered_pullback_tier else ""
-        print(f"[{profile.profile_name}] TRADE PLACED: kt_cg_trial_7:{trigger_type}{tier_info} | {'; '.join(eval_reasons)}")
+        print(
+            f"[{profile.profile_name}] TRADE PLACED: kt_cg_trial_7:{trigger_type}{tier_info} "
+            f"| TP={effective_tp_pips:.2f}p (base={original_tp_pips:.2f}p zone={tp_zone})"
+            f" | {'; '.join(eval_reasons)}"
+        )
 
     return {
         "decision": ExecutionDecision(
@@ -5044,6 +5081,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
         ),
         "tier_updates": tier_updates,
         "trigger_type": trigger_type,
+        "tp_pips_effective": float(effective_tp_pips),
+        "tp_pips_base": float(original_tp_pips),
         "exhaustion_result": exhaustion_result,
     }
 
