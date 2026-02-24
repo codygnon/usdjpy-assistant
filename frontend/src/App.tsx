@@ -7446,7 +7446,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
   };
 
   // --- Computation utilities ---
-  const computeEquitySeries = (arr: api.AdvancedTrade[]) => {
+  function computeEquitySeries(arr: api.AdvancedTrade[]) {
     let cum = 0;
     const exit = (t: api.AdvancedTrade) => (t.exit_time_utc != null ? String(t.exit_time_utc) : '');
     return arr
@@ -7456,9 +7456,9 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
         cum += t.pips!;
         return { idx: i + 1, cumPips: Math.round(cum * 100) / 100, date: exit(t).slice(0, 10), pips: t.pips! };
       });
-  };
+  }
 
-  const computeRollingMetrics = (arr: api.AdvancedTrade[], windowSize: number, mode: 'trades' | 'time', timeDays: number) => {
+  function computeRollingMetrics(arr: api.AdvancedTrade[], windowSize: number, mode: 'trades' | 'time', timeDays: number) {
     const exitStr = (t: api.AdvancedTrade) => (t.exit_time_utc != null ? String(t.exit_time_utc) : '');
     const sorted = arr
       .filter(t => t.pips != null)
@@ -7496,12 +7496,12 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
 
       return { idx: i + 1, winRate, avgPips, avgR, expectancy, date: exitStr(sorted[i]).slice(0, 10) };
     }).filter(Boolean) as { idx: number; winRate: number; avgPips: number; avgR: number | null; expectancy: number | null; date: string }[];
-  };
+  }
 
-  const computeDrawdownSeries = (
+  function computeDrawdownSeries(
     arr: api.AdvancedTrade[],
     opts: { startingBalance?: number | null; totalProfitCurrency?: number | null } = {}
-  ) => {
+  ) {
     const { startingBalance: sb = null, totalProfitCurrency: totalProfitCur = null } = opts;
     const hasProfitData = arr.some(t => t.profit != null);
     const useCurrency = sb != null && sb > 0 && hasProfitData;
@@ -7617,10 +7617,10 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
       recoveryFactorNote,
       maxDdUsd,
     };
-  };
+  }
 
   // --- Helper: histogram bins ---
-  const computeHistogramBins = (values: number[], binCount = 8): { bin: string; count: number; midValue: number }[] => {
+  function computeHistogramBins(values: number[], binCount = 8): { bin: string; count: number; midValue: number }[] {
     if (values.length === 0) return [];
     const min = Math.min(...values);
     const max = Math.max(...values);
@@ -7634,7 +7634,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
       bins.push({ bin: `${lo.toFixed(1)}`, count, midValue: lo + binWidth / 2 });
     }
     return bins;
-  };
+  }
 
   if (loading) {
     return (
