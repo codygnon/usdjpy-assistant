@@ -2809,6 +2809,10 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
                 "ema9_min_slope": getattr(policy, "ema_zone_filter_ema9_min_slope_pips_per_bar", 0.08),
                 "ema21_min_slope": getattr(policy, "ema_zone_filter_ema21_min_slope_pips_per_bar", 0.05),
             }
+            filters["m5_ema_distance_gate"] = {
+                "enabled": True,
+                "min_gap_pips": getattr(policy, "m5_min_ema_distance_pips", 1.0),
+            }
         else:
             filters["ema_zone_filter"] = {
                 "enabled": getattr(policy, "ema_zone_filter_enabled", False),

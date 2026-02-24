@@ -1063,6 +1063,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     # M5 Trend EMAs
                     "m5_trend_ema_fast": 9,
                     "m5_trend_ema_slow": 21,
+                    "m5_min_ema_distance_pips": 1.0,
                     # M1 Zone Entry - EMA 9 vs EMA 21 (respects cooldown)
                     "m1_zone_entry_ema_slow": 21,
                     # M1 Pullback Cross - EMA 9 crosses EMA 13 (overrides cooldown)
@@ -1561,7 +1562,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "m1_zone_entry_ema_slow": 9,
                     # Tiered Pullback Configuration (EMA 9-34)
                     "tiered_pullback_enabled": True,
-                    "tier_ema_periods": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34],
+                    "tier_ema_periods": [9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34],
                     "tier_reset_buffer_pips": 1.0,
                     # Core controls from Trial #4
                     "close_opposite_on_trade": True,

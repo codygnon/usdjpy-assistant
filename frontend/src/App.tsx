@@ -3795,6 +3795,7 @@ interface EditedSettings {
   // Trial #7: M5 trend EMAs
   t7_m5_trend_ema_fast: number;
   t7_m5_trend_ema_slow: number;
+  t7_m5_min_ema_distance_pips: number;
   // Trial #6: M3 Slope Trend Engine
   t6_m3_slope_lookback: number;
   t6_m3_bb_period: number;
@@ -3812,6 +3813,21 @@ interface EditedSettings {
   t6_dead_zone_end_hour_utc: number;
   // Trial #6: Spread-Aware BE scope
   t6_spread_aware_be_apply_to_ema_tier: boolean;
+}
+
+const TRIAL7_DEFAULT_TIER_EMA_PERIODS: number[] = [9, ...Array.from({ length: 24 }, (_, i) => i + 11)];
+const TRIAL7_ALLOWED_TIER_EMA_PERIODS = new Set<number>(TRIAL7_DEFAULT_TIER_EMA_PERIODS);
+
+function sanitizeTrial7TierPeriods(periods: number[] | null | undefined): number[] {
+  if (!Array.isArray(periods)) return [...TRIAL7_DEFAULT_TIER_EMA_PERIODS];
+  const cleaned = Array.from(
+    new Set(
+      periods
+        .map((p) => Math.trunc(Number(p)))
+        .filter((p) => TRIAL7_ALLOWED_TIER_EMA_PERIODS.has(p))
+    )
+  ).sort((a, b) => a - b);
+  return cleaned.length > 0 ? cleaned : [...TRIAL7_DEFAULT_TIER_EMA_PERIODS];
 }
 
 function PresetsPage({ profile }: { profile: Profile }) {
@@ -3938,6 +3954,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let maxTieredPullbackOpen = 8;
       let t7M5TrendEmaFast = 9;
       let t7M5TrendEmaSlow = 21;
+      let t7M5MinEmaDistancePips = 1.0;
       // Trial #4: Tiered ATR Filter
       let tieredAtrFilterEnabled = true;
       let tieredAtrBlockBelowPips = 4.0;
@@ -4137,6 +4154,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
           if (pol.type === 'kt_cg_trial_7') {
             t7M5TrendEmaFast = (pol.m5_trend_ema_fast as number) ?? 9;
             t7M5TrendEmaSlow = (pol.m5_trend_ema_slow as number) ?? 21;
+            t7M5MinEmaDistancePips = (pol.m5_min_ema_distance_pips as number) ?? 1.0;
+            tierEmaPeriods = sanitizeTrial7TierPeriods(pol.tier_ema_periods as number[] | undefined);
             policySlPips = (pol.sl_pips as number) ?? 20;
             t7TrendExhaustionEnabled = (pol.trend_exhaustion_enabled as boolean) ?? false;
             t7TrendExhaustionMode = (pol.trend_exhaustion_mode as 'global' | 'session' | 'session_and_side') ?? 'session_and_side';
@@ -4257,6 +4276,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         max_tiered_pullback_open: maxTieredPullbackOpen,
         t7_m5_trend_ema_fast: t7M5TrendEmaFast,
         t7_m5_trend_ema_slow: t7M5TrendEmaSlow,
+        t7_m5_min_ema_distance_pips: t7M5MinEmaDistancePips,
         // Trial #4: Tiered ATR Filter
         tiered_atr_filter_enabled: tieredAtrFilterEnabled,
         tiered_atr_block_below_pips: tieredAtrBlockBelowPips,
@@ -4472,8 +4492,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
         if (pol.type === 'kt_cg_trial_7') {
           updates.m5_trend_ema_fast = Math.max(2, editedSettings.t7_m5_trend_ema_fast);
           updates.m5_trend_ema_slow = Math.max(3, editedSettings.t7_m5_trend_ema_slow);
+          updates.m5_min_ema_distance_pips = Math.max(0, editedSettings.t7_m5_min_ema_distance_pips);
           updates.zone_entry_enabled = editedSettings.zone_entry_enabled;
-          updates.tier_ema_periods = editedSettings.tier_ema_periods;
+          updates.tier_ema_periods = sanitizeTrial7TierPeriods(editedSettings.tier_ema_periods);
           updates.ema_zone_filter_enabled = editedSettings.ema_zone_filter_enabled;
           updates.ema_zone_filter_lookback_bars = Math.max(1, editedSettings.ema_zone_filter_lookback_bars);
           updates.ema_zone_filter_ema5_min_slope_pips_per_bar = Math.max(0, editedSettings.ema_zone_filter_ema5_min_slope_pips_per_bar);
@@ -6040,6 +6061,24 @@ function PresetsPage({ profile }: { profile: Profile }) {
                           onChange={(e) => setEditedSettings({ ...editedSettings, t7_m5_trend_ema_slow: parseInt(e.target.value) || 21 })}
                           style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
                         />
+                      </div>
+                    </div>
+                    )}
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                    <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                        M5 EMA9/21 Min Distance (pips)
+                      </div>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        value={editedSettings.t7_m5_min_ema_distance_pips}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, t7_m5_min_ema_distance_pips: parseFloat(e.target.value) || 0 })}
+                        style={{ width: '100%', padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                      />
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                        Blocks all Trial #7 entries while |EMA9-EMA21| on M5 is below this threshold.
                       </div>
                     </div>
                     )}

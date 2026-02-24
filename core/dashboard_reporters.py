@@ -249,6 +249,35 @@ def report_ema_zone_slope_filter_trial_7(policy, m1_df, pip_size: float, side: s
     )
 
 
+def report_trial7_m5_ema_distance_gate(policy, m5_df, pip_size: float) -> FilterReport:
+    """Report Trial #7 M5 EMA distance trade gate status."""
+    from core.execution_engine import _trial7_m5_ema_gap_pips
+
+    if m5_df is None or m5_df.empty:
+        return FilterReport(
+            filter_id="m5_ema_distance_gate", display_name="M5 EMA Distance Gate",
+            enabled=True, is_clear=True, current_value="No M5 data",
+        )
+    m5_df = m5_df.copy()
+    fast_p = int(getattr(policy, "m5_trend_ema_fast", 9))
+    slow_p = int(getattr(policy, "m5_trend_ema_slow", 21))
+    if len(m5_df) < max(fast_p, slow_p) + 1:
+        return FilterReport(
+            filter_id="m5_ema_distance_gate", display_name="M5 EMA Distance Gate",
+            enabled=True, is_clear=True, current_value="Insufficient data",
+        )
+    gap_pips, _fast_v, _slow_v = _trial7_m5_ema_gap_pips(m5_df["close"], fast_p, slow_p, pip_size)
+    min_gap = float(getattr(policy, "m5_min_ema_distance_pips", 1.0))
+    is_clear = gap_pips >= min_gap
+    return FilterReport(
+        filter_id="m5_ema_distance_gate", display_name="M5 EMA Distance Gate",
+        enabled=True, is_clear=is_clear,
+        current_value=f"{gap_pips:.2f}p",
+        threshold=f">= {min_gap:.2f}p",
+        block_reason=f"{gap_pips:.2f}p < {min_gap:.2f}p" if not is_clear else None,
+    )
+
+
 def report_rolling_danger_zone(policy, m1_df, tick, side: str, pip_size: float) -> FilterReport:
     """Report Rolling Danger Zone status."""
     enabled = getattr(policy, "rolling_danger_zone_enabled", False)
@@ -614,6 +643,7 @@ def collect_trial_7_context(
     trend_added = False
     if m5_df is not None and not m5_df.empty:
         from core.indicators import ema as ema_fn
+        from core.execution_engine import _trial7_m5_ema_gap_pips
         m5_close = m5_df["close"]
         fast_p = getattr(policy, "m5_trend_ema_fast", 9)
         slow_p = getattr(policy, "m5_trend_ema_slow", 21)
@@ -624,6 +654,10 @@ def collect_trial_7_context(
             items.append(ContextItem("M5 Trend", trend, "trend"))
             items.append(ContextItem(f"M5 EMA{fast_p}", f"{fast_v:.3f}", "trend"))
             items.append(ContextItem(f"M5 EMA{slow_p}", f"{slow_v:.3f}", "trend"))
+            gap_pips, _fv, _sv = _trial7_m5_ema_gap_pips(m5_close, int(fast_p), int(slow_p), pip_size)
+            min_gap = float(getattr(policy, "m5_min_ema_distance_pips", 1.0))
+            items.append(ContextItem("EMA9-EMA21 Gap (pips)", f"{gap_pips:.2f}", "trend"))
+            items.append(ContextItem("Min Gap Threshold (pips)", f"{min_gap:.2f}", "trend"))
             trend_added = True
     if not trend_added:
         items.append(ContextItem("M5 Trend", "N/A (warming up)", "trend"))

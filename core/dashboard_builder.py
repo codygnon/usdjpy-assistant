@@ -26,6 +26,7 @@ from core.dashboard_reporters import (
     report_t6_m3_trend,
     report_t6_bb_reversal_cap,
     report_ema_zone_slope_filter_trial_7,
+    report_trial7_m5_ema_distance_gate,
     report_open_trade_cap_by_entry_type,
 )
 
@@ -229,6 +230,8 @@ def build_dashboard_filters(
                 pass
 
     elif policy_type == "kt_cg_trial_7" and policy is not None:
+        m5_df = data_by_tf.get("M5")
+        filters.append(report_trial7_m5_ema_distance_gate(policy, m5_df, pip_size))
         m1_df = data_by_tf.get("M1")
         if m1_df is not None and not m1_df.empty:
             filters.append(report_ema_zone_slope_filter_trial_7(policy, m1_df, pip_size, side))

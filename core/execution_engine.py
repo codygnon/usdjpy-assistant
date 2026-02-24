@@ -3704,6 +3704,26 @@ def _trial7_session_name_utc(ts_utc: pd.Timestamp) -> str:
     return "ny"
 
 
+def _canonical_trial7_tier_periods(periods: Optional[list[int] | tuple[int, ...]]) -> list[int]:
+    """Canonical Trial #7 tiers: EMA 9 and EMA 11..34 (EMA10 intentionally excluded)."""
+    allowed = {9, *range(11, 35)}
+    default_tiers = [9, *list(range(11, 35))]
+    if not periods:
+        return default_tiers
+    cleaned = sorted({int(x) for x in periods if int(x) in allowed})
+    return cleaned if cleaned else default_tiers
+
+
+def _trial7_m5_ema_gap_pips(m5_close: pd.Series, fast_period: int, slow_period: int, pip_size: float) -> tuple[float, float, float]:
+    """Return (ema_gap_pips, fast_val, slow_val) for M5 EMA fast/slow."""
+    fast_series = ema_fn(m5_close, fast_period)
+    slow_series = ema_fn(m5_close, slow_period)
+    fast_val = float(fast_series.iloc[-1])
+    slow_val = float(slow_series.iloc[-1])
+    gap_pips = abs(fast_val - slow_val) / pip_size
+    return gap_pips, fast_val, slow_val
+
+
 def _compute_trial7_trend_exhaustion(
     *,
     policy,
@@ -3987,6 +4007,7 @@ def evaluate_kt_cg_trial_7_conditions(
 
     m5_ema_fast = getattr(policy, "m5_trend_ema_fast", 9)
     m5_ema_slow = getattr(policy, "m5_trend_ema_slow", 21)
+    min_ema_gap_pips = float(getattr(policy, "m5_min_ema_distance_pips", 1.0))
     m1_zone_ema_fast = getattr(policy, "m1_zone_entry_ema_fast", 5)
     m1_zone_ema_slow = getattr(policy, "m1_zone_entry_ema_slow", 9)
 
@@ -3997,25 +4018,39 @@ def evaluate_kt_cg_trial_7_conditions(
     if len(m5_df) < m5_ema_slow + 1:
         return {"passed": False, "side": None, "reasons": [f"kt_cg_trial_7: need at least {m5_ema_slow + 1} M5 bars"], "trigger_type": "", "tiered_pullback_tier": None, "tier_updates": {}, "m5_trend": ""}
 
+    m5_close = m5_df["close"]
+    m5_ema_gap_pips, m5_ema_fast_val, m5_ema_slow_val = _trial7_m5_ema_gap_pips(
+        m5_close, int(m5_ema_fast), int(m5_ema_slow), float(profile.pip_size)
+    )
+    if m5_ema_gap_pips < min_ema_gap_pips:
+        return {
+            "passed": False,
+            "side": None,
+            "reasons": [f"kt_cg_trial_7: blocked (M5 EMA gap {m5_ema_gap_pips:.2f}p < min {min_ema_gap_pips:.2f}p)"],
+            "trigger_type": "",
+            "tiered_pullback_tier": None,
+            "tier_updates": {},
+            "m5_trend": "",
+            "m5_ema_gap_pips": round(m5_ema_gap_pips, 3),
+            "m5_ema_gap_min_pips": round(min_ema_gap_pips, 3),
+        }
+
+    is_bull = m5_ema_fast_val > m5_ema_slow_val
+    trend = "bull" if is_bull else "bear"
+    reasons.append(
+        f"M5 trend: {trend.upper()} (EMA{m5_ema_fast}={m5_ema_fast_val:.3f} vs EMA{m5_ema_slow}={m5_ema_slow_val:.3f}, gap={m5_ema_gap_pips:.2f}p >= {min_ema_gap_pips:.2f}p)"
+    )
+
     m1_df = data_by_tf.get("M1")
     if m1_df is None or m1_df.empty:
         return {"passed": False, "side": None, "reasons": ["kt_cg_trial_7: no M1 data"], "trigger_type": "", "tiered_pullback_tier": None, "tier_updates": {}, "m5_trend": ""}
     m1_df = drop_incomplete_last_bar(m1_df.copy(), "M1")
 
-    tier_periods = list(getattr(policy, "tier_ema_periods", tuple(range(9, 35))))
+    tier_periods = _canonical_trial7_tier_periods(getattr(policy, "tier_ema_periods", tuple(range(9, 35))))
     max_tier_period = max(tier_periods) if tier_periods else 34
     min_m1_bars = max(m1_zone_ema_slow, max_tier_period) + 2
     if len(m1_df) < min_m1_bars:
         return {"passed": False, "side": None, "reasons": [f"kt_cg_trial_7: need at least {min_m1_bars} M1 bars"], "trigger_type": "", "tiered_pullback_tier": None, "tier_updates": {}, "m5_trend": ""}
-
-    m5_close = m5_df["close"]
-    m5_ema_fast_series = ema_fn(m5_close, m5_ema_fast)
-    m5_ema_slow_series = ema_fn(m5_close, m5_ema_slow)
-    m5_ema_fast_val = float(m5_ema_fast_series.iloc[-1])
-    m5_ema_slow_val = float(m5_ema_slow_series.iloc[-1])
-    is_bull = m5_ema_fast_val > m5_ema_slow_val
-    trend = "bull" if is_bull else "bear"
-    reasons.append(f"M5 trend: {trend.upper()} (EMA{m5_ema_fast}={m5_ema_fast_val:.3f} vs EMA{m5_ema_slow}={m5_ema_slow_val:.3f})")
 
     m1_close = m1_df["close"]
     m1_ema_zone_fast = ema_fn(m1_close, m1_zone_ema_fast)
@@ -4631,7 +4666,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
     rule_id = f"kt_cg_trial_7:{policy.id}:M1:{bar_time_utc}"
 
     exhaustion_result = None
-    effective_tiers = list(getattr(policy, "tier_ema_periods", tuple(range(9, 35))))
+    effective_tiers = _canonical_trial7_tier_periods(getattr(policy, "tier_ema_periods", tuple(range(9, 35))))
     block_zone_entry_by_exhaustion = False
     cap_multiplier = 1.0
     cap_minimum = 1

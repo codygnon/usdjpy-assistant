@@ -633,6 +633,8 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
     # M5 Trend EMAs
     m5_trend_ema_fast: int = 9
     m5_trend_ema_slow: int = 21
+    # Block all entries when M5 EMA9/EMA21 are too close (chop guard)
+    m5_min_ema_distance_pips: float = 1.0
 
     # M1 Zone Entry - EMA5 vs EMA9
     zone_entry_enabled: bool = True
@@ -642,7 +644,7 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
     # Tiered Pullback Configuration (9-34 subset, configurable)
     tiered_pullback_enabled: bool = True
     tier_ema_periods: tuple[int, ...] = (
-        9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+        9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
         28, 29, 30, 31, 32, 33, 34
     )
     tier_reset_buffer_pips: float = 1.0
@@ -996,6 +998,18 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
                         pol.pop("ema_zone_filter_slope_max_pips", None)
                         pol.pop("ema_zone_filter_dir_min_pips", None)
                         pol.pop("ema_zone_filter_dir_max_pips", None)
+                        # Ensure required Trial #7 defaults
+                        if "m5_min_ema_distance_pips" not in pol:
+                            pol["m5_min_ema_distance_pips"] = 1.0
+                        # Canonical tier set for Trial #7: EMA 9 and 11..34 (no EMA10)
+                        raw_tiers = pol.get("tier_ema_periods")
+                        allowed = {9, *range(11, 35)}
+                        canonical_default = [9, *list(range(11, 35))]
+                        if isinstance(raw_tiers, (list, tuple)):
+                            cleaned = sorted({int(x) for x in raw_tiers if isinstance(x, (int, float)) and int(x) in allowed})
+                            pol["tier_ema_periods"] = cleaned if cleaned else canonical_default
+                        else:
+                            pol["tier_ema_periods"] = canonical_default
         return d
 
     profile_name = d.get("profile_name") or d.get("name") or "default"
