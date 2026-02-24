@@ -45,6 +45,16 @@ _BASE_URLS = {
 }
 
 
+def _rfc3339_utc(ts: datetime) -> str:
+    """Format UTC datetime for OANDA query params with second precision."""
+    return ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _is_oanda_invalid_time_range_error(err: Exception) -> bool:
+    msg = str(err)
+    return " 416 " in msg and "time range specified is invalid" in msg
+
+
 def _symbol_to_instrument(symbol: str) -> str:
     """USDJPY or USDJPY.PRO -> USD_JPY."""
     base = re.sub(r"[^A-Za-z]", "", symbol.upper())
@@ -452,15 +462,17 @@ class OandaAdapter:
         # Request last 30 days of transactions
         to_ts = datetime.now(timezone.utc)
         from_ts = to_ts - timedelta(days=30)
-        from_param = from_ts.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
-        to_param = to_ts.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+        from_param = _rfc3339_utc(from_ts)
+        to_param = _rfc3339_utc(to_ts)
         try:
             data = self._req(
                 "GET",
                 f"/v3/accounts/{aid}/transactions",
                 params={"from": from_param, "to": to_param, "pageSize": 500},
             )
-        except Exception:
+        except Exception as e:
+            if _is_oanda_invalid_time_range_error(e):
+                return None
             return None
 
         def _match_close(tx_list: list) -> PositionCloseInfo | None:
@@ -504,8 +516,8 @@ class OandaAdapter:
         aid = self._get_account_id()
         to_ts = datetime.now(timezone.utc)
         from_ts = to_ts - timedelta(days=days_back)
-        from_param = from_ts.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
-        to_param = to_ts.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+        from_param = _rfc3339_utc(from_ts)
+        to_param = _rfc3339_utc(to_ts)
         opens: dict[str, dict] = {}   # tradeID -> { instrument, price, time, units }
         closes: dict[str, dict] = {}  # tradeID -> { price, time, pl, units }
 
@@ -577,6 +589,9 @@ class OandaAdapter:
             process_response_pages(data)
             full_range_ok = True
         except Exception as e:
+            if _is_oanda_invalid_time_range_error(e):
+                print("[oanda] get_closed_positions_from_history: full-range time range invalid; treating as empty window")
+                return []
             print(f"[oanda] get_closed_positions_from_history: full-range fetch failed ({e}); retrying in smaller windows")
 
         # Fallback for transient 50x/API gateway issues: fetch in small windows.
@@ -588,8 +603,8 @@ class OandaAdapter:
             chunk_successes = 0
             while cur_from < to_ts:
                 cur_to = min(cur_from + timedelta(days=window_days), to_ts)
-                chunk_from = cur_from.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
-                chunk_to = cur_to.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+                chunk_from = _rfc3339_utc(cur_from)
+                chunk_to = _rfc3339_utc(cur_to)
                 try:
                     chunk_data = self._req(
                         "GET",
@@ -599,6 +614,10 @@ class OandaAdapter:
                     process_response_pages(chunk_data)
                     chunk_successes += 1
                 except Exception as e:
+                    if _is_oanda_invalid_time_range_error(e):
+                        # OANDA occasionally rejects certain time windows; skip and continue.
+                        cur_from = cur_to
+                        continue
                     chunk_failures += 1
                     print(f"[oanda] get_closed_positions_from_history: chunk fetch failed ({chunk_from} -> {chunk_to}): {e}")
                 cur_from = cur_to
