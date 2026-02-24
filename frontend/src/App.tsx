@@ -5582,6 +5582,55 @@ function PresetsPage({ profile }: { profile: Profile }) {
                             </div>
                           </div>
                         </div>
+                        <div style={{ padding: 10, background: 'var(--bg-secondary)', borderRadius: 8 }}>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-primary)', fontWeight: 700, marginBottom: 8 }}>Adaptive TP</div>
+                          <div style={{ display: 'grid', gap: 8 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Enable adaptive TP</span>
+                              <input
+                                type="checkbox"
+                                checked={editedSettings.t7_trend_exhaustion_adaptive_tp_enabled}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_adaptive_tp_enabled: e.target.checked })}
+                              />
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Extended offset (pips)</span>
+                              <input
+                                type="number"
+                                step="0.1"
+                                min="0"
+                                value={editedSettings.t7_trend_exhaustion_tp_extended_offset_pips}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_tp_extended_offset_pips: parseFloat(e.target.value) || 0 })}
+                                style={{ width: 120, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+                              />
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Very extended offset (pips)</span>
+                              <input
+                                type="number"
+                                step="0.1"
+                                min="0"
+                                value={editedSettings.t7_trend_exhaustion_tp_very_extended_offset_pips}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_tp_very_extended_offset_pips: parseFloat(e.target.value) || 0 })}
+                                style={{ width: 120, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+                              />
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Minimum TP (pips)</span>
+                              <input
+                                type="number"
+                                step="0.1"
+                                min="0.1"
+                                value={editedSettings.t7_trend_exhaustion_tp_min_pips}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_tp_min_pips: parseFloat(e.target.value) || 0.1 })}
+                                style={{ width: 120, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+                              />
+                            </div>
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                              Uses base TP from Target Pips. In extended/very-extended zones, TP is reduced by these offsets, but never below Minimum TP.
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
                     )}
@@ -6328,57 +6377,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       />
                       <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
                         Blocks all Trial #7 entries while |EMA9-EMA21| on M5 is below this threshold.
-                      </div>
-                    </div>
-                    )}
-                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
-                    <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 8 }}>
-                        <input
-                          type="checkbox"
-                          checked={editedSettings.t7_trend_exhaustion_adaptive_tp_enabled}
-                          onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_adaptive_tp_enabled: e.target.checked })}
-                          style={{ width: 16, height: 16, cursor: 'pointer' }}
-                        />
-                        <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>Adaptive TP By Exhaustion</span>
-                      </label>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(90px, 1fr))', gap: 8 }}>
-                        <div>
-                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Extended Offset</div>
-                          <input
-                            type="number"
-                            step="0.1"
-                            min="0"
-                            value={editedSettings.t7_trend_exhaustion_tp_extended_offset_pips}
-                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_tp_extended_offset_pips: parseFloat(e.target.value) || 0 })}
-                            style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                          />
-                        </div>
-                        <div>
-                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Very Extended Offset</div>
-                          <input
-                            type="number"
-                            step="0.1"
-                            min="0"
-                            value={editedSettings.t7_trend_exhaustion_tp_very_extended_offset_pips}
-                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_tp_very_extended_offset_pips: parseFloat(e.target.value) || 0 })}
-                            style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                          />
-                        </div>
-                        <div>
-                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Minimum TP</div>
-                          <input
-                            type="number"
-                            step="0.1"
-                            min="0.1"
-                            value={editedSettings.t7_trend_exhaustion_tp_min_pips}
-                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_trend_exhaustion_tp_min_pips: parseFloat(e.target.value) || 0.1 })}
-                            style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                          />
-                        </div>
-                      </div>
-                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 6 }}>
-                        Base TP from Target Pips. Effective TP = base, base-offset, or base-very-offset by exhaustion zone, floored by Minimum TP.
                       </div>
                     </div>
                     )}
