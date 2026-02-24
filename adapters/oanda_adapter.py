@@ -51,8 +51,8 @@ def _rfc3339_utc(ts: datetime) -> str:
 
 
 def _is_oanda_invalid_time_range_error(err: Exception) -> bool:
-    msg = str(err)
-    return " 416 " in msg and "time range specified is invalid" in msg
+    msg = str(err).lower()
+    return "416" in msg and "time range specified is invalid" in msg
 
 
 def _symbol_to_instrument(symbol: str) -> str:
