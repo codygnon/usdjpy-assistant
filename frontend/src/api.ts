@@ -586,6 +586,7 @@ export interface PositionInfo {
   trade_id: string;
   side: string;
   entry_price: number;
+  size_lots: number | null;
   entry_type: string | null;
   current_price: number;
   unrealized_pips: number;

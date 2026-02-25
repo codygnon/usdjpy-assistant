@@ -2684,6 +2684,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
         for t in adapter.get_open_positions(profile.symbol):
             units = float(t.get("currentUnits", 0) or 0)
             s = "buy" if units > 0 else "sell"
+            size_lots = abs(units) / 100_000.0 if units else 0.0
             entry = float(t.get("price", 0) or 0)
             unrealized = (mid - entry) / pip_size if s == "buy" else (entry - mid) / pip_size
             age = 0.0
@@ -2707,6 +2708,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 "trade_id": str(t.get("id", "")),
                 "side": s,
                 "entry_price": entry,
+                "size_lots": round(size_lots, 4),
                 "entry_type": None,
                 "current_price": mid,
                 "unrealized_pips": round(unrealized, 1),

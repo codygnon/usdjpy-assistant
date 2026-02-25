@@ -409,6 +409,7 @@ def _build_and_write_dashboard(
                     if isinstance(t, dict):
                         units = float(t.get("currentUnits", 0) or t.get("initialUnits", 0) or 0)
                         s = "buy" if units > 0 else "sell"
+                        size_lots = abs(units) / 100_000.0 if units else 0.0
                         entry = float(t.get("price", 0) or 0)
                         trade_id = str(t.get("id", ""))
                         open_time_str = t.get("openTime")
@@ -432,6 +433,7 @@ def _build_and_write_dashboard(
                             s = "sell"
                         else:
                             continue
+                        size_lots = float(getattr(t, "volume", 0.0) or 0.0)
                         entry = float(getattr(t, "price_open", 0.0) or 0.0)
                         trade_id = str(getattr(t, "ticket", ""))
                         open_time_raw = getattr(t, "time", None)
@@ -462,6 +464,7 @@ def _build_and_write_dashboard(
                         trade_id=trade_id,
                         side=s,
                         entry_price=entry,
+                        size_lots=round(size_lots, 4),
                         entry_type=(db_row.get("entry_type") if db_row else None),
                         current_price=mid,
                         unrealized_pips=round(unrealized, 1),
@@ -498,6 +501,7 @@ def _build_and_write_dashboard(
                         trade_id=str(d.get("trade_id", "")),
                         side=s,
                         entry_price=entry,
+                        size_lots=(float(d.get("size_lots")) if d.get("size_lots") is not None else None),
                         entry_type=d.get("entry_type"),
                         current_price=mid,
                         unrealized_pips=round(unrealized, 1),

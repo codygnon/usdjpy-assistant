@@ -270,7 +270,9 @@ function PositionsPanel({ trades }: { trades: PositionInfo[] }) {
                           ? `${t.target_price.toFixed(3)} (${Math.round(tpPipsAway ?? 0)}p)`
                           : '—'}
                       </td>
-                      <td style={{ padding: '4px 6px', textAlign: 'right', color: colors.textSecondary, ...mono }}>—</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right', color: colors.textSecondary, ...mono }}>
+                        {t.size_lots != null ? t.size_lots.toFixed(2) : '—'}
+                      </td>
                     </tr>
                   );
                 })}

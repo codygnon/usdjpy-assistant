@@ -39,6 +39,7 @@ class PositionInfo:
     trade_id: str
     side: str
     entry_price: float
+    size_lots: Optional[float] = None
     entry_type: Optional[str] = None
     current_price: float = 0.0
     unrealized_pips: float = 0.0
