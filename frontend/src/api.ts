@@ -655,6 +655,7 @@ export interface Trial7ReversalRiskStatus {
   available: boolean;
   score: number | null;
   tier: string | null;
+  regime?: string | null;
   lot_multiplier?: number | null;
   min_tier_ema?: number | null;
   zone_block_entry?: boolean | null;

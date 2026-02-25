@@ -740,6 +740,10 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
     rr_rsi_period: int = 9
     rr_rsi_lookback_bars: int = 20
     rr_rsi_severity_midpoint: float = 18.0  # RSI points for 0.5 severity
+    rr_rsi_use_rolling_fallback: bool = True
+    rr_rsi_require_confirmation_bar: bool = True
+    rr_rsi_min_delta_for_score: float = 8.0
+    rr_rsi_min_pivot_separation_bars: int = 5
 
     # ADR params
     rr_adr_period: int = 14
@@ -755,11 +759,35 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
     # HTF proximity params
     rr_htf_buffer_pips: float = 5.0
     rr_htf_swing_lookback: int = 30
+    rr_htf_use_h4_levels: bool = True
+    rr_htf_buffer_prev_day_pips: float = 8.0
+    rr_htf_buffer_round_pips: float = 5.0
+    rr_htf_buffer_swing_pips: float = 6.0
+    rr_htf_score_decay_pips: float = 6.0
 
     # Tier thresholds from calibrated score distribution
     rr_tier_medium: float = 58.0
     rr_tier_high: float = 65.0
     rr_tier_critical: float = 71.0
+
+    # Regime-adaptive (ADX-based: trending / ranging / transition)
+    rr_regime_adaptive_enabled: bool = True
+    rr_regime_trending_tier_medium: Optional[float] = None
+    rr_regime_trending_tier_high: Optional[float] = None
+    rr_regime_trending_tier_critical: Optional[float] = None
+    rr_regime_trending_rsi_weight_mult: float = 0.8
+    rr_regime_trending_htf_weight_mult: float = 0.7
+    rr_regime_ranging_tier_medium: Optional[float] = None
+    rr_regime_ranging_tier_high: Optional[float] = None
+    rr_regime_ranging_tier_critical: Optional[float] = None
+    rr_regime_ranging_htf_weight_mult: float = 1.3
+    rr_regime_ranging_rsi_weight_mult: float = 1.2
+    rr_regime_adx_period: int = 14
+    rr_regime_trending_threshold: float = 25.0
+    rr_regime_ranging_threshold: float = 20.0
+    rr_regime_atr_ratio_lookback: int = 20
+    rr_regime_atr_ratio_trending: float = 1.2
+    rr_regime_use_atr_fallback: bool = False
 
     # Response params
     rr_medium_lot_multiplier: float = 0.75

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 import pandas as pd
 
+from core.indicators import adx as adx_fn
+from core.indicators import atr as atr_fn
+from core.indicators import detect_rsi_divergence as detect_rsi_divergence_fn
 from core.indicators import ema as ema_fn
 from core.indicators import rsi as rsi_fn
 
@@ -37,14 +39,55 @@ def _session_name_utc(ts_utc: pd.Timestamp) -> str:
     return "ny"
 
 
+def compute_regime(
+    m5_df: Optional[pd.DataFrame],
+    adx_period: int = 14,
+    trending_threshold: float = 25.0,
+    ranging_threshold: float = 20.0,
+    atr_ratio_lookback: int = 20,
+    atr_ratio_trending: float = 1.2,
+    use_atr_fallback: bool = False,
+) -> Literal["trending", "ranging", "transition"]:
+    """Classify market regime from M5: trending (ADX high), ranging (ADX low), or transition.
+
+    When ADX is in transition band, optional ATR fallback: range/ATR ratio > atr_ratio_trending -> trending.
+    """
+    if m5_df is None or m5_df.empty or len(m5_df) < adx_period + atr_ratio_lookback:
+        return "transition"
+    try:
+        adx_series = adx_fn(m5_df, period=adx_period)
+        adx_val = float(adx_series.iloc[-1]) if len(adx_series) else 0.0
+    except Exception:
+        return "transition"
+
+    if adx_val >= trending_threshold:
+        return "trending"
+    if adx_val <= ranging_threshold:
+        return "ranging"
+
+    if use_atr_fallback and len(m5_df) >= atr_ratio_lookback:
+        try:
+            window = m5_df.tail(atr_ratio_lookback)
+            rng = (window["high"].astype(float) - window["low"].astype(float)).mean()
+            atr_series = atr_fn(m5_df, period=adx_period)
+            atr_val = float(atr_series.iloc[-1]) if len(atr_series) else 1e-10
+            if atr_val > 0 and rng / atr_val >= atr_ratio_trending:
+                return "trending"
+        except Exception:
+            pass
+    return "transition"
+
+
 def _find_price_rsi_divergence(
     close: pd.Series,
     rsi: pd.Series,
     lookback: int,
+    min_pivot_separation_bars: int = 5,
 ) -> dict:
-    """Simple pivot-based divergence detection on latest lookback bars.
+    """Pivot-based divergence detection on latest lookback bars.
 
-    Returns both bullish/bearish divergence deltas so caller can select by trend side.
+    Requires at least min_pivot_separation_bars between last two highs/lows to filter noise.
+    Returns deltas and last pivot index (for confirmation check).
     """
     if close is None or rsi is None or len(close) < max(lookback, 8):
         return {
@@ -52,6 +95,10 @@ def _find_price_rsi_divergence(
             "bullish_found": False,
             "bearish_delta": 0.0,
             "bullish_delta": 0.0,
+            "bearish_last_pivot_idx": None,
+            "bullish_last_pivot_idx": None,
+            "bearish_separation": 0,
+            "bullish_separation": 0,
         }
 
     c = close.tail(lookback).astype(float).reset_index(drop=True)
@@ -63,13 +110,18 @@ def _find_price_rsi_divergence(
             "bullish_found": False,
             "bearish_delta": 0.0,
             "bullish_delta": 0.0,
+            "bearish_last_pivot_idx": None,
+            "bullish_last_pivot_idx": None,
+            "bearish_separation": 0,
+            "bullish_separation": 0,
         }
 
+    sep = max(1, int(min_pivot_separation_bars))
     highs: list[int] = []
     lows: list[int] = []
     wing = 2
     for i in range(wing, n - wing):
-        w = c.iloc[i - wing: i + wing + 1]
+        w = c.iloc[i - wing : i + wing + 1]
         v = float(c.iloc[i])
         if v >= float(w.max()):
             highs.append(i)
@@ -80,29 +132,56 @@ def _find_price_rsi_divergence(
     bullish_found = False
     bearish_delta = 0.0
     bullish_delta = 0.0
+    bearish_last_pivot_idx: Optional[int] = None
+    bullish_last_pivot_idx: Optional[int] = None
 
+    bearish_separation = 0
+    bullish_separation = 0
     if len(highs) >= 2:
         i1, i2 = highs[-2], highs[-1]
-        p1, p2 = float(c.iloc[i1]), float(c.iloc[i2])
-        r1, r2 = float(rv.iloc[i1]), float(rv.iloc[i2])
-        if p2 > p1 and r2 < r1:
-            bearish_found = True
-            bearish_delta = abs(r1 - r2)
+        if (i2 - i1) >= sep:
+            p1, p2 = float(c.iloc[i1]), float(c.iloc[i2])
+            r1, r2 = float(rv.iloc[i1]), float(rv.iloc[i2])
+            if p2 > p1 and r2 < r1:
+                bearish_found = True
+                bearish_delta = abs(r1 - r2)
+                bearish_last_pivot_idx = i2
+                bearish_separation = i2 - i1
 
     if len(lows) >= 2:
         i1, i2 = lows[-2], lows[-1]
-        p1, p2 = float(c.iloc[i1]), float(c.iloc[i2])
-        r1, r2 = float(rv.iloc[i1]), float(rv.iloc[i2])
-        if p2 < p1 and r2 > r1:
-            bullish_found = True
-            bullish_delta = abs(r2 - r1)
+        if (i2 - i1) >= sep:
+            p1, p2 = float(c.iloc[i1]), float(c.iloc[i2])
+            r1, r2 = float(rv.iloc[i1]), float(rv.iloc[i2])
+            if p2 < p1 and r2 > r1:
+                bullish_found = True
+                bullish_delta = abs(r2 - r1)
+                bullish_last_pivot_idx = i2
+                bullish_separation = i2 - i1
 
     return {
         "bearish_found": bearish_found,
         "bullish_found": bullish_found,
         "bearish_delta": round(bearish_delta, 3),
         "bullish_delta": round(bullish_delta, 3),
+        "bearish_last_pivot_idx": bearish_last_pivot_idx,
+        "bullish_last_pivot_idx": bullish_last_pivot_idx,
+        "bearish_separation": bearish_separation,
+        "bullish_separation": bullish_separation,
     }
+
+
+def _rsi_severity_from_delta(delta: float, min_delta: float) -> float:
+    """Stepped severity: 10->0.2, 18->0.5, 36->1.0. Below min_delta -> 0."""
+    if delta < min_delta:
+        return 0.0
+    if delta < 10.0:
+        return 0.0
+    if delta <= 18.0:
+        return 0.2
+    if delta <= 36.0:
+        return _clamp(0.2 + (delta - 18.0) / 18.0 * 0.8, 0.2, 1.0)
+    return 1.0
 
 
 def _compute_rsi_divergence_component(
@@ -112,6 +191,10 @@ def _compute_rsi_divergence_component(
     rsi_period: int,
     lookback: int,
     severity_midpoint: float,
+    use_rolling_fallback: bool = True,
+    require_confirmation_bar: bool = True,
+    min_delta_for_score: float = 8.0,
+    min_pivot_separation_bars: int = 5,
 ) -> dict:
     if m5_df is None or m5_df.empty or len(m5_df) < max(lookback + 2, rsi_period + 5):
         return {
@@ -119,33 +202,87 @@ def _compute_rsi_divergence_component(
             "score": 0.0,
             "found": False,
             "severity": 0.0,
+            "confidence": 0.0,
             "direction": None,
             "details": "insufficient_m5_data",
         }
 
+    lb = max(8, int(lookback))
     close = m5_df["close"].astype(float)
+    high = m5_df["high"].astype(float) if "high" in m5_df.columns else close
+    low = m5_df["low"].astype(float) if "low" in m5_df.columns else close
     rsi = rsi_fn(close, max(2, int(rsi_period)))
-    div = _find_price_rsi_divergence(close, rsi, max(8, int(lookback)))
+    div = _find_price_rsi_divergence(
+        close, rsi, lb, min_pivot_separation_bars=int(min_pivot_separation_bars)
+    )
 
     side = str(trend_side or "bull").lower()
     if side == "bull":
         found = bool(div["bearish_found"])
         delta = float(div["bearish_delta"])
         direction = "bearish"
+        last_pivot_idx = div.get("bearish_last_pivot_idx")
+        check_high = True
     else:
         found = bool(div["bullish_found"])
         delta = float(div["bullish_delta"])
         direction = "bullish"
+        last_pivot_idx = div.get("bullish_last_pivot_idx")
+        check_high = False
 
-    # Calibration: 18 RSI points -> 0.5 severity, 36 -> 1.0
-    denom = max(0.1, float(severity_midpoint) * 2.0)
-    severity = _clamp(delta / denom, 0.0, 1.0) if found else 0.0
+    if found and require_confirmation_bar and last_pivot_idx is not None:
+        c_tail = close.tail(lb).reset_index(drop=True)
+        h_tail = high.tail(lb).reset_index(drop=True)
+        l_tail = low.tail(lb).reset_index(drop=True)
+        n = len(c_tail)
+        if last_pivot_idx >= n:
+            last_pivot_idx = n - 1
+        if check_high:
+            pivot_price = float(h_tail.iloc[last_pivot_idx])
+            after_highs = h_tail.iloc[last_pivot_idx + 1 : n]
+            if len(after_highs) > 0 and float(after_highs.max()) > pivot_price:
+                found = False
+                delta = 0.0
+        else:
+            pivot_price = float(l_tail.iloc[last_pivot_idx])
+            after_lows = l_tail.iloc[last_pivot_idx + 1 : n]
+            if len(after_lows) > 0 and float(after_lows.min()) < pivot_price:
+                found = False
+                delta = 0.0
+
+    if not found and use_rolling_fallback and len(m5_df) >= 50:
+        has_bearish, has_bullish, roll_details = detect_rsi_divergence_fn(
+            m5_df, rsi_period=int(rsi_period), lookback_bars=min(50, lb * 2)
+        )
+        if side == "bull" and has_bearish and isinstance(roll_details.get("bearish_divergence"), dict):
+            d = roll_details["bearish_divergence"]
+            delta = abs(float(d.get("recent_rsi", 0)) - float(d.get("ref_rsi", 0)))
+            found = delta >= min_delta_for_score
+            direction = "bearish"
+        elif side != "bull" and has_bullish and isinstance(roll_details.get("bullish_divergence"), dict):
+            d = roll_details["bullish_divergence"]
+            delta = abs(float(d.get("recent_rsi", 0)) - float(d.get("ref_rsi", 0)))
+            found = delta >= min_delta_for_score
+            direction = "bullish"
+
+    min_delta = max(0.0, float(min_delta_for_score))
+    if found and delta < min_delta:
+        found = False
+        severity = 0.0
+    else:
+        severity = _rsi_severity_from_delta(delta, min_delta) if found else 0.0
+
+    confidence = 0.0
+    if found:
+        sep = div.get("bearish_separation", 0) if direction == "bearish" else div.get("bullish_separation", 0)
+        confidence = min(1.0, max(0.0, int(sep)) / 10.0)
 
     return {
         "name": "rsi_divergence",
-        "score": severity,
+        "score": round(severity, 4),
         "found": found,
         "severity": round(severity, 4),
+        "confidence": round(confidence, 4),
         "delta_rsi_points": round(delta, 3),
         "direction": direction,
         "details": f"{direction}_divergence" if found else "none",
@@ -287,27 +424,59 @@ def _compute_ema_spread_component(
     }
 
 
-def _round_number_levels(price: float) -> list[tuple[str, float]]:
-    levels: list[tuple[str, float]] = []
+def _round_number_levels(price: float) -> list[tuple[str, float, str]]:
+    """Return (name, price, level_type)."""
+    levels: list[tuple[str, float, str]] = []
     whole = int(price)
     for base in (whole - 1, whole, whole + 1, whole + 2):
-        levels.append((f"round_{base}.000", float(base)))
-        levels.append((f"round_{base}.500", float(base) + 0.5))
+        levels.append((f"round_{base}.000", float(base), "round"))
+        levels.append((f"round_{base}.500", float(base) + 0.5, "round"))
     return levels
+
+
+def _swing_high_low_local_extrema(df: pd.DataFrame, lookback: int, wing: int = 2) -> tuple[Optional[float], Optional[float]]:
+    """Swing high/low as local extrema (peak/trough in wing-neighborhood). Returns (swing_high, swing_low)."""
+    if df is None or len(df) < lookback or wing < 1:
+        return None, None
+    window = df.tail(lookback)
+    high = window["high"].astype(float)
+    low = window["low"].astype(float)
+    n = len(high)
+    swing_highs: list[float] = []
+    swing_lows: list[float] = []
+    for i in range(wing, n - wing):
+        h_val = float(high.iloc[i])
+        l_val = float(low.iloc[i])
+        h_win = high.iloc[i - wing : i + wing + 1]
+        l_win = low.iloc[i - wing : i + wing + 1]
+        if h_val >= float(h_win.max()):
+            swing_highs.append(h_val)
+        if l_val <= float(l_win.min()):
+            swing_lows.append(l_val)
+    sh = float(max(swing_highs)) if swing_highs else None
+    sl = float(min(swing_lows)) if swing_lows else None
+    return sh, sl
 
 
 def _compute_htf_proximity_component(
     *,
     m15_df: Optional[pd.DataFrame],
     d_df: Optional[pd.DataFrame],
+    h4_df: Optional[pd.DataFrame],
     trial7_daily_state: Optional[dict],
     current_price: float,
     trend_side: str,
     pip_size: float,
-    buffer_pips: float,
+    buffer_prev_day_pips: float,
+    buffer_round_pips: float,
+    buffer_swing_pips: float,
     swing_lookback: int,
+    score_decay_pips: float,
+    use_h4_levels: bool = True,
 ) -> dict:
-    levels: list[tuple[str, float]] = []
+    """HTF proximity with level-type buffers and exponential decay score."""
+    import math
+    levels: list[tuple[str, float, str]] = []
 
     prev_day_high = None
     prev_day_low = None
@@ -328,33 +497,37 @@ def _compute_htf_proximity_component(
             prev_day_low = float(ref["low"])
 
     if prev_day_high is not None:
-        levels.append(("prev_day_high", float(prev_day_high)))
+        levels.append(("prev_day_high", float(prev_day_high), "prev_day"))
     if prev_day_low is not None:
-        levels.append(("prev_day_low", float(prev_day_low)))
+        levels.append(("prev_day_low", float(prev_day_low), "prev_day"))
 
     levels.extend(_round_number_levels(float(current_price)))
 
+    lb = max(5, int(swing_lookback))
     if m15_df is not None and not m15_df.empty:
-        m15 = m15_df.copy().sort_values("time")
-        lookback = max(5, int(swing_lookback))
-        window = m15.tail(lookback)
-        try:
-            swing_high = float(window["high"].astype(float).max())
-            swing_low = float(window["low"].astype(float).min())
-            levels.append(("m15_swing_high", swing_high))
-            levels.append(("m15_swing_low", swing_low))
-        except Exception:
-            pass
+        sh, sl = _swing_high_low_local_extrema(m15_df, lb)
+        if sh is not None:
+            levels.append(("m15_swing_high", sh, "swing"))
+        if sl is not None:
+            levels.append(("m15_swing_low", sl, "swing"))
+
+    if use_h4_levels and h4_df is not None and not h4_df.empty and len(h4_df) >= lb:
+        h4_lookback = min(lb, 20)
+        sh, sl = _swing_high_low_local_extrema(h4_df, h4_lookback)
+        if sh is not None:
+            levels.append(("h4_swing_high", sh, "swing"))
+        if sl is not None:
+            levels.append(("h4_swing_low", sl, "swing"))
 
     side = str(trend_side or "bull").lower()
-    opp: list[tuple[str, float]] = []
-    for name, lv in levels:
+    opp: list[tuple[str, float, str]] = []
+    for name, lv, ltype in levels:
         if side == "bull":
             if lv >= current_price:
-                opp.append((name, lv))
+                opp.append((name, lv, ltype))
         else:
             if lv <= current_price:
-                opp.append((name, lv))
+                opp.append((name, lv, ltype))
 
     if not opp:
         return {
@@ -365,13 +538,23 @@ def _compute_htf_proximity_component(
             "details": "no_opposing_levels",
         }
 
+    buf_prev = max(0.1, float(buffer_prev_day_pips))
+    buf_round = max(0.1, float(buffer_round_pips))
+    buf_swing = max(0.1, float(buffer_swing_pips))
+    decay = max(0.1, float(score_decay_pips))
+    best_score = 0.0
     nearest_name = None
     nearest_dist = None
-    for name, lv in opp:
-        dist = abs(float(lv) - float(current_price)) / float(pip_size)
-        if nearest_dist is None or dist < nearest_dist:
-            nearest_dist = dist
+    for name, lv, ltype in opp:
+        dist_pips = abs(float(lv) - float(current_price)) / float(pip_size)
+        buf = buf_prev if ltype == "prev_day" else (buf_round if ltype == "round" else buf_swing)
+        if dist_pips > buf:
+            continue
+        score = math.exp(-dist_pips / decay)
+        if score > best_score:
+            best_score = score
             nearest_name = name
+            nearest_dist = dist_pips
 
     if nearest_dist is None:
         return {
@@ -379,13 +562,12 @@ def _compute_htf_proximity_component(
             "score": 0.0,
             "nearest_level": None,
             "distance_pips": None,
-            "details": "distance_calc_failed",
+            "details": "no_level_within_buffer",
         }
 
-    score = _clamp(1.0 - (nearest_dist / max(0.1, float(buffer_pips))), 0.0, 1.0)
     return {
         "name": "htf_proximity",
-        "score": round(score, 4),
+        "score": round(_clamp(best_score, 0.0, 1.0), 4),
         "nearest_level": nearest_name,
         "distance_pips": round(float(nearest_dist), 2),
         "details": "ok",
@@ -500,8 +682,19 @@ def compute_reversal_risk_score(
     """Compute calibrated Trial #7 reversal-risk score and adaptive response."""
     m5_df = data_by_tf.get("M5")
     m15_df = data_by_tf.get("M15")
+    h4_df = data_by_tf.get("H4")
     d_df = data_by_tf.get("D")
     current_price = (float(tick.bid) + float(tick.ask)) / 2.0
+
+    regime = compute_regime(
+        m5_df,
+        adx_period=int(getattr(policy, "rr_regime_adx_period", 14)),
+        trending_threshold=float(getattr(policy, "rr_regime_trending_threshold", 25.0)),
+        ranging_threshold=float(getattr(policy, "rr_regime_ranging_threshold", 20.0)),
+        atr_ratio_lookback=int(getattr(policy, "rr_regime_atr_ratio_lookback", 20)),
+        atr_ratio_trending=float(getattr(policy, "rr_regime_atr_ratio_trending", 1.2)),
+        use_atr_fallback=bool(getattr(policy, "rr_regime_use_atr_fallback", False)),
+    )
 
     components = {
         "rsi_divergence": _compute_rsi_divergence_component(
@@ -510,6 +703,10 @@ def compute_reversal_risk_score(
             rsi_period=int(getattr(policy, "rr_rsi_period", 9)),
             lookback=int(getattr(policy, "rr_rsi_lookback_bars", 20)),
             severity_midpoint=float(getattr(policy, "rr_rsi_severity_midpoint", 18.0)),
+            use_rolling_fallback=bool(getattr(policy, "rr_rsi_use_rolling_fallback", True)),
+            require_confirmation_bar=bool(getattr(policy, "rr_rsi_require_confirmation_bar", True)),
+            min_delta_for_score=float(getattr(policy, "rr_rsi_min_delta_for_score", 8.0)),
+            min_pivot_separation_bars=int(getattr(policy, "rr_rsi_min_pivot_separation_bars", 5)),
         ),
         "adr_exhaustion": _compute_adr_exhaustion_component(
             d_df=d_df,
@@ -524,12 +721,17 @@ def compute_reversal_risk_score(
         "htf_proximity": _compute_htf_proximity_component(
             m15_df=m15_df,
             d_df=d_df,
+            h4_df=h4_df,
             trial7_daily_state=trial7_daily_state,
             current_price=current_price,
             trend_side=trend_side,
             pip_size=float(pip_size),
-            buffer_pips=float(getattr(policy, "rr_htf_buffer_pips", 5.0)),
+            buffer_prev_day_pips=float(getattr(policy, "rr_htf_buffer_prev_day_pips", 8.0)),
+            buffer_round_pips=float(getattr(policy, "rr_htf_buffer_round_pips", 5.0)),
+            buffer_swing_pips=float(getattr(policy, "rr_htf_buffer_swing_pips", 6.0)),
             swing_lookback=int(getattr(policy, "rr_htf_swing_lookback", 30)),
+            score_decay_pips=float(getattr(policy, "rr_htf_score_decay_pips", 6.0)),
+            use_h4_levels=bool(getattr(policy, "rr_htf_use_h4_levels", True)),
         ),
         "ema_spread": _compute_ema_spread_component(
             m5_df=m5_df,
@@ -539,20 +741,47 @@ def compute_reversal_risk_score(
         ),
     }
 
+    w_rsi = int(getattr(policy, "rr_weight_rsi_divergence", 55))
+    w_adr = int(getattr(policy, "rr_weight_adr_exhaustion", 20))
+    w_htf = int(getattr(policy, "rr_weight_htf_proximity", 15))
+    w_spread = int(getattr(policy, "rr_weight_ema_spread", 10))
+
+    if bool(getattr(policy, "rr_regime_adaptive_enabled", True)):
+        if regime == "trending":
+            w_rsi = max(1, int(w_rsi * float(getattr(policy, "rr_regime_trending_rsi_weight_mult", 0.8))))
+            w_htf = max(1, int(w_htf * float(getattr(policy, "rr_regime_trending_htf_weight_mult", 0.7))))
+        elif regime == "ranging":
+            w_rsi = max(1, int(w_rsi * float(getattr(policy, "rr_regime_ranging_rsi_weight_mult", 1.2))))
+            w_htf = max(1, int(w_htf * float(getattr(policy, "rr_regime_ranging_htf_weight_mult", 1.3))))
+
     score, weights = _compute_weighted_score(
         components=components,
-        w_rsi=int(getattr(policy, "rr_weight_rsi_divergence", 55)),
-        w_adr=int(getattr(policy, "rr_weight_adr_exhaustion", 20)),
-        w_htf=int(getattr(policy, "rr_weight_htf_proximity", 15)),
-        w_spread=int(getattr(policy, "rr_weight_ema_spread", 10)),
+        w_rsi=w_rsi,
+        w_adr=w_adr,
+        w_htf=w_htf,
+        w_spread=w_spread,
     )
 
-    tier = _score_to_tier(
-        score,
-        float(getattr(policy, "rr_tier_medium", 58.0)),
-        float(getattr(policy, "rr_tier_high", 65.0)),
-        float(getattr(policy, "rr_tier_critical", 71.0)),
-    )
+    t_medium = float(getattr(policy, "rr_tier_medium", 58.0))
+    t_high = float(getattr(policy, "rr_tier_high", 65.0))
+    t_critical = float(getattr(policy, "rr_tier_critical", 71.0))
+    if bool(getattr(policy, "rr_regime_adaptive_enabled", True)):
+        if regime == "trending":
+            if getattr(policy, "rr_regime_trending_tier_medium", None) is not None:
+                t_medium = float(policy.rr_regime_trending_tier_medium)
+            if getattr(policy, "rr_regime_trending_tier_high", None) is not None:
+                t_high = float(policy.rr_regime_trending_tier_high)
+            if getattr(policy, "rr_regime_trending_tier_critical", None) is not None:
+                t_critical = float(policy.rr_regime_trending_tier_critical)
+        elif regime == "ranging":
+            if getattr(policy, "rr_regime_ranging_tier_medium", None) is not None:
+                t_medium = float(policy.rr_regime_ranging_tier_medium)
+            if getattr(policy, "rr_regime_ranging_tier_high", None) is not None:
+                t_high = float(policy.rr_regime_ranging_tier_high)
+            if getattr(policy, "rr_regime_ranging_tier_critical", None) is not None:
+                t_critical = float(policy.rr_regime_ranging_tier_critical)
+
+    tier = _score_to_tier(score, t_medium, t_high, t_critical)
     response = build_reversal_risk_response(policy, tier)
 
     now_utc = pd.Timestamp.now(tz="UTC")
@@ -560,14 +789,15 @@ def compute_reversal_risk_score(
         "enabled": bool(getattr(policy, "use_reversal_risk_score", False)),
         "score": round(float(score), 2),
         "tier": tier,
+        "regime": regime,
         "trend_side": str(trend_side or "").lower(),
         "session": _session_name_utc(now_utc),
         "weights": weights,
         "components": components,
         "response": response,
         "thresholds": {
-            "medium": float(getattr(policy, "rr_tier_medium", 58.0)),
-            "high": float(getattr(policy, "rr_tier_high", 65.0)),
-            "critical": float(getattr(policy, "rr_tier_critical", 71.0)),
+            "medium": t_medium,
+            "high": t_high,
+            "critical": t_critical,
         },
     }

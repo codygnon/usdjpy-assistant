@@ -5916,6 +5916,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                                       ? 'var(--accent)'
                                       : 'var(--success)',
                             }}>{String(t7ReversalRiskStatus.tier || 'N/A').toUpperCase()}</strong></span>
+                            <span>Regime: <strong>{String(t7ReversalRiskStatus?.regime ?? 'N/A')}</strong></span>
                             <span>Lot x: <strong>{typeof t7ReversalRiskStatus.lot_multiplier === 'number' ? t7ReversalRiskStatus.lot_multiplier.toFixed(2) : 'N/A'}</strong></span>
                             <span>Zone block: <strong>{t7ReversalRiskStatus.zone_block_entry ? 'ON' : 'OFF'}</strong></span>
                             <span>Managed exit: <strong>{t7ReversalRiskStatus.use_managed_exit ? 'ON' : 'OFF'}</strong></span>

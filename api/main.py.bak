@@ -3359,7 +3359,6 @@ def get_trial7_reversal_risk_status(profile_name: str, profile_path: Optional[st
 
     score = None
     tier = None
-    regime = None
     lot_multiplier = None
     min_tier_ema = None
     zone_block_entry = None
@@ -3375,7 +3374,6 @@ def get_trial7_reversal_risk_status(profile_name: str, profile_path: Optional[st
         metadata = f.get("metadata") if isinstance(f.get("metadata"), dict) else {}
         score = metadata.get("score")
         tier = metadata.get("tier")
-        regime = metadata.get("regime")
         lot_multiplier = metadata.get("lot_multiplier")
         min_tier_ema = metadata.get("min_tier_ema")
         zone_block_entry = metadata.get("zone_block_entry")
@@ -3410,15 +3408,12 @@ def get_trial7_reversal_risk_status(profile_name: str, profile_path: Optional[st
                 zone_block_entry = str(value).upper() == "ON"
             elif key == "RR Managed Exit":
                 use_managed_exit = str(value).upper() == "ON"
-            elif key == "Regime":
-                regime = str(value).lower() if value is not None else None
 
     return {
         "enabled": enabled,
         "available": score is not None or tier is not None,
         "score": score,
         "tier": tier,
-        "regime": regime,
         "lot_multiplier": lot_multiplier,
         "min_tier_ema": min_tier_ema,
         "zone_block_entry": zone_block_entry,

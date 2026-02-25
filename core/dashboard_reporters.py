@@ -476,6 +476,7 @@ def report_trial7_reversal_risk(policy, reversal_risk_result: Optional[dict]) ->
 
     score = float(reversal_risk_result.get("score", 0.0))
     tier = str(reversal_risk_result.get("tier", "low")).lower()
+    regime = str(reversal_risk_result.get("regime", "transition")).lower()
     thresholds = reversal_risk_result.get("thresholds") if isinstance(reversal_risk_result.get("thresholds"), dict) else {}
     t_medium = float(thresholds.get("medium", getattr(policy, "rr_tier_medium", 58.0)))
     t_high = float(thresholds.get("high", getattr(policy, "rr_tier_high", 65.0)))
@@ -517,13 +518,14 @@ def report_trial7_reversal_risk(policy, reversal_risk_result: Optional[dict]) ->
         display_name="Trial #7 Reversal Risk",
         enabled=True,
         is_clear=True,
-        current_value=f"Score {score:.2f} | Tier {tier.upper()}",
+        current_value=f"Score {score:.2f} | Tier {tier.upper()} | Regime: {regime}",
         threshold=f"medium:{t_medium:.1f} high:{t_high:.1f} critical:{t_critical:.1f}",
         block_reason=None,
         sub_filters=sub_filters,
         metadata={
             "score": round(score, 2),
             "tier": tier,
+            "regime": regime,
             "lot_multiplier": round(lot_x, 4),
             "min_tier_ema": int(min_tier) if min_tier is not None else None,
             "zone_block_entry": zone_block,
@@ -895,6 +897,7 @@ def collect_trial_7_context(
         if isinstance(rr_result, dict):
             rr_score = rr_result.get("score")
             rr_tier = str(rr_result.get("tier", "low")).upper()
+            rr_regime = str(rr_result.get("regime", "transition")).lower()
             rr_resp = rr_result.get("response") if isinstance(rr_result.get("response"), dict) else {}
             rr_lot_x = rr_resp.get("lot_multiplier")
             rr_min_tier = rr_resp.get("min_tier_ema")
@@ -906,6 +909,7 @@ def collect_trial_7_context(
                 except Exception:
                     pass
             items.append(ContextItem("RR Tier", rr_tier, "reversal_risk"))
+            items.append(ContextItem("Regime", rr_regime, "reversal_risk"))
             if rr_lot_x is not None:
                 try:
                     items.append(ContextItem("RR Lot Multiplier", f"{float(rr_lot_x):.2f}x", "reversal_risk"))

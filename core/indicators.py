@@ -28,6 +28,45 @@ def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     return tr.rolling(period).mean()
 
 
+def adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """Average Directional Index (ADX). Wilder smoothing (alpha=1/period).
+
+    df must have columns: high, low, close.
+    Returns ADX series (0-100). Needs at least 2*period bars for meaningful values.
+    """
+    if df is None or len(df) < period + 1:
+        return pd.Series(dtype=float)
+    high = df["high"].astype(float)
+    low = df["low"].astype(float)
+    prev_high = high.shift(1)
+    prev_low = low.shift(1)
+    prev_close = df["close"].astype(float).shift(1)
+
+    up_move = high - prev_high
+    down_move = prev_low - low
+
+    plus_dm = up_move.where((up_move > down_move) & (up_move > 0), 0.0)
+    minus_dm = down_move.where((down_move > up_move) & (down_move > 0), 0.0)
+
+    tr = pd.concat(
+        [
+            high - low,
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+
+    alpha = 1.0 / float(period)
+    atr_series = tr.ewm(alpha=alpha, adjust=False).mean()
+    plus_di = 100.0 * plus_dm.ewm(alpha=alpha, adjust=False).mean() / atr_series.replace(0, float("nan")).ffill().fillna(1e-10)
+    minus_di = 100.0 * minus_dm.ewm(alpha=alpha, adjust=False).mean() / atr_series.replace(0, float("nan")).ffill().fillna(1e-10)
+
+    dx = 100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, float("nan")).ffill().fillna(1e-10)
+    adx_series = dx.ewm(alpha=alpha, adjust=False).mean()
+    return adx_series
+
+
 def rsi(series: pd.Series, period: int = 14) -> pd.Series:
     """Relative Strength Index (RSI) using Wilder's smoothing."""
     delta = series.diff()
