@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -157,6 +158,10 @@ def _runtime_state_path(profile_name: str) -> Path:
     return LOGS_DIR / profile_name / "runtime_state.json"
 
 
+def _loop_pid_path(profile_name: str) -> Path:
+    return LOGS_DIR / profile_name / "loop.pid"
+
+
 def _get_display_currency(profile: ProfileV1) -> tuple[str, float]:
     """Return (currency_code, rate). Rate multiplies USD amounts to get display value.
     For USD, rate=1. For JPY, rate=usdjpy bid (1 USD = rate JPY)."""
@@ -184,13 +189,25 @@ def _convert_amount(amount: float | None, rate: float) -> float | None:
 
 def _is_loop_running(profile_name: str) -> bool:
     proc = _loop_processes.get(profile_name)
-    if proc is None:
+    if proc is not None:
+        if proc.poll() is None:
+            return True
+        # Process finished; remove from tracking
+        del _loop_processes[profile_name]
+
+    pid_path = _loop_pid_path(profile_name)
+    if not pid_path.exists():
         return False
-    if proc.poll() is None:
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+        os.kill(pid, 0)
         return True
-    # Process finished; remove from tracking
-    del _loop_processes[profile_name]
-    return False
+    except Exception:
+        try:
+            pid_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -598,6 +615,9 @@ def start_loop(profile_name: str, profile_path: str) -> dict[str, Any]:
             stderr=subprocess.STDOUT,
         )
         _loop_processes[profile_name] = proc
+        pid_path = _loop_pid_path(profile_name)
+        pid_path.parent.mkdir(parents=True, exist_ok=True)
+        pid_path.write_text(str(proc.pid), encoding="utf-8")
         return {"status": "started", "pid": proc.pid}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -607,17 +627,59 @@ def start_loop(profile_name: str, profile_path: str) -> dict[str, Any]:
 def stop_loop(profile_name: str) -> dict[str, str]:
     """Stop the trading loop for a profile."""
     proc = _loop_processes.get(profile_name)
-    if proc is None or proc.poll() is not None:
+    if proc is not None and proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        _loop_processes.pop(profile_name, None)
+        try:
+            _loop_pid_path(profile_name).unlink(missing_ok=True)
+        except Exception:
+            pass
+        return {"status": "stopped"}
+
+    # Fallback: stop by persisted pid (covers API restarts)
+    pid_path = _loop_pid_path(profile_name)
+    if not pid_path.exists():
         return {"status": "not_running"}
-    
-    proc.terminate()
     try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-    
-    del _loop_processes[profile_name]
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+    except Exception:
+        pid_path.unlink(missing_ok=True)
+        return {"status": "not_running"}
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pid_path.unlink(missing_ok=True)
+        return {"status": "not_running"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to stop loop pid {pid}: {e}")
+
+    deadline = _time.monotonic() + 10.0
+    while _time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+            _time.sleep(0.1)
+        except ProcessLookupError:
+            pid_path.unlink(missing_ok=True)
+            _loop_processes.pop(profile_name, None)
+            return {"status": "stopped"}
+        except Exception:
+            break
+
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to force-stop loop pid {pid}: {e}")
+
+    pid_path.unlink(missing_ok=True)
+    _loop_processes.pop(profile_name, None)
     return {"status": "stopped"}
 
 
@@ -3089,6 +3151,7 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
                 except Exception:
                     stale_age_seconds = None
             result = dict(file_state)
+            result["loop_running"] = _is_loop_running(profile_name)
             result["stale"] = stale
             result["stale_age_seconds"] = stale_age_seconds
             result["data_source"] = "run_loop_file"
