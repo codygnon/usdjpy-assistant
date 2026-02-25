@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -570,6 +571,18 @@ def _append_trade_open_event(
         append_trade_event(log_dir, event)
     except Exception:
         pass
+
+
+def _event_trigger_label(trigger_type: str | None, decision_reason: str | None) -> str:
+    """Create a user-friendly trigger label for dashboard trade events."""
+    base = (trigger_type or "").strip()
+    if base != "tiered_pullback":
+        return base
+    reason = (decision_reason or "").strip()
+    m = re.search(r"tier_(\d+)", reason)
+    if m:
+        return f"tiered_pullback_ema{m.group(1)}"
+    return base
 
 
 def main() -> None:
@@ -1548,7 +1561,9 @@ def main() -> None:
                             )
                             _append_trade_open_event(
                                 log_dir, f"kt_cg_trial_4:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
-                                side, entry_price, trigger_type=t4_trigger_type or "", entry_type=t4_trigger_type or "",
+                                side, entry_price,
+                                trigger_type=_event_trigger_label(t4_trigger_type, dec.reason),
+                                entry_type=t4_trigger_type or "",
                             )
                         else:
                             print(f"[{profile.profile_name}] kt_cg_trial_4 {pol.id} mode={mode} -> {dec.reason}")
@@ -1756,7 +1771,9 @@ def main() -> None:
                             )
                             _append_trade_open_event(
                                 log_dir, f"kt_cg_trial_5:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
-                                side, entry_price, trigger_type=t5_trigger_type or "", entry_type=t5_trigger_type or "",
+                                side, entry_price,
+                                trigger_type=_event_trigger_label(t5_trigger_type, dec.reason),
+                                entry_type=t5_trigger_type or "",
                             )
                             # Fix 6: Only persist tier FIRES after trade is confirmed placed
                             if tier_fires:
@@ -1890,7 +1907,9 @@ def main() -> None:
                             )
                             _append_trade_open_event(
                                 log_dir, f"kt_cg_trial_7:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
-                                side, entry_price, trigger_type=t7_trigger_type or "", entry_type=t7_trigger_type or "",
+                                side, entry_price,
+                                trigger_type=_event_trigger_label(t7_trigger_type, dec.reason),
+                                entry_type=t7_trigger_type or "",
                             )
                         else:
                             print(f"[{profile.profile_name}] kt_cg_trial_7 {pol.id} mode={mode} -> {dec.reason}")
