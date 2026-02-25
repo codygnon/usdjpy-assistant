@@ -228,10 +228,12 @@ export interface TradesResponse {
 export async function getTrades(
   profileName: string,
   limit = 50,
-  profilePath?: string
+  profilePath?: string,
+  sync = false
 ): Promise<TradesResponse> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (profilePath) params.set('profile_path', profilePath);
+  if (sync) params.set('sync', 'true');
   const url = `${API_BASE}/data/${profileName}/trades?${params}`;
   const data = await fetchJson<Record<string, unknown>[] | { trades: Record<string, unknown>[]; display_currency: string }>(url);
   if (data != null && typeof data === 'object' && 'trades' in data && Array.isArray((data as { trades: unknown }).trades)) {
@@ -300,10 +302,12 @@ export async function getRejectionBreakdown(profileName: string): Promise<Record
   return fetchJson<Record<string, number>>(`${API_BASE}/data/${profileName}/rejection-breakdown`);
 }
 
-export async function getQuickStats(profileName: string, profilePath?: string): Promise<QuickStats> {
-  const url = profilePath
-    ? `${API_BASE}/data/${profileName}/stats?profile_path=${encodeURIComponent(profilePath)}`
-    : `${API_BASE}/data/${profileName}/stats`;
+export async function getQuickStats(profileName: string, profilePath?: string, sync = false): Promise<QuickStats> {
+  const params = new URLSearchParams();
+  if (profilePath) params.set('profile_path', profilePath);
+  if (sync) params.set('sync', 'true');
+  const qs = params.toString();
+  const url = qs ? `${API_BASE}/data/${profileName}/stats?${qs}` : `${API_BASE}/data/${profileName}/stats`;
   return fetchJson<QuickStats>(url);
 }
 
@@ -504,9 +508,12 @@ export interface OpenTrade {
   financing?: number;
 }
 
-export async function getOpenTrades(profileName: string, profilePath?: string): Promise<OpenTrade[]> {
-  const params = profilePath ? `?profile_path=${encodeURIComponent(profilePath)}` : '';
-  return fetchJson<OpenTrade[]>(`${API_BASE}/data/${profileName}/open-trades${params}`);
+export async function getOpenTrades(profileName: string, profilePath?: string, sync = false): Promise<OpenTrade[]> {
+  const params = new URLSearchParams();
+  if (profilePath) params.set('profile_path', profilePath);
+  if (sync) params.set('sync', 'true');
+  const qs = params.toString();
+  return fetchJson<OpenTrade[]>(`${API_BASE}/data/${profileName}/open-trades${qs ? `?${qs}` : ''}`);
 }
 
 // Advanced Analytics
@@ -609,6 +616,9 @@ export interface DashboardState {
   bid: number;
   ask: number;
   spread_pips: number;
+  stale?: boolean;
+  stale_age_seconds?: number | null;
+  data_source?: 'run_loop_file' | 'none';
   error?: string;
 }
 

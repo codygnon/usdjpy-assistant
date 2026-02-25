@@ -34,7 +34,7 @@ class ErrorBoundary extends React.Component<
   }
 }
 
-type Page = 'dashboard' | 'run' | 'presets' | 'profile' | 'logs' | 'analysis' | 'guide';
+type Page = 'dashboard' | 'presets' | 'profile' | 'logs' | 'analysis' | 'guide';
 
 interface Profile {
   path: string;
@@ -54,6 +54,20 @@ const getUnlockedProfiles = (): Set<string> => {
 const setUnlockedProfilesStorage = (paths: Set<string>) => {
   sessionStorage.setItem('unlockedProfiles', JSON.stringify([...paths]));
 };
+
+function useDocumentVisible(): boolean {
+  const [isVisible, setIsVisible] = useState(
+    typeof document === 'undefined' ? true : document.visibilityState !== 'hidden'
+  );
+
+  useEffect(() => {
+    const onVisibilityChange = () => setIsVisible(document.visibilityState !== 'hidden');
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, []);
+
+  return isVisible;
+}
 
 export default function App() {
   const [page, setPage] = useState<Page>('dashboard');
@@ -382,12 +396,6 @@ export default function App() {
             Dashboard
           </button>
           <button
-            className={`nav-item ${page === 'run' ? 'active' : ''}`}
-            onClick={() => setPage('run')}
-          >
-            Run / Status
-          </button>
-          <button
             className={`nav-item ${page === 'analysis' ? 'active' : ''}`}
             onClick={() => setPage('analysis')}
           >
@@ -467,7 +475,6 @@ export default function App() {
             <>
               <ErrorBoundary>
               {page === 'dashboard' && <DashboardPage profileName={selectedProfile.name} profilePath={selectedProfile.path} />}
-              {page === 'run' && <RunPage profile={selectedProfile} />}
               {page === 'analysis' && <AnalysisPage profile={selectedProfile} />}
               {page === 'presets' && <PresetsPage profile={selectedProfile} />}
               {page === 'profile' && <ProfilePage profile={selectedProfile} authStatus={authStatus} onAuthChange={fetchProfiles} />}
@@ -482,169 +489,6 @@ export default function App() {
           </div>
         )}
       </main>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Run / Status Page
-// ---------------------------------------------------------------------------
-
-function RunPage({ profile }: { profile: Profile }) {
-  const [state, setState] = useState<api.RuntimeState | null>(null);
-  const [log, setLog] = useState<string>('');
-  const [loading, setLoading] = useState(false);
-  const [openTrades, setOpenTrades] = useState<api.OpenTrade[]>([]);
-
-  const fetchState = () => {
-    api.getRuntimeState(profile.name).then(setState).catch(console.error);
-    api.getLoopLog(profile.name, 200).then((r) => setLog(r.content)).catch(console.error);
-  };
-
-  const fetchOpenTrades = () => {
-    api.getOpenTrades(profile.name, profile.path).then(setOpenTrades).catch(console.error);
-  };
-
-  useEffect(() => {
-    fetchState();
-    const interval = setInterval(fetchState, 3000);
-    return () => clearInterval(interval);
-  }, [profile.name]);
-
-  useEffect(() => {
-    fetchOpenTrades();
-    const interval = setInterval(fetchOpenTrades, 15000);
-    return () => clearInterval(interval);
-  }, [profile.name]);
-
-  const handleModeChange = async (mode: string) => {
-    if (!state) return;
-    await api.updateRuntimeState(profile.name, mode, state.kill_switch);
-    fetchState();
-  };
-
-  const handleKillSwitch = async (checked: boolean) => {
-    if (!state) return;
-    await api.updateRuntimeState(profile.name, state.mode, checked);
-    fetchState();
-  };
-
-  const handleStart = async () => {
-    setLoading(true);
-    try {
-      await api.startLoop(profile.name, profile.path);
-      fetchState();
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleStop = async () => {
-    setLoading(true);
-    try {
-      await api.stopLoop(profile.name);
-      fetchState();
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div>
-      <h2 className="page-title">Run / Status</h2>
-
-      <div className="grid-2">
-        <div className="card">
-          <h3 className="card-title">Loop Control</h3>
-          
-          <div className="flex-between mb-4">
-            <span>Status:</span>
-            {state?.loop_running ? (
-              <span className="status status-running">
-                <span className="status-dot" />
-                Running
-              </span>
-            ) : (
-              <span className="status status-stopped">
-                <span className="status-dot" />
-                Stopped
-              </span>
-            )}
-          </div>
-
-          <div className="flex gap-2">
-            <button
-              className="btn btn-success"
-              onClick={handleStart}
-              disabled={loading || state?.loop_running}
-            >
-              Start Loop
-            </button>
-            <button
-              className="btn btn-danger"
-              onClick={handleStop}
-              disabled={loading || !state?.loop_running}
-            >
-              Stop Loop
-            </button>
-          </div>
-        </div>
-
-        <div className="card">
-          <h3 className="card-title">Runtime Settings</h3>
-
-          <div className="form-group">
-            <label>Mode</label>
-            <select
-              value={state?.mode || 'DISARMED'}
-              onChange={(e) => handleModeChange(e.target.value)}
-            >
-              <option value="DISARMED">DISARMED</option>
-              <option value="ARMED_MANUAL_CONFIRM">ARMED_MANUAL_CONFIRM</option>
-              <option value="ARMED_AUTO_DEMO">ARMED_AUTO_DEMO</option>
-            </select>
-          </div>
-
-          <div className="form-group">
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={state?.kill_switch || false}
-                onChange={(e) => handleKillSwitch(e.target.checked)}
-                style={{ width: 'auto' }}
-              />
-              Kill Switch (disable all execution)
-            </label>
-          </div>
-        </div>
-      </div>
-
-      <div className="card mt-4">
-        <h3 className="card-title">Open Positions</h3>
-        <div style={{ display: 'flex', gap: 32 }}>
-          <div>
-            <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Total</div>
-            <div style={{ fontSize: '1.4rem', fontWeight: 700 }}>{openTrades.length}</div>
-          </div>
-          <div>
-            <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Long</div>
-            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#3b82f6' }}>
-              {openTrades.filter(t => t.side.toLowerCase() === 'buy').length}
-            </div>
-          </div>
-          <div>
-            <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Short</div>
-            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#ef4444' }}>
-              {openTrades.filter(t => t.side.toLowerCase() === 'sell').length}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="card mt-4">
-        <h3 className="card-title">Loop Log (last 200 lines)</h3>
-        <div className="log-viewer">{log || '(no log yet)'}</div>
-      </div>
     </div>
   );
 }
@@ -1275,9 +1119,12 @@ function CandlestickChart({ ohlc, emaStack, bollingerSeries, height = 300, chart
 // ---------------------------------------------------------------------------
 
 function AnalysisPage({ profile }: { profile: Profile }) {
+  const isPageVisible = useDocumentVisible();
   const [ta, setTa] = useState<api.TechnicalAnalysis | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [analysisLoaded, setAnalysisLoaded] = useState(false);
+  const [autoRefreshAnalysis, setAutoRefreshAnalysis] = useState(false);
   const [expandedTf, setExpandedTf] = useState<string | null>(null);
   const [enlargedTf, setEnlargedTf] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
@@ -1310,7 +1157,7 @@ function AnalysisPage({ profile }: { profile: Profile }) {
     return Object.keys(filtered).length > 0 ? filtered : undefined;
   };
 
-  const fetchTa = async () => {
+  const fetchTa = useCallback(async () => {
     try {
       const [taData, allTradesData, openTradesData] = await Promise.all([
         api.getTechnicalAnalysis(profile.name, profile.path),
@@ -1376,15 +1223,26 @@ function AnalysisPage({ profile }: { profile: Profile }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [profile.name, profile.path]);
 
   useEffect(() => {
-    setLoading(true);
-    fetchTa();
-    // Auto-refresh every 30 seconds
-    const interval = setInterval(fetchTa, 30000);
-    return () => clearInterval(interval);
+    setTa(null);
+    setChartTrades([]);
+    setError(null);
+    setLastUpdate(null);
+    setAnalysisLoaded(false);
+    setAutoRefreshAnalysis(false);
+    setLoading(false);
+    setExpandedTf(null);
+    setEnlargedTf(null);
+    setFullscreenTf(null);
   }, [profile.name, profile.path]);
+
+  useEffect(() => {
+    if (!isPageVisible || !analysisLoaded || !autoRefreshAnalysis) return;
+    const interval = setInterval(fetchTa, 10000);
+    return () => clearInterval(interval);
+  }, [analysisLoaded, autoRefreshAnalysis, isPageVisible, fetchTa]);
 
   // ESC key to close fullscreen
   useEffect(() => {
@@ -1524,36 +1382,70 @@ function AnalysisPage({ profile }: { profile: Profile }) {
           Technical Analysis
         </h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {lastUpdate && (
+          {analysisLoaded && lastUpdate && (
             <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
               Updated: {lastUpdate.toLocaleTimeString()}
             </span>
           )}
+          {analysisLoaded && (
+            <>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                <input
+                  type="checkbox"
+                  checked={autoRefreshAnalysis}
+                  onChange={(e) => setAutoRefreshAnalysis(e.target.checked)}
+                />
+                Auto-refresh (10s)
+              </label>
+              <button
+                className="btn btn-secondary"
+                style={{ fontSize: '0.8rem' }}
+                onClick={() => {
+                  const next = !scoreVisible;
+                  setScoreVisible(next);
+                  localStorage.setItem('ta_score_visible', String(next));
+                }}
+              >
+                {scoreVisible ? 'Score ON' : 'Score OFF'}
+              </button>
+            </>
+          )}
           <button
             className="btn btn-secondary"
-            style={{ fontSize: '0.8rem' }}
             onClick={() => {
-              const next = !scoreVisible;
-              setScoreVisible(next);
-              localStorage.setItem('ta_score_visible', String(next));
+              if (!analysisLoaded) setAnalysisLoaded(true);
+              setLoading(true);
+              fetchTa();
             }}
-          >
-            {scoreVisible ? 'Score ON' : 'Score OFF'}
-          </button>
-          <button
-            className="btn btn-secondary"
-            onClick={fetchTa}
             disabled={loading}
           >
-            {loading ? 'Loading...' : 'Refresh'}
+            {loading ? 'Loading...' : analysisLoaded ? 'Refresh' : 'Load Analysis'}
           </button>
         </div>
       </div>
 
       <p style={{ color: 'var(--text-secondary)', marginBottom: 16, fontSize: '0.9rem' }}>
-        Real-time technical analysis across multiple timeframes. Auto-refreshes every 30 seconds.
-        Click on a timeframe to expand detailed view.
+        Manual-load mode is enabled to reduce runtime cost. Use Load Analysis/Refresh on demand, or enable optional 10s auto-refresh.
       </p>
+
+      {!analysisLoaded && (
+        <div className="card mb-4" style={{ textAlign: 'center' }}>
+          <p style={{ color: 'var(--text-secondary)', marginBottom: 12 }}>
+            Analysis data is paused by default.
+          </p>
+          <button
+            className="btn"
+            onClick={() => {
+              setAnalysisLoaded(true);
+              setLoading(true);
+              fetchTa();
+            }}
+            disabled={loading}
+          >
+            {loading ? 'Loading...' : 'Load Analysis'}
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="card mb-4" style={{ borderColor: 'var(--danger)' }}>
@@ -8401,6 +8293,8 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
 // ---------------------------------------------------------------------------
 
 function LogsPage({ profile }: { profile: Profile }) {
+  const isPageVisible = useDocumentVisible();
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [stats, setStats] = useState<api.QuickStats | null>(null);
   const [breakdown, setBreakdown] = useState<Record<string, number>>({});
   const [trades, setTrades] = useState<Record<string, unknown>[]>([]);
@@ -8419,8 +8313,9 @@ function LogsPage({ profile }: { profile: Profile }) {
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [visibleTradeCount, setVisibleTradeCount] = useState(50);
   const [openTradesMap, setOpenTradesMap] = useState<Record<string, api.OpenTrade>>({});
+  const [autoRefreshHistory, setAutoRefreshHistory] = useState(false);
 
-  const fetchData = () => {
+  const fetchData = useCallback(() => {
     api.getQuickStats(profile.name, profile.path).then(setStats).catch(console.error);
     api.getRejectionBreakdown(profile.name).then(setBreakdown).catch(console.error);
     api.getTrades(profile.name, 250, profile.path).then((data) => {
@@ -8435,10 +8330,23 @@ function LogsPage({ profile }: { profile: Profile }) {
       for (const t of openTrades) map[String(t.trade_id)] = t;
       setOpenTradesMap(map);
     }).catch(console.error);
-  };
+  }, [profile.name, profile.path]);
 
   useEffect(() => {
-    fetchData();
+    if (!isPageVisible || !historyLoaded || !autoRefreshHistory) return;
+    const interval = setInterval(fetchData, 10000);
+    return () => clearInterval(interval);
+  }, [autoRefreshHistory, fetchData, historyLoaded, isPageVisible]);
+
+  useEffect(() => {
+    setHistoryLoaded(false);
+    setAutoRefreshHistory(false);
+    setShowAnalytics(false);
+    setAnalyticsTradesData(null);
+    setAnalyticsLoading(false);
+    setVisibleTradeCount(50);
+    setSyncMessage(null);
+    setConfirmClose(null);
   }, [profile.name, profile.path]);
 
   const handleSync = async () => {
@@ -8515,17 +8423,39 @@ function LogsPage({ profile }: { profile: Profile }) {
     return trade.exit_price === null || trade.exit_price === undefined;
   };
 
+  const handleLoadData = useCallback(() => {
+    if (!historyLoaded) setHistoryLoaded(true);
+    fetchData();
+  }, [fetchData, historyLoaded]);
+
   return (
     <div>
       <div className="flex-between mb-4">
         <h2 className="page-title" style={{ marginBottom: 0, borderBottom: 'none', paddingBottom: 0 }}>Logs & Stats</h2>
-        <button
-          className="btn btn-secondary"
-          onClick={handleSync}
-          disabled={syncing}
-        >
-          {syncing ? 'Syncing...' : 'Sync from broker'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <button
+            className="btn btn-secondary"
+            onClick={handleLoadData}
+          >
+            {historyLoaded ? 'Refresh data' : 'Load Logs & Stats'}
+          </button>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+            <input
+              type="checkbox"
+              checked={autoRefreshHistory}
+              onChange={(e) => setAutoRefreshHistory(e.target.checked)}
+              disabled={!historyLoaded}
+            />
+            Auto-refresh history (10s)
+          </label>
+          <button
+            className="btn btn-secondary"
+            onClick={handleSync}
+            disabled={syncing}
+          >
+            {syncing ? 'Syncing...' : 'Sync from broker'}
+          </button>
+        </div>
       </div>
 
       {syncMessage && (
@@ -8533,6 +8463,9 @@ function LogsPage({ profile }: { profile: Profile }) {
           <p>{syncMessage}</p>
         </div>
       )}
+
+      {historyLoaded ? (
+        <>
 
       {/* Confirmation Modal */}
       {confirmClose && (
@@ -9149,6 +9082,21 @@ function LogsPage({ profile }: { profile: Profile }) {
           </table>
         </div>
       </div>
+        </>
+      ) : (
+        <div className="card mb-4" style={{ textAlign: 'center' }}>
+          <p style={{ color: 'var(--text-secondary)', marginBottom: 12 }}>
+            Logs and stats are manual-load to reduce CPU/network usage.
+          </p>
+          <button
+            className="btn"
+            onClick={handleLoadData}
+            disabled={syncing}
+          >
+            Load Logs & Stats
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -9204,10 +9152,10 @@ function GuidePage() {
               <strong>Go to Presets</strong> and pick a preset that matches your style (start with <em>Conservative Scalping</em> if unsure), then click <strong>Apply Preset</strong>.
             </li>
             <li>
-              <strong>Go to Run / Status</strong>, set the mode to <strong>ARMED_AUTO_DEMO</strong>, then click <strong>Start Loop</strong>.
+              <strong>Go to Dashboard</strong>, set the mode to <strong>ARMED_AUTO_DEMO</strong>, then click <strong>Start</strong>.
             </li>
             <li>
-              <strong>Watch the log</strong> - the bot will show heartbeats every few seconds and log its trading decisions.
+              <strong>Watch Trade Events and Filter Status</strong> on Dashboard to see loop decisions and entries.
             </li>
             <li>
               <strong>Check Logs & Stats</strong> to see your trades, win rate, and performance metrics.
@@ -9284,12 +9232,12 @@ function GuidePage() {
       <SectionCard id="dashboard" title="Reading the Dashboard" icon="📊">
         <div className="grid-2" style={{ gap: 16 }}>
           <div style={{ padding: 16, background: 'var(--bg-tertiary)', borderRadius: 8 }}>
-            <h4 style={{ margin: '0 0 12px 0', color: 'var(--accent)' }}>Run / Status Page</h4>
+            <h4 style={{ margin: '0 0 12px 0', color: 'var(--accent)' }}>Dashboard Controls</h4>
             <ul style={{ margin: 0, paddingLeft: 20, lineHeight: 1.8 }}>
               <li><strong>Loop Status:</strong> Shows if the trading loop is running or stopped</li>
               <li><strong>Mode:</strong> DISARMED (no trades), ARMED_MANUAL_CONFIRM (prompts before trading), ARMED_AUTO_DEMO (fully automated)</li>
-              <li><strong>Kill Switch:</strong> Emergency stop - prevents any new trades</li>
-              <li><strong>Loop Log:</strong> Real-time output showing heartbeats and decisions</li>
+              <li><strong>Start/Stop:</strong> Single control to run or pause the loop</li>
+              <li><strong>Context + Filters:</strong> Snapshot of current trend and block/clear reasons</li>
             </ul>
           </div>
           <div style={{ padding: 16, background: 'var(--bg-tertiary)', borderRadius: 8 }}>
@@ -9316,7 +9264,7 @@ function GuidePage() {
           <li><strong>ATR:</strong> Average True Range - Elevated (high volatility), Normal, Low (quiet market)</li>
         </ul>
         <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-          Click on any timeframe card to expand and see detailed indicator values. The page auto-refreshes every 30 seconds.
+          Click on any timeframe card to expand and see detailed indicator values. This page uses manual load by default, with optional 10s auto-refresh.
         </p>
       </SectionCard>
 
@@ -9330,7 +9278,7 @@ function GuidePage() {
               <br />• <strong>Spread too wide:</strong> The bot waits for good spreads to avoid slippage
               <br />• <strong>Alignment filters:</strong> Multi-timeframe conditions must match
               <br />• <strong>Max trades reached:</strong> Daily trade limit hit
-              <br />• <strong>Kill switch on:</strong> Check the Run page
+              <br />• <strong>Mode is DISARMED:</strong> Set mode to an armed state on Dashboard
               <br />• <strong>Market closed:</strong> Forex markets close on weekends
             </p>
           </div>

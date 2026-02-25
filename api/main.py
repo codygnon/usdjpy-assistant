@@ -14,6 +14,7 @@ from typing import Any, Optional
 import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -56,6 +57,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # Track running loop processes: {profile_name: subprocess.Popen}
 _loop_processes: dict[str, subprocess.Popen] = {}
@@ -87,6 +89,50 @@ def _get_bars_cached(adapter: Any, symbol: str, tf: str, count: int = 700) -> An
 # Backfill MAE/MFE throttle: {profile_name: last_run_timestamp}
 _backfill_last_run: dict[str, float] = {}
 _BACKFILL_INTERVAL = 60.0  # seconds
+
+# Lean API mode: reduce broker-backed read amplification for UI pages.
+LEAN_UI_MODE = os.environ.get("LEAN_UI_MODE", "true").strip().lower() in {"1", "true", "yes", "on"}
+
+# Short-lived endpoint response cache for expensive read endpoints.
+_endpoint_response_cache: dict[str, tuple[float, Any]] = {}
+_ENDPOINT_CACHE_TTL_SECONDS: dict[str, float] = {
+    "trade_history_detail": 10.0,
+    "advanced_analytics": 10.0,
+    "stats_by_preset": 10.0,
+    "mt5_report": 10.0,
+}
+
+
+def _cache_compose_key(endpoint: str, *parts: Any) -> str:
+    safe_parts = [str(p) for p in parts]
+    return f"{endpoint}|" + "|".join(safe_parts)
+
+
+def _cache_get(endpoint: str, key: str) -> Any | None:
+    ttl = _ENDPOINT_CACHE_TTL_SECONDS.get(endpoint)
+    if ttl is None:
+        return None
+    cached = _endpoint_response_cache.get(key)
+    if not cached:
+        return None
+    ts, payload = cached
+    if (_time.monotonic() - ts) >= ttl:
+        _endpoint_response_cache.pop(key, None)
+        return None
+    return payload
+
+
+def _cache_set(endpoint: str, key: str, payload: Any) -> None:
+    if endpoint in _ENDPOINT_CACHE_TTL_SECONDS:
+        _endpoint_response_cache[key] = (_time.monotonic(), payload)
+
+
+def _cache_invalidate_profile(profile_name: str) -> None:
+    token = f"|{profile_name}|"
+    stale_keys = [k for k in _endpoint_response_cache.keys() if token in k]
+    for k in stale_keys:
+        _endpoint_response_cache.pop(k, None)
+    _dashboard_live_cache.pop(profile_name, None)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -609,6 +655,7 @@ def get_trades(
     profile_name: str,
     limit: int = 250,
     profile_path: Optional[str] = None,
+    sync: bool = False,
 ) -> list[dict[str, Any]] | dict[str, Any]:
     """Get recent trades. If profile_path is provided, returns an object with
     trades (each including profit_display in display currency) and display_currency.
@@ -617,10 +664,12 @@ def get_trades(
     """
     store = _store_for(profile_name)
 
-    # Sync with broker to detect closed trades
-    if profile_path and _resolve_profile_path(profile_path).exists():
+    resolved_profile_path = _resolve_profile_path(profile_path) if profile_path else None
+
+    # Sync with broker only when explicitly requested.
+    if sync and resolved_profile_path and resolved_profile_path.exists():
         try:
-            profile = load_profile_v1(_resolve_profile_path(profile_path))
+            profile = load_profile_v1(resolved_profile_path)
             _sync_open_trades_with_broker(profile, store)
         except Exception as e:
             print(f"[api] sync error in get_trades: {e}")
@@ -630,11 +679,11 @@ def get_trades(
     df = df.where(pd.notna(df), None)
     records = df.to_dict(orient="records")
 
-    if not profile_path or not _resolve_profile_path(profile_path).exists():
+    if not resolved_profile_path or not resolved_profile_path.exists():
         return records
 
     try:
-        profile = load_profile_v1(_resolve_profile_path(profile_path))
+        profile = load_profile_v1(resolved_profile_path)
     except Exception:
         return records
 
@@ -813,6 +862,11 @@ def get_trade_history_detail(
     """
     from adapters.broker import get_adapter
 
+    cache_key = _cache_compose_key("trade_history_detail", profile_name, profile_path or "", days_back)
+    cached_payload = _cache_get("trade_history_detail", cache_key)
+    if cached_payload is not None:
+        return cached_payload
+
     profile = None
     if profile_path and _resolve_profile_path(profile_path).exists():
         try:
@@ -874,7 +928,9 @@ def get_trade_history_detail(
                     "volume": float(row.get("size_lots") or 0),
                     "spread_pips": spread,
                 })
-            return {"trades": trades_list, "display_currency": curr, "source": "database"}
+            payload = {"trades": trades_list, "display_currency": curr, "source": "database"}
+            _cache_set("trade_history_detail", cache_key, payload)
+            return payload
 
     # Fallback: broker history (only when local DB has no closed trades)
     if profile:
@@ -906,11 +962,15 @@ def get_trade_history_detail(
                         "volume": getattr(pos, "volume", 0),
                         "spread_pips": None,
                     })
-                return {"trades": trades_list_broker, "display_currency": curr, "source": "broker"}
+                payload = {"trades": trades_list_broker, "display_currency": curr, "source": "broker"}
+                _cache_set("trade_history_detail", cache_key, payload)
+                return payload
         except Exception as e:
             print(f"[api] trade-history-detail broker error: {e}")
 
-    return {"trades": [], "display_currency": curr, "source": "database"}
+    payload = {"trades": [], "display_currency": curr, "source": "database"}
+    _cache_set("trade_history_detail", cache_key, payload)
+    return payload
 
 
 @app.get("/api/data/{profile_name}/executions")
@@ -948,7 +1008,7 @@ def get_rejection_breakdown(profile_name: str, limit: int = 200) -> dict[str, in
 
 
 @app.get("/api/data/{profile_name}/stats")
-def get_quick_stats(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
+def get_quick_stats(profile_name: str, profile_path: Optional[str] = None, sync: bool = False) -> dict[str, Any]:
     """Get quick stats (win rate, avg pips, total profit).
     
     Prefers broker (MT5/OANDA) deal history as source of truth when available.
@@ -972,8 +1032,8 @@ def get_quick_stats(profile_name: str, profile_path: Optional[str] = None) -> di
                 except Exception:
                     pass
 
-    # Try broker report stats first (MT5 has them; OANDA returns None)
-    if profile:
+    # Try broker report stats only when explicitly requested.
+    if sync and profile:
         try:
             adapter = get_adapter(profile)
             adapter.initialize()
@@ -1086,6 +1146,11 @@ def get_quick_stats(profile_name: str, profile_path: Optional[str] = None) -> di
 def get_mt5_report(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
     """Get full MT5 report (Summary, Closed P/L, Long/Short). Same data as View -> Reports.
     Returns {source: null} when MT5 is unavailable."""
+    cache_key = _cache_compose_key("mt5_report", profile_name, profile_path or "")
+    cached_payload = _cache_get("mt5_report", cache_key)
+    if cached_payload is not None:
+        return cached_payload
+
     profile = None
     if profile_path and _resolve_profile_path(profile_path).exists():
         try:
@@ -1101,7 +1166,9 @@ def get_mt5_report(profile_name: str, profile_path: Optional[str] = None) -> dic
                 except Exception:
                     pass
     if not profile:
-        return {"source": None}
+        payload = {"source": None}
+        _cache_set("mt5_report", cache_key, payload)
+        return payload
     try:
         from adapters.broker import get_adapter
         adapter = get_adapter(profile)
@@ -1113,7 +1180,9 @@ def get_mt5_report(profile_name: str, profile_path: Optional[str] = None) -> dic
     except Exception:
         result = None
     if result is None:
-        return {"source": None}
+        payload = {"source": None}
+        _cache_set("mt5_report", cache_key, payload)
+        return payload
     curr, rate = _get_display_currency(profile)
     result["display_currency"] = curr
     if "summary" in result and result["summary"]:
@@ -1127,6 +1196,7 @@ def get_mt5_report(profile_name: str, profile_path: Optional[str] = None) -> dic
                   "largest_profit_trade", "largest_loss_trade", "expected_payoff"):
             if k in pl and pl[k] is not None:
                 pl[k] = round(float(pl[k]) * rate, 2)
+    _cache_set("mt5_report", cache_key, result)
     return result
 
 
@@ -1142,16 +1212,25 @@ def get_stats_by_preset(profile_name: str, profile_path: Optional[str] = None) -
     """
     from adapters.broker import get_adapter
 
+    cache_key = _cache_compose_key("stats_by_preset", profile_name, profile_path or "")
+    cached_payload = _cache_get("stats_by_preset", cache_key)
+    if cached_payload is not None:
+        return cached_payload
+
     store = _store_for(profile_name)
     df = store.read_trades_df(profile_name)
 
     if df.empty:
-        return {"presets": {}, "source": "database"}
+        payload = {"presets": {}, "source": "database"}
+        _cache_set("stats_by_preset", cache_key, payload)
+        return payload
 
     closed = df[pd.to_numeric(df.get("exit_price"), errors="coerce").notna()].copy() if "exit_price" in df.columns else pd.DataFrame()
 
     if closed.empty:
-        return {"presets": {}, "source": "database"}
+        payload = {"presets": {}, "source": "database"}
+        _cache_set("stats_by_preset", cache_key, payload)
+        return payload
 
     if "preset_name" not in closed.columns:
         closed["preset_name"] = "Unknown"
@@ -1311,7 +1390,9 @@ def get_stats_by_preset(profile_name: str, profile_path: Optional[str] = None) -
             "max_drawdown": max_drawdown,
         }
 
-    return {"presets": presets_data, "source": source, "display_currency": curr}
+    payload = {"presets": presets_data, "source": source, "display_currency": curr}
+    _cache_set("stats_by_preset", cache_key, payload)
+    return payload
 
 
 @app.get("/api/data/{profile_name}/technical-analysis")
@@ -1610,6 +1691,11 @@ def get_advanced_analytics(
 ) -> dict[str, Any]:
     """Get trade-level data for advanced analytics (MAE/MFE, rolling metrics,
     R-distribution, drawdown, duration). All computation happens on the frontend."""
+    cache_key = _cache_compose_key("advanced_analytics", profile_name, profile_path or "", days_back)
+    cached_payload = _cache_get("advanced_analytics", cache_key)
+    if cached_payload is not None:
+        return cached_payload
+
     profile = None
     if profile_path and _resolve_profile_path(profile_path).exists():
         try:
@@ -1636,11 +1722,15 @@ def get_advanced_analytics(
 
     df = store.read_trades_df(profile_name)
     if df.empty or "exit_price" not in df.columns:
-        return {"trades": [], "display_currency": curr, "source": "database", "starting_balance": None, "total_profit_currency": None}
+        payload = {"trades": [], "display_currency": curr, "source": "database", "starting_balance": None, "total_profit_currency": None}
+        _cache_set("advanced_analytics", cache_key, payload)
+        return payload
 
     closed = df[pd.to_numeric(df["exit_price"], errors="coerce").notna()].copy()
     if closed.empty:
-        return {"trades": [], "display_currency": curr, "source": "database", "starting_balance": None, "total_profit_currency": None}
+        payload = {"trades": [], "display_currency": curr, "source": "database", "starting_balance": None, "total_profit_currency": None}
+        _cache_set("advanced_analytics", cache_key, payload)
+        return payload
 
     # Filter by days_back
     if "exit_timestamp_utc" in closed.columns:
@@ -1728,13 +1818,15 @@ def get_advanced_analytics(
     if profits:
         total_profit_currency = round(sum(profits), 2)
 
-    return {
+    payload = {
         "trades": trades_list,
         "display_currency": curr,
         "source": "database",
         "starting_balance": starting_balance,
         "total_profit_currency": total_profit_currency,
     }
+    _cache_set("advanced_analytics", cache_key, payload)
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -1743,7 +1835,7 @@ def get_advanced_analytics(
 
 
 @app.get("/api/data/{profile_name}/open-trades")
-def get_open_trades(profile_name: str, profile_path: Optional[str] = None) -> list[dict[str, Any]]:
+def get_open_trades(profile_name: str, profile_path: Optional[str] = None, sync: bool = False) -> list[dict[str, Any]]:
     """Get open trades (trades without exit_price).
 
     Syncs with broker first to detect any trades closed externally.
@@ -1753,7 +1845,7 @@ def get_open_trades(profile_name: str, profile_path: Optional[str] = None) -> li
 
     broker_live: dict[int, dict] = {}
 
-    if profile_path:
+    if profile_path and sync:
         loaded_profile = None
         try:
             loaded_profile = load_profile_v1(profile_path)
@@ -2102,6 +2194,7 @@ def close_trade_endpoint(profile_name: str, trade_id: str, profile_path: str) ->
         if profit_value is not None:
             updates["profit"] = float(profit_value)
         store.close_trade(trade_id=trade_id, updates=updates)
+        _cache_invalidate_profile(profile_name)
         
         return {
             "status": "closed",
@@ -2153,6 +2246,7 @@ def sync_trades_endpoint(
 
         # Backfill profit (force_refresh=True recomputes all to fix partial-close bug)
         profit_backfilled = backfill_profit(profile, store, force_refresh=force_profit_refresh)
+        _cache_invalidate_profile(profile_name)
 
         return {
             "status": "synced",
@@ -2975,21 +3069,58 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
 
 @app.get("/api/data/{profile_name}/dashboard")
 def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
-    """Returns dashboard state. Always fetches live broker data; merges run-loop file data when fresh."""
+    """Return dashboard state with lean run-loop-file-first behavior."""
     from core.dashboard_models import read_dashboard_state
 
-    # Check live cache first
+    if LEAN_UI_MODE:
+        from datetime import datetime, timezone
+
+        log_dir = LOGS_DIR / profile_name
+        file_state = read_dashboard_state(log_dir)
+        if file_state is not None:
+            stale_age_seconds: float | None = None
+            stale = True
+            ts = file_state.get("timestamp_utc")
+            if ts:
+                try:
+                    parsed = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                    stale_age_seconds = max(0.0, (datetime.now(timezone.utc) - parsed).total_seconds())
+                    stale = stale_age_seconds >= _DASHBOARD_FILE_FRESHNESS
+                except Exception:
+                    stale_age_seconds = None
+            result = dict(file_state)
+            result["stale"] = stale
+            result["stale_age_seconds"] = stale_age_seconds
+            result["data_source"] = "run_loop_file"
+            return result
+
+        return {
+            "timestamp_utc": None,
+            "preset_name": "",
+            "mode": "DISARMED",
+            "loop_running": _is_loop_running(profile_name),
+            "filters": [],
+            "context": [],
+            "positions": [],
+            "daily_summary": None,
+            "bid": 0.0,
+            "ask": 0.0,
+            "spread_pips": 0.0,
+            "stale": True,
+            "stale_age_seconds": None,
+            "data_source": "none",
+        }
+
+    # Legacy behavior (opt-in): live + file merge.
     now = _time.monotonic()
     cached = _dashboard_live_cache.get(profile_name)
     if cached and (now - cached[0]) < _DASHBOARD_LIVE_TTL:
         return cached[1]
 
-    # Build live state (positions, tick, daily summary, basic filters)
     live = _build_live_dashboard_state(profile_name, profile_path)
     if "error" in live:
         return live
 
-    # Read file state from run loop (if it exists)
     log_dir = LOGS_DIR / profile_name
     file_state = read_dashboard_state(log_dir)
 
@@ -3022,6 +3153,9 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
     else:
         result = live
 
+    result["stale"] = False
+    result["stale_age_seconds"] = 0.0
+    result["data_source"] = "run_loop_file"
     _dashboard_live_cache[profile_name] = (now, result)
     return result
 
