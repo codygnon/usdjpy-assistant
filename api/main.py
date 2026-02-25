@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -3232,7 +3233,111 @@ def get_trade_events(profile_name: str, limit: int = 50) -> list[dict[str, Any]]
     from core.dashboard_models import read_trade_events
 
     log_dir = LOGS_DIR / profile_name
+    _backfill_trade_event_tier_labels(profile_name, log_dir)
     return read_trade_events(log_dir, limit=limit)
+
+
+def _backfill_trade_event_tier_labels(profile_name: str, log_dir: Path) -> None:
+    """Backfill legacy tiered_pullback trade-events with explicit EMA tier labels.
+
+    Converts trigger_type from "tiered_pullback" -> "tiered_pullback_emaXX" by
+    matching open events against placed executions with rule_id "...:tier_XX".
+    """
+    events_path = log_dir / "trade_events.json"
+    if not events_path.exists():
+        return
+    try:
+        events = json.loads(events_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if not isinstance(events, list) or not events:
+        return
+
+    missing_idxs: list[int] = []
+    for i, ev in enumerate(events):
+        if not isinstance(ev, dict):
+            continue
+        if ev.get("event_type") != "open":
+            continue
+        if str(ev.get("trigger_type") or "") != "tiered_pullback":
+            continue
+        missing_idxs.append(i)
+    if not missing_idxs:
+        return
+
+    try:
+        store = _store_for(profile_name)
+        execs = store.read_executions_df(profile_name)
+    except Exception:
+        return
+    if execs is None or execs.empty:
+        return
+
+    tier_execs: list[dict[str, Any]] = []
+    for _, row in execs.iterrows():
+        try:
+            if int(row.get("placed") or 0) != 1:
+                continue
+        except Exception:
+            continue
+        rule_id = str(row.get("rule_id") or "")
+        m = re.search(r":tier_(\d+)", rule_id)
+        if not m:
+            continue
+        try:
+            ts = pd.to_datetime(row.get("timestamp_utc"), utc=True)
+        except Exception:
+            continue
+        tier_execs.append(
+            {
+                "timestamp": ts,
+                "tier": int(m.group(1)),
+                "rule_id": rule_id,
+            }
+        )
+    if not tier_execs:
+        return
+
+    changed = False
+    for idx in missing_idxs:
+        ev = events[idx]
+        ev_ts_raw = ev.get("timestamp_utc")
+        if not ev_ts_raw:
+            continue
+        try:
+            ev_ts = pd.to_datetime(ev_ts_raw, utc=True)
+        except Exception:
+            continue
+
+        trade_id = str(ev.get("trade_id") or "")
+        policy_prefix = ""
+        if trade_id.startswith("kt_cg_trial_"):
+            parts = trade_id.split(":")
+            if parts:
+                policy_prefix = parts[0] + ":"
+
+        best_match = None
+        best_diff = None
+        for ex in tier_execs:
+            if policy_prefix and not str(ex["rule_id"]).startswith(policy_prefix):
+                continue
+            diff = abs((ex["timestamp"] - ev_ts).total_seconds())
+            if diff > 8.0:
+                continue
+            if best_diff is None or diff < best_diff:
+                best_diff = diff
+                best_match = ex
+
+        if best_match is None:
+            continue
+        ev["trigger_type"] = f"tiered_pullback_ema{best_match['tier']}"
+        changed = True
+
+    if changed:
+        try:
+            events_path.write_text(json.dumps(events, default=str) + "\n", encoding="utf-8")
+        except Exception:
+            pass
 
 
 # Catch-all for SPA routing (must be last so API routes match first)
