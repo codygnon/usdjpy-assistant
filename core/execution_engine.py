@@ -18,10 +18,6 @@ from core.indicators import macd as macd_fn
 from core.indicators import rsi as rsi_fn
 from core.indicators import vwap as vwap_fn
 from core.models import MarketContext, TradeCandidate
-from core.reversal_risk import (
-    compute_reversal_risk_score,
-    get_rr_exhaustion_threshold_boost_pips,
-)
 from core.profile import (
     ExecutionPolicyBollingerBands,
     ExecutionPolicyBreakout,
@@ -3735,7 +3731,6 @@ def _compute_trial7_trend_exhaustion(
     current_price: float,
     pip_size: float,
     trend_side: str,
-    reversal_risk_result: Optional[dict] = None,
 ) -> dict:
     """Compute Trial #7 stretch-based trend exhaustion regime.
 
@@ -3750,7 +3745,6 @@ def _compute_trial7_trend_exhaustion(
         "mode": getattr(policy, "trend_exhaustion_mode", "session_and_side"),
         "session": None,
         "trend_side": trend_side,
-        "rr_threshold_boost_pips": 0.0,
     }
 
     if m5_df is None or m5_df.empty or len(m5_df) < 22:
@@ -3787,13 +3781,6 @@ def _compute_trial7_trend_exhaustion(
     if p90 < p80:
         p80, p90 = p90, p80
 
-    rr_boost = 0.0
-    if reversal_risk_result and bool(getattr(policy, "use_reversal_risk_score", False)):
-        rr_tier = str(reversal_risk_result.get("tier", "low"))
-        rr_boost = max(0.0, float(get_rr_exhaustion_threshold_boost_pips(policy, rr_tier)))
-        p80 += rr_boost
-        p90 += rr_boost
-
     # Simple hysteresis widening to reduce noisy boundary flips.
     hyst = max(0.0, float(getattr(policy, "trend_exhaustion_hysteresis_pips", 0.5)))
     if stretch_pips >= (p90 + hyst):
@@ -3812,7 +3799,6 @@ def _compute_trial7_trend_exhaustion(
             "session": session.upper(),
             "ema21_m5": round(ema21_last, 5),
             "price_ref": round(price_ref, 5),
-            "rr_threshold_boost_pips": round(rr_boost, 2),
         }
     )
     return out
@@ -4751,10 +4737,6 @@ def execute_kt_cg_trial_7_policy_demo_only(
     """Evaluate and execute KT/CG Trial #7 (demo only)."""
     candidate_side: Optional[str] = None
     candidate_trigger: Optional[str] = None
-    reversal_risk_result: Optional[dict] = None
-    rr_lot_multiplier: float = 1.0
-    rr_min_tier_ema: Optional[int] = None
-    block_zone_entry_by_reversal_risk = False
     if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
         return {
             "decision": ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed"),
@@ -4764,7 +4746,6 @@ def execute_kt_cg_trial_7_policy_demo_only(
             "candidate_trigger": candidate_trigger,
             "side": candidate_side,
             "exhaustion_result": None,
-            "reversal_risk_result": reversal_risk_result,
         }
     if not adapter.is_demo_account():
         return {
@@ -4775,7 +4756,6 @@ def execute_kt_cg_trial_7_policy_demo_only(
             "candidate_trigger": candidate_trigger,
             "side": candidate_side,
             "exhaustion_result": None,
-            "reversal_risk_result": reversal_risk_result,
         }
 
     store = _store(log_dir)
@@ -4801,59 +4781,10 @@ def execute_kt_cg_trial_7_policy_demo_only(
             "candidate_trigger": candidate_trigger,
             "side": candidate_side,
             "exhaustion_result": exhaustion_result,
-            "reversal_risk_result": reversal_risk_result,
         }
         if extra:
             payload.update(extra)
         return payload
-
-    m5_df_for_rr = data_by_tf.get("M5")
-    trend_side_for_rr = "bull"
-    if m5_df_for_rr is not None and not m5_df_for_rr.empty:
-        try:
-            m5_local_rr = drop_incomplete_last_bar(m5_df_for_rr.copy(), "M5")
-            if len(m5_local_rr) >= max(getattr(policy, "m5_trend_ema_slow", 21) + 1, 22):
-                close_rr = m5_local_rr["close"].astype(float)
-                ema_fast_rr = close_rr.ewm(span=getattr(policy, "m5_trend_ema_fast", 9), adjust=False).mean()
-                ema_slow_rr = close_rr.ewm(span=getattr(policy, "m5_trend_ema_slow", 21), adjust=False).mean()
-                trend_side_for_rr = "bull" if float(ema_fast_rr.iloc[-1]) > float(ema_slow_rr.iloc[-1]) else "bear"
-        except Exception:
-            pass
-
-    if bool(getattr(policy, "use_reversal_risk_score", False)):
-        try:
-            reversal_risk_result = compute_reversal_risk_score(
-                policy=policy,
-                data_by_tf=data_by_tf,
-                tick=tick,
-                pip_size=float(profile.pip_size),
-                trend_side=trend_side_for_rr,
-                trial7_daily_state=data_by_tf.get("_trial7_daily_state") if isinstance(data_by_tf, dict) else None,
-            )
-            rr_resp = reversal_risk_result.get("response", {}) if isinstance(reversal_risk_result, dict) else {}
-            rr_lot_multiplier = max(0.01, float(rr_resp.get("lot_multiplier", 1.0)))
-            rr_min_tier_ema = rr_resp.get("min_tier_ema")
-            block_zone_entry_by_reversal_risk = bool(rr_resp.get("block_zone_entry", False))
-            print(
-                f"[{profile.profile_name}] trial7_reversal_risk: score={reversal_risk_result.get('score')} "
-                f"tier={reversal_risk_result.get('tier')} lot_x={rr_lot_multiplier:.2f} "
-                f"zone_block={block_zone_entry_by_reversal_risk} min_tier={rr_min_tier_ema}"
-            )
-        except Exception as e:
-            reversal_risk_result = {
-                "enabled": True,
-                "score": 0.0,
-                "tier": "low",
-                "error": f"compute_failed:{e}",
-                "response": {
-                    "allowed": True,
-                    "lot_multiplier": 1.0,
-                    "min_tier_ema": None,
-                    "block_zone_entry": False,
-                    "use_managed_exit": False,
-                    "reason": "compute_failed",
-                },
-            }
 
     if getattr(policy, "trend_exhaustion_enabled", False):
         m5_df_ex = data_by_tf.get("M5")
@@ -4871,7 +4802,6 @@ def execute_kt_cg_trial_7_policy_demo_only(
                     current_price=current_mid,
                     pip_size=float(profile.pip_size),
                     trend_side=trend_side,
-                    reversal_risk_result=reversal_risk_result,
                 )
                 ex_zone = exhaustion_result.get("zone", "normal")
                 if ex_zone == "extended":
@@ -4889,14 +4819,6 @@ def execute_kt_cg_trial_7_policy_demo_only(
                         cap_minimum = max(1, int(getattr(policy, "trend_exhaustion_very_extended_cap_min", 1)))
             else:
                 exhaustion_result = {"zone": "normal", "reason": "insufficient_m5_bars"}
-
-    if rr_min_tier_ema is not None:
-        effective_tiers = [t for t in effective_tiers if int(t) >= int(rr_min_tier_ema)]
-
-    if reversal_risk_result and isinstance(exhaustion_result, dict):
-        exhaustion_result["rr_score"] = reversal_risk_result.get("score")
-        exhaustion_result["rr_tier"] = reversal_risk_result.get("tier")
-        exhaustion_result["rr_lot_multiplier"] = rr_lot_multiplier
 
     effective_tp_pips, tp_zone = _compute_trial7_effective_tp_pips(policy, exhaustion_result)
     if exhaustion_result is None:
@@ -4932,9 +4854,6 @@ def execute_kt_cg_trial_7_policy_demo_only(
     def _run_zone_prechecks() -> Optional[str]:
         if trigger_type != "zone_entry":
             return None
-        if block_zone_entry_by_reversal_risk:
-            rr_tier = (reversal_risk_result or {}).get("tier", "low")
-            return f"reversal_risk: {rr_tier} blocks zone_entry"
         if block_zone_entry_by_exhaustion:
             ex_zone = (exhaustion_result or {}).get("zone", "normal")
             stretch = (exhaustion_result or {}).get("stretch_pips")
@@ -4992,9 +4911,6 @@ def execute_kt_cg_trial_7_policy_demo_only(
     def _attempt_zone_fallback_from_tier_cap(cap_reason: str) -> tuple[bool, str]:
         nonlocal side, trigger_type, tiered_pullback_tier, eval_reasons, tier_updates, rule_id, candidate_side, candidate_trigger
         fallback_prefix = f"{cap_reason}; tiered_cap_reached -> fallback_zone_attempted"
-        if block_zone_entry_by_reversal_risk:
-            rr_tier = (reversal_risk_result or {}).get("tier", "low")
-            return False, f"{fallback_prefix}; reversal_risk: {rr_tier} blocks zone_entry"
         if block_zone_entry_by_exhaustion:
             ex_zone = (exhaustion_result or {}).get("zone", "normal")
             stretch = (exhaustion_result or {}).get("stretch_pips")
@@ -5098,12 +5014,41 @@ def execute_kt_cg_trial_7_policy_demo_only(
 
     try:
         open_trades = store.list_open_trades(profile.profile_name)
+        # Live broker position ids: cap counts only actually open positions (not stale DB rows)
+        _live_pos_ids: set[int] = set()
+        try:
+            if adapter is not None:
+                positions = adapter.get_open_positions(profile.symbol)
+                for pos in positions or []:
+                    pid = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
+                    if pid is not None:
+                        try:
+                            _live_pos_ids.add(int(pid))
+                        except (TypeError, ValueError):
+                            pass
+        except Exception:
+            pass
+
+        def _row_still_open(row: dict) -> bool:
+            if not _live_pos_ids:
+                return True
+            pid = row.get("mt5_position_id")
+            if pid is None:
+                return False
+            try:
+                return int(pid) in _live_pos_ids
+            except (TypeError, ValueError):
+                return False
+
         while True:
             if trigger_type == "tiered_pullback":
                 max_tiered_pullback_open = getattr(policy, "max_tiered_pullback_open", None)
                 if max_tiered_pullback_open is not None:
                     max_tiered_pullback_open = max(cap_minimum, int(round(float(max_tiered_pullback_open) * cap_multiplier)))
-                    tiered_open = sum(1 for row in open_trades if row.get("entry_type") == "tiered_pullback")
+                    tiered_open = sum(
+                        1 for row in open_trades
+                        if row.get("entry_type") == "tiered_pullback" and _row_still_open(dict(row) if hasattr(row, "keys") else row)
+                    )
                     if tiered_open >= max_tiered_pullback_open:
                         tier_cap_reason = (
                             f"max_tiered_pullback_open: {tiered_open} tiered pullback trade(s) already open "
@@ -5124,7 +5069,10 @@ def execute_kt_cg_trial_7_policy_demo_only(
                 max_zone_entry_open = getattr(policy, "max_zone_entry_open", None)
                 if max_zone_entry_open is not None:
                     max_zone_entry_open = max(cap_minimum, int(round(float(max_zone_entry_open) * cap_multiplier)))
-                    zone_entry_open = sum(1 for row in open_trades if row.get("entry_type") == "zone_entry")
+                    zone_entry_open = sum(
+                        1 for row in open_trades
+                        if row.get("entry_type") == "zone_entry" and _row_still_open(dict(row) if hasattr(row, "keys") else row)
+                    )
                     if zone_entry_open >= max_zone_entry_open:
                         return _result_payload(
                             ExecutionDecision(
@@ -5167,16 +5115,6 @@ def execute_kt_cg_trial_7_policy_demo_only(
         candidate = _kt_cg_trial_4_candidate(profile, policy, entry_price, side)
     finally:
         object.__setattr__(policy, "tp_pips", original_tp_pips)
-    base_lots = float(candidate.size_lots or get_effective_risk(profile).max_lots)
-    final_lots = max(0.01, base_lots * rr_lot_multiplier)
-    candidate = TradeCandidate(
-        symbol=candidate.symbol,
-        side=candidate.side,
-        entry_price=candidate.entry_price,
-        stop_price=candidate.stop_price,
-        target_price=candidate.target_price,
-        size_lots=round(final_lots, 4),
-    )
     decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
     if not decision.allow:
         sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
@@ -5266,9 +5204,6 @@ def execute_kt_cg_trial_7_policy_demo_only(
         print(
             f"[{profile.profile_name}] TRADE PLACED: kt_cg_trial_7:{trigger_type}{tier_info} "
             f"| TP={effective_tp_pips:.2f}p (base={original_tp_pips:.2f}p zone={tp_zone})"
-            f" | RR={((reversal_risk_result or {}).get('score') if reversal_risk_result else 'N/A')}/"
-            f"{((reversal_risk_result or {}).get('tier') if reversal_risk_result else 'N/A')}"
-            f" lot_x={rr_lot_multiplier:.2f}"
             f" | {'; '.join(eval_reasons)}"
         )
 
@@ -5286,9 +5221,6 @@ def execute_kt_cg_trial_7_policy_demo_only(
         extra={
             "tp_pips_effective": float(effective_tp_pips),
             "tp_pips_base": float(original_tp_pips),
-            "reversal_risk_result": reversal_risk_result,
-            "lot_multiplier_applied": rr_lot_multiplier,
-            "size_lots_effective": float(candidate.size_lots or get_effective_risk(profile).max_lots),
         },
     )
 

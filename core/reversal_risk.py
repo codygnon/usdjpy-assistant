@@ -272,6 +272,14 @@ def _compute_rsi_divergence_component(
     else:
         severity = _rsi_severity_from_delta(delta, min_delta) if found else 0.0
 
+    # When no divergence, add a small "RSI extension" score so component isn't always 0 (overbought/oversold hint)
+    rsi_last = float(rsi.iloc[-1]) if len(rsi) else 50.0
+    if not found and 0 <= rsi_last <= 100:
+        if side == "bull" and rsi_last > 65:
+            severity = min(0.15, (rsi_last - 65) / 35.0 * 0.15)
+        elif side != "bull" and rsi_last < 35:
+            severity = min(0.15, (35 - rsi_last) / 35.0 * 0.15)
+
     confidence = 0.0
     if found:
         sep = div.get("bearish_separation", 0) if direction == "bearish" else div.get("bullish_separation", 0)
@@ -366,8 +374,11 @@ def _compute_adr_exhaustion_component(
 
     x = consumed
     x0 = float(ramp_start_pct)
-    if x <= x0:
+    if x <= 0:
         score = 0.0
+    elif x < x0:
+        # Soft ramp below ramp_start_pct so "building" exhaustion shows a small score (max 0.15)
+        score = (x / x0) * 0.15
     elif x <= 100.0:
         score = (x - x0) / max(1e-6, (100.0 - x0)) * float(score_100)
     elif x <= 120.0:
@@ -411,9 +422,9 @@ def _compute_ema_spread_component(
     ema21 = ema_fn(close, 21)
     spread_pips = abs(float(ema9.iloc[-1]) - float(ema21.iloc[-1])) / float(pip_size)
 
-    lo = 3.0
-    hi = max(lo + 0.001, float(max_pips))
-    score = _clamp((spread_pips - lo) / (hi - lo), 0.0, 1.0)
+    # Map 0..max_pips to 0..1 so any spread shows a non-zero score (avoids permanent 0.0/100)
+    hi = max(0.5, float(max_pips))
+    score = _clamp(spread_pips / hi, 0.0, 1.0)
 
     return {
         "name": "ema_spread",
