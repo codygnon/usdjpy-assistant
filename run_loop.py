@@ -569,6 +569,19 @@ def _build_and_write_dashboard(
         write_dashboard_state(log_dir, state)
     except Exception as e:
         print(f"[{profile.profile_name}] Dashboard write error: {e}")
+        # Fallback: write minimal state so timestamp stays fresh (prevents false "stale" indicator)
+        try:
+            from datetime import datetime, timezone
+            from core.dashboard_models import DashboardState, write_dashboard_state as _wds
+            _fb = DashboardState(
+                timestamp_utc=datetime.now(timezone.utc).isoformat(),
+                preset_name=getattr(profile, "active_preset_name", "") or "",
+                mode=mode,
+                loop_running=True,
+            )
+            _wds(log_dir, _fb)
+        except Exception:
+            pass
 
 
 def _append_trade_open_event(
@@ -783,6 +796,19 @@ def main() -> None:
                         print(f"[{profile.profile_name}] broker temporarily unavailable after {_MAX_FETCH_RETRIES} attempts, sleeping 60s then continuing: {_fetch_err}")
                         time.sleep(60)
             if data_by_tf is None or tick is None:
+                # Write a minimal heartbeat so dashboard doesn't go stale during broker outages
+                try:
+                    from datetime import datetime, timezone
+                    from core.dashboard_models import DashboardState, write_dashboard_state
+                    _hb = DashboardState(
+                        timestamp_utc=datetime.now(timezone.utc).isoformat(),
+                        preset_name=profile.active_preset_name or "",
+                        mode=mode,
+                        loop_running=True,
+                    )
+                    write_dashboard_state(log_dir, _hb)
+                except Exception:
+                    pass
                 continue
 
             # Trade management: breakeven and TP1 partial close (only for positions we opened)
