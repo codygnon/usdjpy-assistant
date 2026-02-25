@@ -4265,7 +4265,7 @@ def execute_kt_cg_trial_4_policy_demo_only(
     # Check cooldown for Zone Entry only (Tiered Pullback has NO cooldown)
     if trigger_type == "zone_entry":
         cooldown_ok, cooldown_reason = _check_kt_cg_trial_4_cooldown(
-            store, profile.profile_name, policy.id, policy.cooldown_minutes, rule_prefix="kt_cg_trial_7"
+            store, profile.profile_name, policy.id, policy.cooldown_minutes, rule_prefix="kt_cg_trial_4"
         )
         if not cooldown_ok:
             store.insert_execution(
@@ -4805,7 +4805,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
 
     if trigger_type == "zone_entry":
         cooldown_ok, cooldown_reason = _check_kt_cg_trial_4_cooldown(
-            store, profile.profile_name, policy.id, policy.cooldown_minutes
+            store, profile.profile_name, policy.id, policy.cooldown_minutes, rule_prefix="kt_cg_trial_7"
         )
         if not cooldown_ok:
             store.insert_execution(
