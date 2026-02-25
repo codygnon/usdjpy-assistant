@@ -163,6 +163,81 @@ def _loop_pid_path(profile_name: str) -> Path:
     return LOGS_DIR / profile_name / "loop.pid"
 
 
+def _candidate_log_dirs(profile_name: str, profile_path: Optional[str] = None) -> list[Path]:
+    """Return possible log dirs for this profile, handling profile_name mismatches."""
+    dirs: list[Path] = []
+    seen: set[str] = set()
+
+    def _add(name: str) -> None:
+        if not name:
+            return
+        key = str(name)
+        if key in seen:
+            return
+        seen.add(key)
+        dirs.append(LOGS_DIR / name)
+
+    _add(profile_name)
+    if profile_path:
+        try:
+            rp = _resolve_profile_path(profile_path)
+            _add(rp.stem)
+            if rp.exists():
+                prof = load_profile_v1(rp)
+                _add(getattr(prof, "profile_name", ""))
+        except Exception:
+            pass
+    return dirs
+
+
+def _pick_best_dashboard_log_dir(profile_name: str, profile_path: Optional[str] = None) -> Path:
+    """Pick log dir with freshest dashboard_state.json among candidate dirs."""
+    from datetime import datetime, timezone
+
+    best_dir = LOGS_DIR / profile_name
+    best_score = -1.0
+    for d in _candidate_log_dirs(profile_name, profile_path):
+        p = d / "dashboard_state.json"
+        if not p.exists():
+            continue
+        score = 0.0
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            ts = data.get("timestamp_utc")
+            if ts:
+                dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                score = dt.timestamp()
+            else:
+                score = p.stat().st_mtime
+        except Exception:
+            try:
+                score = p.stat().st_mtime
+            except Exception:
+                score = 0.0
+        if score > best_score:
+            best_score = score
+            best_dir = d
+    return best_dir
+
+
+def _pick_best_trade_events_log_dir(profile_name: str, profile_path: Optional[str] = None) -> Path:
+    """Pick log dir with newest trade_events.json among candidate dirs."""
+    best_dir = LOGS_DIR / profile_name
+    best_mtime = -1.0
+    for d in _candidate_log_dirs(profile_name, profile_path):
+        p = d / "trade_events.json"
+        if not p.exists():
+            continue
+        try:
+            mt = p.stat().st_mtime
+        except Exception:
+            mt = 0.0
+        if mt > best_mtime:
+            best_mtime = mt
+            best_dir = d
+    return best_dir
+
+
 def _get_display_currency(profile: ProfileV1) -> tuple[str, float]:
     """Return (currency_code, rate). Rate multiplies USD amounts to get display value.
     For USD, rate=1. For JPY, rate=usdjpy bid (1 USD = rate JPY)."""
@@ -3141,7 +3216,7 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
     if LEAN_UI_MODE:
         from datetime import datetime, timezone
 
-        log_dir = LOGS_DIR / profile_name
+        log_dir = _pick_best_dashboard_log_dir(profile_name, profile_path)
         file_state = read_dashboard_state(log_dir)
         if file_state is not None:
             stale_age_seconds: float | None = None
@@ -3228,11 +3303,11 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
 
 
 @app.get("/api/data/{profile_name}/trade-events")
-def get_trade_events(profile_name: str, limit: int = 50) -> list[dict[str, Any]]:
+def get_trade_events(profile_name: str, limit: int = 50, profile_path: Optional[str] = None) -> list[dict[str, Any]]:
     """Returns trade_events.json contents (append-only trade log)."""
     from core.dashboard_models import read_trade_events
 
-    log_dir = LOGS_DIR / profile_name
+    log_dir = _pick_best_trade_events_log_dir(profile_name, profile_path)
     _backfill_trade_event_tier_labels(profile_name, log_dir)
     return read_trade_events(log_dir, limit=limit)
 

@@ -642,6 +642,8 @@ export async function getDashboard(profileName: string, profilePath?: string): P
   return fetchJson<DashboardState>(`${API_BASE}/data/${profileName}/dashboard${params}`);
 }
 
-export async function getTradeEvents(profileName: string, limit = 50): Promise<TradeEvent[]> {
-  return fetchJson<TradeEvent[]>(`${API_BASE}/data/${profileName}/trade-events?limit=${limit}`);
+export async function getTradeEvents(profileName: string, limit = 50, profilePath?: string): Promise<TradeEvent[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (profilePath) params.set('profile_path', profilePath);
+  return fetchJson<TradeEvent[]>(`${API_BASE}/data/${profileName}/trade-events?${params.toString()}`);
 }

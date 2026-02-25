@@ -420,7 +420,7 @@ function TradeCard({ event, isNew }: { event: TradeEvent; isNew: boolean }) {
   );
 }
 
-function TradeLog({ events }: { events: TradeEvent[] }) {
+function TradeLog({ title, events }: { title: string; events: TradeEvent[] }) {
   const prevCountRef = useRef(events.length);
   const newCount = events.length - prevCountRef.current;
   useEffect(() => { prevCountRef.current = events.length; }, [events.length]);
@@ -431,7 +431,7 @@ function TradeLog({ events }: { events: TradeEvent[] }) {
       border: `1px solid ${colors.border}`,
     }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: colors.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
-        Trade Log ({events.length})
+        {title} ({events.length})
       </div>
       <div style={{ maxHeight: 300, overflowY: 'auto' }}>
         {events.length === 0 ? (
@@ -493,6 +493,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
   const [dashState, setDashState] = useState<DashboardState | null>(null);
   const [runtime, setRuntime] = useState<RuntimeState | null>(null);
   const [trail, setTrail] = useState<Array<{ time: string; spread: number; blocked: number; trend: string }>>([]);
+  const [trailExpanded, setTrailExpanded] = useState(false);
 
   const loopRunning = dashState?.loop_running ?? false;
   const tick = (dashState && Number.isFinite(dashState.bid) && Number.isFinite(dashState.ask))
@@ -504,14 +505,14 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     if (!isPageVisible) return;
     let mounted = true;
     const poll = () => {
-      getTradeEvents(profileName, 30)
+      getTradeEvents(profileName, 30, profilePath)
         .then(e => { if (mounted) setEvents(e); })
         .catch(() => {});
     };
     poll();
     const id = setInterval(poll, 10000);
     return () => { mounted = false; clearInterval(id); };
-  }, [profileName, isPageVisible]);
+  }, [profileName, profilePath, isPageVisible]);
 
   // Poll dashboard state — 10s
   useEffect(() => {
@@ -571,6 +572,9 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
   const positions: PositionInfo[] = dashState?.positions || [];
   const dailySummary: DailySummary | null = dashState?.daily_summary || null;
   const presetName = dashState?.preset_name || '';
+  const openEvents = events.filter((e) => e.event_type === 'open');
+  const closedEvents = events.filter((e) => e.event_type === 'close');
+  const latestTrail = trail.length > 0 ? trail[trail.length - 1] : null;
 
   const staleLabel = (() => {
     if (!dashState?.stale) return null;
@@ -613,30 +617,57 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
             No run-loop dashboard data yet. Start the loop to populate dashboard context and filters.
           </div>
         )}
-        {/* Two-column: Context + Positions */}
+        {/* Two-column: Context + Trade Log */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <ContextPanel items={context} />
-          <PositionsPanel trades={positions} />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <TradeLog title="Open Entries" events={openEvents} />
+            <TradeLog title="Closed Trades" events={closedEvents} />
+          </div>
         </div>
 
         {/* Filter Status */}
         <FilterTable filters={filters} />
 
-        {/* Trade Log (from trade_events.json, written by loop) */}
-        {events.length > 0 && <TradeLog events={events} />}
+        {/* Open Positions */}
+        <PositionsPanel trades={positions} />
 
         {/* Local dashboard history trail (last 60 polls) */}
         <div style={{
           backgroundColor: colors.panel, borderRadius: 6, padding: 12,
           border: `1px solid ${colors.border}`,
         }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: colors.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
-            Recent Dashboard Trail ({trail.length})
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 1 }}>
+              Recent Dashboard Trail ({trail.length})
+            </div>
+            <button
+              type="button"
+              onClick={() => setTrailExpanded((v) => !v)}
+              style={{
+                border: `1px solid ${colors.border}`,
+                background: 'transparent',
+                color: colors.blue,
+                borderRadius: 4,
+                fontSize: 11,
+                padding: '2px 8px',
+                cursor: 'pointer',
+              }}
+            >
+              {trailExpanded ? 'Minimize' : 'Expand'}
+            </button>
           </div>
           {trail.length === 0 ? (
             <div style={{ color: colors.textSecondary, fontSize: 12 }}>No samples yet</div>
+          ) : !trailExpanded ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16, color: colors.textSecondary, fontSize: 12 }}>
+              <span style={mono}>{latestTrail?.time}</span>
+              <span>Spread <span style={mono}>{latestTrail?.spread.toFixed(1)}p</span></span>
+              <span>Blocked <span style={{ ...mono, color: (latestTrail?.blocked || 0) > 0 ? colors.red : colors.green }}>{latestTrail?.blocked ?? 0}</span></span>
+              <span>Trend <span style={{ color: colors.textPrimary }}>{latestTrail?.trend ?? '—'}</span></span>
+            </div>
           ) : (
-            <div style={{ maxHeight: 240, overflowY: 'auto' }}>
+            <div style={{ maxHeight: 180, overflowY: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                 <thead>
                   <tr style={{ color: colors.textSecondary, borderBottom: `1px solid ${colors.border}` }}>
