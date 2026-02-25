@@ -4879,6 +4879,19 @@ def execute_kt_cg_trial_7_policy_demo_only(
             if open_positions:
                 for pos in open_positions:
                     if isinstance(pos, dict):
+                        # OANDA returns all open trades for the symbol.
+                        # For Trial #7 per-side cap, count Trial #7-tagged trades only
+                        # so manual/other-strategy trades do not consume this policy cap.
+                        client_ext = pos.get("clientExtensions")
+                        comment = ""
+                        if isinstance(client_ext, dict):
+                            comment = str(client_ext.get("comment") or "").strip()
+                        if not comment:
+                            trade_ext = pos.get("tradeClientExtensions")
+                            if isinstance(trade_ext, dict):
+                                comment = str(trade_ext.get("comment") or "").strip()
+                        if comment and not comment.startswith("kt_cg_trial_7:"):
+                            continue
                         units = float(pos.get("currentUnits") or pos.get("initialUnits") or 0)
                         if units > 0:
                             pos_side = "buy"
