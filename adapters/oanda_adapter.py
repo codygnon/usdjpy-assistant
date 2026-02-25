@@ -50,6 +50,49 @@ def _rfc3339_utc(ts: datetime) -> str:
     return ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _to_float(value, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        if isinstance(value, str) and value.strip() == "":
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+
+def _to_int(value, default: int = 0) -> int:
+    try:
+        if value is None:
+            return default
+        if isinstance(value, str) and value.strip() == "":
+            return default
+        return int(float(value))
+    except Exception:
+        return default
+
+
+def _realized_pl_for_closed_trade(fill_tx: dict, closed_trade: dict) -> float:
+    """Per-trade realized P/L from a close entry.
+
+    Never blindly apply transaction-level PL to each closed trade in multi-close fills.
+    """
+    if closed_trade is None:
+        closed_trade = {}
+    raw = closed_trade.get("realizedPL")
+    if raw is not None and str(raw).strip() != "":
+        return _to_float(raw, 0.0)
+
+    # Conservative fallback: only when transaction clearly closes exactly one trade.
+    # This avoids duplicating aggregate transaction PL across multiple closed trades.
+    trades_closed = fill_tx.get("tradesClosed") or []
+    trade_closed = fill_tx.get("tradeClosed") or {}
+    closes_one_trade = (bool(trade_closed) and not trades_closed) or (len(trades_closed) == 1 and not trade_closed)
+    if closes_one_trade:
+        return _to_float(fill_tx.get("pl"), 0.0)
+    return 0.0
+
+
 def _is_oanda_invalid_time_range_error(err: Exception) -> bool:
     msg = str(err).lower()
     return "416" in msg and "time range specified is invalid" in msg
@@ -488,21 +531,34 @@ class OandaAdapter:
                 return None
             return None
 
-        def _match_close(tx_list: list) -> PositionCloseInfo | None:
+        closes: list[dict] = []
+
+        def _collect_closes(tx_list: list) -> None:
             for t in tx_list or []:
                 if t.get("type") != "ORDER_FILL":
                     continue
                 closed = t.get("tradeClosed") or {}
                 if str(closed.get("tradeID") or "") == ticket_str:
-                    return _close_info_from_fill(ticket, t, closed)
+                    closes.append(
+                        {
+                            "price": _to_float(t.get("price"), 0.0),
+                            "time": str(t.get("time") or ""),
+                            "pl": _realized_pl_for_closed_trade(t, closed),
+                            "units": abs(_to_int(closed.get("units"), 0)),
+                        }
+                    )
                 for tc in t.get("tradesClosed") or []:
                     if str(tc.get("tradeID") or "") == ticket_str:
-                        return _close_info_from_fill(ticket, t, tc)
-            return None
+                        closes.append(
+                            {
+                                "price": _to_float(t.get("price"), 0.0),
+                                "time": str(t.get("time") or ""),
+                                "pl": _realized_pl_for_closed_trade(t, tc),
+                                "units": abs(_to_int(tc.get("units"), 0)),
+                            }
+                        )
 
-        hit = _match_close(data.get("transactions") or [])
-        if hit is not None:
-            return hit
+        _collect_closes(data.get("transactions") or [])
 
         pages = data.get("pages") or []
         for page_path in pages:
@@ -517,10 +573,23 @@ class OandaAdapter:
                 page_data = self._req("GET", req_path)
             except Exception:
                 continue
-            hit = _match_close(page_data.get("transactions") or [])
-            if hit is not None:
-                return hit
-        return None
+            _collect_closes(page_data.get("transactions") or [])
+
+        if not closes:
+            return None
+
+        closes.sort(key=lambda x: str(x.get("time") or ""))
+        last = closes[-1]
+        total_pl = sum(_to_float(c.get("pl"), 0.0) for c in closes)
+        total_units = sum(max(0, _to_int(c.get("units"), 0)) for c in closes)
+        volume = (total_units / 100_000.0) if total_units > 0 else (abs(_to_int(last.get("units"), 0)) / 100_000.0)
+        return PositionCloseInfo(
+            ticket=ticket,
+            exit_price=_to_float(last.get("price"), 0.0),
+            exit_time_utc=str(last.get("time") or ""),
+            profit=float(total_pl),
+            volume=float(volume),
+        )
 
     def get_closed_positions_from_history(self, days_back: int = 30, symbol: str | None = None, pip_size: float | None = None) -> list:
         """Fetch closed positions from OANDA transaction history (activity).
@@ -532,7 +601,7 @@ class OandaAdapter:
         from_param = _rfc3339_utc(from_ts)
         to_param = _rfc3339_utc(to_ts)
         opens: dict[str, dict] = {}   # tradeID -> { instrument, price, time, units }
-        closes: dict[str, dict] = {}  # tradeID -> { price, time, pl, units }
+        closes: dict[str, dict] = {}  # tradeID -> { price, time, pl, units_closed }
 
         def process_transactions(transactions: list) -> None:
             for t in transactions or []:
@@ -554,25 +623,44 @@ class OandaAdapter:
                 closed = t.get("tradeClosed") or {}
                 if closed.get("tradeID"):
                     tid_str = str(closed.get("tradeID"))
-                    pl = float(closed.get("realizedPL") or t.get("pl") or 0)
-                    closes[tid_str] = {
-                        "price": float(t.get("price") or 0),
-                        "time": str(t.get("time") or ""),
-                        "pl": pl,
-                        "units": int(float(closed.get("units") or 0)),
-                    }
+                    pl = _realized_pl_for_closed_trade(t, closed)
+                    units = abs(_to_int(closed.get("units"), 0))
+                    existing = closes.get(tid_str)
+                    if existing is None:
+                        closes[tid_str] = {
+                            "price": _to_float(t.get("price"), 0.0),
+                            "time": str(t.get("time") or ""),
+                            "pl": float(pl),
+                            "units_closed": units,
+                        }
+                    else:
+                        existing["pl"] = float(_to_float(existing.get("pl"), 0.0) + pl)
+                        existing["units_closed"] = int(_to_int(existing.get("units_closed"), 0) + units)
+                        tx_time = str(t.get("time") or "")
+                        if tx_time >= str(existing.get("time") or ""):
+                            existing["time"] = tx_time
+                            existing["price"] = _to_float(t.get("price"), 0.0)
                 for tc in t.get("tradesClosed") or []:
                     tid_str = str(tc.get("tradeID") or "")
                     if not tid_str:
                         continue
-                    # Prefer per-trade realizedPL; transaction-level pl can be total across multiple closed trades.
-                    pl = float(tc.get("realizedPL") or t.get("pl") or 0)
-                    closes[tid_str] = {
-                        "price": float(t.get("price") or 0),
-                        "time": str(t.get("time") or ""),
-                        "pl": pl,
-                        "units": int(float(tc.get("units") or 0)),
-                    }
+                    pl = _realized_pl_for_closed_trade(t, tc)
+                    units = abs(_to_int(tc.get("units"), 0))
+                    existing = closes.get(tid_str)
+                    if existing is None:
+                        closes[tid_str] = {
+                            "price": _to_float(t.get("price"), 0.0),
+                            "time": str(t.get("time") or ""),
+                            "pl": float(pl),
+                            "units_closed": units,
+                        }
+                    else:
+                        existing["pl"] = float(_to_float(existing.get("pl"), 0.0) + pl)
+                        existing["units_closed"] = int(_to_int(existing.get("units_closed"), 0) + units)
+                        tx_time = str(t.get("time") or "")
+                        if tx_time >= str(existing.get("time") or ""):
+                            existing["time"] = tx_time
+                            existing["price"] = _to_float(t.get("price"), 0.0)
 
         def process_response_pages(data: dict) -> None:
             # Process initial response transactions if present (some APIs return first page in body)
@@ -662,9 +750,14 @@ class OandaAdapter:
             exit_price = close_info["price"]
             entry_time_utc = open_info["time"]
             exit_time_utc = close_info["time"]
-            units = abs(open_info["units"])
+            open_units = abs(_to_int(open_info.get("units"), 0))
+            closed_units = max(0, _to_int(close_info.get("units_closed"), 0))
+            # Skip partial-only closes; this endpoint should return fully closed trades.
+            if open_units > 0 and 0 < closed_units < open_units:
+                continue
+            units = open_units if open_units > 0 else closed_units
             volume = units / 100_000.0
-            profit = close_info["pl"]
+            profit = float(_to_float(close_info.get("pl"), 0.0))
             side = "buy" if open_info["units"] and int(open_info["units"]) > 0 else "sell"
             pips_val = None
             if pip_size and pip_size > 0:
@@ -711,10 +804,10 @@ class OandaAdapter:
 
 def _close_info_from_fill(ticket: int, fill: dict, closed: dict) -> PositionCloseInfo:
     """Build PositionCloseInfo from OANDA ORDER_FILL and tradeClosed/tradesClosed entry."""
-    price = float(fill.get("price") or 0)
+    price = _to_float(fill.get("price"), 0.0)
     time_str = str(fill.get("time") or "")
-    pl = float(fill.get("pl") or closed.get("realizedPL") or 0)
-    units = abs(int(float(closed.get("units") or 0)))
+    pl = _realized_pl_for_closed_trade(fill, closed)
+    units = abs(_to_int(closed.get("units"), 0))
     volume = units / 100_000.0
     return PositionCloseInfo(
         ticket=ticket,

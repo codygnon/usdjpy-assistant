@@ -3317,7 +3317,68 @@ def get_trade_events(profile_name: str, limit: int = 50, profile_path: Optional[
 
     log_dir = _pick_best_trade_events_log_dir(profile_name, profile_path)
     _backfill_trade_event_tier_labels(profile_name, log_dir)
-    return read_trade_events(log_dir, limit=limit)
+    events = read_trade_events(log_dir, limit=limit)
+    return _hydrate_trade_event_close_financials(profile_name, events)
+
+
+def _hydrate_trade_event_close_financials(profile_name: str, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Prefer DB close-trade pips/profit in trade-events for corrected historical display."""
+    if not events:
+        return events
+    close_ids = {
+        str(ev.get("trade_id") or "")
+        for ev in events
+        if isinstance(ev, dict) and ev.get("event_type") == "close" and ev.get("trade_id")
+    }
+    if not close_ids:
+        return events
+    try:
+        store = _store_for(profile_name)
+        trades_df = store.read_trades_df(profile_name)
+        if trades_df is None or trades_df.empty:
+            return events
+        if "trade_id" not in trades_df.columns:
+            return events
+        matched = trades_df[trades_df["trade_id"].astype(str).isin(close_ids)]
+        if matched.empty:
+            return events
+        financials: dict[str, dict[str, Any]] = {}
+        for _, row in matched.iterrows():
+            tid = str(row.get("trade_id") or "")
+            if not tid:
+                continue
+            pips = row.get("pips")
+            profit = row.get("profit")
+            if pd.isna(pips):
+                pips = None
+            if pd.isna(profit):
+                profit = None
+            financials[tid] = {
+                "pips": float(pips) if pips is not None else None,
+                "profit": float(profit) if profit is not None else None,
+            }
+        if not financials:
+            return events
+        hydrated: list[dict[str, Any]] = []
+        for ev in events:
+            if not isinstance(ev, dict):
+                hydrated.append(ev)
+                continue
+            if ev.get("event_type") != "close":
+                hydrated.append(ev)
+                continue
+            tid = str(ev.get("trade_id") or "")
+            fin = financials.get(tid)
+            if not fin:
+                hydrated.append(ev)
+                continue
+            ev2 = dict(ev)
+            ev2["pips"] = fin.get("pips")
+            ev2["profit"] = fin.get("profit")
+            hydrated.append(ev2)
+        return hydrated
+    except Exception:
+        return events
 
 
 def _backfill_trade_event_tier_labels(profile_name: str, log_dir: Path) -> None:

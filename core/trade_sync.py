@@ -464,18 +464,51 @@ def backfill_profit(profile: "ProfileV1", store: "SqliteStore", force_refresh: b
     
     updated_count = 0
     try:
+        oanda_profit_by_position: dict[int, float] | None = None
+        is_oanda = getattr(profile, "broker_type", None) == "oanda"
+        if is_oanda:
+            try:
+                closed_positions = adapter.get_closed_positions_from_history(
+                    days_back=365,
+                    symbol=profile.symbol,
+                    pip_size=float(profile.pip_size),
+                )
+                oanda_profit_by_position = {}
+                for pos in closed_positions or []:
+                    pid = getattr(pos, "position_id", None)
+                    if pid is None:
+                        continue
+                    try:
+                        oanda_profit_by_position[int(pid)] = float(getattr(pos, "profit", 0.0) or 0.0)
+                    except Exception:
+                        continue
+            except Exception as e:
+                print(f"[trade_sync] OANDA history profit map failed: {e}")
+                oanda_profit_by_position = {}
+
         for trade_row in trades:
             trade_id = trade_row["trade_id"]
             mt5_position_id = _safe_get(trade_row, "mt5_position_id")
             
             if not mt5_position_id or pd.isna(mt5_position_id):
                 continue
-            
-            close_info = adapter.get_position_close_info(int(mt5_position_id))
-            if close_info:
-                store.update_trade(trade_id, {"profit": float(close_info.profit)})
-                print(f"[trade_sync] Backfilled profit={close_info.profit:.2f} for trade {trade_id}")
-                updated_count += 1
+
+            position_id = int(mt5_position_id)
+            profit_value: float | None = None
+            if oanda_profit_by_position is not None:
+                profit_value = oanda_profit_by_position.get(position_id)
+
+            if profit_value is None:
+                close_info = adapter.get_position_close_info(position_id)
+                if close_info:
+                    profit_value = float(close_info.profit)
+
+            if profit_value is None:
+                continue
+
+            store.update_trade(trade_id, {"profit": float(profit_value)})
+            print(f"[trade_sync] Backfilled profit={profit_value:.2f} for trade {trade_id}")
+            updated_count += 1
     finally:
         try:
             adapter.shutdown()
