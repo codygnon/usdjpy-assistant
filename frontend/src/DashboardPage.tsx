@@ -574,6 +574,8 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
   const presetName = dashState?.preset_name || '';
   const openEvents = events.filter((e) => e.event_type === 'open');
   const closedEvents = events.filter((e) => e.event_type === 'close');
+  const recentOpenEvents = openEvents.slice(0, 30);
+  const recentClosedEvents = closedEvents.slice(0, 30);
   const latestTrail = trail.length > 0 ? trail[trail.length - 1] : null;
 
   const staleLabel = (() => {
@@ -620,10 +622,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
         {/* Two-column: Context + Trade Log */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <ContextPanel items={context} />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <TradeLog title="Open Entries" events={openEvents} />
-            <TradeLog title="Closed Trades" events={closedEvents} />
-          </div>
+          <TradeLog title="Trade Log (Last 30)" events={recentOpenEvents} />
         </div>
 
         {/* Filter Status */}
@@ -631,6 +630,9 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
 
         {/* Open Positions */}
         <PositionsPanel trades={positions} />
+
+        {/* Closed Trades */}
+        <TradeLog title="Closed Trades (Last 30)" events={recentClosedEvents} />
 
         {/* Local dashboard history trail (last 60 polls) */}
         <div style={{
