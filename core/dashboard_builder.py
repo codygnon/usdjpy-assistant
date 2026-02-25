@@ -22,6 +22,7 @@ from core.dashboard_reporters import (
     report_dead_zone,
     report_trend_exhaustion,
     report_max_trades,
+    report_max_trades_by_side,
     report_t6_dead_zone,
     report_t6_m3_trend,
     report_t6_bb_reversal_cap,
@@ -247,8 +248,7 @@ def build_dashboard_filters(
                 side_counts, live_ok = _live_side_counts(profile, adapter)
                 if not live_ok:
                     side_counts = _store_side_counts(store, profile.profile_name)
-                sc = side_counts.get(side, 0)
-                filters.append(report_max_trades(sc, max_per_side, side, side_counts))
+                filters.extend(report_max_trades_by_side(side_counts, max_per_side))
             except Exception:
                 pass
 
@@ -263,8 +263,7 @@ def build_dashboard_filters(
                 side_counts, live_ok = _live_side_counts(profile, adapter)
                 if not live_ok:
                     side_counts = _store_side_counts(store, profile.profile_name)
-                sc = side_counts.get(side, 0)
-                filters.append(report_max_trades(sc, max_per_side, side, side_counts))
+                filters.extend(report_max_trades_by_side(side_counts, max_per_side))
             except Exception:
                 pass
 
@@ -294,8 +293,7 @@ def build_dashboard_filters(
                 side_counts, live_ok = _live_side_counts(profile, adapter)
                 if not live_ok:
                     side_counts = _store_side_counts(store, profile.profile_name)
-                sc = side_counts.get(side, 0)
-                filters.append(report_max_trades(sc, max_per_side, side, side_counts))
+                filters.extend(report_max_trades_by_side(side_counts, max_per_side))
                 open_trades = store.list_open_trades(profile.profile_name)
                 zone_cap = getattr(policy, "max_zone_entry_open", None)
                 if zone_cap is not None:

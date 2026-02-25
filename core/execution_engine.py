@@ -4804,14 +4804,6 @@ def execute_kt_cg_trial_7_policy_demo_only(
         rule_id = f"kt_cg_trial_7:{policy.id}:tier_{tiered_pullback_tier}"
 
     if trigger_type == "zone_entry":
-        within = 2
-        if store.has_recent_price_level_placement(profile.profile_name, rule_id, within):
-            return {
-                "decision": ExecutionDecision(attempted=False, placed=False, reason="kt_cg_trial_7: recent placement (idempotent)"),
-                "tier_updates": tier_updates,
-                "exhaustion_result": exhaustion_result,
-            }
-
         cooldown_ok, cooldown_reason = _check_kt_cg_trial_4_cooldown(
             store, profile.profile_name, policy.id, policy.cooldown_minutes
         )

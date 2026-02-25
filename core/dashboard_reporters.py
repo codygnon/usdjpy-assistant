@@ -473,6 +473,49 @@ def report_max_trades(open_count: int, max_allowed: Optional[int], side: str, si
     )
 
 
+def report_max_trades_by_side(side_counts: dict[str, int], max_allowed: Optional[int]) -> list[FilterReport]:
+    """Report explicit per-side max open trade caps (Buy + Sell rows)."""
+    if max_allowed is None:
+        return [
+            FilterReport(
+                filter_id="max_trades_buy",
+                display_name="Max Open Trades (Buy)",
+                enabled=False,
+                is_clear=True,
+            ),
+            FilterReport(
+                filter_id="max_trades_sell",
+                display_name="Max Open Trades (Sell)",
+                enabled=False,
+                is_clear=True,
+            ),
+        ]
+    buy_open = int(side_counts.get("buy", 0))
+    sell_open = int(side_counts.get("sell", 0))
+    buy_clear = buy_open < max_allowed
+    sell_clear = sell_open < max_allowed
+    return [
+        FilterReport(
+            filter_id="max_trades_buy",
+            display_name="Max Open Trades (Buy)",
+            enabled=True,
+            is_clear=buy_clear,
+            current_value=f"{buy_open}/{max_allowed}",
+            threshold=f"Max: {max_allowed}",
+            block_reason=f"{buy_open} >= {max_allowed}" if not buy_clear else None,
+        ),
+        FilterReport(
+            filter_id="max_trades_sell",
+            display_name="Max Open Trades (Sell)",
+            enabled=True,
+            is_clear=sell_clear,
+            current_value=f"{sell_open}/{max_allowed}",
+            threshold=f"Max: {max_allowed}",
+            block_reason=f"{sell_open} >= {max_allowed}" if not sell_clear else None,
+        ),
+    ]
+
+
 def report_open_trade_cap_by_entry_type(entry_type: str, open_count: int, max_allowed: int) -> FilterReport:
     """Report open trade cap for a specific entry type."""
     label = "Zone Entry Cap" if entry_type == "zone_entry" else "Tiered Pullback Cap"
