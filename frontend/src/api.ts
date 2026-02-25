@@ -649,3 +649,21 @@ export async function getTradeEvents(profileName: string, limit = 50, profilePat
   if (profilePath) params.set('profile_path', profilePath);
   return fetchJson<TradeEvent[]>(`${API_BASE}/data/${profileName}/trade-events?${params.toString()}`);
 }
+
+export interface Trial7ReversalRiskStatus {
+  enabled: boolean;
+  available: boolean;
+  score: number | null;
+  tier: string | null;
+  lot_multiplier?: number | null;
+  min_tier_ema?: number | null;
+  zone_block_entry?: boolean | null;
+  use_managed_exit?: boolean | null;
+  timestamp_utc?: string | null;
+  source?: string;
+}
+
+export async function getTrial7ReversalRiskStatus(profileName: string, profilePath?: string): Promise<Trial7ReversalRiskStatus> {
+  const params = profilePath ? `?profile_path=${encodeURIComponent(profilePath)}` : '';
+  return fetchJson<Trial7ReversalRiskStatus>(`${API_BASE}/data/${profileName}/reversal-risk${params}`);
+}

@@ -727,6 +727,61 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
     max_zone_entry_open: Optional[int] = 3
     max_tiered_pullback_open: Optional[int] = 8
 
+    # Reversal Risk Score (calibrated for USDJPY, disabled by default)
+    use_reversal_risk_score: bool = False
+
+    # Component weights (sum should be 100)
+    rr_weight_rsi_divergence: int = 55
+    rr_weight_adr_exhaustion: int = 20
+    rr_weight_htf_proximity: int = 15
+    rr_weight_ema_spread: int = 10
+
+    # RSI divergence params
+    rr_rsi_period: int = 9
+    rr_rsi_lookback_bars: int = 20
+    rr_rsi_severity_midpoint: float = 18.0  # RSI points for 0.5 severity
+
+    # ADR params
+    rr_adr_period: int = 14
+    rr_adr_ramp_start_pct: float = 75.0
+    rr_adr_score_at_100_pct: float = 0.3
+    rr_adr_score_at_120_pct: float = 0.6
+    rr_adr_score_at_150_pct: float = 0.9
+
+    # EMA spread params
+    rr_ema_spread_threshold_pips: float = 4.22
+    rr_ema_spread_max_pips: float = 8.0
+
+    # HTF proximity params
+    rr_htf_buffer_pips: float = 5.0
+    rr_htf_swing_lookback: int = 30
+
+    # Tier thresholds from calibrated score distribution
+    rr_tier_medium: float = 58.0
+    rr_tier_high: float = 65.0
+    rr_tier_critical: float = 71.0
+
+    # Response params
+    rr_medium_lot_multiplier: float = 0.75
+    rr_high_lot_multiplier: float = 0.50
+    rr_critical_lot_multiplier: float = 0.25
+    rr_high_min_tier_ema: int = 21
+    rr_critical_min_tier_ema: int = 26
+    rr_block_zone_entry_above_tier: Literal["medium", "high", "critical"] = "high"
+
+    # Optional dynamic coupling into trend-exhaustion thresholds (loosen by raising thresholds)
+    rr_adjust_exhaustion_thresholds: bool = True
+    rr_exhaustion_medium_threshold_boost_pips: float = 0.5
+    rr_exhaustion_high_threshold_boost_pips: float = 1.0
+    rr_exhaustion_critical_threshold_boost_pips: float = 1.5
+
+    # Managed exit (activates at configured tier+)
+    rr_use_managed_exit_at: Literal["medium", "high", "critical"] = "high"
+    rr_managed_exit_hard_sl_pips: float = 72.0
+    rr_managed_exit_max_hold_underwater_min: float = 30.0
+    rr_managed_exit_trail_activation_pips: float = 4.0
+    rr_managed_exit_trail_distance_pips: float = 2.5
+
 
 class ExecutionPolicyKtCgTrial6(BaseModel):
     """KT/CG Trial #6 (BB Slope Trend + EMA Tier Pullback + BB Reversal).
@@ -1042,6 +1097,96 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
                             pol["tier_ema_periods"] = cleaned if cleaned else canonical_default
                         else:
                             pol["tier_ema_periods"] = canonical_default
+                        # Reversal risk defaults + sanitization
+                        defaults_rr = {
+                            "use_reversal_risk_score": False,
+                            "rr_weight_rsi_divergence": 55,
+                            "rr_weight_adr_exhaustion": 20,
+                            "rr_weight_htf_proximity": 15,
+                            "rr_weight_ema_spread": 10,
+                            "rr_rsi_period": 9,
+                            "rr_rsi_lookback_bars": 20,
+                            "rr_rsi_severity_midpoint": 18.0,
+                            "rr_adr_period": 14,
+                            "rr_adr_ramp_start_pct": 75.0,
+                            "rr_adr_score_at_100_pct": 0.3,
+                            "rr_adr_score_at_120_pct": 0.6,
+                            "rr_adr_score_at_150_pct": 0.9,
+                            "rr_ema_spread_threshold_pips": 4.22,
+                            "rr_ema_spread_max_pips": 8.0,
+                            "rr_htf_buffer_pips": 5.0,
+                            "rr_htf_swing_lookback": 30,
+                            "rr_tier_medium": 58.0,
+                            "rr_tier_high": 65.0,
+                            "rr_tier_critical": 71.0,
+                            "rr_medium_lot_multiplier": 0.75,
+                            "rr_high_lot_multiplier": 0.50,
+                            "rr_critical_lot_multiplier": 0.25,
+                            "rr_high_min_tier_ema": 21,
+                            "rr_critical_min_tier_ema": 26,
+                            "rr_block_zone_entry_above_tier": "high",
+                            "rr_adjust_exhaustion_thresholds": True,
+                            "rr_exhaustion_medium_threshold_boost_pips": 0.5,
+                            "rr_exhaustion_high_threshold_boost_pips": 1.0,
+                            "rr_exhaustion_critical_threshold_boost_pips": 1.5,
+                            "rr_use_managed_exit_at": "high",
+                            "rr_managed_exit_hard_sl_pips": 72.0,
+                            "rr_managed_exit_max_hold_underwater_min": 30.0,
+                            "rr_managed_exit_trail_activation_pips": 4.0,
+                            "rr_managed_exit_trail_distance_pips": 2.5,
+                        }
+                        for k, v in defaults_rr.items():
+                            if k not in pol:
+                                pol[k] = v
+
+                        try:
+                            w1 = max(0, int(pol.get("rr_weight_rsi_divergence", 55)))
+                            w2 = max(0, int(pol.get("rr_weight_adr_exhaustion", 20)))
+                            w3 = max(0, int(pol.get("rr_weight_htf_proximity", 15)))
+                            w4 = max(0, int(pol.get("rr_weight_ema_spread", 10)))
+                            if (w1 + w2 + w3 + w4) <= 0:
+                                w1, w2, w3, w4 = 55, 20, 15, 10
+                            pol["rr_weight_rsi_divergence"] = w1
+                            pol["rr_weight_adr_exhaustion"] = w2
+                            pol["rr_weight_htf_proximity"] = w3
+                            pol["rr_weight_ema_spread"] = w4
+                        except Exception:
+                            pol["rr_weight_rsi_divergence"] = 55
+                            pol["rr_weight_adr_exhaustion"] = 20
+                            pol["rr_weight_htf_proximity"] = 15
+                            pol["rr_weight_ema_spread"] = 10
+
+                        pol["rr_rsi_period"] = max(2, int(pol.get("rr_rsi_period", 9)))
+                        pol["rr_rsi_lookback_bars"] = max(5, int(pol.get("rr_rsi_lookback_bars", 20)))
+                        pol["rr_rsi_severity_midpoint"] = max(0.1, float(pol.get("rr_rsi_severity_midpoint", 18.0)))
+                        pol["rr_adr_period"] = max(2, int(pol.get("rr_adr_period", 14)))
+                        pol["rr_adr_ramp_start_pct"] = max(0.0, min(200.0, float(pol.get("rr_adr_ramp_start_pct", 75.0))))
+                        pol["rr_adr_score_at_100_pct"] = max(0.0, min(1.0, float(pol.get("rr_adr_score_at_100_pct", 0.3))))
+                        pol["rr_adr_score_at_120_pct"] = max(0.0, min(1.0, float(pol.get("rr_adr_score_at_120_pct", 0.6))))
+                        pol["rr_adr_score_at_150_pct"] = max(0.0, min(1.0, float(pol.get("rr_adr_score_at_150_pct", 0.9))))
+                        pol["rr_ema_spread_threshold_pips"] = max(0.1, float(pol.get("rr_ema_spread_threshold_pips", 4.22)))
+                        pol["rr_ema_spread_max_pips"] = max(pol["rr_ema_spread_threshold_pips"], float(pol.get("rr_ema_spread_max_pips", 8.0)))
+                        pol["rr_htf_buffer_pips"] = max(0.1, float(pol.get("rr_htf_buffer_pips", 5.0)))
+                        pol["rr_htf_swing_lookback"] = max(5, int(pol.get("rr_htf_swing_lookback", 30)))
+                        pol["rr_tier_medium"] = max(0.0, float(pol.get("rr_tier_medium", 58.0)))
+                        pol["rr_tier_high"] = max(pol["rr_tier_medium"], float(pol.get("rr_tier_high", 65.0)))
+                        pol["rr_tier_critical"] = max(pol["rr_tier_high"], float(pol.get("rr_tier_critical", 71.0)))
+                        pol["rr_medium_lot_multiplier"] = max(0.01, float(pol.get("rr_medium_lot_multiplier", 0.75)))
+                        pol["rr_high_lot_multiplier"] = max(0.01, float(pol.get("rr_high_lot_multiplier", 0.50)))
+                        pol["rr_critical_lot_multiplier"] = max(0.01, float(pol.get("rr_critical_lot_multiplier", 0.25)))
+                        pol["rr_high_min_tier_ema"] = max(9, int(pol.get("rr_high_min_tier_ema", 21)))
+                        pol["rr_critical_min_tier_ema"] = max(pol["rr_high_min_tier_ema"], int(pol.get("rr_critical_min_tier_ema", 26)))
+                        if pol.get("rr_block_zone_entry_above_tier") not in ("medium", "high", "critical"):
+                            pol["rr_block_zone_entry_above_tier"] = "high"
+                        if pol.get("rr_use_managed_exit_at") not in ("medium", "high", "critical"):
+                            pol["rr_use_managed_exit_at"] = "high"
+                        pol["rr_managed_exit_hard_sl_pips"] = max(0.1, float(pol.get("rr_managed_exit_hard_sl_pips", 72.0)))
+                        pol["rr_managed_exit_max_hold_underwater_min"] = max(1.0, float(pol.get("rr_managed_exit_max_hold_underwater_min", 30.0)))
+                        pol["rr_managed_exit_trail_activation_pips"] = max(0.1, float(pol.get("rr_managed_exit_trail_activation_pips", 4.0)))
+                        pol["rr_managed_exit_trail_distance_pips"] = max(0.1, float(pol.get("rr_managed_exit_trail_distance_pips", 2.5)))
+                        pol["rr_exhaustion_medium_threshold_boost_pips"] = max(0.0, float(pol.get("rr_exhaustion_medium_threshold_boost_pips", 0.5)))
+                        pol["rr_exhaustion_high_threshold_boost_pips"] = max(0.0, float(pol.get("rr_exhaustion_high_threshold_boost_pips", 1.0)))
+                        pol["rr_exhaustion_critical_threshold_boost_pips"] = max(0.0, float(pol.get("rr_exhaustion_critical_threshold_boost_pips", 1.5)))
         return d
 
     profile_name = d.get("profile_name") or d.get("name") or "default"

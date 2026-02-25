@@ -1,0 +1,5 @@
+tier,min_score,max_score
+normal,0.0,58.111
+extended,58.111,65.022
+very_extended,65.022,100.0
+alt_warn,53.323,58.111

@@ -453,6 +453,85 @@ def report_trial7_adaptive_tp(policy, exhaustion_result: Optional[dict]) -> Filt
     )
 
 
+def report_trial7_reversal_risk(policy, reversal_risk_result: Optional[dict]) -> FilterReport:
+    """Report Trial #7 calibrated reversal-risk score and active response."""
+    enabled = bool(getattr(policy, "use_reversal_risk_score", False))
+    if not enabled:
+        return FilterReport(
+            filter_id="trial7_reversal_risk",
+            display_name="Trial #7 Reversal Risk",
+            enabled=False,
+            is_clear=True,
+            current_value="OFF",
+        )
+
+    if not isinstance(reversal_risk_result, dict):
+        return FilterReport(
+            filter_id="trial7_reversal_risk",
+            display_name="Trial #7 Reversal Risk",
+            enabled=True,
+            is_clear=True,
+            current_value="Waiting for score",
+        )
+
+    score = float(reversal_risk_result.get("score", 0.0))
+    tier = str(reversal_risk_result.get("tier", "low")).lower()
+    thresholds = reversal_risk_result.get("thresholds") if isinstance(reversal_risk_result.get("thresholds"), dict) else {}
+    t_medium = float(thresholds.get("medium", getattr(policy, "rr_tier_medium", 58.0)))
+    t_high = float(thresholds.get("high", getattr(policy, "rr_tier_high", 65.0)))
+    t_critical = float(thresholds.get("critical", getattr(policy, "rr_tier_critical", 71.0)))
+
+    response = reversal_risk_result.get("response") if isinstance(reversal_risk_result.get("response"), dict) else {}
+    lot_x = float(response.get("lot_multiplier", 1.0))
+    min_tier = response.get("min_tier_ema")
+    zone_block = bool(response.get("block_zone_entry", False))
+    managed_exit = bool(response.get("use_managed_exit", False))
+
+    sub_filters: list[FilterReport] = []
+    components = reversal_risk_result.get("components")
+    if isinstance(components, dict):
+        comp_labels = (
+            ("rsi_divergence", "RSI Divergence"),
+            ("adr_exhaustion", "ADR Exhaustion"),
+            ("htf_proximity", "HTF Proximity"),
+            ("ema_spread", "EMA Spread"),
+        )
+        for key, label in comp_labels:
+            comp = components.get(key)
+            if not isinstance(comp, dict):
+                continue
+            comp_score = float(comp.get("score", 0.0))
+            sub_filters.append(
+                FilterReport(
+                    filter_id=f"trial7_rr_{key}",
+                    display_name=label,
+                    enabled=True,
+                    is_clear=True,
+                    current_value=f"{comp_score * 100.0:.1f}/100",
+                )
+            )
+
+    min_tier_str = f"{int(min_tier)}+" if min_tier is not None else "none"
+    return FilterReport(
+        filter_id="trial7_reversal_risk",
+        display_name="Trial #7 Reversal Risk",
+        enabled=True,
+        is_clear=True,
+        current_value=f"Score {score:.2f} | Tier {tier.upper()}",
+        threshold=f"medium:{t_medium:.1f} high:{t_high:.1f} critical:{t_critical:.1f}",
+        block_reason=None,
+        sub_filters=sub_filters,
+        metadata={
+            "score": round(score, 2),
+            "tier": tier,
+            "lot_multiplier": round(lot_x, 4),
+            "min_tier_ema": int(min_tier) if min_tier is not None else None,
+            "zone_block_entry": zone_block,
+            "use_managed_exit": managed_exit,
+        },
+    )
+
+
 def report_max_trades(open_count: int, max_allowed: Optional[int], side: str, side_counts: Optional[dict] = None) -> FilterReport:
     """Report max open trades status."""
     if max_allowed is None:
@@ -798,6 +877,49 @@ def collect_trial_7_context(
                 "tp",
             )
         )
+
+    rr_enabled = bool(getattr(policy, "use_reversal_risk_score", False))
+    items.append(ContextItem("Reversal Risk", "ON" if rr_enabled else "OFF", "reversal_risk"))
+    rr_result = None
+    if eval_result and isinstance(eval_result.get("reversal_risk_result"), dict):
+        rr_result = eval_result.get("reversal_risk_result")
+    elif exhaustion_result and (
+        exhaustion_result.get("rr_score") is not None or exhaustion_result.get("rr_tier") is not None
+    ):
+        rr_result = {
+            "score": exhaustion_result.get("rr_score"),
+            "tier": exhaustion_result.get("rr_tier"),
+            "response": {"lot_multiplier": exhaustion_result.get("rr_lot_multiplier")},
+        }
+    if rr_enabled:
+        if isinstance(rr_result, dict):
+            rr_score = rr_result.get("score")
+            rr_tier = str(rr_result.get("tier", "low")).upper()
+            rr_resp = rr_result.get("response") if isinstance(rr_result.get("response"), dict) else {}
+            rr_lot_x = rr_resp.get("lot_multiplier")
+            rr_min_tier = rr_resp.get("min_tier_ema")
+            rr_zone_block = bool(rr_resp.get("block_zone_entry", False))
+            rr_managed_exit = bool(rr_resp.get("use_managed_exit", False))
+            if rr_score is not None:
+                try:
+                    items.append(ContextItem("RR Score", f"{float(rr_score):.2f}", "reversal_risk"))
+                except Exception:
+                    pass
+            items.append(ContextItem("RR Tier", rr_tier, "reversal_risk"))
+            if rr_lot_x is not None:
+                try:
+                    items.append(ContextItem("RR Lot Multiplier", f"{float(rr_lot_x):.2f}x", "reversal_risk"))
+                except Exception:
+                    pass
+            items.append(ContextItem("RR Zone Block", "ON" if rr_zone_block else "OFF", "reversal_risk"))
+            items.append(ContextItem("RR Managed Exit", "ON" if rr_managed_exit else "OFF", "reversal_risk"))
+            if rr_min_tier is not None:
+                try:
+                    items.append(ContextItem("RR Min Tier EMA", f"{int(rr_min_tier)}+", "reversal_risk"))
+                except Exception:
+                    pass
+        else:
+            items.append(ContextItem("RR Score", "PENDING", "reversal_risk"))
 
     if exhaustion_result:
         zone = str(exhaustion_result.get("zone", "normal"))

@@ -17,6 +17,7 @@ import pandas as pd
 
 from adapters.broker import get_adapter
 from core.context_engine import compute_tf_context
+from core.managed_exit import apply_trial7_managed_exit_for_position
 from core.execution_engine import (
     build_default_candidate_from_signal,
     execute_bollinger_policy_demo_only,
@@ -138,6 +139,7 @@ def _insert_trade_for_policy(
     target_price: float | None = None,
     size_lots: float | None = None,
     entry_type: str | None = None,
+    reversal_risk_result: dict | None = None,
 ) -> None:
     """Store a trade in DB when a policy places an order. Ensures preset and position_id for Performance by Preset."""
     try:
@@ -171,6 +173,12 @@ def _insert_trade_for_policy(
         row["tp1_partial_done"] = 0
         if entry_type:
             row["entry_type"] = entry_type
+        if reversal_risk_result:
+            row["reversal_risk_score"] = float(reversal_risk_result.get("score", 0.0))
+            row["reversal_risk_tier"] = str(reversal_risk_result.get("tier", "low"))
+            row["reversal_risk_json"] = json.dumps(reversal_risk_result)
+            if bool((reversal_risk_result.get("response") or {}).get("use_managed_exit", False)):
+                row["managed_exit_active"] = 1
         # Capture entry slippage if fill_price available
         if getattr(dec, 'fill_price', None) is not None:
             slippage = abs(dec.fill_price - entry_price) / float(profile.pip_size)
@@ -190,15 +198,19 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
 
     # Find Trial #4/#5/#6/#7 spread-aware BE config if present
     t4_spread_be = None
+    trial7_policy = None
     for pol in profile.execution.policies:
-        if getattr(pol, "type", None) in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6", "kt_cg_trial_7") and getattr(pol, "enabled", True):
-            if getattr(pol, "spread_aware_be_enabled", False):
+        if not getattr(pol, "enabled", True):
+            continue
+        if getattr(pol, "type", None) in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6", "kt_cg_trial_7"):
+            if t4_spread_be is None and getattr(pol, "spread_aware_be_enabled", False):
                 t4_spread_be = pol
-            break
+        if trial7_policy is None and getattr(pol, "type", None) == "kt_cg_trial_7":
+            trial7_policy = pol
 
     has_simple_be = breakeven and getattr(breakeven, "enabled", False)
     has_scaled = target and getattr(target, "mode", None) == "scaled" and getattr(target, "tp1_pips", None)
-    if not has_simple_be and not has_scaled and t4_spread_be is None:
+    if not has_simple_be and not has_scaled and t4_spread_be is None and trial7_policy is None:
         return
     try:
         open_positions = adapter.get_open_positions(profile.symbol)
@@ -353,6 +365,20 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
             mae_mfe_updates["max_favorable_pips"] = round(mfe, 2)
         if mae_mfe_updates:
             store.update_trade(trade_id, mae_mfe_updates)
+
+        # 4) Trial #7 managed exit
+        if trial7_policy is not None and str(trade_row.get("notes") or "").startswith("auto:kt_cg_trial_7:"):
+            apply_trial7_managed_exit_for_position(
+                adapter=adapter,
+                profile=profile,
+                store=store,
+                policy=trial7_policy,
+                position_id=int(position_id),
+                live_position=pos,
+                trade_row=trade_row,
+                tick=tick,
+                pip_size=pip,
+            )
 
 
 def _build_and_write_dashboard(
@@ -756,6 +782,14 @@ def main() -> None:
         _last_exhaustion_zone: str | None = None
         _last_summary_time: float = 0.0
         _SUMMARY_INTERVAL: float = 30.0  # Print periodic summary every 30s
+        trial7_daily_state: dict = {
+            "date_utc": None,
+            "today_open": None,
+            "today_high": None,
+            "today_low": None,
+            "prev_day_high": None,
+            "prev_day_low": None,
+        }
 
         def _get_bars_cached(symbol: str, tf: str, count: int) -> pd.DataFrame:
             """Fetch bars with caching to reduce API calls at fast poll rates."""
@@ -811,9 +845,9 @@ def main() -> None:
                     # Fetch M3 data when needed by kt_cg_trial_4/5/6 (trend detection).
                     if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6:
                         data_by_tf["M3"] = _get_bars_cached(profile.symbol, "M3", 3000)
-                    # Fetch D1 data when needed by daily H/L filter (Trial #4/5).
-                    if has_kt_cg_trial_4 or has_kt_cg_trial_5:
-                        data_by_tf["D"] = _get_bars_cached(profile.symbol, "D", 2)
+                    # Fetch D1 data for Trial #4/5 daily filters and Trial #7 ADR/reversal-risk context.
+                    if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_7:
+                        data_by_tf["D"] = _get_bars_cached(profile.symbol, "D", 60)
                     # Tick always fetched fresh for live price detection
                     tick = adapter.get_tick(profile.symbol)
                     break
@@ -827,6 +861,36 @@ def main() -> None:
                         time.sleep(60)
             if data_by_tf is None or tick is None:
                 continue
+
+            if has_kt_cg_trial_7:
+                now_date = pd.Timestamp.now(tz="UTC").date().isoformat()
+                mid_tick = (tick.bid + tick.ask) / 2.0
+                if trial7_daily_state.get("date_utc") != now_date:
+                    trial7_daily_state["date_utc"] = now_date
+                    trial7_daily_state["today_open"] = float(mid_tick)
+                    trial7_daily_state["today_high"] = float(mid_tick)
+                    trial7_daily_state["today_low"] = float(mid_tick)
+                else:
+                    prev_hi = trial7_daily_state.get("today_high")
+                    prev_lo = trial7_daily_state.get("today_low")
+                    trial7_daily_state["today_high"] = float(mid_tick) if prev_hi is None else max(float(prev_hi), float(mid_tick))
+                    trial7_daily_state["today_low"] = float(mid_tick) if prev_lo is None else min(float(prev_lo), float(mid_tick))
+
+                d_df_live = data_by_tf.get("D")
+                if d_df_live is not None and not d_df_live.empty and len(d_df_live) >= 2:
+                    try:
+                        d_local = d_df_live.copy()
+                        d_local["time"] = pd.to_datetime(d_local["time"], utc=True, errors="coerce")
+                        d_local = d_local.dropna(subset=["time"]).sort_values("time")
+                        if len(d_local) >= 2:
+                            if str(d_local.iloc[-1]["time"].date().isoformat()) == now_date:
+                                prev_row = d_local.iloc[-2]
+                            else:
+                                prev_row = d_local.iloc[-1]
+                            trial7_daily_state["prev_day_high"] = float(prev_row["high"])
+                            trial7_daily_state["prev_day_low"] = float(prev_row["low"])
+                    except Exception:
+                        pass
 
             # Trade management: breakeven and TP1 partial close (only for positions we opened)
             _run_trade_management(profile, adapter, store, tick)
@@ -1908,13 +1972,15 @@ def main() -> None:
                     if m1_df is None or m1_df.empty:
                         continue
                     bar_time_utc = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
+                    t7_data_by_tf = dict(data_by_tf)
+                    t7_data_by_tf["_trial7_daily_state"] = dict(trial7_daily_state)
                     exec_result = execute_kt_cg_trial_7_policy_demo_only(
                         adapter=adapter,
                         profile=profile,
                         log_dir=log_dir,
                         policy=pol,
                         context=t7_mkt,
-                        data_by_tf=data_by_tf,
+                        data_by_tf=t7_data_by_tf,
                         tick=tick,
                         trades_df=trades_df,
                         mode=mode,
@@ -1948,11 +2014,16 @@ def main() -> None:
                             sl_pips = getattr(pol, "sl_pips", None)
                             if sl_pips is None:
                                 sl_pips = float(get_effective_risk(profile).min_stop_pips)
+                            tp_pips_effective = float(exec_result.get("tp_pips_effective") or getattr(pol, "tp_pips", 4.0))
+                            size_lots_effective = exec_result.get("size_lots_effective")
+                            if size_lots_effective is None:
+                                size_lots_effective = float(get_effective_risk(profile).max_lots)
+                            rr_result = exec_result.get("reversal_risk_result")
                             if side == "buy":
-                                tp_price = entry_price + pol.tp_pips * pip
+                                tp_price = entry_price + tp_pips_effective * pip
                                 sl_price = entry_price - sl_pips * pip
                             else:
-                                tp_price = entry_price - pol.tp_pips * pip
+                                tp_price = entry_price - tp_pips_effective * pip
                                 sl_price = entry_price + sl_pips * pip
                             print(f"[{profile.profile_name}] TRADE PLACED: kt_cg_trial_7:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
@@ -1966,20 +2037,27 @@ def main() -> None:
                                 dec=dec,
                                 stop_price=sl_price,
                                 target_price=tp_price,
+                                size_lots=float(size_lots_effective),
                                 entry_type=t7_trigger_type,
+                                reversal_risk_result=rr_result if isinstance(rr_result, dict) else None,
                             )
                             _append_trade_open_event(
                                 log_dir, f"kt_cg_trial_7:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
                                 side, entry_price,
                                 trigger_type=_event_trigger_label(t7_trigger_type, dec.reason),
                                 entry_type=t7_trigger_type or "",
+                                context_snapshot={
+                                    "rr_score": (rr_result or {}).get("score") if isinstance(rr_result, dict) else None,
+                                    "rr_tier": (rr_result or {}).get("tier") if isinstance(rr_result, dict) else None,
+                                    "tp_pips_effective": tp_pips_effective,
+                                },
                             )
                         else:
                             print(f"[{profile.profile_name}] kt_cg_trial_7 {pol.id} mode={mode} -> {dec.reason}")
 
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,
-                        data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
+                        data_by_tf=t7_data_by_tf, mode=mode, adapter=adapter, policy=pol,
                         policy_type="kt_cg_trial_7", tier_state=tier_state,
                         eval_result=exec_result,
                         exhaustion_result=exec_result.get("exhaustion_result"),

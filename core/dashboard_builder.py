@@ -29,6 +29,7 @@ from core.dashboard_reporters import (
     report_ema_zone_slope_filter_trial_7,
     report_trial7_m5_ema_distance_gate,
     report_trial7_adaptive_tp,
+    report_trial7_reversal_risk,
     report_open_trade_cap_by_entry_type,
 )
 
@@ -282,6 +283,19 @@ def build_dashboard_filters(
         m1_df = data_by_tf.get("M1")
         if m1_df is not None and not m1_df.empty:
             filters.append(report_ema_zone_slope_filter_trial_7(policy, m1_df, pip_size, side))
+        rr_result = eval_result.get("reversal_risk_result") if eval_result else None
+        if not isinstance(rr_result, dict) and exhaustion_result:
+            rr_score = exhaustion_result.get("rr_score")
+            rr_tier = exhaustion_result.get("rr_tier")
+            if rr_score is not None or rr_tier is not None:
+                rr_result = {
+                    "score": rr_score,
+                    "tier": rr_tier,
+                    "response": {
+                        "lot_multiplier": exhaustion_result.get("rr_lot_multiplier"),
+                    },
+                }
+        filters.append(report_trial7_reversal_risk(policy, rr_result))
         if getattr(policy, "trend_exhaustion_enabled", False):
             filters.append(report_trend_exhaustion(exhaustion_result))
         filters.append(report_trial7_adaptive_tp(policy, exhaustion_result))

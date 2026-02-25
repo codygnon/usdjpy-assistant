@@ -75,6 +75,12 @@ CREATE TABLE IF NOT EXISTS trades (
   opened_by TEXT,
   preset_name TEXT,
   profit REAL,
+  reversal_risk_score REAL,
+  reversal_risk_tier TEXT,
+  reversal_risk_json TEXT,
+  managed_exit_active INTEGER,
+  managed_exit_sl_price REAL,
+  managed_exit_last_action TEXT,
 
   FOREIGN KEY(snapshot_id) REFERENCES snapshots(id)
 );
@@ -169,6 +175,13 @@ class SqliteStore:
             self._ensure_column(conn, "trades", "breakeven_sl_price", "REAL")
             # v1.9: Post-SL recovery tracking
             self._ensure_column(conn, "trades", "post_sl_recovery_pips", "REAL")
+            # v2.0: Trial #7 reversal-risk and managed-exit tracking
+            self._ensure_column(conn, "trades", "reversal_risk_score", "REAL")
+            self._ensure_column(conn, "trades", "reversal_risk_tier", "TEXT")
+            self._ensure_column(conn, "trades", "reversal_risk_json", "TEXT")
+            self._ensure_column(conn, "trades", "managed_exit_active", "INTEGER")
+            self._ensure_column(conn, "trades", "managed_exit_sl_price", "REAL")
+            self._ensure_column(conn, "trades", "managed_exit_last_action", "TEXT")
             conn.commit()
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, col: str, col_type: str) -> None:
@@ -355,4 +368,3 @@ class SqliteStore:
                 [profile, mt5_position_id],
             )
             return cur.fetchone() is not None
-

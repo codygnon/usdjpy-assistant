@@ -1,0 +1,7 @@
+rsi_period,horizon_m5_bars,bear_div_count,bull_div_count,median_rsi_drop_after_bear_div,median_rsi_rise_after_bull_div,bear_div_to_reversal_hit_rate,bull_div_to_reversal_hit_rate,median_bars_to_bear_reversal,median_bars_to_bull_reversal,mean_hit_rate
+9,10,1468,1231,11.614,11.141,0.564,0.5605,4.0,3.5,0.5622499999999999
+14,10,1280,1000,8.318,7.323,0.5641,0.56,4.0,3.0,0.56205
+21,10,1074,800,5.83,5.358,0.5521,0.555,4.0,4.0,0.55355
+9,20,1468,1231,18.084,18.257,0.7977,0.7831,5.0,4.0,0.7904
+14,20,1280,1000,12.773,13.296,0.8039,0.764,5.0,4.0,0.7839499999999999
+21,20,1074,800,9.507,10.735,0.7831,0.7538,5.0,4.0,0.7684500000000001

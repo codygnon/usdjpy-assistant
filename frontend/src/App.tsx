@@ -3693,6 +3693,42 @@ interface EditedSettings {
   t7_m5_trend_ema_slow: number;
   t7_m5_min_ema_distance_pips: number;
   t7_zone_entry_mode: 'ema_cross' | 'price_vs_ema5';
+  // Trial #7: Calibrated Reversal Risk Score
+  t7_rr_enabled: boolean;
+  t7_rr_weight_rsi_divergence: number;
+  t7_rr_weight_adr_exhaustion: number;
+  t7_rr_weight_htf_proximity: number;
+  t7_rr_weight_ema_spread: number;
+  t7_rr_rsi_period: number;
+  t7_rr_rsi_lookback_bars: number;
+  t7_rr_rsi_severity_midpoint: number;
+  t7_rr_adr_period: number;
+  t7_rr_adr_ramp_start_pct: number;
+  t7_rr_adr_score_at_100_pct: number;
+  t7_rr_adr_score_at_120_pct: number;
+  t7_rr_adr_score_at_150_pct: number;
+  t7_rr_ema_spread_threshold_pips: number;
+  t7_rr_ema_spread_max_pips: number;
+  t7_rr_htf_buffer_pips: number;
+  t7_rr_htf_swing_lookback: number;
+  t7_rr_tier_medium: number;
+  t7_rr_tier_high: number;
+  t7_rr_tier_critical: number;
+  t7_rr_medium_lot_multiplier: number;
+  t7_rr_high_lot_multiplier: number;
+  t7_rr_critical_lot_multiplier: number;
+  t7_rr_high_min_tier_ema: number;
+  t7_rr_critical_min_tier_ema: number;
+  t7_rr_block_zone_entry_above_tier: 'medium' | 'high' | 'critical';
+  t7_rr_adjust_exhaustion_thresholds: boolean;
+  t7_rr_exhaustion_medium_threshold_boost_pips: number;
+  t7_rr_exhaustion_high_threshold_boost_pips: number;
+  t7_rr_exhaustion_critical_threshold_boost_pips: number;
+  t7_rr_use_managed_exit_at: 'medium' | 'high' | 'critical';
+  t7_rr_managed_exit_hard_sl_pips: number;
+  t7_rr_managed_exit_max_hold_underwater_min: number;
+  t7_rr_managed_exit_trail_activation_pips: number;
+  t7_rr_managed_exit_trail_distance_pips: number;
   // Trial #6: M3 Slope Trend Engine
   t6_m3_slope_lookback: number;
   t6_m3_bb_period: number;
@@ -3763,6 +3799,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
   const [editedSettings, setEditedSettings] = useState<EditedSettings | null>(null);
   const [applyingSettings, setApplyingSettings] = useState(false);
   const [t7TrendExhaustionManualThresholds, setT7TrendExhaustionManualThresholds] = useState(false);
+  const [t7ReversalRiskManualSettings, setT7ReversalRiskManualSettings] = useState(false);
+  const [t7ReversalRiskPresetMode, setT7ReversalRiskPresetMode] = useState<'data_calibrated' | 'conservative' | 'aggressive'>('data_calibrated');
+  const [t7ReversalRiskStatus, setT7ReversalRiskStatus] = useState<api.Trial7ReversalRiskStatus | null>(null);
 
   // Fetch current profile to get active preset
   const fetchProfile = () => {
@@ -3786,6 +3825,36 @@ function PresetsPage({ profile }: { profile: Profile }) {
       setPreview(null);
     }
   }, [selected, profile.path]);
+
+  useEffect(() => {
+    if (!showActiveSettings) {
+      setT7ReversalRiskStatus(null);
+      return;
+    }
+    const policies = (currentProfile?.execution as Record<string, unknown> | undefined)?.policies as Record<string, unknown>[] | undefined;
+    const hasTrial7 = !!policies?.some((p) => p.type === 'kt_cg_trial_7');
+    if (!hasTrial7) {
+      setT7ReversalRiskStatus(null);
+      return;
+    }
+
+    let cancelled = false;
+    const loadStatus = async () => {
+      try {
+        const status = await api.getTrial7ReversalRiskStatus(profile.name, profile.path);
+        if (!cancelled) setT7ReversalRiskStatus(status);
+      } catch {
+        if (!cancelled) setT7ReversalRiskStatus(null);
+      }
+    };
+
+    loadStatus();
+    const timer = window.setInterval(loadStatus, 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [showActiveSettings, currentProfile, profile.name, profile.path]);
 
   // Initialize edited settings when View Settings opens
   useEffect(() => {
@@ -3880,6 +3949,41 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t7M5TrendEmaSlow = 21;
       let t7M5MinEmaDistancePips = 1.0;
       let t7ZoneEntryMode: 'ema_cross' | 'price_vs_ema5' = 'ema_cross';
+      let t7RrEnabled = false;
+      let t7RrWeightRsiDivergence = 55;
+      let t7RrWeightAdrExhaustion = 20;
+      let t7RrWeightHtfProximity = 15;
+      let t7RrWeightEmaSpread = 10;
+      let t7RrRsiPeriod = 9;
+      let t7RrRsiLookbackBars = 20;
+      let t7RrRsiSeverityMidpoint = 18.0;
+      let t7RrAdrPeriod = 14;
+      let t7RrAdrRampStartPct = 75.0;
+      let t7RrAdrScoreAt100Pct = 0.3;
+      let t7RrAdrScoreAt120Pct = 0.6;
+      let t7RrAdrScoreAt150Pct = 0.9;
+      let t7RrEmaSpreadThresholdPips = 4.22;
+      let t7RrEmaSpreadMaxPips = 8.0;
+      let t7RrHtfBufferPips = 5.0;
+      let t7RrHtfSwingLookback = 30;
+      let t7RrTierMedium = 58.0;
+      let t7RrTierHigh = 65.0;
+      let t7RrTierCritical = 71.0;
+      let t7RrMediumLotMultiplier = 0.75;
+      let t7RrHighLotMultiplier = 0.50;
+      let t7RrCriticalLotMultiplier = 0.25;
+      let t7RrHighMinTierEma = 21;
+      let t7RrCriticalMinTierEma = 26;
+      let t7RrBlockZoneEntryAboveTier: 'medium' | 'high' | 'critical' = 'high';
+      let t7RrAdjustExhaustionThresholds = true;
+      let t7RrExhaustionMediumThresholdBoostPips = 0.5;
+      let t7RrExhaustionHighThresholdBoostPips = 1.0;
+      let t7RrExhaustionCriticalThresholdBoostPips = 1.5;
+      let t7RrUseManagedExitAt: 'medium' | 'high' | 'critical' = 'high';
+      let t7RrManagedExitHardSlPips = 72.0;
+      let t7RrManagedExitMaxHoldUnderwaterMin = 30.0;
+      let t7RrManagedExitTrailActivationPips = 4.0;
+      let t7RrManagedExitTrailDistancePips = 2.5;
       // Trial #4: Tiered ATR Filter
       let tieredAtrFilterEnabled = true;
       let tieredAtrBlockBelowPips = 4.0;
@@ -4121,6 +4225,47 @@ function PresetsPage({ profile }: { profile: Profile }) {
             t7TrendExhaustionTpExtendedOffsetPips = (pol.trend_exhaustion_tp_extended_offset_pips as number) ?? 1.0;
             t7TrendExhaustionTpVeryExtendedOffsetPips = (pol.trend_exhaustion_tp_very_extended_offset_pips as number) ?? 2.0;
             t7TrendExhaustionTpMinPips = (pol.trend_exhaustion_tp_min_pips as number) ?? 0.5;
+            t7RrEnabled = (pol.use_reversal_risk_score as boolean) ?? false;
+            t7RrWeightRsiDivergence = (pol.rr_weight_rsi_divergence as number) ?? 55;
+            t7RrWeightAdrExhaustion = (pol.rr_weight_adr_exhaustion as number) ?? 20;
+            t7RrWeightHtfProximity = (pol.rr_weight_htf_proximity as number) ?? 15;
+            t7RrWeightEmaSpread = (pol.rr_weight_ema_spread as number) ?? 10;
+            t7RrRsiPeriod = (pol.rr_rsi_period as number) ?? 9;
+            t7RrRsiLookbackBars = (pol.rr_rsi_lookback_bars as number) ?? 20;
+            t7RrRsiSeverityMidpoint = (pol.rr_rsi_severity_midpoint as number) ?? 18.0;
+            t7RrAdrPeriod = (pol.rr_adr_period as number) ?? 14;
+            t7RrAdrRampStartPct = (pol.rr_adr_ramp_start_pct as number) ?? 75.0;
+            t7RrAdrScoreAt100Pct = (pol.rr_adr_score_at_100_pct as number) ?? 0.3;
+            t7RrAdrScoreAt120Pct = (pol.rr_adr_score_at_120_pct as number) ?? 0.6;
+            t7RrAdrScoreAt150Pct = (pol.rr_adr_score_at_150_pct as number) ?? 0.9;
+            t7RrEmaSpreadThresholdPips = (pol.rr_ema_spread_threshold_pips as number) ?? 4.22;
+            t7RrEmaSpreadMaxPips = (pol.rr_ema_spread_max_pips as number) ?? 8.0;
+            t7RrHtfBufferPips = (pol.rr_htf_buffer_pips as number) ?? 5.0;
+            t7RrHtfSwingLookback = (pol.rr_htf_swing_lookback as number) ?? 30;
+            t7RrTierMedium = (pol.rr_tier_medium as number) ?? 58.0;
+            t7RrTierHigh = (pol.rr_tier_high as number) ?? 65.0;
+            t7RrTierCritical = (pol.rr_tier_critical as number) ?? 71.0;
+            t7RrMediumLotMultiplier = (pol.rr_medium_lot_multiplier as number) ?? 0.75;
+            t7RrHighLotMultiplier = (pol.rr_high_lot_multiplier as number) ?? 0.50;
+            t7RrCriticalLotMultiplier = (pol.rr_critical_lot_multiplier as number) ?? 0.25;
+            t7RrHighMinTierEma = (pol.rr_high_min_tier_ema as number) ?? 21;
+            t7RrCriticalMinTierEma = (pol.rr_critical_min_tier_ema as number) ?? 26;
+            t7RrBlockZoneEntryAboveTier = (pol.rr_block_zone_entry_above_tier as 'medium' | 'high' | 'critical') ?? 'high';
+            if (!['medium', 'high', 'critical'].includes(t7RrBlockZoneEntryAboveTier)) {
+              t7RrBlockZoneEntryAboveTier = 'high';
+            }
+            t7RrAdjustExhaustionThresholds = (pol.rr_adjust_exhaustion_thresholds as boolean) ?? true;
+            t7RrExhaustionMediumThresholdBoostPips = (pol.rr_exhaustion_medium_threshold_boost_pips as number) ?? 0.5;
+            t7RrExhaustionHighThresholdBoostPips = (pol.rr_exhaustion_high_threshold_boost_pips as number) ?? 1.0;
+            t7RrExhaustionCriticalThresholdBoostPips = (pol.rr_exhaustion_critical_threshold_boost_pips as number) ?? 1.5;
+            t7RrUseManagedExitAt = (pol.rr_use_managed_exit_at as 'medium' | 'high' | 'critical') ?? 'high';
+            if (!['medium', 'high', 'critical'].includes(t7RrUseManagedExitAt)) {
+              t7RrUseManagedExitAt = 'high';
+            }
+            t7RrManagedExitHardSlPips = (pol.rr_managed_exit_hard_sl_pips as number) ?? 72.0;
+            t7RrManagedExitMaxHoldUnderwaterMin = (pol.rr_managed_exit_max_hold_underwater_min as number) ?? 30.0;
+            t7RrManagedExitTrailActivationPips = (pol.rr_managed_exit_trail_activation_pips as number) ?? 4.0;
+            t7RrManagedExitTrailDistancePips = (pol.rr_managed_exit_trail_distance_pips as number) ?? 2.5;
           }
           if (policyCooldown > 0 || policySlPips !== 20) break;
         }
@@ -4215,6 +4360,41 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t7_m5_trend_ema_slow: t7M5TrendEmaSlow,
         t7_m5_min_ema_distance_pips: t7M5MinEmaDistancePips,
         t7_zone_entry_mode: t7ZoneEntryMode,
+        t7_rr_enabled: t7RrEnabled,
+        t7_rr_weight_rsi_divergence: t7RrWeightRsiDivergence,
+        t7_rr_weight_adr_exhaustion: t7RrWeightAdrExhaustion,
+        t7_rr_weight_htf_proximity: t7RrWeightHtfProximity,
+        t7_rr_weight_ema_spread: t7RrWeightEmaSpread,
+        t7_rr_rsi_period: t7RrRsiPeriod,
+        t7_rr_rsi_lookback_bars: t7RrRsiLookbackBars,
+        t7_rr_rsi_severity_midpoint: t7RrRsiSeverityMidpoint,
+        t7_rr_adr_period: t7RrAdrPeriod,
+        t7_rr_adr_ramp_start_pct: t7RrAdrRampStartPct,
+        t7_rr_adr_score_at_100_pct: t7RrAdrScoreAt100Pct,
+        t7_rr_adr_score_at_120_pct: t7RrAdrScoreAt120Pct,
+        t7_rr_adr_score_at_150_pct: t7RrAdrScoreAt150Pct,
+        t7_rr_ema_spread_threshold_pips: t7RrEmaSpreadThresholdPips,
+        t7_rr_ema_spread_max_pips: t7RrEmaSpreadMaxPips,
+        t7_rr_htf_buffer_pips: t7RrHtfBufferPips,
+        t7_rr_htf_swing_lookback: t7RrHtfSwingLookback,
+        t7_rr_tier_medium: t7RrTierMedium,
+        t7_rr_tier_high: t7RrTierHigh,
+        t7_rr_tier_critical: t7RrTierCritical,
+        t7_rr_medium_lot_multiplier: t7RrMediumLotMultiplier,
+        t7_rr_high_lot_multiplier: t7RrHighLotMultiplier,
+        t7_rr_critical_lot_multiplier: t7RrCriticalLotMultiplier,
+        t7_rr_high_min_tier_ema: t7RrHighMinTierEma,
+        t7_rr_critical_min_tier_ema: t7RrCriticalMinTierEma,
+        t7_rr_block_zone_entry_above_tier: t7RrBlockZoneEntryAboveTier,
+        t7_rr_adjust_exhaustion_thresholds: t7RrAdjustExhaustionThresholds,
+        t7_rr_exhaustion_medium_threshold_boost_pips: t7RrExhaustionMediumThresholdBoostPips,
+        t7_rr_exhaustion_high_threshold_boost_pips: t7RrExhaustionHighThresholdBoostPips,
+        t7_rr_exhaustion_critical_threshold_boost_pips: t7RrExhaustionCriticalThresholdBoostPips,
+        t7_rr_use_managed_exit_at: t7RrUseManagedExitAt,
+        t7_rr_managed_exit_hard_sl_pips: t7RrManagedExitHardSlPips,
+        t7_rr_managed_exit_max_hold_underwater_min: t7RrManagedExitMaxHoldUnderwaterMin,
+        t7_rr_managed_exit_trail_activation_pips: t7RrManagedExitTrailActivationPips,
+        t7_rr_managed_exit_trail_distance_pips: t7RrManagedExitTrailDistancePips,
         // Trial #4: Tiered ATR Filter
         tiered_atr_filter_enabled: tieredAtrFilterEnabled,
         tiered_atr_block_below_pips: tieredAtrBlockBelowPips,
@@ -4428,6 +4608,25 @@ function PresetsPage({ profile }: { profile: Profile }) {
         }
         // Update Trial #7 settings
         if (pol.type === 'kt_cg_trial_7') {
+          let rrW1 = Math.max(0, Math.round(editedSettings.t7_rr_weight_rsi_divergence));
+          let rrW2 = Math.max(0, Math.round(editedSettings.t7_rr_weight_adr_exhaustion));
+          let rrW3 = Math.max(0, Math.round(editedSettings.t7_rr_weight_htf_proximity));
+          let rrW4 = Math.max(0, Math.round(editedSettings.t7_rr_weight_ema_spread));
+          const rrTotal = rrW1 + rrW2 + rrW3 + rrW4;
+          if (rrTotal <= 0) {
+            rrW1 = 55;
+            rrW2 = 20;
+            rrW3 = 15;
+            rrW4 = 10;
+          } else if (rrTotal !== 100) {
+            rrW1 = Math.round((rrW1 / rrTotal) * 100);
+            rrW2 = Math.round((rrW2 / rrTotal) * 100);
+            rrW3 = Math.round((rrW3 / rrTotal) * 100);
+            rrW4 = Math.round((rrW4 / rrTotal) * 100);
+            const diff = 100 - (rrW1 + rrW2 + rrW3 + rrW4);
+            rrW1 = Math.max(0, rrW1 + diff);
+          }
+
           updates.m5_trend_ema_fast = Math.max(2, editedSettings.t7_m5_trend_ema_fast);
           updates.m5_trend_ema_slow = Math.max(3, editedSettings.t7_m5_trend_ema_slow);
           updates.m5_min_ema_distance_pips = Math.max(0, editedSettings.t7_m5_min_ema_distance_pips);
@@ -4486,6 +4685,41 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.trend_exhaustion_tp_extended_offset_pips = Math.max(0, editedSettings.t7_trend_exhaustion_tp_extended_offset_pips);
           updates.trend_exhaustion_tp_very_extended_offset_pips = Math.max(0, editedSettings.t7_trend_exhaustion_tp_very_extended_offset_pips);
           updates.trend_exhaustion_tp_min_pips = Math.max(0.1, editedSettings.t7_trend_exhaustion_tp_min_pips);
+          updates.use_reversal_risk_score = editedSettings.t7_rr_enabled;
+          updates.rr_weight_rsi_divergence = rrW1;
+          updates.rr_weight_adr_exhaustion = rrW2;
+          updates.rr_weight_htf_proximity = rrW3;
+          updates.rr_weight_ema_spread = rrW4;
+          updates.rr_rsi_period = Math.max(2, Math.round(editedSettings.t7_rr_rsi_period));
+          updates.rr_rsi_lookback_bars = Math.max(5, Math.round(editedSettings.t7_rr_rsi_lookback_bars));
+          updates.rr_rsi_severity_midpoint = Math.max(0.1, editedSettings.t7_rr_rsi_severity_midpoint);
+          updates.rr_adr_period = Math.max(2, Math.round(editedSettings.t7_rr_adr_period));
+          updates.rr_adr_ramp_start_pct = Math.max(0, Math.min(200, editedSettings.t7_rr_adr_ramp_start_pct));
+          updates.rr_adr_score_at_100_pct = Math.max(0, Math.min(1, editedSettings.t7_rr_adr_score_at_100_pct));
+          updates.rr_adr_score_at_120_pct = Math.max(0, Math.min(1, editedSettings.t7_rr_adr_score_at_120_pct));
+          updates.rr_adr_score_at_150_pct = Math.max(0, Math.min(1, editedSettings.t7_rr_adr_score_at_150_pct));
+          updates.rr_ema_spread_threshold_pips = Math.max(0.1, editedSettings.t7_rr_ema_spread_threshold_pips);
+          updates.rr_ema_spread_max_pips = Math.max(updates.rr_ema_spread_threshold_pips as number, editedSettings.t7_rr_ema_spread_max_pips);
+          updates.rr_htf_buffer_pips = Math.max(0.1, editedSettings.t7_rr_htf_buffer_pips);
+          updates.rr_htf_swing_lookback = Math.max(5, Math.round(editedSettings.t7_rr_htf_swing_lookback));
+          updates.rr_tier_medium = Math.max(0, editedSettings.t7_rr_tier_medium);
+          updates.rr_tier_high = Math.max(updates.rr_tier_medium as number, editedSettings.t7_rr_tier_high);
+          updates.rr_tier_critical = Math.max(updates.rr_tier_high as number, editedSettings.t7_rr_tier_critical);
+          updates.rr_medium_lot_multiplier = Math.max(0.01, editedSettings.t7_rr_medium_lot_multiplier);
+          updates.rr_high_lot_multiplier = Math.max(0.01, editedSettings.t7_rr_high_lot_multiplier);
+          updates.rr_critical_lot_multiplier = Math.max(0.01, editedSettings.t7_rr_critical_lot_multiplier);
+          updates.rr_high_min_tier_ema = Math.max(9, Math.round(editedSettings.t7_rr_high_min_tier_ema));
+          updates.rr_critical_min_tier_ema = Math.max(updates.rr_high_min_tier_ema as number, Math.round(editedSettings.t7_rr_critical_min_tier_ema));
+          updates.rr_block_zone_entry_above_tier = editedSettings.t7_rr_block_zone_entry_above_tier;
+          updates.rr_adjust_exhaustion_thresholds = editedSettings.t7_rr_adjust_exhaustion_thresholds;
+          updates.rr_exhaustion_medium_threshold_boost_pips = Math.max(0, editedSettings.t7_rr_exhaustion_medium_threshold_boost_pips);
+          updates.rr_exhaustion_high_threshold_boost_pips = Math.max(0, editedSettings.t7_rr_exhaustion_high_threshold_boost_pips);
+          updates.rr_exhaustion_critical_threshold_boost_pips = Math.max(0, editedSettings.t7_rr_exhaustion_critical_threshold_boost_pips);
+          updates.rr_use_managed_exit_at = editedSettings.t7_rr_use_managed_exit_at;
+          updates.rr_managed_exit_hard_sl_pips = Math.max(0.1, editedSettings.t7_rr_managed_exit_hard_sl_pips);
+          updates.rr_managed_exit_max_hold_underwater_min = Math.max(1, editedSettings.t7_rr_managed_exit_max_hold_underwater_min);
+          updates.rr_managed_exit_trail_activation_pips = Math.max(0.1, editedSettings.t7_rr_managed_exit_trail_activation_pips);
+          updates.rr_managed_exit_trail_distance_pips = Math.max(0.1, editedSettings.t7_rr_managed_exit_trail_distance_pips);
         }
         // Update Trial #6 settings
         if (pol.type === 'kt_cg_trial_6') {
@@ -4624,6 +4858,94 @@ function PresetsPage({ profile }: { profile: Profile }) {
       t7_trend_exhaustion_p90_bear_london: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p90_bear_london * scale).toFixed(2)),
       t7_trend_exhaustion_p80_bear_ny: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p80_bear_ny * scale).toFixed(2)),
       t7_trend_exhaustion_p90_bear_ny: Number((TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS.p90_bear_ny * scale).toFixed(2)),
+    });
+  };
+
+  const applyTrial7ReversalRiskPreset = (mode: 'data_calibrated' | 'conservative' | 'aggressive') => {
+    if (!editedSettings) return;
+    setT7ReversalRiskPresetMode(mode);
+    if (mode === 'data_calibrated') {
+      setEditedSettings({
+        ...editedSettings,
+        t7_rr_weight_rsi_divergence: 55,
+        t7_rr_weight_adr_exhaustion: 20,
+        t7_rr_weight_htf_proximity: 15,
+        t7_rr_weight_ema_spread: 10,
+        t7_rr_tier_medium: 58.0,
+        t7_rr_tier_high: 65.0,
+        t7_rr_tier_critical: 71.0,
+        t7_rr_medium_lot_multiplier: 0.75,
+        t7_rr_high_lot_multiplier: 0.5,
+        t7_rr_critical_lot_multiplier: 0.25,
+        t7_rr_high_min_tier_ema: 21,
+        t7_rr_critical_min_tier_ema: 26,
+        t7_rr_block_zone_entry_above_tier: 'high',
+        t7_rr_use_managed_exit_at: 'high',
+        t7_rr_managed_exit_hard_sl_pips: 72.0,
+        t7_rr_managed_exit_max_hold_underwater_min: 30.0,
+        t7_rr_managed_exit_trail_activation_pips: 4.0,
+        t7_rr_managed_exit_trail_distance_pips: 2.5,
+        t7_rr_adjust_exhaustion_thresholds: true,
+        t7_rr_exhaustion_medium_threshold_boost_pips: 0.5,
+        t7_rr_exhaustion_high_threshold_boost_pips: 1.0,
+        t7_rr_exhaustion_critical_threshold_boost_pips: 1.5,
+      });
+      return;
+    }
+
+    if (mode === 'conservative') {
+      setEditedSettings({
+        ...editedSettings,
+        t7_rr_weight_rsi_divergence: 60,
+        t7_rr_weight_adr_exhaustion: 25,
+        t7_rr_weight_htf_proximity: 10,
+        t7_rr_weight_ema_spread: 5,
+        t7_rr_tier_medium: 54.0,
+        t7_rr_tier_high: 61.0,
+        t7_rr_tier_critical: 68.0,
+        t7_rr_medium_lot_multiplier: 0.65,
+        t7_rr_high_lot_multiplier: 0.4,
+        t7_rr_critical_lot_multiplier: 0.2,
+        t7_rr_high_min_tier_ema: 24,
+        t7_rr_critical_min_tier_ema: 29,
+        t7_rr_block_zone_entry_above_tier: 'medium',
+        t7_rr_use_managed_exit_at: 'medium',
+        t7_rr_managed_exit_hard_sl_pips: 72.0,
+        t7_rr_managed_exit_max_hold_underwater_min: 24.0,
+        t7_rr_managed_exit_trail_activation_pips: 3.5,
+        t7_rr_managed_exit_trail_distance_pips: 2.0,
+        t7_rr_adjust_exhaustion_thresholds: true,
+        t7_rr_exhaustion_medium_threshold_boost_pips: 0.8,
+        t7_rr_exhaustion_high_threshold_boost_pips: 1.4,
+        t7_rr_exhaustion_critical_threshold_boost_pips: 2.0,
+      });
+      return;
+    }
+
+    setEditedSettings({
+      ...editedSettings,
+      t7_rr_weight_rsi_divergence: 50,
+      t7_rr_weight_adr_exhaustion: 15,
+      t7_rr_weight_htf_proximity: 20,
+      t7_rr_weight_ema_spread: 15,
+      t7_rr_tier_medium: 61.0,
+      t7_rr_tier_high: 69.0,
+      t7_rr_tier_critical: 76.0,
+      t7_rr_medium_lot_multiplier: 0.85,
+      t7_rr_high_lot_multiplier: 0.65,
+      t7_rr_critical_lot_multiplier: 0.4,
+      t7_rr_high_min_tier_ema: 17,
+      t7_rr_critical_min_tier_ema: 23,
+      t7_rr_block_zone_entry_above_tier: 'critical',
+      t7_rr_use_managed_exit_at: 'critical',
+      t7_rr_managed_exit_hard_sl_pips: 72.0,
+      t7_rr_managed_exit_max_hold_underwater_min: 45.0,
+      t7_rr_managed_exit_trail_activation_pips: 5.0,
+      t7_rr_managed_exit_trail_distance_pips: 3.0,
+      t7_rr_adjust_exhaustion_thresholds: true,
+      t7_rr_exhaustion_medium_threshold_boost_pips: 0.2,
+      t7_rr_exhaustion_high_threshold_boost_pips: 0.5,
+      t7_rr_exhaustion_critical_threshold_boost_pips: 0.8,
     });
   };
   const execution = currentProfile?.execution as Record<string, unknown> | undefined;
@@ -5524,6 +5846,337 @@ function PresetsPage({ profile }: { profile: Profile }) {
                           </div>
                         </div>
                       </div>
+                    </div>
+                    )}
+                  </div>
+                  )}
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Trial #7 Reversal Risk (Calibrated)
+                    </div>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6, marginBottom: 10 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={editedSettings.t7_rr_enabled}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_enabled: e.target.checked })}
+                          style={{ width: 18, height: 18, cursor: 'pointer' }}
+                        />
+                        <span style={{ fontWeight: 600, color: editedSettings.t7_rr_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                          {editedSettings.t7_rr_enabled ? 'ON' : 'OFF'}
+                        </span>
+                      </label>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 6 }}>
+                        Data-calibrated USDJPY reversal-risk scoring. Focus is risk sizing and exit management, not hard entry blocking.
+                      </div>
+                    </div>
+                    {editedSettings.t7_rr_enabled && (
+                    <div style={{ background: 'var(--bg-tertiary)', borderRadius: 8, padding: 10 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+                        <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Mode</div>
+                          <select
+                            value={t7ReversalRiskPresetMode}
+                            onChange={(e) => applyTrial7ReversalRiskPreset(e.target.value as 'data_calibrated' | 'conservative' | 'aggressive')}
+                            style={{ width: '100%', padding: '5px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          >
+                            <option value="data_calibrated">Data-Calibrated (default)</option>
+                            <option value="conservative">Conservative</option>
+                            <option value="aggressive">Aggressive</option>
+                          </select>
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={t7ReversalRiskManualSettings}
+                              onChange={(e) => setT7ReversalRiskManualSettings(e.target.checked)}
+                            />
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-primary)', fontWeight: 600 }}>Manual advanced editing</span>
+                          </label>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                            Keep OFF for simpler setup. Turn ON to edit all component internals.
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6, marginBottom: 10 }}>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Live status</div>
+                        {t7ReversalRiskStatus?.available ? (
+                          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: '0.75rem' }}>
+                            <span>Score: <strong>{typeof t7ReversalRiskStatus.score === 'number' ? t7ReversalRiskStatus.score.toFixed(2) : 'N/A'}</strong></span>
+                            <span>Tier: <strong style={{
+                              color:
+                                t7ReversalRiskStatus.tier === 'critical'
+                                  ? 'var(--danger)'
+                                  : t7ReversalRiskStatus.tier === 'high'
+                                    ? 'var(--warning)'
+                                    : t7ReversalRiskStatus.tier === 'medium'
+                                      ? 'var(--accent)'
+                                      : 'var(--success)',
+                            }}>{String(t7ReversalRiskStatus.tier || 'N/A').toUpperCase()}</strong></span>
+                            <span>Lot x: <strong>{typeof t7ReversalRiskStatus.lot_multiplier === 'number' ? t7ReversalRiskStatus.lot_multiplier.toFixed(2) : 'N/A'}</strong></span>
+                            <span>Zone block: <strong>{t7ReversalRiskStatus.zone_block_entry ? 'ON' : 'OFF'}</strong></span>
+                            <span>Managed exit: <strong>{t7ReversalRiskStatus.use_managed_exit ? 'ON' : 'OFF'}</strong></span>
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                            Waiting for next Trial #7 dashboard update.
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
+                        <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Medium tier starts at</div>
+                          <input type="number" step="0.1" min="0" value={editedSettings.t7_rr_tier_medium}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_tier_medium: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_tier_medium })}
+                            style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>High tier starts at</div>
+                          <input type="number" step="0.1" min="0" value={editedSettings.t7_rr_tier_high}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_tier_high: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_tier_high })}
+                            style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Critical tier starts at</div>
+                          <input type="number" step="0.1" min="0" value={editedSettings.t7_rr_tier_critical}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_tier_critical: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_tier_critical })}
+                            style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Medium lot multiplier</div>
+                          <input type="number" step="0.01" min="0.01" value={editedSettings.t7_rr_medium_lot_multiplier}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_medium_lot_multiplier: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_medium_lot_multiplier })}
+                            style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>High lot multiplier</div>
+                          <input type="number" step="0.01" min="0.01" value={editedSettings.t7_rr_high_lot_multiplier}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_high_lot_multiplier: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_high_lot_multiplier })}
+                            style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Critical lot multiplier</div>
+                          <input type="number" step="0.01" min="0.01" value={editedSettings.t7_rr_critical_lot_multiplier}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_critical_lot_multiplier: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_critical_lot_multiplier })}
+                            style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
+                        <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Block zone entries at/above tier</div>
+                          <select
+                            value={editedSettings.t7_rr_block_zone_entry_above_tier}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_block_zone_entry_above_tier: e.target.value as 'medium' | 'high' | 'critical' })}
+                            style={{ width: '100%', padding: '5px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+                          >
+                            <option value="medium">Medium+</option>
+                            <option value="high">High+</option>
+                            <option value="critical">Critical only</option>
+                          </select>
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Enable managed exit at/above tier</div>
+                          <select
+                            value={editedSettings.t7_rr_use_managed_exit_at}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_use_managed_exit_at: e.target.value as 'medium' | 'high' | 'critical' })}
+                            style={{ width: '100%', padding: '5px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+                          >
+                            <option value="medium">Medium+</option>
+                            <option value="high">High+</option>
+                            <option value="critical">Critical only</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {t7ReversalRiskManualSettings && (
+                        <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                          <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Advanced component controls</div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>RSI weight</div>
+                              <input type="number" step="1" min="0" value={editedSettings.t7_rr_weight_rsi_divergence}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_weight_rsi_divergence: parseInt(e.target.value) || 0 })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>ADR weight</div>
+                              <input type="number" step="1" min="0" value={editedSettings.t7_rr_weight_adr_exhaustion}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_weight_adr_exhaustion: parseInt(e.target.value) || 0 })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>HTF weight</div>
+                              <input type="number" step="1" min="0" value={editedSettings.t7_rr_weight_htf_proximity}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_weight_htf_proximity: parseInt(e.target.value) || 0 })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>EMA spread weight</div>
+                              <input type="number" step="1" min="0" value={editedSettings.t7_rr_weight_ema_spread}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_weight_ema_spread: parseInt(e.target.value) || 0 })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                          </div>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 6 }}>
+                            Weights auto-normalize to 100 when saved.
+                          </div>
+
+                          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>RSI period</div>
+                              <input type="number" step="1" min="2" value={editedSettings.t7_rr_rsi_period}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_rsi_period: parseInt(e.target.value) || editedSettings.t7_rr_rsi_period })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>RSI lookback bars</div>
+                              <input type="number" step="1" min="5" value={editedSettings.t7_rr_rsi_lookback_bars}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_rsi_lookback_bars: parseInt(e.target.value) || editedSettings.t7_rr_rsi_lookback_bars })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>RSI severity midpoint</div>
+                              <input type="number" step="0.1" min="0.1" value={editedSettings.t7_rr_rsi_severity_midpoint}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_rsi_severity_midpoint: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_rsi_severity_midpoint })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>ADR period</div>
+                              <input type="number" step="1" min="2" value={editedSettings.t7_rr_adr_period}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_adr_period: parseInt(e.target.value) || editedSettings.t7_rr_adr_period })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                          </div>
+
+                          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>ADR ramp start %</div>
+                              <input type="number" step="0.1" min="0" value={editedSettings.t7_rr_adr_ramp_start_pct}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_adr_ramp_start_pct: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_adr_ramp_start_pct })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Score @100% ADR</div>
+                              <input type="number" step="0.01" min="0" max="1" value={editedSettings.t7_rr_adr_score_at_100_pct}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_adr_score_at_100_pct: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_adr_score_at_100_pct })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Score @120% ADR</div>
+                              <input type="number" step="0.01" min="0" max="1" value={editedSettings.t7_rr_adr_score_at_120_pct}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_adr_score_at_120_pct: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_adr_score_at_120_pct })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Score @150% ADR</div>
+                              <input type="number" step="0.01" min="0" max="1" value={editedSettings.t7_rr_adr_score_at_150_pct}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_adr_score_at_150_pct: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_adr_score_at_150_pct })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                          </div>
+
+                          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>EMA spread threshold (pips)</div>
+                              <input type="number" step="0.01" min="0.1" value={editedSettings.t7_rr_ema_spread_threshold_pips}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_ema_spread_threshold_pips: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_ema_spread_threshold_pips })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>EMA spread max (pips)</div>
+                              <input type="number" step="0.01" min="0.1" value={editedSettings.t7_rr_ema_spread_max_pips}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_ema_spread_max_pips: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_ema_spread_max_pips })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>HTF buffer (pips)</div>
+                              <input type="number" step="0.1" min="0.1" value={editedSettings.t7_rr_htf_buffer_pips}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_htf_buffer_pips: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_htf_buffer_pips })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>HTF swing lookback</div>
+                              <input type="number" step="1" min="5" value={editedSettings.t7_rr_htf_swing_lookback}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_htf_swing_lookback: parseInt(e.target.value) || editedSettings.t7_rr_htf_swing_lookback })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                          </div>
+
+                          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>High min tier EMA</div>
+                              <input type="number" step="1" min="9" value={editedSettings.t7_rr_high_min_tier_ema}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_high_min_tier_ema: parseInt(e.target.value) || editedSettings.t7_rr_high_min_tier_ema })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Critical min tier EMA</div>
+                              <input type="number" step="1" min="9" value={editedSettings.t7_rr_critical_min_tier_ema}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_critical_min_tier_ema: parseInt(e.target.value) || editedSettings.t7_rr_critical_min_tier_ema })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                                <input type="checkbox" checked={editedSettings.t7_rr_adjust_exhaustion_thresholds} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_adjust_exhaustion_thresholds: e.target.checked })} />
+                                <span style={{ fontSize: '0.75rem' }}>Adjust exhaustion thresholds</span>
+                              </label>
+                            </div>
+                          </div>
+
+                          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Boost at Medium (pips)</div>
+                              <input type="number" step="0.1" min="0" value={editedSettings.t7_rr_exhaustion_medium_threshold_boost_pips}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_exhaustion_medium_threshold_boost_pips: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_exhaustion_medium_threshold_boost_pips })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Boost at High (pips)</div>
+                              <input type="number" step="0.1" min="0" value={editedSettings.t7_rr_exhaustion_high_threshold_boost_pips}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_exhaustion_high_threshold_boost_pips: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_exhaustion_high_threshold_boost_pips })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Boost at Critical (pips)</div>
+                              <input type="number" step="0.1" min="0" value={editedSettings.t7_rr_exhaustion_critical_threshold_boost_pips}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_exhaustion_critical_threshold_boost_pips: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_exhaustion_critical_threshold_boost_pips })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                          </div>
+
+                          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Hard disaster SL (pips)</div>
+                              <input type="number" step="0.1" min="0.1" value={editedSettings.t7_rr_managed_exit_hard_sl_pips}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_managed_exit_hard_sl_pips: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_managed_exit_hard_sl_pips })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Underwater max hold (min)</div>
+                              <input type="number" step="1" min="1" value={editedSettings.t7_rr_managed_exit_max_hold_underwater_min}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_managed_exit_max_hold_underwater_min: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_managed_exit_max_hold_underwater_min })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Trail activation (pips)</div>
+                              <input type="number" step="0.1" min="0.1" value={editedSettings.t7_rr_managed_exit_trail_activation_pips}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_managed_exit_trail_activation_pips: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_managed_exit_trail_activation_pips })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: 3 }}>Trail distance (pips)</div>
+                              <input type="number" step="0.1" min="0.1" value={editedSettings.t7_rr_managed_exit_trail_distance_pips}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_managed_exit_trail_distance_pips: Number.isFinite(parseFloat(e.target.value)) ? parseFloat(e.target.value) : editedSettings.t7_rr_managed_exit_trail_distance_pips })}
+                                style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                     )}
                   </div>
