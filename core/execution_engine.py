@@ -1345,6 +1345,25 @@ def execute_ema_pullback_policy_demo_only(
             }
         )
         return ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter")
+    ok, reason = passes_session_boundary_block(profile, now_utc)
+    if not ok:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": reason or "session_boundary_block",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason=reason or "session_boundary_block")
     al = profile.strategy.filters.alignment
     if al.enabled:
         if al.trend_timeframe is not None:
@@ -1766,6 +1785,25 @@ def execute_ema_bb_scalp_policy_demo_only(
             }
         )
         return ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter")
+    ok, reason = passes_session_boundary_block(profile, now_utc)
+    if not ok:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": reason or "session_boundary_block",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason=reason or "session_boundary_block")
 
     entry_price = tick.ask if side == "buy" else tick.bid
     candidate = _ema_bb_scalp_candidate(profile, policy, entry_price, side)
@@ -1877,6 +1915,43 @@ def passes_session_filter(profile: ProfileV1, now_utc: datetime) -> tuple[bool, 
         if open_h <= current_hour < close_h:
             return True, None
     return False, f"session_filter: outside allowed sessions (UTC hour={current_hour})"
+
+
+def _session_boundary_block_windows_utc(buffer_minutes: int) -> list[tuple[int, int]]:
+    """Return list of (start_min, end_min) since midnight UTC for each 30-min block around open/close.
+    Tokyo 0,9; London 8,16; NY 13,21. Each boundary gives [boundary*60 - buf, boundary*60 + buf].
+    """
+    boundaries_h = [0, 9, 8, 16, 13, 21]  # open/close for tokyo, london, ny
+    windows: list[tuple[int, int]] = []
+    for h in boundaries_h:
+        center = h * 60
+        start = (center - buffer_minutes + 24 * 60) % (24 * 60)
+        end = (center + buffer_minutes) % (24 * 60)
+        windows.append((start, end))
+    return windows
+
+
+def passes_session_boundary_block(profile: ProfileV1, now_utc: datetime) -> tuple[bool, str | None]:
+    """Return (True, None) if boundary block is disabled or current time is not in any open/close window.
+    When enabled, blocks entries from buffer_minutes before until buffer_minutes after each NY/London/Tokyo open and close.
+    """
+    f = getattr(profile.strategy.filters, "session_boundary_block", None)
+    if f is None or not getattr(f, "enabled", False):
+        return True, None
+    buffer_minutes = max(0, min(60, int(getattr(f, "buffer_minutes", 15))))
+    current_minutes = now_utc.hour * 60 + now_utc.minute
+    windows = _session_boundary_block_windows_utc(buffer_minutes)
+    for start, end in windows:
+        if start <= end:
+            in_window = start <= current_minutes <= end
+        else:
+            in_window = current_minutes >= start or current_minutes <= end
+        if in_window:
+            return False, (
+                f"session_boundary_block: in {buffer_minutes}min window around session open/close "
+                f"(UTC {now_utc.hour:02d}:{now_utc.minute:02d})"
+            )
+    return True, None
 
 
 def passes_alignment_trend(
@@ -2606,6 +2681,25 @@ def execute_kt_cg_hybrid_policy_demo_only(
             }
         )
         return ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter")
+    ok, reason = passes_session_boundary_block(profile, now_utc)
+    if not ok:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": reason or "session_boundary_block",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason=reason or "session_boundary_block")
 
     m1_df = data_by_tf.get("M1")
     if m1_df is not None:
@@ -3084,6 +3178,25 @@ def execute_kt_cg_ctp_policy_demo_only(
             }
         )
         return ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter")
+    ok, reason = passes_session_boundary_block(profile, now_utc)
+    if not ok:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": reason or "session_boundary_block",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return ExecutionDecision(attempted=True, placed=False, reason=reason or "session_boundary_block")
 
     m1_df = data_by_tf.get("M1")
     if m1_df is not None:
@@ -4378,6 +4491,25 @@ def execute_kt_cg_trial_4_policy_demo_only(
             }
         )
         return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter"), "tier_updates": tier_updates, "divergence_updates": {}}
+    ok, reason = passes_session_boundary_block(profile, now_utc)
+    if not ok:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": reason or "session_boundary_block",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "session_boundary_block"), "tier_updates": tier_updates, "divergence_updates": {}}
 
     m1_df = data_by_tf.get("M1")
     if m1_df is not None:
@@ -5107,6 +5239,27 @@ def execute_kt_cg_trial_7_policy_demo_only(
         return _result_payload(
             ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter"),
         )
+    ok, reason = passes_session_boundary_block(profile, now_utc)
+    if not ok:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": reason or "session_boundary_block",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return _result_payload(
+            ExecutionDecision(attempted=True, placed=False, reason=reason or "session_boundary_block"),
+        )
 
     entry_price = tick.ask if side == "buy" else tick.bid
     original_tp_pips = float(getattr(policy, "tp_pips", 4.0))
@@ -5711,6 +5864,25 @@ def execute_kt_cg_trial_5_policy_demo_only(
             }
         )
         return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter"), "tier_updates": tier_updates, "divergence_updates": {}, "exhaustion_state": exhaustion_state}
+    ok, reason = passes_session_boundary_block(profile, now_utc)
+    if not ok:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                "rule_id": rule_id,
+                "mode": mode,
+                "attempted": 1,
+                "placed": 0,
+                "reason": reason or "session_boundary_block",
+                "mt5_retcode": None,
+                "mt5_order_id": None,
+                "mt5_deal_id": None,
+            }
+        )
+        return {"decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "session_boundary_block"), "tier_updates": tier_updates, "divergence_updates": {}, "exhaustion_state": exhaustion_state}
 
     # --- Trial #5 Dual ATR Filter ---
     m1_df = data_by_tf.get("M1")

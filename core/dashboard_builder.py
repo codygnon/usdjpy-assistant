@@ -12,6 +12,7 @@ from typing import Any, Optional
 from core.dashboard_models import FilterReport
 from core.dashboard_reporters import (
     report_session_filter,
+    report_session_boundary_block,
     report_spread,
     report_tiered_atr_trial_4,
     report_daily_hl_filter,
@@ -237,6 +238,7 @@ def build_dashboard_filters(
 
     # Session filter (all)
     filters.append(report_session_filter(profile, now_utc))
+    filters.append(report_session_boundary_block(profile, now_utc))
 
     # Spread: run loop uses profile.strategy.filters.max_spread_pips; API sometimes has profile.risk
     spread_pips = (tick.ask - tick.bid) / pip_size

@@ -3093,6 +3093,9 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
     # Session filter (from strategy filters)
     sf = profile.strategy.filters.session_filter
     filters["session_filter"] = {"enabled": sf.enabled, "sessions": sf.sessions}
+    sbb = getattr(profile.strategy.filters, "session_boundary_block", None)
+    if sbb is not None:
+        filters["session_boundary_block"] = {"enabled": getattr(sbb, "enabled", False), "buffer_minutes": getattr(sbb, "buffer_minutes", 15)}
 
     # EMA Zone Filter
     if hasattr(policy, "ema_zone_filter_enabled"):
@@ -3265,167 +3268,7 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
             "max": getattr(policy, "max_tiered_pullback_open", None),
         }
 
-    if is_trial_7:
-        filters["reversal_risk"] = {
-            "enabled": getattr(policy, "use_reversal_risk_score", False),
-            "weight_rsi_divergence": getattr(policy, "rr_weight_rsi_divergence", 55),
-            "weight_adr_exhaustion": getattr(policy, "rr_weight_adr_exhaustion", 20),
-            "weight_htf_proximity": getattr(policy, "rr_weight_htf_proximity", 15),
-            "weight_ema_spread": getattr(policy, "rr_weight_ema_spread", 10),
-            "rsi_period": getattr(policy, "rr_rsi_period", 9),
-            "rsi_lookback_bars": getattr(policy, "rr_rsi_lookback_bars", 20),
-            "rsi_severity_midpoint": getattr(policy, "rr_rsi_severity_midpoint", 18.0),
-            "adr_period": getattr(policy, "rr_adr_period", 14),
-            "adr_ramp_start_pct": getattr(policy, "rr_adr_ramp_start_pct", 75.0),
-            "adr_score_at_100_pct": getattr(policy, "rr_adr_score_at_100_pct", 0.3),
-            "adr_score_at_120_pct": getattr(policy, "rr_adr_score_at_120_pct", 0.6),
-            "adr_score_at_150_pct": getattr(policy, "rr_adr_score_at_150_pct", 0.9),
-            "ema_spread_threshold_pips": getattr(policy, "rr_ema_spread_threshold_pips", 4.22),
-            "ema_spread_max_pips": getattr(policy, "rr_ema_spread_max_pips", 8.0),
-            "htf_buffer_pips": getattr(policy, "rr_htf_buffer_pips", 5.0),
-            "htf_swing_lookback": getattr(policy, "rr_htf_swing_lookback", 30),
-            "tier_medium": getattr(policy, "rr_tier_medium", 58.0),
-            "tier_high": getattr(policy, "rr_tier_high", 65.0),
-            "tier_critical": getattr(policy, "rr_tier_critical", 71.0),
-            "medium_lot_multiplier": getattr(policy, "rr_medium_lot_multiplier", 0.75),
-            "high_lot_multiplier": getattr(policy, "rr_high_lot_multiplier", 0.50),
-            "critical_lot_multiplier": getattr(policy, "rr_critical_lot_multiplier", 0.25),
-            "high_min_tier_ema": getattr(policy, "rr_high_min_tier_ema", 21),
-            "critical_min_tier_ema": getattr(policy, "rr_critical_min_tier_ema", 26),
-            "block_zone_entry_above_tier": getattr(policy, "rr_block_zone_entry_above_tier", "high"),
-            "adjust_exhaustion_thresholds": getattr(policy, "rr_adjust_exhaustion_thresholds", True),
-            "exhaustion_medium_threshold_boost_pips": getattr(policy, "rr_exhaustion_medium_threshold_boost_pips", 0.5),
-            "exhaustion_high_threshold_boost_pips": getattr(policy, "rr_exhaustion_high_threshold_boost_pips", 1.0),
-            "exhaustion_critical_threshold_boost_pips": getattr(policy, "rr_exhaustion_critical_threshold_boost_pips", 1.5),
-            "use_managed_exit_at": getattr(policy, "rr_use_managed_exit_at", "high"),
-            "managed_exit_hard_sl_pips": getattr(policy, "rr_managed_exit_hard_sl_pips", 72.0),
-            "managed_exit_max_hold_underwater_min": getattr(policy, "rr_managed_exit_max_hold_underwater_min", 30.0),
-            "managed_exit_trail_activation_pips": getattr(policy, "rr_managed_exit_trail_activation_pips", 4.0),
-            "managed_exit_trail_distance_pips": getattr(policy, "rr_managed_exit_trail_distance_pips", 2.5),
-        }
-
     return {"preset_name": profile.active_preset_name or "", "filters": filters}
-
-
-@app.get("/api/data/{profile_name}/reversal-risk")
-def get_trial7_reversal_risk_status(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
-    """Return latest Trial #7 reversal-risk status from run-loop dashboard state."""
-    from core.dashboard_models import read_dashboard_state
-
-    resolved_path: Optional[Path] = None
-    if profile_path:
-        try:
-            p = _resolve_profile_path(profile_path)
-            if p.exists():
-                resolved_path = p
-        except Exception:
-            pass
-    if resolved_path is None:
-        for p in _list_profile_paths():
-            if p.stem == profile_name:
-                resolved_path = p
-                break
-    if resolved_path is None:
-        raise HTTPException(status_code=404, detail="Profile not found")
-
-    profile = load_profile_v1(str(resolved_path))
-    trial7_policy = None
-    for pol in profile.execution.policies:
-        if getattr(pol, "enabled", False) and getattr(pol, "type", "") == "kt_cg_trial_7":
-            trial7_policy = pol
-            break
-    if trial7_policy is None:
-        return {
-            "enabled": False,
-            "available": False,
-            "score": None,
-            "tier": None,
-            "source": "none",
-            "reason": "trial7_not_active",
-        }
-
-    enabled = bool(getattr(trial7_policy, "use_reversal_risk_score", False))
-    log_dir = _pick_best_dashboard_log_dir(profile_name, profile_path)
-    state = read_dashboard_state(log_dir)
-    if not isinstance(state, dict):
-        return {
-            "enabled": enabled,
-            "available": False,
-            "score": None,
-            "tier": None,
-            "source": "none",
-            "reason": "dashboard_state_missing",
-        }
-
-    score = None
-    tier = None
-    regime = None
-    lot_multiplier = None
-    min_tier_ema = None
-    zone_block_entry = None
-    use_managed_exit = None
-    timestamp_utc = state.get("timestamp_utc")
-
-    filters = state.get("filters") if isinstance(state.get("filters"), list) else []
-    for f in filters:
-        if not isinstance(f, dict):
-            continue
-        if f.get("filter_id") != "trial7_reversal_risk":
-            continue
-        metadata = f.get("metadata") if isinstance(f.get("metadata"), dict) else {}
-        score = metadata.get("score")
-        tier = metadata.get("tier")
-        regime = metadata.get("regime")
-        lot_multiplier = metadata.get("lot_multiplier")
-        min_tier_ema = metadata.get("min_tier_ema")
-        zone_block_entry = metadata.get("zone_block_entry")
-        use_managed_exit = metadata.get("use_managed_exit")
-        break
-
-    if score is None or tier is None:
-        context = state.get("context") if isinstance(state.get("context"), list) else []
-        for item in context:
-            if not isinstance(item, dict):
-                continue
-            key = str(item.get("key") or "")
-            value = item.get("value")
-            if key == "RR Score":
-                try:
-                    score = float(value)
-                except Exception:
-                    pass
-            elif key == "RR Tier":
-                tier = str(value).lower() if value is not None else None
-            elif key == "RR Lot Multiplier":
-                try:
-                    lot_multiplier = float(str(value).replace("x", "").strip())
-                except Exception:
-                    pass
-            elif key == "RR Min Tier EMA":
-                try:
-                    min_tier_ema = int(str(value).replace("+", "").strip())
-                except Exception:
-                    pass
-            elif key == "RR Zone Block":
-                zone_block_entry = str(value).upper() == "ON"
-            elif key == "RR Managed Exit":
-                use_managed_exit = str(value).upper() == "ON"
-            elif key == "Regime":
-                regime = str(value).lower() if value is not None else None
-
-    return {
-        "enabled": enabled,
-        "available": score is not None or tier is not None,
-        "score": score,
-        "tier": tier,
-        "regime": regime,
-        "lot_multiplier": lot_multiplier,
-        "min_tier_ema": min_tier_ema,
-        "zone_block_entry": zone_block_entry,
-        "use_managed_exit": use_managed_exit,
-        "timestamp_utc": timestamp_utc,
-        "source": "run_loop_file",
-    }
 
 
 @app.get("/api/data/{profile_name}/dashboard")

@@ -42,6 +42,32 @@ def report_session_filter(profile, now_utc: datetime) -> FilterReport:
     )
 
 
+def report_session_boundary_block(profile, now_utc: datetime) -> FilterReport:
+    """Report session boundary block status (block 15min before/after NY/London/Tokyo open and close)."""
+    from core.execution_engine import passes_session_boundary_block
+
+    f = getattr(profile.strategy.filters, "session_boundary_block", None)
+    if f is None or not getattr(f, "enabled", False):
+        return FilterReport(
+            filter_id="session_boundary_block",
+            display_name="Session Boundary Block",
+            enabled=False,
+            is_clear=True,
+            current_value=f"UTC {now_utc.strftime('%H:%M')}",
+        )
+    ok, reason = passes_session_boundary_block(profile, now_utc)
+    buf = max(0, int(getattr(f, "buffer_minutes", 15)))
+    return FilterReport(
+        filter_id="session_boundary_block",
+        display_name="Session Boundary Block",
+        enabled=True,
+        is_clear=ok,
+        current_value=f"UTC {now_utc.strftime('%H:%M')}",
+        threshold=f"Block ±{buf}min around open/close",
+        block_reason=reason,
+    )
+
+
 def report_tiered_atr_trial_4(policy, m1_df, pip_size: float, trigger_type: str) -> FilterReport:
     """Report Tiered ATR(14) filter for Trial #4."""
     from core.execution_engine import _passes_tiered_atr_filter_trial_4
