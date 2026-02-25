@@ -81,6 +81,49 @@ def _compute_mkt(profile, tick, data_by_tf) -> MarketContext:
     return MarketContext(spread_pips=float(spread_pips), alignment_score=alignment_score)
 
 
+def _normalized_profit_for_dashboard_row(row: dict, symbol_hint: str) -> float | None:
+    """Use stored profit unless it's a clear outlier; then use price-based estimate."""
+    def _f(v):
+        try:
+            if v is None:
+                return None
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    raw = _f(row.get("profit"))
+    entry = _f(row.get("entry_price"))
+    exit_ = _f(row.get("exit_price"))
+    lots = _f(row.get("size_lots")) or _f(row.get("volume"))
+    side = str(row.get("side") or "").lower()
+    symbol = "".join(ch for ch in str(row.get("symbol") or symbol_hint or "").upper() if ch.isalpha())[:6]
+
+    est = None
+    if entry is not None and exit_ is not None and lots and side in ("buy", "sell"):
+        diff = (exit_ - entry) if side == "buy" else (entry - exit_)
+        units = lots * 100_000.0
+        if symbol.endswith("JPY") and exit_ > 0:
+            est = round(diff * units / exit_, 2)
+        elif len(symbol) == 6 and symbol[3:] == "USD":
+            est = round(diff * units, 2)
+        elif len(symbol) == 6 and symbol[:3] == "USD" and exit_ > 0:
+            est = round(diff * units / exit_, 2)
+
+    if raw is None:
+        return est
+    if est is None:
+        return raw
+    abs_raw = abs(raw)
+    abs_est = abs(est)
+    if abs_raw >= 250 and abs_est >= 5:
+        ratio = abs_raw / abs_est if abs_est > 0 else float("inf")
+        if ratio >= 6.0:
+            return est
+    if abs_raw >= 250 and abs_est >= 20 and (raw * est) < 0:
+        return est
+    return raw
+
+
 def _insert_trade_for_policy(
     *,
     profile,
@@ -536,7 +579,7 @@ def _build_and_write_dashboard(
             for row in closed_today:
                 d = dict(row)
                 pips = d.get("pips")
-                profit = d.get("profit")
+                profit = _normalized_profit_for_dashboard_row(d, profile.symbol)
                 if pips is not None:
                     daily.total_pips += float(pips)
                     if float(pips) > 0:
@@ -569,19 +612,6 @@ def _build_and_write_dashboard(
         write_dashboard_state(log_dir, state)
     except Exception as e:
         print(f"[{profile.profile_name}] Dashboard write error: {e}")
-        # Fallback: write minimal state so timestamp stays fresh (prevents false "stale" indicator)
-        try:
-            from datetime import datetime, timezone
-            from core.dashboard_models import DashboardState, write_dashboard_state as _wds
-            _fb = DashboardState(
-                timestamp_utc=datetime.now(timezone.utc).isoformat(),
-                preset_name=getattr(profile, "active_preset_name", "") or "",
-                mode=mode,
-                loop_running=True,
-            )
-            _wds(log_dir, _fb)
-        except Exception:
-            pass
 
 
 def _append_trade_open_event(
@@ -796,19 +826,6 @@ def main() -> None:
                         print(f"[{profile.profile_name}] broker temporarily unavailable after {_MAX_FETCH_RETRIES} attempts, sleeping 60s then continuing: {_fetch_err}")
                         time.sleep(60)
             if data_by_tf is None or tick is None:
-                # Write a minimal heartbeat so dashboard doesn't go stale during broker outages
-                try:
-                    from datetime import datetime, timezone
-                    from core.dashboard_models import DashboardState, write_dashboard_state
-                    _hb = DashboardState(
-                        timestamp_utc=datetime.now(timezone.utc).isoformat(),
-                        preset_name=profile.active_preset_name or "",
-                        mode=mode,
-                        loop_running=True,
-                    )
-                    write_dashboard_state(log_dir, _hb)
-                except Exception:
-                    pass
                 continue
 
             # Trade management: breakeven and TP1 partial close (only for positions we opened)

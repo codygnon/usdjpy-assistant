@@ -263,6 +263,88 @@ def _convert_amount(amount: float | None, rate: float) -> float | None:
     return round(amount * rate, 2)
 
 
+def _row_get(row: Any, key: str) -> Any:
+    if isinstance(row, dict):
+        return row.get(key)
+    try:
+        return row.get(key)  # pandas Series / dict-like
+    except Exception:
+        pass
+    try:
+        return row[key]
+    except Exception:
+        return None
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_symbol_code(symbol: str | None) -> str:
+    s = re.sub(r"[^A-Za-z]", "", str(symbol or "").upper())
+    return s[:6] if len(s) >= 6 else s
+
+
+def _estimate_profit_usd_from_row(row: Any, symbol_hint: str | None = None) -> float | None:
+    """Best-effort USD P/L estimate from entry/exit/size/side."""
+    entry = _float_or_none(_row_get(row, "entry_price"))
+    exit_ = _float_or_none(_row_get(row, "exit_price"))
+    lots = _float_or_none(_row_get(row, "size_lots"))
+    if lots is None:
+        lots = _float_or_none(_row_get(row, "volume"))
+    side = str(_row_get(row, "side") or "").lower()
+    if entry is None or exit_ is None or lots is None or lots == 0 or side not in ("buy", "sell"):
+        return None
+
+    diff = (exit_ - entry) if side == "buy" else (entry - exit_)
+    units = lots * 100_000.0
+    sym = _normalize_symbol_code(str(_row_get(row, "symbol") or symbol_hint or ""))
+    if not sym:
+        return None
+
+    if sym.endswith("JPY"):
+        if exit_ <= 0:
+            return None
+        return round(diff * units / exit_, 2)
+    if len(sym) == 6 and sym[3:] == "USD":
+        return round(diff * units, 2)
+    if len(sym) == 6 and sym[:3] == "USD":
+        if exit_ <= 0:
+            return None
+        return round(diff * units / exit_, 2)
+    return None
+
+
+def _normalized_trade_profit_usd(row: Any, symbol_hint: str | None = None) -> float | None:
+    """Prefer stored profit, but repair obvious outliers using price-based estimate."""
+    raw = _float_or_none(_row_get(row, "profit"))
+    est = _estimate_profit_usd_from_row(row, symbol_hint=symbol_hint)
+    if raw is None:
+        return est
+    if est is None:
+        return raw
+
+    abs_raw = abs(raw)
+    abs_est = abs(est)
+    if abs_raw >= 250 and abs_est >= 5:
+        ratio = abs_raw / abs_est if abs_est > 0 else float("inf")
+        if ratio >= 6.0:
+            return est
+    if abs_raw >= 250 and abs_est >= 20 and (raw * est) < 0:
+        return est
+    return raw
+
+
 def _is_loop_running(profile_name: str) -> bool:
     proc = _loop_processes.get(profile_name)
     if proc is not None:
@@ -826,49 +908,12 @@ def get_trades(
         return records
 
     curr, rate = _get_display_currency(profile)
-    symbol = str(getattr(profile, "symbol", "")).upper()
-
-    def _compute_profit_usd(row: dict[str, Any]) -> float | None:
-        """Best-effort per-trade profit estimate in USD from entry/exit/size."""
-        try:
-            entry_price = row.get("entry_price")
-            exit_price = row.get("exit_price")
-            size_lots = row.get("size_lots") or row.get("volume")
-            side = (row.get("side") or "").lower()
-            if entry_price is None or exit_price is None or size_lots is None or not side:
-                return None
-            entry = float(entry_price)
-            exit_ = float(exit_price)
-            lots = float(size_lots)
-            if lots == 0:
-                return None
-            # Price difference in favor of the trade
-            if side == "buy":
-                diff = exit_ - entry
-            elif side == "sell":
-                diff = entry - exit_
-            else:
-                return None
-            # For JPY-quoted pairs like USDJPY, approximate USD profit from price move
-            if symbol.endswith("JPY") and exit_ > 0:
-                # 1 standard lot = 100,000 base; convert JPY P/L back to USD
-                profit_usd = diff * lots * 100_000.0 / exit_
-                return round(profit_usd, 2)
-        except Exception:
-            return None
-        return None
 
     for row in records:
-        profit_raw = row.get("profit")
-        profit_value: float | None = None
-        if profit_raw is not None and not (isinstance(profit_raw, float) and pd.isna(profit_raw)):
-            # Use stored profit when available (already in account currency, assumed USD)
-            try:
-                profit_value = float(profit_raw)
-            except (TypeError, ValueError):
-                profit_value = None
-        if profit_value is None:
-            profit_value = _compute_profit_usd(row)
+        profit_value = _normalized_trade_profit_usd(
+            row,
+            symbol_hint=str(getattr(profile, "symbol", "") or ""),
+        )
 
         if profit_value is not None:
             row["profit_display"] = _convert_amount(profit_value, rate)
@@ -915,13 +960,11 @@ def get_trade_history(
                 date_str = exit_ts[:10] if len(exit_ts) >= 10 else ""
                 if not date_str:
                     continue
-                profit_raw = row.get("profit")
-                profit_val = 0.0
-                if profit_raw is not None and not (isinstance(profit_raw, float) and pd.isna(profit_raw)):
-                    try:
-                        profit_val = _convert_amount(float(profit_raw), rate) or 0.0
-                    except (TypeError, ValueError):
-                        pass
+                profit_usd = _normalized_trade_profit_usd(
+                    row,
+                    symbol_hint=str(getattr(profile, "symbol", "") or ""),
+                )
+                profit_val = _convert_amount(profit_usd, rate) or 0.0
                 if date_str in by_date_db:
                     by_date_db[date_str]["daily_profit"] += profit_val
                     by_date_db[date_str]["trade_count"] += 1
@@ -1048,7 +1091,10 @@ def get_trade_history_detail(
                         pips_val = round((exit_price - entry_price) / pip_size, 1)
                     elif side == "sell":
                         pips_val = round((entry_price - exit_price) / pip_size, 1)
-                profit_raw = float(row["profit"]) if pd.notna(row.get("profit")) else None
+                profit_raw = _normalized_trade_profit_usd(
+                    row,
+                    symbol_hint=str(getattr(profile, "symbol", "") or ""),
+                )
 
                 spread = None
                 snap_id = row.get("snapshot_id")
@@ -1240,7 +1286,11 @@ def get_quick_stats(profile_name: str, profile_path: Optional[str] = None, sync:
         }
 
     pips = pd.to_numeric(closed.get("pips"), errors="coerce")
-    profit_col = pd.to_numeric(closed.get("profit"), errors="coerce")
+    symbol_hint = str(getattr(profile, "symbol", "") or "")
+    profit_col = pd.to_numeric(
+        closed.apply(lambda r: _normalized_trade_profit_usd(r, symbol_hint=symbol_hint), axis=1),
+        errors="coerce",
+    )
 
     use_profit = profit_col.notna()
     use_pips_fallback = ~use_profit & pips.notna()
@@ -1261,7 +1311,7 @@ def get_quick_stats(profile_name: str, profile_path: Optional[str] = None, sync:
     win_rate = round(wins / total, 3) if total > 0 else None
     total_profit = round(float(profit_col.sum()), 2) if profit_col.notna().any() else None
 
-    profit_col_diag = pd.to_numeric(closed.get("profit"), errors="coerce")
+    profit_col_diag = profit_col
     pos_id_col = closed.get("mt5_position_id")
     trades_with_profit = int(profit_col_diag.notna().sum())
     trades_without_profit = int(profit_col_diag.isna().sum())
@@ -1421,8 +1471,10 @@ def get_stats_by_preset(profile_name: str, profile_path: Optional[str] = None) -
             pid = int(pos_id)
             if pid in mt5_financials:
                 return mt5_financials[pid]["profit"]
-        p = row.get("profit")
-        return float(p) if pd.notna(p) else None
+        return _normalized_trade_profit_usd(
+            row,
+            symbol_hint=str(getattr(profile, "symbol", "") or ""),
+        )
 
     def _get_commission(row: pd.Series) -> float:
         pos_id = row.get("mt5_position_id")
@@ -1915,7 +1967,10 @@ def get_advanced_analytics(
         if r_multiple is None:
             r_multiple = float(row["r_multiple"]) if pd.notna(row.get("r_multiple")) else None
 
-        profit_raw = float(row["profit"]) if pd.notna(row.get("profit")) else None
+        profit_raw = _normalized_trade_profit_usd(
+            row,
+            symbol_hint=str(getattr(profile, "symbol", "") or ""),
+        )
         duration = float(row["duration_minutes"]) if pd.notna(row.get("duration_minutes")) else None
 
         # Compute duration from timestamps if not stored
@@ -2949,7 +3004,10 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
         for row in closed_today:
             d = dict(row)
             pips = d.get("pips")
-            profit = d.get("profit")
+            profit = _normalized_trade_profit_usd(
+                d,
+                symbol_hint=str(getattr(profile, "symbol", "") or ""),
+            )
             if pips is not None:
                 total_pips += float(pips)
                 if float(pips) > 0:
@@ -3348,11 +3406,9 @@ def _hydrate_trade_event_close_financials(profile_name: str, events: list[dict[s
             if not tid:
                 continue
             pips = row.get("pips")
-            profit = row.get("profit")
+            profit = _normalized_trade_profit_usd(row)
             if pd.isna(pips):
                 pips = None
-            if pd.isna(profit):
-                profit = None
             financials[tid] = {
                 "pips": float(pips) if pips is not None else None,
                 "profit": float(profit) if profit is not None else None,
