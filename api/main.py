@@ -2852,6 +2852,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 daily_reset_state=daily_reset_state,
                 exhaustion_result=exhaustion_result,
                 store=store,
+                adapter=_adapter if '_adapter' in locals() else None,
                 temp_overrides=temp_overrides_api,
             )
             filters.extend(asdict(f) for f in filter_reports)

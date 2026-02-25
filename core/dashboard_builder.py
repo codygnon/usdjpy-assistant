@@ -68,6 +68,50 @@ def effective_policy_for_dashboard(policy: Any, temp_overrides: Optional[dict]) 
     return _EffectivePolicy(policy, overrides_clean)
 
 
+def _live_side_counts(profile: Any, adapter: Optional[Any]) -> tuple[dict[str, int], bool]:
+    """Count live broker positions by side (buy/sell). Returns (counts, ok)."""
+    side_counts: dict[str, int] = {"buy": 0, "sell": 0}
+    if adapter is None:
+        return side_counts, False
+    try:
+        open_positions = adapter.get_open_positions(profile.symbol)
+        if not open_positions:
+            return side_counts, True
+        for pos in open_positions:
+            if isinstance(pos, dict):
+                units = float(pos.get("currentUnits") or pos.get("initialUnits") or 0)
+                if units > 0:
+                    side_counts["buy"] += 1
+                elif units < 0:
+                    side_counts["sell"] += 1
+            else:
+                mt5_type = getattr(pos, "type", None)
+                if mt5_type == 0:
+                    side_counts["buy"] += 1
+                elif mt5_type == 1:
+                    side_counts["sell"] += 1
+    except Exception:
+        return side_counts, False
+    return side_counts, True
+
+
+def _store_side_counts(store: Optional[Any], profile_name: str) -> dict[str, int]:
+    """Count open DB trades by side as fallback."""
+    side_counts: dict[str, int] = {"buy": 0, "sell": 0}
+    if store is None:
+        return side_counts
+    try:
+        open_trades = store.list_open_trades(profile_name)
+        for t in open_trades:
+            row = dict(t) if hasattr(t, "keys") else t
+            s = str(row.get("side", "")).lower()
+            if s in side_counts:
+                side_counts[s] += 1
+    except Exception:
+        pass
+    return side_counts
+
+
 def _side_from_eval_result(eval_result: Optional[dict]) -> str:
     side = "buy"
     if not eval_result:
@@ -130,6 +174,7 @@ def build_dashboard_filters(
     daily_reset_state: Optional[dict] = None,
     exhaustion_result: Optional[dict] = None,
     store: Optional[Any] = None,
+    adapter: Optional[Any] = None,
     temp_overrides: Optional[dict[str, int]] = None,
 ) -> list[FilterReport]:
     """Build the filter report list the same way the run loop does.
@@ -197,15 +242,11 @@ def build_dashboard_filters(
         filters.append(report_dead_zone(daily_reset_state or {}))
         filters.append(report_trend_exhaustion(exhaustion_result))
         max_per_side = getattr(policy, "max_open_trades_per_side", None)
-        if max_per_side is not None and store is not None:
+        if max_per_side is not None:
             try:
-                open_trades = store.list_open_trades(profile.profile_name)
-                side_counts: dict[str, int] = {"buy": 0, "sell": 0}
-                for t in open_trades:
-                    row = dict(t) if hasattr(t, "keys") else t
-                    s = str(row.get("side", "")).lower()
-                    if s in side_counts:
-                        side_counts[s] += 1
+                side_counts, live_ok = _live_side_counts(profile, adapter)
+                if not live_ok:
+                    side_counts = _store_side_counts(store, profile.profile_name)
                 sc = side_counts.get(side, 0)
                 filters.append(report_max_trades(sc, max_per_side, side, side_counts))
             except Exception:
@@ -217,15 +258,11 @@ def build_dashboard_filters(
         if store is not None:
             filters.append(report_t6_bb_reversal_cap(policy, store, profile.profile_name))
         max_per_side = getattr(policy, "max_open_trades_per_side", None)
-        if max_per_side is not None and store is not None:
+        if max_per_side is not None:
             try:
-                open_trades = store.list_open_trades(profile.profile_name)
-                side_counts: dict[str, int] = {"buy": 0, "sell": 0}
-                for t in open_trades:
-                    row = dict(t) if hasattr(t, "keys") else t
-                    s = str(row.get("side", "")).lower()
-                    if s in side_counts:
-                        side_counts[s] += 1
+                side_counts, live_ok = _live_side_counts(profile, adapter)
+                if not live_ok:
+                    side_counts = _store_side_counts(store, profile.profile_name)
                 sc = side_counts.get(side, 0)
                 filters.append(report_max_trades(sc, max_per_side, side, side_counts))
             except Exception:
@@ -254,15 +291,12 @@ def build_dashboard_filters(
             max_per_side = max(cap_min, int(round(float(max_per_side) * cap_multiplier)))
         if max_per_side is not None and store is not None:
             try:
-                open_trades = store.list_open_trades(profile.profile_name)
-                side_counts: dict[str, int] = {"buy": 0, "sell": 0}
-                for t in open_trades:
-                    row = dict(t) if hasattr(t, "keys") else t
-                    s = str(row.get("side", "")).lower()
-                    if s in side_counts:
-                        side_counts[s] += 1
+                side_counts, live_ok = _live_side_counts(profile, adapter)
+                if not live_ok:
+                    side_counts = _store_side_counts(store, profile.profile_name)
                 sc = side_counts.get(side, 0)
                 filters.append(report_max_trades(sc, max_per_side, side, side_counts))
+                open_trades = store.list_open_trades(profile.profile_name)
                 zone_cap = getattr(policy, "max_zone_entry_open", None)
                 if zone_cap is not None:
                     zone_cap = max(cap_min, int(round(float(zone_cap) * cap_multiplier)))

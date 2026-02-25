@@ -350,6 +350,7 @@ def _build_and_write_dashboard(
             daily_reset_state=daily_reset_state,
             exhaustion_result=exhaustion_result,
             store=store,
+            adapter=adapter,
             temp_overrides=temp_overrides,
         )
 
@@ -382,53 +383,66 @@ def _build_and_write_dashboard(
 
         # --- Positions ---
         positions = []
+        mid = (tick.bid + tick.ask) / 2.0
+
+        # Build DB map by broker position id so we can enrich live positions with entry_type/breakeven.
+        db_by_position_id: dict[int, dict] = {}
         try:
-            open_trades = store.list_open_trades(profile.profile_name)
-            mid = (tick.bid + tick.ask) / 2.0
-            for row in open_trades:
+            for row in store.list_open_trades(profile.profile_name):
                 d = dict(row)
-                entry = float(d.get("entry_price", 0))
-                s = str(d.get("side", "")).lower()
-                if s == "buy":
-                    unrealized = (mid - entry) / pip_size
-                else:
-                    unrealized = (entry - mid) / pip_size
-                age = 0.0
-                ts = d.get("timestamp_utc")
-                if ts:
-                    try:
-                        import pandas as _pd
-                        t0 = _pd.to_datetime(ts, utc=True)
-                        age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
-                    except Exception:
-                        pass
-                positions.append(PositionInfo(
-                    trade_id=str(d.get("trade_id", "")),
-                    side=s,
-                    entry_price=entry,
-                    entry_type=d.get("entry_type"),
-                    current_price=mid,
-                    unrealized_pips=round(unrealized, 1),
-                    age_minutes=round(age, 1),
-                    stop_price=d.get("stop_price"),
-                    target_price=d.get("target_price"),
-                    breakeven_applied=bool(d.get("breakeven_applied")),
-                ))
+                pos_id = d.get("mt5_position_id")
+                if pos_id is None:
+                    continue
+                try:
+                    db_by_position_id[int(pos_id)] = d
+                except Exception:
+                    continue
         except Exception:
             pass
 
-        # Fallback: fetch positions directly from broker when local DB has none
-        if not positions and adapter is not None:
-            try:
-                mid = (tick.bid + tick.ask) / 2.0
+        # Prefer live broker positions for dashboard accuracy.
+        try:
+            if adapter is not None:
                 live_trades = adapter.get_open_positions(profile.symbol)
                 for t in live_trades:
-                    units = float(t.get("currentUnits", 0) or 0)
-                    s = "buy" if units > 0 else "sell"
-                    entry = float(t.get("price", 0) or 0)
+                    if isinstance(t, dict):
+                        units = float(t.get("currentUnits", 0) or t.get("initialUnits", 0) or 0)
+                        s = "buy" if units > 0 else "sell"
+                        entry = float(t.get("price", 0) or 0)
+                        trade_id = str(t.get("id", ""))
+                        open_time_str = t.get("openTime")
+                        sl = None
+                        tp = None
+                        try:
+                            if t.get("stopLossOrder"):
+                                sl = float(t["stopLossOrder"]["price"])
+                        except Exception:
+                            pass
+                        try:
+                            if t.get("takeProfitOrder"):
+                                tp = float(t["takeProfitOrder"]["price"])
+                        except Exception:
+                            pass
+                    else:
+                        mt5_type = getattr(t, "type", None)
+                        if mt5_type == 0:
+                            s = "buy"
+                        elif mt5_type == 1:
+                            s = "sell"
+                        else:
+                            continue
+                        entry = float(getattr(t, "price_open", 0.0) or 0.0)
+                        trade_id = str(getattr(t, "ticket", ""))
+                        open_time_raw = getattr(t, "time", None)
+                        open_time_str = str(open_time_raw) if open_time_raw is not None else None
+                        sl = float(getattr(t, "sl", 0.0) or 0.0) or None
+                        tp = float(getattr(t, "tp", 0.0) or 0.0) or None
+
+                    if not entry or not s:
+                        continue
+
                     unrealized = (mid - entry) / pip_size if s == "buy" else (entry - mid) / pip_size
                     age = 0.0
-                    open_time_str = t.get("openTime")
                     if open_time_str:
                         try:
                             import pandas as _pd2
@@ -436,29 +450,60 @@ def _build_and_write_dashboard(
                             age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
                         except Exception:
                             pass
-                    sl = None
-                    tp = None
+
+                    db_row = None
                     try:
-                        if t.get("stopLossOrder"):
-                            sl = float(t["stopLossOrder"]["price"])
+                        db_row = db_by_position_id.get(int(trade_id))
                     except Exception:
-                        pass
-                    try:
-                        if t.get("takeProfitOrder"):
-                            tp = float(t["takeProfitOrder"]["price"])
-                    except Exception:
-                        pass
+                        db_row = None
+
                     positions.append(PositionInfo(
-                        trade_id=str(t.get("id", "")),
+                        trade_id=trade_id,
                         side=s,
                         entry_price=entry,
-                        entry_type=None,
+                        entry_type=(db_row.get("entry_type") if db_row else None),
                         current_price=mid,
                         unrealized_pips=round(unrealized, 1),
                         age_minutes=round(age, 1),
-                        stop_price=sl,
-                        target_price=tp,
-                        breakeven_applied=False,
+                        stop_price=(db_row.get("stop_price") if db_row and db_row.get("stop_price") is not None else sl),
+                        target_price=(db_row.get("target_price") if db_row and db_row.get("target_price") is not None else tp),
+                        breakeven_applied=bool(db_row.get("breakeven_applied")) if db_row else False,
+                    ))
+        except Exception:
+            positions = []
+
+        # Fallback: DB positions when live fetch fails.
+        if not positions:
+            try:
+                open_trades = store.list_open_trades(profile.profile_name)
+                for row in open_trades:
+                    d = dict(row)
+                    entry = float(d.get("entry_price", 0))
+                    s = str(d.get("side", "")).lower()
+                    if s == "buy":
+                        unrealized = (mid - entry) / pip_size
+                    else:
+                        unrealized = (entry - mid) / pip_size
+                    age = 0.0
+                    ts = d.get("timestamp_utc")
+                    if ts:
+                        try:
+                            import pandas as _pd
+                            t0 = _pd.to_datetime(ts, utc=True)
+                            age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
+                        except Exception:
+                            pass
+                    positions.append(PositionInfo(
+                        trade_id=str(d.get("trade_id", "")),
+                        side=s,
+                        entry_price=entry,
+                        entry_type=d.get("entry_type"),
+                        current_price=mid,
+                        unrealized_pips=round(unrealized, 1),
+                        age_minutes=round(age, 1),
+                        stop_price=d.get("stop_price"),
+                        target_price=d.get("target_price"),
+                        breakeven_applied=bool(d.get("breakeven_applied")),
                     ))
             except Exception:
                 pass
