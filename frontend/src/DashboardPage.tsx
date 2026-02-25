@@ -328,7 +328,15 @@ function FilterRow({ filter, depth = 0 }: { filter: FilterReport; depth?: number
   );
 }
 
-function FilterTable({ filters }: { filters: FilterReport[] }) {
+function FilterTable({
+  filters,
+  candidateSide,
+  candidateTrigger,
+}: {
+  filters: FilterReport[];
+  candidateSide: 'buy' | 'sell' | null;
+  candidateTrigger: 'zone_entry' | 'tiered_pullback' | null;
+}) {
   const enabledFilters = filters.filter(f => f.enabled);
   if (enabledFilters.length === 0) {
     return (
@@ -341,8 +349,29 @@ function FilterTable({ filters }: { filters: FilterReport[] }) {
       </div>
     );
   }
-  const allClear = enabledFilters.every(f => f.is_clear);
-  const blockers = enabledFilters.filter(f => !f.is_clear).map(f => f.display_name);
+  const hasCandidateContext = candidateSide != null && candidateTrigger != null;
+  const isRelevantBlocker = (filter: FilterReport) => {
+    switch (filter.filter_id) {
+      case 'max_trades_buy':
+        return candidateSide === 'buy';
+      case 'max_trades_sell':
+        return candidateSide === 'sell';
+      case 'zone_entry_cap':
+        return candidateTrigger === 'zone_entry';
+      case 'tiered_pullback_cap':
+        return candidateTrigger === 'tiered_pullback';
+      case 'ema_zone_slope_filter':
+        return candidateTrigger === 'zone_entry';
+      default:
+        return true;
+    }
+  };
+  const relevantFilters = enabledFilters.filter(isRelevantBlocker);
+  const relevantBlockers = relevantFilters.filter(f => !f.is_clear).map(f => f.display_name);
+  const otherWarnings = enabledFilters
+    .filter(f => !isRelevantBlocker(f) && !f.is_clear)
+    .map(f => f.display_name);
+  const allClear = relevantBlockers.length === 0;
 
   return (
     <div style={{
@@ -368,12 +397,40 @@ function FilterTable({ filters }: { filters: FilterReport[] }) {
       </table>
       <div style={{
         marginTop: 8, padding: '4px 8px', fontSize: 12, borderRadius: 4,
-        backgroundColor: allClear ? colors.green + '11' : colors.red + '11',
-        color: allClear ? colors.green : colors.red,
-        border: `1px solid ${allClear ? colors.green + '33' : colors.red + '33'}`,
+        backgroundColor: !hasCandidateContext
+          ? colors.amber + '11'
+          : allClear
+            ? colors.green + '11'
+            : colors.red + '11',
+        color: !hasCandidateContext
+          ? colors.amber
+          : allClear
+            ? colors.green
+            : colors.red,
+        border: `1px solid ${
+          !hasCandidateContext
+            ? colors.amber + '33'
+            : allClear
+              ? colors.green + '33'
+              : colors.red + '33'
+        }`,
       }}>
-        Entry: {allClear ? 'CLEAR' : `BLOCKED by ${blockers.join(', ')}`}
+        {!hasCandidateContext
+          ? 'Entry: WAITING (no active candidate)'
+          : allClear
+            ? 'Entry: CLEAR'
+            : `Entry: BLOCKED by ${relevantBlockers.join(', ')}`}
       </div>
+      {otherWarnings.length > 0 && (
+        <div style={{ marginTop: 6, fontSize: 11, color: colors.textSecondary }}>
+          Other warnings: {otherWarnings.join(', ')}
+        </div>
+      )}
+      {hasCandidateContext && (
+        <div style={{ marginTop: 4, fontSize: 11, color: colors.textSecondary }}>
+          Candidate: {candidateSide?.toUpperCase()} {candidateTrigger === 'zone_entry' ? 'zone entry' : 'tiered pullback'}
+        </div>
+      )}
     </div>
   );
 }
@@ -626,7 +683,11 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
         </div>
 
         {/* Filter Status */}
-        <FilterTable filters={filters} />
+        <FilterTable
+          filters={filters}
+          candidateSide={dashState?.entry_candidate_side ?? null}
+          candidateTrigger={dashState?.entry_candidate_trigger ?? null}
+        />
 
         {/* Open Positions */}
         <PositionsPanel trades={positions} />

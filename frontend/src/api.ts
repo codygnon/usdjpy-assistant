@@ -610,6 +610,8 @@ export interface DashboardState {
   preset_name: string;
   mode: string;
   loop_running: boolean;
+  entry_candidate_side?: 'buy' | 'sell' | null;
+  entry_candidate_trigger?: 'zone_entry' | 'tiered_pullback' | null;
   filters: FilterReport[];
   context: ContextItem[];
   positions: PositionInfo[];

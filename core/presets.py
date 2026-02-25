@@ -1616,7 +1616,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "trend_exhaustion_very_extended_tighten_caps": True,
                     "trend_exhaustion_very_extended_cap_multiplier": 0.5,
                     "trend_exhaustion_very_extended_cap_min": 1,
-                    "trend_exhaustion_adaptive_tp_enabled": True,
+                    "trend_exhaustion_adaptive_tp_enabled": False,
                     "trend_exhaustion_tp_extended_offset_pips": 1.0,
                     "trend_exhaustion_tp_very_extended_offset_pips": 2.0,
                     "trend_exhaustion_tp_min_pips": 1.0,

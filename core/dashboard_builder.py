@@ -114,14 +114,20 @@ def _store_side_counts(store: Optional[Any], profile_name: str) -> dict[str, int
 
 
 def _side_from_eval_result(eval_result: Optional[dict]) -> str:
-    side = "buy"
+    side = ""
     if not eval_result:
         return side
+    if eval_result.get("candidate_side") in ("buy", "sell"):
+        return eval_result["candidate_side"]
     dec = eval_result.get("decision")
     if dec and getattr(dec, "side", None):
-        return dec.side
+        raw = str(dec.side).lower()
+        if raw in ("buy", "sell"):
+            return raw
     if eval_result.get("side"):
-        return eval_result["side"]
+        raw = str(eval_result["side"]).lower()
+        if raw in ("buy", "sell"):
+            return raw
     return side
 
 
@@ -193,16 +199,19 @@ def build_dashboard_filters(
     # Apply temp overrides so dashboard reflects same EMAs as run loop execution.
     policy = effective_policy_for_dashboard(policy, temp_overrides)
 
-    side = _side_from_eval_result(eval_result) if eval_result else "buy"
+    side = _side_from_eval_result(eval_result) if eval_result else ""
     trigger_type = "zone_entry"
     if eval_result:
-        trigger_type = eval_result.get("trigger_type") or "zone_entry"
+        trigger_type = eval_result.get("candidate_trigger") or eval_result.get("trigger_type") or "zone_entry"
     # Trial #7 dashboard filter context should follow current M5 trend direction,
     # not a stale/missing eval_result side (which can default to BUY).
     if policy is not None and policy_type == "kt_cg_trial_7":
-        side = _side_from_m5(data_by_tf, policy)
-    elif policy is not None and not eval_result:
+        if side not in ("buy", "sell"):
+            side = _side_from_m5(data_by_tf, policy)
+    elif policy is not None and side not in ("buy", "sell"):
         side = _side_from_m3(data_by_tf, policy)
+    if side not in ("buy", "sell"):
+        side = "buy"
 
     # Session filter (all)
     filters.append(report_session_filter(profile, now_utc))

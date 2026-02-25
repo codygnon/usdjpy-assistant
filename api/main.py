@@ -2975,6 +2975,8 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
         "preset_name": getattr(profile, "active_preset_name", "") or "",
         "mode": runtime.mode,
         "loop_running": _is_loop_running(profile_name),
+        "entry_candidate_side": None,
+        "entry_candidate_trigger": None,
         "filters": filters,
         "context": [],
         "positions": positions,
@@ -3231,6 +3233,8 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
                     stale_age_seconds = None
             result = dict(file_state)
             result["loop_running"] = _is_loop_running(profile_name)
+            result.setdefault("entry_candidate_side", None)
+            result.setdefault("entry_candidate_trigger", None)
             result["stale"] = stale
             result["stale_age_seconds"] = stale_age_seconds
             result["data_source"] = "run_loop_file"
@@ -3241,6 +3245,8 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
             "preset_name": "",
             "mode": "DISARMED",
             "loop_running": _is_loop_running(profile_name),
+            "entry_candidate_side": None,
+            "entry_candidate_trigger": None,
             "filters": [],
             "context": [],
             "positions": [],
@@ -3298,6 +3304,8 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
     result["stale"] = False
     result["stale_age_seconds"] = 0.0
     result["data_source"] = "run_loop_file"
+    result.setdefault("entry_candidate_side", None)
+    result.setdefault("entry_candidate_trigger", None)
     _dashboard_live_cache[profile_name] = (now, result)
     return result
 

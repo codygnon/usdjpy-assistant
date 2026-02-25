@@ -382,6 +382,20 @@ def _build_and_write_dashboard(
         elif policy_type == "kt_cg_counter_trend_pullback":
             context_items = collect_trial_3_context(policy, data_by_tf, tick, pip_size)
 
+        candidate_side = None
+        candidate_trigger = None
+        if isinstance(eval_result, dict):
+            raw_side = eval_result.get("candidate_side") or eval_result.get("side")
+            if raw_side is None:
+                dec = eval_result.get("decision")
+                raw_side = getattr(dec, "side", None) if dec is not None else None
+            if str(raw_side).lower() in ("buy", "sell"):
+                candidate_side = str(raw_side).lower()
+
+            raw_trigger = eval_result.get("candidate_trigger") or eval_result.get("trigger_type")
+            if str(raw_trigger) in ("zone_entry", "tiered_pullback"):
+                candidate_trigger = str(raw_trigger)
+
         # --- Positions ---
         positions = []
         mid = (tick.bid + tick.ask) / 2.0
@@ -542,6 +556,8 @@ def _build_and_write_dashboard(
             preset_name=profile.active_preset_name or "",
             mode=mode,
             loop_running=True,
+            entry_candidate_side=candidate_side,
+            entry_candidate_trigger=candidate_trigger,
             filters=filters,
             context=context_items,
             positions=positions,

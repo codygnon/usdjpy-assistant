@@ -4079,11 +4079,18 @@ def evaluate_kt_cg_trial_7_conditions(
     m1_close = m1_df["close"]
     m1_ema_zone_fast = ema_fn(m1_close, m1_zone_ema_fast)
     m1_ema_zone_slow = ema_fn(m1_close, m1_zone_ema_slow)
-    m1_ema5 = ema_fn(m1_close, 5)
     current_price = (float(current_bid) + float(current_ask)) / 2.0
+    # Price-vs-EMA5 mode should reflect current poll price, not only last closed M1 price.
+    # Replace the latest close with current_price for a live EMA5 snapshot.
+    m1_close_live = m1_close.copy()
+    try:
+        m1_close_live.iloc[-1] = current_price
+    except Exception:
+        pass
+    m1_ema5_live = ema_fn(m1_close_live, 5)
     m1_zone_fast_val = float(m1_ema_zone_fast.iloc[-1])
     m1_zone_slow_val = float(m1_ema_zone_slow.iloc[-1])
-    m1_ema5_val = float(m1_ema5.iloc[-1])
+    m1_ema5_val = float(m1_ema5_live.iloc[-1])
 
     tiered_pullback_enabled = getattr(policy, "tiered_pullback_enabled", True)
     tiered_pullback_triggered = False
@@ -4194,6 +4201,29 @@ def evaluate_kt_cg_trial_7_conditions(
         "tier_updates": tier_updates,
         "m5_trend": trend,
     }
+
+
+def _evaluate_kt_cg_trial_7_zone_only_candidate(
+    profile: ProfileV1,
+    policy,
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+    tick: Tick,
+    tier_state: dict[int, bool],
+) -> dict:
+    """Re-evaluate Trial #7 conditions for zone-entry only (tier trigger disabled)."""
+    original_tiered_enabled = bool(getattr(policy, "tiered_pullback_enabled", True))
+    try:
+        object.__setattr__(policy, "tiered_pullback_enabled", False)
+        return evaluate_kt_cg_trial_7_conditions(
+            profile,
+            policy,
+            data_by_tf,
+            current_bid=tick.bid,
+            current_ask=tick.ask,
+            tier_state=tier_state,
+        )
+    finally:
+        object.__setattr__(policy, "tiered_pullback_enabled", original_tiered_enabled)
 
 
 def execute_kt_cg_trial_4_policy_demo_only(
@@ -4705,19 +4735,56 @@ def execute_kt_cg_trial_7_policy_demo_only(
     tier_state: dict[int, bool],
 ) -> dict:
     """Evaluate and execute KT/CG Trial #7 (demo only)."""
+    candidate_side: Optional[str] = None
+    candidate_trigger: Optional[str] = None
     if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
-        return {"decision": ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed"), "tier_updates": {}}
+        return {
+            "decision": ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed"),
+            "tier_updates": {},
+            "trigger_type": None,
+            "candidate_side": candidate_side,
+            "candidate_trigger": candidate_trigger,
+            "side": candidate_side,
+            "exhaustion_result": None,
+        }
     if not adapter.is_demo_account():
-        return {"decision": ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)"), "tier_updates": {}}
+        return {
+            "decision": ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)"),
+            "tier_updates": {},
+            "trigger_type": None,
+            "candidate_side": candidate_side,
+            "candidate_trigger": candidate_trigger,
+            "side": candidate_side,
+            "exhaustion_result": None,
+        }
 
     store = _store(log_dir)
     rule_id = f"kt_cg_trial_7:{policy.id}:M1:{bar_time_utc}"
 
     exhaustion_result = None
+    tier_updates: dict[int, bool] = {}
     effective_tiers = _canonical_trial7_tier_periods(getattr(policy, "tier_ema_periods", tuple(range(9, 35))))
     block_zone_entry_by_exhaustion = False
     cap_multiplier = 1.0
     cap_minimum = 1
+
+    def _result_payload(
+        decision: ExecutionDecision,
+        *,
+        extra: Optional[dict] = None,
+    ) -> dict:
+        payload = {
+            "decision": decision,
+            "tier_updates": tier_updates,
+            "trigger_type": candidate_trigger,
+            "candidate_side": candidate_side,
+            "candidate_trigger": candidate_trigger,
+            "side": candidate_side,
+            "exhaustion_result": exhaustion_result,
+        }
+        if extra:
+            payload.update(extra)
+        return payload
 
     if getattr(policy, "trend_exhaustion_enabled", False):
         m5_df_ex = data_by_tf.get("M5")
@@ -4777,34 +4844,21 @@ def execute_kt_cg_trial_7_policy_demo_only(
     passed = result["passed"]
     side = result["side"]
     eval_reasons = result["reasons"]
-    trigger_type = result["trigger_type"]
+    trigger_type = str(result.get("trigger_type") or "")
     tier_updates = result.get("tier_updates", {})
     tiered_pullback_tier = result.get("tiered_pullback_tier")
+    if side in ("buy", "sell"):
+        candidate_side = side
+    candidate_trigger = trigger_type or None
 
-    if not passed or side is None:
-        return {
-            "decision": ExecutionDecision(attempted=False, placed=False, reason="; ".join(eval_reasons)),
-            "tier_updates": tier_updates,
-            "exhaustion_result": exhaustion_result,
-        }
+    def _run_zone_prechecks() -> Optional[str]:
+        if trigger_type != "zone_entry":
+            return None
+        if block_zone_entry_by_exhaustion:
+            ex_zone = (exhaustion_result or {}).get("zone", "normal")
+            stretch = (exhaustion_result or {}).get("stretch_pips")
+            return f"trend_exhaustion: {ex_zone} blocks zone_entry (stretch={stretch}p)"
 
-    if trigger_type == "zone_entry" and block_zone_entry_by_exhaustion:
-        ex_zone = (exhaustion_result or {}).get("zone", "normal")
-        stretch = (exhaustion_result or {}).get("stretch_pips")
-        return {
-            "decision": ExecutionDecision(
-                attempted=True,
-                placed=False,
-                reason=f"trend_exhaustion: {ex_zone} blocks zone_entry (stretch={stretch}p)",
-            ),
-            "tier_updates": tier_updates,
-            "exhaustion_result": exhaustion_result,
-        }
-
-    if trigger_type == "tiered_pullback" and tiered_pullback_tier:
-        rule_id = f"kt_cg_trial_7:{policy.id}:tier_{tiered_pullback_tier}"
-
-    if trigger_type == "zone_entry":
         cooldown_ok, cooldown_reason = _check_kt_cg_trial_4_cooldown(
             store, profile.profile_name, policy.id, policy.cooldown_minutes, rule_prefix="kt_cg_trial_7"
         )
@@ -4825,13 +4879,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
                     "mt5_deal_id": None,
                 }
             )
-            return {
-                "decision": ExecutionDecision(attempted=True, placed=False, reason=cooldown_reason or "zone_entry_cooldown"),
-                "tier_updates": tier_updates,
-                "exhaustion_result": exhaustion_result,
-            }
+            return cooldown_reason or "zone_entry_cooldown"
 
-    if trigger_type == "zone_entry":
         ema_zone_filter_enabled = getattr(policy, "ema_zone_filter_enabled", False)
         if ema_zone_filter_enabled:
             m1_df_zone = data_by_tf.get("M1")
@@ -4856,11 +4905,61 @@ def execute_kt_cg_trial_7_policy_demo_only(
                             "mt5_deal_id": None,
                         }
                     )
-                    return {
-                        "decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "ema_zone_slope_filter"),
-                        "tier_updates": tier_updates,
-                        "exhaustion_result": exhaustion_result,
-                    }
+                    return reason or "ema_zone_slope_filter"
+        return None
+
+    def _attempt_zone_fallback_from_tier_cap(cap_reason: str) -> tuple[bool, str]:
+        nonlocal side, trigger_type, tiered_pullback_tier, eval_reasons, tier_updates, rule_id, candidate_side, candidate_trigger
+        fallback_prefix = f"{cap_reason}; tiered_cap_reached -> fallback_zone_attempted"
+        if block_zone_entry_by_exhaustion:
+            ex_zone = (exhaustion_result or {}).get("zone", "normal")
+            stretch = (exhaustion_result or {}).get("stretch_pips")
+            return False, f"{fallback_prefix}; trend_exhaustion: {ex_zone} blocks zone_entry (stretch={stretch}p)"
+
+        fallback = _evaluate_kt_cg_trial_7_zone_only_candidate(
+            profile=profile,
+            policy=policy,
+            data_by_tf=data_by_tf,
+            tick=tick,
+            tier_state=tier_state,
+        )
+        fallback_passed = bool(fallback.get("passed")) and fallback.get("side") is not None and str(fallback.get("trigger_type") or "") == "zone_entry"
+        if not fallback_passed:
+            fallback_reasons = "; ".join(fallback.get("reasons") or [])
+            if fallback_reasons:
+                return False, f"{fallback_prefix}; zone_fallback_not_valid: {fallback_reasons}"
+            return False, f"{fallback_prefix}; zone_fallback_not_valid"
+
+        fallback_side = str(fallback.get("side") or "").lower()
+        if fallback_side not in ("buy", "sell"):
+            return False, f"{fallback_prefix}; zone_fallback_invalid_side"
+        if candidate_side in ("buy", "sell") and fallback_side != candidate_side:
+            return False, f"{fallback_prefix}; zone_fallback_side_mismatch ({candidate_side}->{fallback_side})"
+
+        trigger_type = "zone_entry"
+        candidate_trigger = "zone_entry"
+        side = fallback_side
+        candidate_side = fallback_side
+        tiered_pullback_tier = None
+        # Do not mark tier as fired when tier trade did not execute.
+        tier_updates = {int(k): bool(v) for k, v in tier_updates.items() if not bool(v)}
+        eval_reasons = list(eval_reasons) + [fallback_prefix] + list(fallback.get("reasons") or [])
+        rule_id = f"kt_cg_trial_7:{policy.id}:M1:{bar_time_utc}"
+        return True, fallback_prefix
+
+    if not passed or side is None:
+        return _result_payload(
+            ExecutionDecision(attempted=False, placed=False, reason="; ".join(eval_reasons)),
+        )
+
+    zone_precheck_reason = _run_zone_prechecks()
+    if zone_precheck_reason:
+        return _result_payload(
+            ExecutionDecision(attempted=True, placed=False, reason=zone_precheck_reason),
+        )
+
+    if trigger_type == "tiered_pullback" and tiered_pullback_tier:
+        rule_id = f"kt_cg_trial_7:{policy.id}:tier_{tiered_pullback_tier}"
 
     max_open_per_side = getattr(policy, "max_open_trades_per_side", None)
     if max_open_per_side is not None:
@@ -4903,46 +5002,54 @@ def execute_kt_cg_trial_7_policy_demo_only(
                     if pos_side == side:
                         side_open += 1
             if side_open >= max_open_per_side:
-                return {
-                    "decision": ExecutionDecision(attempted=True, placed=False, reason=f"max_open_trades_per_side: {side_open} {side} trade(s) open (max {max_open_per_side})"),
-                    "tier_updates": tier_updates,
-                    "exhaustion_result": exhaustion_result,
-                }
+                return _result_payload(
+                    ExecutionDecision(
+                        attempted=True,
+                        placed=False,
+                        reason=f"max_open_trades_per_side: {side_open} {side} trade(s) open (max {max_open_per_side})",
+                    ),
+                )
         except Exception:
             pass
 
     try:
         open_trades = store.list_open_trades(profile.profile_name)
-        if trigger_type == "zone_entry":
-            max_zone_entry_open = getattr(policy, "max_zone_entry_open", None)
-            if max_zone_entry_open is not None:
-                max_zone_entry_open = max(cap_minimum, int(round(float(max_zone_entry_open) * cap_multiplier)))
-                zone_entry_open = sum(1 for row in open_trades if row.get("entry_type") == "zone_entry")
-                if zone_entry_open >= max_zone_entry_open:
-                    return {
-                        "decision": ExecutionDecision(
-                            attempted=True,
-                            placed=False,
-                            reason=f"max_zone_entry_open: {zone_entry_open} zone entry trade(s) already open (max {max_zone_entry_open})",
-                        ),
-                        "tier_updates": tier_updates,
-                        "exhaustion_result": exhaustion_result,
-                    }
-        if trigger_type == "tiered_pullback":
-            max_tiered_pullback_open = getattr(policy, "max_tiered_pullback_open", None)
-            if max_tiered_pullback_open is not None:
-                max_tiered_pullback_open = max(cap_minimum, int(round(float(max_tiered_pullback_open) * cap_multiplier)))
-                tiered_open = sum(1 for row in open_trades if row.get("entry_type") == "tiered_pullback")
-                if tiered_open >= max_tiered_pullback_open:
-                    return {
-                        "decision": ExecutionDecision(
-                            attempted=True,
-                            placed=False,
-                            reason=f"max_tiered_pullback_open: {tiered_open} tiered pullback trade(s) already open (max {max_tiered_pullback_open})",
-                        ),
-                        "tier_updates": tier_updates,
-                        "exhaustion_result": exhaustion_result,
-                    }
+        while True:
+            if trigger_type == "tiered_pullback":
+                max_tiered_pullback_open = getattr(policy, "max_tiered_pullback_open", None)
+                if max_tiered_pullback_open is not None:
+                    max_tiered_pullback_open = max(cap_minimum, int(round(float(max_tiered_pullback_open) * cap_multiplier)))
+                    tiered_open = sum(1 for row in open_trades if row.get("entry_type") == "tiered_pullback")
+                    if tiered_open >= max_tiered_pullback_open:
+                        tier_cap_reason = (
+                            f"max_tiered_pullback_open: {tiered_open} tiered pullback trade(s) already open "
+                            f"(max {max_tiered_pullback_open})"
+                        )
+                        fallback_ok, fallback_reason = _attempt_zone_fallback_from_tier_cap(tier_cap_reason)
+                        if not fallback_ok:
+                            return _result_payload(
+                                ExecutionDecision(attempted=True, placed=False, reason=fallback_reason),
+                            )
+                        zone_precheck_reason = _run_zone_prechecks()
+                        if zone_precheck_reason:
+                            return _result_payload(
+                                ExecutionDecision(attempted=True, placed=False, reason=zone_precheck_reason),
+                            )
+                        continue
+            if trigger_type == "zone_entry":
+                max_zone_entry_open = getattr(policy, "max_zone_entry_open", None)
+                if max_zone_entry_open is not None:
+                    max_zone_entry_open = max(cap_minimum, int(round(float(max_zone_entry_open) * cap_multiplier)))
+                    zone_entry_open = sum(1 for row in open_trades if row.get("entry_type") == "zone_entry")
+                    if zone_entry_open >= max_zone_entry_open:
+                        return _result_payload(
+                            ExecutionDecision(
+                                attempted=True,
+                                placed=False,
+                                reason=f"max_zone_entry_open: {zone_entry_open} zone entry trade(s) already open (max {max_zone_entry_open})",
+                            ),
+                        )
+            break
     except Exception:
         pass
 
@@ -4965,11 +5072,9 @@ def execute_kt_cg_trial_7_policy_demo_only(
                 "mt5_deal_id": None,
             }
         )
-        return {
-            "decision": ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter"),
-            "tier_updates": tier_updates,
-            "exhaustion_result": exhaustion_result,
-        }
+        return _result_payload(
+            ExecutionDecision(attempted=True, placed=False, reason=reason or "session_filter"),
+        )
 
     entry_price = tick.ask if side == "buy" else tick.bid
     original_tp_pips = float(getattr(policy, "tp_pips", 4.0))
@@ -4997,11 +5102,9 @@ def execute_kt_cg_trial_7_policy_demo_only(
                 "mt5_deal_id": None,
             }
         )
-        return {
-            "decision": ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons)),
-            "tier_updates": tier_updates,
-            "exhaustion_result": exhaustion_result,
-        }
+        return _result_payload(
+            ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons)),
+        )
 
     if mode == "ARMED_MANUAL_CONFIRM":
         sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
@@ -5021,11 +5124,9 @@ def execute_kt_cg_trial_7_policy_demo_only(
                 "mt5_deal_id": None,
             }
         )
-        return {
-            "decision": ExecutionDecision(attempted=True, placed=False, reason="manual_confirm_required"),
-            "tier_updates": tier_updates,
-            "exhaustion_result": exhaustion_result,
-        }
+        return _result_payload(
+            ExecutionDecision(attempted=True, placed=False, reason="manual_confirm_required"),
+        )
 
     if policy.close_opposite_on_trade:
         closed = close_opposite_positions(adapter, profile, side, log_dir)
@@ -5074,8 +5175,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
             f" | {'; '.join(eval_reasons)}"
         )
 
-    return {
-        "decision": ExecutionDecision(
+    return _result_payload(
+        ExecutionDecision(
             attempted=True,
             placed=placed,
             reason=reason,
@@ -5085,12 +5186,11 @@ def execute_kt_cg_trial_7_policy_demo_only(
             fill_price=getattr(res, "fill_price", None),
             side=side,
         ),
-        "tier_updates": tier_updates,
-        "trigger_type": trigger_type,
-        "tp_pips_effective": float(effective_tp_pips),
-        "tp_pips_base": float(original_tp_pips),
-        "exhaustion_result": exhaustion_result,
-    }
+        extra={
+            "tp_pips_effective": float(effective_tp_pips),
+            "tp_pips_base": float(original_tp_pips),
+        },
+    )
 
 
 def _passes_fresh_cross_check(m1_df: pd.DataFrame, is_bull: bool) -> tuple[bool, str | None]:
