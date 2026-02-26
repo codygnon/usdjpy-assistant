@@ -5127,6 +5127,19 @@ def execute_kt_cg_trial_7_policy_demo_only(
         except Exception:
             pass
 
+        # All DB position ids (any entry type) — used to detect orphaned live positions
+        _db_all_pos_ids: set[int] = set()
+        for _row in open_trades:
+            _rdict = dict(_row) if hasattr(_row, "keys") else _row
+            _pid = _rdict.get("mt5_position_id")
+            if _pid is not None:
+                try:
+                    _db_all_pos_ids.add(int(_pid))
+                except (TypeError, ValueError):
+                    pass
+        # Orphaned live positions: in OANDA but absent from DB entirely (e.g. placed before DB recording worked)
+        _orphaned_live_count = len(_live_pos_ids - _db_all_pos_ids) if _live_pos_ids else 0
+
         def _row_still_open(row: dict) -> bool:
             if not _live_pos_ids:
                 return True
@@ -5171,12 +5184,15 @@ def execute_kt_cg_trial_7_policy_demo_only(
                         1 for row in open_trades
                         if row.get("entry_type") == "zone_entry" and _row_still_open(dict(row) if hasattr(row, "keys") else row)
                     )
+                    # Conservatively count orphaned live positions (in OANDA but not in DB) toward the zone
+                    # entry cap. These arise when trades were placed but not recorded (e.g. pre-fix crashes).
+                    zone_entry_open += _orphaned_live_count
                     if zone_entry_open >= max_zone_entry_open:
                         return _result_payload(
                             ExecutionDecision(
                                 attempted=True,
                                 placed=False,
-                                reason=f"max_zone_entry_open: {zone_entry_open} zone entry trade(s) already open (max {max_zone_entry_open})",
+                                reason=f"max_zone_entry_open: {zone_entry_open} zone entry trade(s) already open (max {max_zone_entry_open}; includes {_orphaned_live_count} unrecorded)",
                             ),
                         )
             break
