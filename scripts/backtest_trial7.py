@@ -126,7 +126,6 @@ def build_policy(*, tp_pips: float, sl_pips: float, m5_min_gap_pips: float) -> S
         tiered_pullback_enabled=True,
         tier_ema_periods=tuple([9] + list(range(11, 35))),
         tier_reset_buffer_pips=1.0,
-        close_opposite_on_trade=False,
         cooldown_minutes=3.0,
         sl_pips=float(sl_pips),
         tp_pips=float(tp_pips),
@@ -632,14 +631,6 @@ def backtest(m1: pd.DataFrame, spread_pips: float, base_lot: float, tp_pips: flo
             else:
                 blocked_reasons["tier_cap"] = blocked_reasons.get("tier_cap", 0) + 1
                 continue
-
-        # Direction-switch close
-        if bool(getattr(policy, "close_opposite_on_trade", True)):
-            opp = "sell" if side == "buy" else "buy"
-            for pos in list(open_positions):
-                if pos.side == opp:
-                    exit_px = bid if pos.side == "buy" else ask
-                    close_position(pos, ts, exit_px, "direction_switch_close")
 
         # Place trade
         trade_id_seq += 1

@@ -1011,16 +1011,14 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
     # Two independent entry triggers:
     # 1. Zone Entry (continuous, respects cooldown): M1 EMA9 vs EMA21
     # 2. Pullback Cross (discrete, overrides cooldown): M1 EMA9 crosses EMA13
-    # Direction switch close: closes opposite positions before new trade.
     # -----------------------------------------------------------------------
     PresetId.KT_CG_TRIAL_2: {
         "name": "KT/CG Trial #2 (Zone Entry + Pullback Cross)",
-        "description": "Two independent triggers: Zone Entry (M1 EMA 9 vs 21, respects cooldown) OR Pullback Cross (M1 EMA 9 crosses 13, overrides cooldown). Direction switch close enabled.",
+        "description": "Two independent triggers: Zone Entry (M1 EMA 9 vs 21, respects cooldown) OR Pullback Cross (M1 EMA 9 crosses 13, overrides cooldown).",
         "pros": [
             "Zone Entry trades with trend when EMAs aligned",
             "Pullback Cross catches counter-trend pullbacks",
             "Pullback Cross overrides cooldown for faster re-entry",
-            "Direction switch close prevents hedged positions",
             "Swing filter avoids entries near key reversal zones",
         ],
         "cons": [
@@ -1042,6 +1040,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                 "ema_stack_filter": {"enabled": False},
                 "atr_filter": {"enabled": False},
                 "session_filter": {"enabled": False},
+                "session_boundary_block": {"enabled": False, "buffer_minutes": 15},
             },
             "setups": {},
         },
@@ -1069,8 +1068,6 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "m1_zone_entry_ema_slow": 21,
                     # M1 Pullback Cross - EMA 9 crosses EMA 13 (overrides cooldown)
                     "m1_pullback_cross_ema_slow": 13,
-                    # Close opposite trades before placing new trade
-                    "close_opposite_on_trade": True,
                     # Cooldown (Zone Entry respects, Pullback Cross overrides)
                     "cooldown_minutes": 3.0,
                     "tp_pips": 0.5,
@@ -1090,16 +1087,14 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
     # Two independent entry triggers:
     # 1. Zone Entry (continuous, respects cooldown): M1 EMA9 vs EMA13
     # 2. Pullback Cross (discrete, overrides cooldown): M1 EMA9 crosses EMA15
-    # Direction switch close: closes opposite positions before new trade.
     # -----------------------------------------------------------------------
     PresetId.KT_CG_TRIAL_3: {
         "name": "KT/CG Trial #3 (Counter-Trend Pullback)",
-        "description": "Two independent triggers: Zone Entry (M1 EMA 9 vs 13, respects cooldown) OR Pullback Cross (M1 EMA 9 crosses 15, overrides cooldown). Direction switch close enabled.",
+        "description": "Two independent triggers: Zone Entry (M1 EMA 9 vs 13, respects cooldown) OR Pullback Cross (M1 EMA 9 crosses 15, overrides cooldown).",
         "pros": [
             "Zone Entry trades with trend when EMAs aligned",
             "Pullback Cross catches counter-trend pullbacks",
             "Pullback Cross overrides cooldown for faster re-entry",
-            "Direction switch close prevents hedged positions",
             "Swing filter avoids entries near key reversal zones",
         ],
         "cons": [
@@ -1147,8 +1142,6 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "m1_zone_entry_ema_slow": 13,
                     # M1 Pullback Cross - EMA 9 crosses EMA 15 (overrides cooldown)
                     "m1_pullback_cross_ema_slow": 15,
-                    # Close opposite trades before placing new trade
-                    "close_opposite_on_trade": True,
                     # Cooldown (Zone Entry respects, Pullback Cross overrides)
                     "cooldown_minutes": 3.0,
                     "tp_pips": 0.5,
@@ -1228,8 +1221,6 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "tiered_pullback_enabled": True,
                     "tier_ema_periods": [9, 11, 12, 13, 14, 15, 16, 17],
                     "tier_reset_buffer_pips": 1.0,
-                    # Close opposite trades before placing new trade
-                    "close_opposite_on_trade": True,
                     # Cooldown (Zone Entry respects this, Tiered Pullback has NO cooldown)
                     "cooldown_minutes": 3.0,
                     "tp_pips": 0.5,
@@ -1332,8 +1323,6 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "tiered_pullback_enabled": True,
                     "tier_ema_periods": [18, 21, 25, 29, 34],
                     "tier_reset_buffer_pips": 3.0,
-                    # Close opposite trades before placing new trade
-                    "close_opposite_on_trade": True,
                     # Cooldown REMOVED (replaced by Fresh Cross)
                     "cooldown_minutes": 0.0,
                     "tp_pips": 0.5,
@@ -1484,7 +1473,6 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "dead_zone_end_hour_utc": 2,
                     # Risk
                     "cooldown_after_loss_seconds": 180.0,
-                    "close_opposite_on_trade": False,
                     "max_open_trades_per_side": 15,
                     # Spread-Aware Breakeven (Spread + Buffer only; no fixed trigger)
                     "spread_aware_be_enabled": True,
@@ -1567,7 +1555,6 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "tier_ema_periods": [9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34],
                     "tier_reset_buffer_pips": 1.0,
                     # Core controls from Trial #4
-                    "close_opposite_on_trade": True,
                     "cooldown_minutes": 3.0,
                     "tp_pips": 4.0,
                     "sl_pips": 20.0,
@@ -1681,6 +1668,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "enabled": True,
                     "m5_trend_ema_fast": 9,
                     "m5_trend_ema_slow": 21,
+                    "m5_min_ema_distance_pips": 1.0,
                     "zone_entry_enabled": True,
                     "zone_entry_mode": "price_vs_ema5",
                     "m1_zone_entry_ema_fast": 5,
@@ -1688,7 +1676,6 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "tiered_pullback_enabled": True,
                     "tier_ema_periods": [9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34],
                     "tier_reset_buffer_pips": 1.0,
-                    "close_opposite_on_trade": True,
                     "cooldown_minutes": 3.0,
                     "tp_pips": 4.0,
                     "sl_pips": 20.0,

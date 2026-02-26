@@ -6151,7 +6151,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   </div>
                   )}
                   {/* Daily High/Low Filter (Trial #4/#5 only) */}
-                  {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4' || pol.type === 'kt_cg_trial_5') && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                       Daily High/Low Filter (zone entry + pullback for Trial #5)

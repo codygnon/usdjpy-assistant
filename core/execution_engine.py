@@ -2787,12 +2787,6 @@ def execute_kt_cg_hybrid_policy_demo_only(
         )
         return ExecutionDecision(attempted=True, placed=False, reason=decision.reason or "risk_rejected")
 
-    # Direction Switch Close: close opposite positions before placing new trade
-    if policy.close_opposite_on_trade:
-        closed_ids = close_opposite_positions(adapter, profile, side, log_dir)
-        if closed_ids:
-            print(f"[{profile.profile_name}] kt_cg_hybrid: closed {len(closed_ids)} opposite position(s) before {side.upper()}")
-
     # Place the order
     res = adapter.order_send_market(
         symbol=profile.symbol,
@@ -2952,72 +2946,6 @@ def evaluate_kt_cg_ctp_conditions(
     # Neither trigger fired
     reasons.append(f"No trigger: Zone={m1_ema9_val:.3f} vs EMA{m1_zone_ema_slow}={m1_zone_val:.3f}, no pullback cross")
     return False, None, reasons, ""
-
-
-def close_opposite_positions(
-    adapter,
-    profile: ProfileV1,
-    side: str,
-    log_dir: Path,
-) -> list[int]:
-    """Close all positions with opposite direction before placing new trade.
-
-    Returns list of closed position IDs.
-    """
-    try:
-        open_positions = adapter.get_open_positions(profile.symbol)
-    except Exception:
-        return []
-
-    if not open_positions:
-        return []
-
-    closed_ids: list[int] = []
-    for pos in open_positions:
-        # OANDA: dict with "id", "side" (long/short); MT5: object with ticket, type
-        if isinstance(pos, dict):
-            pos_id = pos.get("id")
-            pos_side = pos.get("side", "").lower()
-            if pos_side == "long":
-                pos_side = "buy"
-            elif pos_side == "short":
-                pos_side = "sell"
-            units = abs(int(pos.get("currentUnits", 0)))
-            volume = units / 100_000.0
-            position_type = 0 if pos_side == "buy" else 1
-        else:
-            pos_id = getattr(pos, "ticket", None)
-            # MT5 type: 0 = buy, 1 = sell
-            mt5_type = getattr(pos, "type", None)
-            if mt5_type == 0:
-                pos_side = "buy"
-            elif mt5_type == 1:
-                pos_side = "sell"
-            else:
-                continue
-            volume = float(getattr(pos, "volume", 0) or 0)
-            position_type = mt5_type
-
-        if pos_id is None:
-            continue
-
-        # Check if position is opposite to the new trade direction
-        is_opposite = (side == "buy" and pos_side == "sell") or (side == "sell" and pos_side == "buy")
-        if is_opposite:
-            try:
-                adapter.close_position(
-                    ticket=int(pos_id),
-                    symbol=profile.symbol,
-                    volume=volume,
-                    position_type=position_type,
-                    comment="direction_switch_close",
-                )
-                closed_ids.append(int(pos_id))
-                print(f"[{profile.profile_name}] Closed opposite {pos_side} position {pos_id} (direction_switch_close)")
-            except Exception as e:
-                print(f"[{profile.profile_name}] Failed to close opposite position {pos_id}: {e}")
-
-    return closed_ids
 
 
 def _kt_cg_ctp_candidate(
@@ -3303,12 +3231,6 @@ def execute_kt_cg_ctp_policy_demo_only(
             }
         )
         return ExecutionDecision(attempted=True, placed=False, reason="manual confirm required")
-
-    # Close opposite positions if enabled (Direction Switch Close)
-    if policy.close_opposite_on_trade:
-        closed = close_opposite_positions(adapter, profile, side, log_dir)
-        if closed:
-            print(f"[{profile.profile_name}] kt_cg_ctp: closed {len(closed)} opposite position(s) before {side.upper()}")
 
     res = adapter.order_send_market(
         symbol=profile.symbol,
@@ -4791,12 +4713,6 @@ def execute_kt_cg_trial_4_policy_demo_only(
         return {"decision": ExecutionDecision(attempted=True, placed=False, reason="manual_confirm_required"), "tier_updates": tier_updates, "divergence_updates": divergence_updates}
 
     # ARMED_AUTO_DEMO: place the trade
-    # First, close opposite positions if enabled (Direction Switch Close)
-    if policy.close_opposite_on_trade:
-        closed = close_opposite_positions(adapter, profile, side, log_dir)
-        if closed:
-            print(f"[{profile.profile_name}] kt_cg_trial_4: closed {len(closed)} opposite position(s) before {side.upper()}")
-
     # Build comment with tier info for tiered pullback
     comment = f"kt_cg_trial_4:{policy.id}:{trigger_type}"
     if trigger_type == "tiered_pullback" and tiered_pullback_tier:
@@ -5361,11 +5277,6 @@ def execute_kt_cg_trial_7_policy_demo_only(
         return _result_payload(
             ExecutionDecision(attempted=True, placed=False, reason="manual_confirm_required"),
         )
-
-    if policy.close_opposite_on_trade:
-        closed = close_opposite_positions(adapter, profile, side, log_dir)
-        if closed:
-            print(f"[{profile.profile_name}] {policy_type}: closed {len(closed)} opposite position(s) before {side.upper()}")
 
     comment = f"{policy_type}:{policy.id}:{trigger_type}"
     if trigger_type == "tiered_pullback" and tiered_pullback_tier:
@@ -6064,11 +5975,6 @@ def execute_kt_cg_trial_5_policy_demo_only(
         return {"decision": ExecutionDecision(attempted=True, placed=False, reason="manual_confirm_required"), "tier_updates": tier_updates, "divergence_updates": divergence_updates, "exhaustion_state": exhaustion_state}
 
     # ARMED_AUTO_DEMO: place the trade
-    if policy.close_opposite_on_trade:
-        closed = close_opposite_positions(adapter, profile, side, log_dir)
-        if closed:
-            print(f"[{profile.profile_name}] kt_cg_trial_5: closed {len(closed)} opposite position(s) before {side.upper()}")
-
     comment = f"kt_cg_trial_5:{policy.id}:{trigger_type}"
     if trigger_type == "tiered_pullback" and tiered_pullback_tier:
         comment = f"kt_cg_trial_5:{policy.id}:tier_{tiered_pullback_tier}"
@@ -6582,11 +6488,6 @@ def execute_kt_cg_trial_6_policy_demo_only(
         }
 
     # ARMED_AUTO_DEMO: place the trade
-    if policy.close_opposite_on_trade:
-        closed = close_opposite_positions(adapter, profile, side, log_dir)
-        if closed:
-            print(f"[{profile.profile_name}] kt_cg_trial_6: closed {len(closed)} opposite position(s) before {side.upper()}")
-
     tier_label = f"_tier{fired_tier_info}" if fired_tier_info is not None else ""
     comment = f"kt_cg_trial_6:{policy.id}:{trigger_type}{tier_label}"
 

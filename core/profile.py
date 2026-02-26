@@ -363,9 +363,6 @@ class ExecutionPolicyKtCgHybrid(BaseModel):
     # M1 Pullback Cross - EMA 9 crosses slow EMA (default 13 for Trial #2)
     m1_pullback_cross_ema_slow: int = 13
 
-    # Close opposite trades before placing new trade
-    close_opposite_on_trade: bool = True
-
     # Cooldown after trade (Zone Entry respects this, Pullback Cross overrides it)
     cooldown_minutes: float = 3.0
 
@@ -394,7 +391,6 @@ class ExecutionPolicyKtCgCounterTrendPullback(BaseModel):
        - If M5 BEAR AND M1 EMA9 crosses ABOVE EMA(pullback_slow) -> SELL (ignore cooldown)
 
     Either condition can trigger a trade independently.
-    Direction switch close: auto-close opposite direction trades before placing new trade.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -412,9 +408,6 @@ class ExecutionPolicyKtCgCounterTrendPullback(BaseModel):
 
     # M1 Pullback Cross - EMA 9 crosses slow EMA
     m1_pullback_cross_ema_slow: int = 15
-
-    # Close opposite trades before placing new trade
-    close_opposite_on_trade: bool = True
 
     # Cooldown after trade (Zone Entry respects this, Pullback Cross overrides it)
     cooldown_minutes: float = 3.0
@@ -461,9 +454,6 @@ class ExecutionPolicyKtCgTrial5(BaseModel):
     tiered_pullback_enabled: bool = True
     tier_ema_periods: tuple[int, ...] = (18, 21, 25, 29, 34)
     tier_reset_buffer_pips: float = 1.0  # hardcoded
-
-    # Close opposite trades before placing new trade
-    close_opposite_on_trade: bool = True
 
     # Cooldown REMOVED from Trial #5 (replaced by Fresh Cross)
     # Field kept for backward compat during migration
@@ -553,7 +543,6 @@ class ExecutionPolicyKtCgTrial4(BaseModel):
        - Tier resets when price moves away from the EMA by reset_buffer
 
     Either condition can trigger a trade independently.
-    Direction switch close: auto-close opposite direction trades before placing new trade.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -575,9 +564,6 @@ class ExecutionPolicyKtCgTrial4(BaseModel):
     tiered_pullback_enabled: bool = True
     tier_ema_periods: tuple[int, ...] = (9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30)
     tier_reset_buffer_pips: float = 1.0  # Distance from EMA to reset tier
-
-    # Close opposite trades before placing new trade
-    close_opposite_on_trade: bool = True
 
     # Cooldown after trade (Zone Entry respects this, Tiered Pullback has NO cooldown)
     cooldown_minutes: float = 3.0
@@ -659,9 +645,6 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
         28, 29, 30, 31, 32, 33, 34
     )
     tier_reset_buffer_pips: float = 1.0
-
-    # Close opposite trades before placing new trade
-    close_opposite_on_trade: bool = True
 
     # Cooldown after trade (Zone Entry respects this, Tiered Pullback has NO cooldown)
     cooldown_minutes: float = 3.0
@@ -829,7 +812,6 @@ class ExecutionPolicyKtCgTrial8(BaseModel):
     )
     tier_reset_buffer_pips: float = 1.0
 
-    close_opposite_on_trade: bool = True
     cooldown_minutes: float = 3.0
 
     tp_pips: float = 4.0
@@ -951,7 +933,6 @@ class ExecutionPolicyKtCgTrial6(BaseModel):
 
     # Risk
     cooldown_after_loss_seconds: float = 180.0
-    close_opposite_on_trade: bool = False
     max_open_trades_per_side: int = 15
 
     # Spread-Aware Breakeven (Spread + Buffer only)
@@ -1109,6 +1090,9 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
             policies = execution.get("policies")
             if isinstance(policies, list):
                 for pol in policies:
+                    if isinstance(pol, dict):
+                        # Direction-switch close is removed platform-wide.
+                        pol.pop("close_opposite_on_trade", None)
                     if isinstance(pol, dict) and pol.get("type") == "kt_cg_trial_4":
                         # Remove old pullback cross EMA fields (now uses tiered pullback)
                         pol.pop("m1_pullback_cross_ema_fast", None)
