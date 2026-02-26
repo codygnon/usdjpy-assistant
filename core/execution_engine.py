@@ -5112,6 +5112,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
 
     try:
         open_trades = store.list_open_trades(profile.profile_name)
+        # sqlite3.Row doesn't support .get(); convert to plain dicts for safe access
+        open_trades = [dict(r) if hasattr(r, "keys") else r for r in open_trades]
         # Live broker position ids: cap counts only actually open positions (not stale DB rows)
         _live_pos_ids: set[int] = set()
         try:
