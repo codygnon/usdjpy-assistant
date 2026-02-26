@@ -66,6 +66,26 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sl-pips", type=float, default=20.0, help="SL in pips (default: 20.0)")
     p.add_argument("--m5-min-gap-pips", type=float, default=1.5, help="Trial #7 M5 EMA9/21 minimum distance in pips")
     p.add_argument("--ema-zone-filter", action="store_true", help="Enable Trial #7 EMA slope zone filter")
+    p.add_argument("--rr-enabled", action="store_true", help="Enable reversal risk system (default off unless set)")
+    p.add_argument("--rr-tier-medium", type=float, default=58.0, help="RR medium threshold")
+    p.add_argument("--rr-tier-high", type=float, default=65.0, help="RR high threshold")
+    p.add_argument("--rr-tier-critical", type=float, default=71.0, help="RR critical threshold")
+    p.add_argument("--rr-medium-lot-mult", type=float, default=0.75, help="RR medium lot multiplier")
+    p.add_argument("--rr-high-lot-mult", type=float, default=0.50, help="RR high lot multiplier")
+    p.add_argument("--rr-critical-lot-mult", type=float, default=0.25, help="RR critical lot multiplier")
+    p.add_argument(
+        "--rr-block-zone-above-tier",
+        choices=["medium", "high", "critical"],
+        default="high",
+        help="Block zone entries at/above this RR tier",
+    )
+    p.add_argument(
+        "--rr-use-managed-exit-at",
+        choices=["medium", "high", "critical"],
+        default="high",
+        help="Enable managed-exit for entries at/above this RR tier",
+    )
+    p.add_argument("--rr-adjust-exhaustion-thresholds", action="store_true", help="Enable RR exhaustion threshold boost")
     p.add_argument("--out", default="research_out/trial7_backtest_report.json", help="Output JSON report path")
     return p.parse_args()
 
@@ -116,6 +136,16 @@ def build_policy(
     sl_pips: float,
     m5_min_gap_pips: float,
     ema_zone_filter_enabled: bool,
+    rr_enabled: bool,
+    rr_tier_medium: float,
+    rr_tier_high: float,
+    rr_tier_critical: float,
+    rr_medium_lot_mult: float,
+    rr_high_lot_mult: float,
+    rr_critical_lot_mult: float,
+    rr_block_zone_above_tier: str,
+    rr_use_managed_exit_at: str,
+    rr_adjust_exhaustion_thresholds: bool,
 ) -> SimpleNamespace:
     # Exactly as requested by user for first pass backtest.
     return SimpleNamespace(
@@ -186,7 +216,7 @@ def build_policy(
         trend_exhaustion_tp_very_extended_offset_pips=2.0,
         trend_exhaustion_tp_min_pips=0.5,
         # Reversal risk
-        use_reversal_risk_score=True,
+        use_reversal_risk_score=bool(rr_enabled),
         rr_weight_rsi_divergence=55,
         rr_weight_adr_exhaustion=20,
         rr_weight_htf_proximity=15,
@@ -203,20 +233,20 @@ def build_policy(
         rr_ema_spread_max_pips=8.0,
         rr_htf_buffer_pips=5.0,
         rr_htf_swing_lookback=30,
-        rr_tier_medium=58.0,
-        rr_tier_high=65.0,
-        rr_tier_critical=71.0,
-        rr_medium_lot_multiplier=0.75,
-        rr_high_lot_multiplier=0.50,
-        rr_critical_lot_multiplier=0.25,
+        rr_tier_medium=float(rr_tier_medium),
+        rr_tier_high=float(rr_tier_high),
+        rr_tier_critical=float(rr_tier_critical),
+        rr_medium_lot_multiplier=float(rr_medium_lot_mult),
+        rr_high_lot_multiplier=float(rr_high_lot_mult),
+        rr_critical_lot_multiplier=float(rr_critical_lot_mult),
         rr_high_min_tier_ema=21,
         rr_critical_min_tier_ema=26,
-        rr_block_zone_entry_above_tier="high",
-        rr_adjust_exhaustion_thresholds=True,
+        rr_block_zone_entry_above_tier=str(rr_block_zone_above_tier),
+        rr_adjust_exhaustion_thresholds=bool(rr_adjust_exhaustion_thresholds),
         rr_exhaustion_medium_threshold_boost_pips=0.5,
         rr_exhaustion_high_threshold_boost_pips=1.0,
         rr_exhaustion_critical_threshold_boost_pips=1.5,
-        rr_use_managed_exit_at="high",
+        rr_use_managed_exit_at=str(rr_use_managed_exit_at),
         rr_managed_exit_hard_sl_pips=50.0,
         rr_managed_exit_max_hold_underwater_min=30.0,
         rr_managed_exit_trail_activation_pips=4.0,
@@ -323,12 +353,32 @@ def backtest(
     sl_pips: float,
     m5_min_gap_pips: float,
     ema_zone_filter_enabled: bool,
+    rr_enabled: bool,
+    rr_tier_medium: float,
+    rr_tier_high: float,
+    rr_tier_critical: float,
+    rr_medium_lot_mult: float,
+    rr_high_lot_mult: float,
+    rr_critical_lot_mult: float,
+    rr_block_zone_above_tier: str,
+    rr_use_managed_exit_at: str,
+    rr_adjust_exhaustion_thresholds: bool,
 ) -> dict:
     policy = build_policy(
         tp_pips=tp_pips,
         sl_pips=sl_pips,
         m5_min_gap_pips=m5_min_gap_pips,
         ema_zone_filter_enabled=ema_zone_filter_enabled,
+        rr_enabled=rr_enabled,
+        rr_tier_medium=rr_tier_medium,
+        rr_tier_high=rr_tier_high,
+        rr_tier_critical=rr_tier_critical,
+        rr_medium_lot_mult=rr_medium_lot_mult,
+        rr_high_lot_mult=rr_high_lot_mult,
+        rr_critical_lot_mult=rr_critical_lot_mult,
+        rr_block_zone_above_tier=rr_block_zone_above_tier,
+        rr_use_managed_exit_at=rr_use_managed_exit_at,
+        rr_adjust_exhaustion_thresholds=rr_adjust_exhaustion_thresholds,
     )
     profile = SimpleNamespace(profile_name="backtest", symbol="USDJPY", pip_size=PIP_SIZE)
 
@@ -801,6 +851,16 @@ def main() -> int:
             "sl_pips": float(args.sl_pips),
             "m5_min_gap_pips": float(args.m5_min_gap_pips),
             "ema_zone_filter_enabled": bool(args.ema_zone_filter),
+            "rr_enabled": bool(args.rr_enabled),
+            "rr_tier_medium": float(args.rr_tier_medium),
+            "rr_tier_high": float(args.rr_tier_high),
+            "rr_tier_critical": float(args.rr_tier_critical),
+            "rr_medium_lot_mult": float(args.rr_medium_lot_mult),
+            "rr_high_lot_mult": float(args.rr_high_lot_mult),
+            "rr_critical_lot_mult": float(args.rr_critical_lot_mult),
+            "rr_block_zone_above_tier": str(args.rr_block_zone_above_tier),
+            "rr_use_managed_exit_at": str(args.rr_use_managed_exit_at),
+            "rr_adjust_exhaustion_thresholds": bool(args.rr_adjust_exhaustion_thresholds),
         },
         "results": backtest(
             m1=m1,
@@ -810,6 +870,16 @@ def main() -> int:
             sl_pips=float(args.sl_pips),
             m5_min_gap_pips=float(args.m5_min_gap_pips),
             ema_zone_filter_enabled=bool(args.ema_zone_filter),
+            rr_enabled=bool(args.rr_enabled),
+            rr_tier_medium=float(args.rr_tier_medium),
+            rr_tier_high=float(args.rr_tier_high),
+            rr_tier_critical=float(args.rr_tier_critical),
+            rr_medium_lot_mult=float(args.rr_medium_lot_mult),
+            rr_high_lot_mult=float(args.rr_high_lot_mult),
+            rr_critical_lot_mult=float(args.rr_critical_lot_mult),
+            rr_block_zone_above_tier=str(args.rr_block_zone_above_tier),
+            rr_use_managed_exit_at=str(args.rr_use_managed_exit_at),
+            rr_adjust_exhaustion_thresholds=bool(args.rr_adjust_exhaustion_thresholds),
         ),
     }
 
