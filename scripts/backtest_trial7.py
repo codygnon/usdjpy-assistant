@@ -86,6 +86,7 @@ def parse_args() -> argparse.Namespace:
         help="Enable managed-exit for entries at/above this RR tier",
     )
     p.add_argument("--rr-adjust-exhaustion-thresholds", action="store_true", help="Enable RR exhaustion threshold boost")
+    p.add_argument("--rr-regime-adaptive-off", action="store_true", help="Disable RR regime-adaptive scoring adjustments")
     p.add_argument("--out", default="research_out/trial7_backtest_report.json", help="Output JSON report path")
     return p.parse_args()
 
@@ -146,6 +147,7 @@ def build_policy(
     rr_block_zone_above_tier: str,
     rr_use_managed_exit_at: str,
     rr_adjust_exhaustion_thresholds: bool,
+    rr_regime_adaptive_enabled: bool,
 ) -> SimpleNamespace:
     # Exactly as requested by user for first pass backtest.
     return SimpleNamespace(
@@ -252,7 +254,7 @@ def build_policy(
         rr_managed_exit_trail_activation_pips=4.0,
         rr_managed_exit_trail_distance_pips=2.5,
         # Keep regime-adaptive ON as requested
-        rr_regime_adaptive_enabled=True,
+        rr_regime_adaptive_enabled=bool(rr_regime_adaptive_enabled),
     )
 
 
@@ -363,6 +365,7 @@ def backtest(
     rr_block_zone_above_tier: str,
     rr_use_managed_exit_at: str,
     rr_adjust_exhaustion_thresholds: bool,
+    rr_regime_adaptive_enabled: bool,
 ) -> dict:
     policy = build_policy(
         tp_pips=tp_pips,
@@ -379,6 +382,7 @@ def backtest(
         rr_block_zone_above_tier=rr_block_zone_above_tier,
         rr_use_managed_exit_at=rr_use_managed_exit_at,
         rr_adjust_exhaustion_thresholds=rr_adjust_exhaustion_thresholds,
+        rr_regime_adaptive_enabled=rr_regime_adaptive_enabled,
     )
     profile = SimpleNamespace(profile_name="backtest", symbol="USDJPY", pip_size=PIP_SIZE)
 
@@ -861,6 +865,7 @@ def main() -> int:
             "rr_block_zone_above_tier": str(args.rr_block_zone_above_tier),
             "rr_use_managed_exit_at": str(args.rr_use_managed_exit_at),
             "rr_adjust_exhaustion_thresholds": bool(args.rr_adjust_exhaustion_thresholds),
+            "rr_regime_adaptive_enabled": not bool(args.rr_regime_adaptive_off),
         },
         "results": backtest(
             m1=m1,
@@ -880,6 +885,7 @@ def main() -> int:
             rr_block_zone_above_tier=str(args.rr_block_zone_above_tier),
             rr_use_managed_exit_at=str(args.rr_use_managed_exit_at),
             rr_adjust_exhaustion_thresholds=bool(args.rr_adjust_exhaustion_thresholds),
+            rr_regime_adaptive_enabled=not bool(args.rr_regime_adaptive_off),
         ),
     }
 

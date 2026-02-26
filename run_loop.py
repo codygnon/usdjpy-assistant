@@ -373,6 +373,7 @@ def _build_and_write_dashboard(
     daily_reset_state: dict | None = None,
     exhaustion_result: dict | None = None,
     temp_overrides: dict | None = None,
+    daily_level_filter=None,
 ) -> None:
     """Assemble and write dashboard state JSON for the current poll cycle."""
     from datetime import datetime, timezone
@@ -397,6 +398,7 @@ def _build_and_write_dashboard(
             store=store,
             adapter=adapter,
             temp_overrides=temp_overrides,
+            daily_level_filter_snapshot=(daily_level_filter.get_state_snapshot() if daily_level_filter is not None else None),
         )
 
         # --- Context items (use effective policy when Apply Temporary Settings active) ---
@@ -2085,6 +2087,7 @@ def main() -> None:
                         policy_type=pol_type, tier_state=tier_state,
                         eval_result=exec_result,
                         exhaustion_result=exec_result.get("exhaustion_result"),
+                        daily_level_filter=daily_level_filter if pol_type == "kt_cg_trial_8" else None,
                     )
 
             # Trial #6 execution — BB Slope Trend + EMA Tier Pullback + BB Reversal

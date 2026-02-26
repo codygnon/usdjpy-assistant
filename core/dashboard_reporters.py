@@ -713,6 +713,51 @@ def report_t6_bb_reversal_cap(policy, store, profile_name: str) -> FilterReport:
     )
 
 
+def report_daily_level_filter(policy, tick, side: str, pip_size: float, snapshot: Optional[dict] = None) -> FilterReport:
+    """Report Trial #8 Daily Level Filter status using a snapshot from DailyLevelFilter.get_state_snapshot()."""
+    enabled = getattr(policy, "use_daily_level_filter", False)
+    if not enabled:
+        return FilterReport(
+            filter_id="daily_level_filter", display_name="Daily Level Filter",
+            enabled=False, is_clear=True,
+        )
+    if snapshot is None:
+        return FilterReport(
+            filter_id="daily_level_filter", display_name="Daily Level Filter",
+            enabled=True, is_clear=True, current_value="Awaiting state",
+        )
+
+    watched_high = snapshot.get("watched_high")
+    watched_low = snapshot.get("watched_low")
+    high_confirmed = bool(snapshot.get("high_breakout_confirmed", False))
+    low_confirmed = bool(snapshot.get("low_breakout_confirmed", False))
+    buffer_pips = float(getattr(policy, "daily_level_filter_buffer_pips", 3.0))
+    buffer = buffer_pips * pip_size
+    current_price = tick.ask if side == "buy" else tick.bid
+
+    block_reason = None
+    if side == "buy" and watched_high is not None:
+        if current_price >= watched_high - buffer and current_price < watched_high:
+            block_reason = f"BUY within {buffer_pips}p below watched_high={watched_high:.3f}"
+        elif not high_confirmed and current_price >= watched_high:
+            block_reason = f"BUY above {watched_high:.3f} — breakout not yet confirmed"
+    elif side == "sell" and watched_low is not None:
+        if current_price <= watched_low + buffer and current_price > watched_low:
+            block_reason = f"SELL within {buffer_pips}p above watched_low={watched_low:.3f}"
+        elif not low_confirmed and current_price <= watched_low:
+            block_reason = f"SELL below {watched_low:.3f} — breakout not yet confirmed"
+
+    high_str = f"{watched_high:.3f}" if watched_high is not None else "—"
+    low_str = f"{watched_low:.3f}" if watched_low is not None else "—"
+    return FilterReport(
+        filter_id="daily_level_filter", display_name="Daily Level Filter",
+        enabled=True, is_clear=block_reason is None,
+        current_value=f"H:{high_str} L:{low_str}",
+        threshold=f"Buffer: {buffer_pips}p",
+        block_reason=block_reason,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Context collectors
 # ---------------------------------------------------------------------------
