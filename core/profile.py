@@ -737,6 +737,69 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
     max_zone_entry_open: Optional[int] = 3
     max_tiered_pullback_open: Optional[int] = 8
 
+    # Reversal Risk Score (calibrated for USDJPY, disabled by default)
+    use_reversal_risk_score: bool = False
+    rr_weight_rsi_divergence: int = 55
+    rr_weight_adr_exhaustion: int = 20
+    rr_weight_htf_proximity: int = 15
+    rr_weight_ema_spread: int = 10
+    rr_rsi_period: int = 9
+    rr_rsi_lookback_bars: int = 20
+    rr_rsi_severity_midpoint: float = 18.0
+    rr_rsi_use_rolling_fallback: bool = True
+    rr_rsi_require_confirmation_bar: bool = True
+    rr_rsi_min_delta_for_score: float = 8.0
+    rr_rsi_min_pivot_separation_bars: int = 5
+    rr_adr_period: int = 14
+    rr_adr_ramp_start_pct: float = 75.0
+    rr_adr_score_at_100_pct: float = 0.3
+    rr_adr_score_at_120_pct: float = 0.6
+    rr_adr_score_at_150_pct: float = 0.9
+    rr_ema_spread_threshold_pips: float = 4.22
+    rr_ema_spread_max_pips: float = 8.0
+    rr_htf_buffer_pips: float = 5.0
+    rr_htf_swing_lookback: int = 30
+    rr_htf_use_h4_levels: bool = True
+    rr_htf_buffer_prev_day_pips: float = 8.0
+    rr_htf_buffer_round_pips: float = 5.0
+    rr_htf_buffer_swing_pips: float = 6.0
+    rr_htf_score_decay_pips: float = 6.0
+    rr_tier_medium: float = 58.0
+    rr_tier_high: float = 65.0
+    rr_tier_critical: float = 71.0
+    rr_regime_adaptive_enabled: bool = True
+    rr_regime_trending_tier_medium: Optional[float] = None
+    rr_regime_trending_tier_high: Optional[float] = None
+    rr_regime_trending_tier_critical: Optional[float] = None
+    rr_regime_trending_rsi_weight_mult: float = 0.8
+    rr_regime_trending_htf_weight_mult: float = 0.7
+    rr_regime_ranging_tier_medium: Optional[float] = None
+    rr_regime_ranging_tier_high: Optional[float] = None
+    rr_regime_ranging_tier_critical: Optional[float] = None
+    rr_regime_ranging_htf_weight_mult: float = 1.3
+    rr_regime_ranging_rsi_weight_mult: float = 1.2
+    rr_regime_adx_period: int = 14
+    rr_regime_trending_threshold: float = 25.0
+    rr_regime_ranging_threshold: float = 20.0
+    rr_regime_atr_ratio_lookback: int = 20
+    rr_regime_atr_ratio_trending: float = 1.2
+    rr_regime_use_atr_fallback: bool = False
+    rr_medium_lot_multiplier: float = 0.75
+    rr_high_lot_multiplier: float = 0.50
+    rr_critical_lot_multiplier: float = 0.25
+    rr_high_min_tier_ema: int = 21
+    rr_critical_min_tier_ema: int = 26
+    rr_block_zone_entry_above_tier: Literal["medium", "high", "critical"] = "high"
+    rr_adjust_exhaustion_thresholds: bool = True
+    rr_exhaustion_medium_threshold_boost_pips: float = 0.5
+    rr_exhaustion_high_threshold_boost_pips: float = 1.0
+    rr_exhaustion_critical_threshold_boost_pips: float = 1.5
+    rr_use_managed_exit_at: Literal["medium", "high", "critical"] = "high"
+    rr_managed_exit_hard_sl_pips: float = 72.0
+    rr_managed_exit_max_hold_underwater_min: float = 30.0
+    rr_managed_exit_trail_activation_pips: float = 4.0
+    rr_managed_exit_trail_distance_pips: float = 2.5
+
 
 class ExecutionPolicyKtCgTrial6(BaseModel):
     """KT/CG Trial #6 (BB Slope Trend + EMA Tier Pullback + BB Reversal).
