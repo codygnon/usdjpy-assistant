@@ -17,7 +17,6 @@ import pandas as pd
 
 from adapters.broker import get_adapter
 from core.context_engine import compute_tf_context
-from core.managed_exit import apply_trial7_managed_exit_for_position
 from core.execution_engine import (
     build_default_candidate_from_signal,
     execute_bollinger_policy_demo_only,
@@ -30,6 +29,7 @@ from core.execution_engine import (
     execute_kt_cg_trial_5_policy_demo_only,
     execute_kt_cg_trial_6_policy_demo_only,
     execute_kt_cg_trial_7_policy_demo_only,
+    execute_kt_cg_trial_8_policy_demo_only,
     execute_price_level_policy_demo_only,
     execute_session_momentum_policy_demo_only,
     execute_signal_demo_only,
@@ -139,8 +139,6 @@ def _insert_trade_for_policy(
     target_price: float | None = None,
     size_lots: float | None = None,
     entry_type: str | None = None,
-    reversal_risk_result: dict | None = None,
-    tier_number: int | None = None,
 ) -> None:
     """Store a trade in DB when a policy places an order. Ensures preset and position_id for Performance by Preset."""
     try:
@@ -169,29 +167,18 @@ def _insert_trade_for_policy(
             "mt5_position_id": position_id,
             "opened_by": "program",
             "preset_name": profile.active_preset_name or "Unknown",
-            "policy_type": policy_type,
         }
         row["breakeven_applied"] = 0
         row["tp1_partial_done"] = 0
         if entry_type:
             row["entry_type"] = entry_type
-        if tier_number is not None:
-            row["tier_number"] = int(tier_number)
-        if reversal_risk_result:
-            row["reversal_risk_score"] = float(reversal_risk_result.get("score", 0.0))
-            row["reversal_risk_tier"] = str(reversal_risk_result.get("tier", "low"))
-            row["reversal_risk_json"] = json.dumps(reversal_risk_result)
-            if bool((reversal_risk_result.get("response") or {}).get("use_managed_exit", False)):
-                row["managed_exit_active"] = 1
         # Capture entry slippage if fill_price available
         if getattr(dec, 'fill_price', None) is not None:
             slippage = abs(dec.fill_price - entry_price) / float(profile.pip_size)
             row["entry_slippage_pips"] = round(slippage, 3)
         store.insert_trade(row)
-    except Exception as e:
-        import traceback
-        print(f"[{profile.profile_name}] CRITICAL: _insert_trade_for_policy FAILED — trade placed at broker but NOT recorded in DB! Error: {e}")
-        traceback.print_exc()
+    except Exception:
+        pass
 
 
 def _run_trade_management(profile, adapter, store, tick) -> None:
@@ -204,19 +191,15 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
 
     # Find Trial #4/#5/#6/#7 spread-aware BE config if present
     t4_spread_be = None
-    trial7_policy = None
     for pol in profile.execution.policies:
-        if not getattr(pol, "enabled", True):
-            continue
-        if getattr(pol, "type", None) in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6", "kt_cg_trial_7"):
-            if t4_spread_be is None and getattr(pol, "spread_aware_be_enabled", False):
+        if getattr(pol, "type", None) in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6", "kt_cg_trial_7", "kt_cg_trial_8") and getattr(pol, "enabled", True):
+            if getattr(pol, "spread_aware_be_enabled", False):
                 t4_spread_be = pol
-        if trial7_policy is None and getattr(pol, "type", None) == "kt_cg_trial_7":
-            trial7_policy = pol
+            break
 
     has_simple_be = breakeven and getattr(breakeven, "enabled", False)
     has_scaled = target and getattr(target, "mode", None) == "scaled" and getattr(target, "tp1_pips", None)
-    if not has_simple_be and not has_scaled and t4_spread_be is None and trial7_policy is None:
+    if not has_simple_be and not has_scaled and t4_spread_be is None:
         return
     try:
         open_positions = adapter.get_open_positions(profile.symbol)
@@ -318,12 +301,9 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                             in_favor_buy = mid >= entry + after_pips * pip
                             in_favor_sell = mid <= entry - after_pips * pip
                             if (side == "buy" and in_favor_buy) or (side == "sell" and in_favor_sell):
-                                try:
-                                    adapter.update_position_stop_loss(position_id, profile.symbol, entry)
-                                    store.update_trade(trade_id, {"breakeven_applied": 1})
-                                    print(f"[{profile.profile_name}] breakeven applied position {position_id}")
-                                except Exception as _be_err:
-                                    print(f"[{profile.profile_name}] breakeven error pos {position_id}: {_be_err}")
+                                adapter.update_position_stop_loss(position_id, profile.symbol, entry)
+                                store.update_trade(trade_id, {"breakeven_applied": 1})
+                                print(f"[{profile.profile_name}] breakeven applied position {position_id}")
         # 1b) Simple breakeven for non-Trial-4 or when spread-aware is disabled
         elif has_simple_be:
             be_applied = trade_row.get("breakeven_applied") or 0
@@ -333,12 +313,9 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                     in_favor_buy = mid >= entry + after_pips * pip
                     in_favor_sell = mid <= entry - after_pips * pip
                     if (side == "buy" and in_favor_buy) or (side == "sell" and in_favor_sell):
-                        try:
-                            adapter.update_position_stop_loss(position_id, profile.symbol, entry)
-                            store.update_trade(trade_id, {"breakeven_applied": 1})
-                            print(f"[{profile.profile_name}] breakeven applied position {position_id}")
-                        except Exception as _be_err:
-                            print(f"[{profile.profile_name}] breakeven error pos {position_id}: {_be_err}")
+                        adapter.update_position_stop_loss(position_id, profile.symbol, entry)
+                        store.update_trade(trade_id, {"breakeven_applied": 1})
+                        print(f"[{profile.profile_name}] breakeven applied position {position_id}")
         # 2) TP1 partial close
         if target and getattr(target, "mode", None) == "scaled":
             tp1_pips = getattr(target, "tp1_pips", None)
@@ -356,17 +333,14 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                             current_lots = float(getattr(pos, "volume", 0) or 0)
                         close_lots = current_lots * (float(tp1_pct) / 100.0)
                         position_type = 1 if side == "sell" else 0
-                        try:
-                            adapter.close_position(
-                                ticket=position_id,
-                                symbol=profile.symbol,
-                                volume=close_lots,
-                                position_type=position_type,
-                            )
-                            store.update_trade(trade_id, {"tp1_partial_done": 1})
-                            print(f"[{profile.profile_name}] TP1 partial close position {position_id} ({tp1_pct}%)")
-                        except Exception as _tp1_err:
-                            print(f"[{profile.profile_name}] TP1 partial close error pos {position_id}: {_tp1_err}")
+                        adapter.close_position(
+                            ticket=position_id,
+                            symbol=profile.symbol,
+                            volume=close_lots,
+                            position_type=position_type,
+                        )
+                        store.update_trade(trade_id, {"tp1_partial_done": 1})
+                        print(f"[{profile.profile_name}] TP1 partial close position {position_id} ({tp1_pct}%)")
         # 3) Update MAE/MFE watermarks
         current_pips = ((mid - entry) / pip) if side == "buy" else ((entry - mid) / pip)
         prev_mae = trade_row.get("max_adverse_pips")
@@ -380,24 +354,6 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
             mae_mfe_updates["max_favorable_pips"] = round(mfe, 2)
         if mae_mfe_updates:
             store.update_trade(trade_id, mae_mfe_updates)
-
-        # 4) Trial #7 managed exit — use policy_type column when available, fall back to notes prefix for old rows
-        _is_trial7_trade = (
-            trade_row.get("policy_type") == "kt_cg_trial_7"
-            or str(trade_row.get("notes") or "").startswith("auto:kt_cg_trial_7:")
-        )
-        if trial7_policy is not None and _is_trial7_trade:
-            apply_trial7_managed_exit_for_position(
-                adapter=adapter,
-                profile=profile,
-                store=store,
-                policy=trial7_policy,
-                position_id=int(position_id),
-                live_position=pos,
-                trade_row=trade_row,
-                tick=tick,
-                pip_size=pip,
-            )
 
 
 def _build_and_write_dashboard(
@@ -461,6 +417,11 @@ def _build_and_write_dashboard(
                 policy_for_context, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
             )
         elif policy_type == "kt_cg_trial_7":
+            context_items = collect_trial_7_context(
+                policy_for_context, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
+                exhaustion_result=exhaustion_result,
+            )
+        elif policy_type == "kt_cg_trial_8":
             context_items = collect_trial_7_context(
                 policy_for_context, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
                 exhaustion_result=exhaustion_result,
@@ -771,6 +732,10 @@ def main() -> None:
             getattr(p, "type", None) == "kt_cg_trial_7" and getattr(p, "enabled", True)
             for p in profile.execution.policies
         )
+        has_kt_cg_trial_8 = any(
+            getattr(p, "type", None) == "kt_cg_trial_8" and getattr(p, "enabled", True)
+            for p in profile.execution.policies
+        )
         # Confirmed-cross setups can now use M5; detect if any do so we fetch M5 bars.
         m5_cross_setup_ids = {
             sid
@@ -801,6 +766,8 @@ def main() -> None:
         _last_exhaustion_zone: str | None = None
         _last_summary_time: float = 0.0
         _SUMMARY_INTERVAL: float = 30.0  # Print periodic summary every 30s
+
+        # Shared daily H/L state for Trial #7 and Trial #8 (today_high/low, prev_day_high/low)
         trial7_daily_state: dict = {
             "date_utc": None,
             "today_open": None,
@@ -809,7 +776,6 @@ def main() -> None:
             "prev_day_high": None,
             "prev_day_low": None,
         }
-        # Restore daily state from runtime_state.json so mid-day restarts don't reset today_high/low
         try:
             _init_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
             _saved_daily = _init_state_data.get("trial7_daily_state")
@@ -820,6 +786,19 @@ def main() -> None:
                     print(f"[{profile.profile_name}] Restored trial7_daily_state from disk (date={now_date_init})")
         except Exception as _e:
             print(f"[{profile.profile_name}] Could not restore trial7_daily_state: {_e}")
+
+        # Daily Level Filter for Trial #8 (one instance per profile, state persists across iterations)
+        daily_level_filter = None
+        if has_kt_cg_trial_8:
+            from core.daily_level_filter import DailyLevelFilter
+            t8_policy = next((p for p in profile.execution.policies if getattr(p, "type", None) == "kt_cg_trial_8" and getattr(p, "enabled", True)), None)
+            if t8_policy is not None:
+                daily_level_filter = DailyLevelFilter(
+                    enabled=bool(getattr(t8_policy, "use_daily_level_filter", False)),
+                    buffer_pips=float(getattr(t8_policy, "daily_level_buffer_pips", 3.0)),
+                    breakout_candles_required=int(getattr(t8_policy, "daily_level_breakout_candles_required", 2)),
+                    pip_size=float(profile.pip_size),
+                )
 
         def _get_bars_cached(symbol: str, tf: str, count: int) -> pd.DataFrame:
             """Fetch bars with caching to reduce API calls at fast poll rates."""
@@ -870,14 +849,14 @@ def main() -> None:
                         "M1": _get_bars_cached(profile.symbol, "M1", 3000),
                     }
                     # Fetch M5 data when needed by ema_pullback, kt_cg_ctp, kt_cg_hybrid, or M5 confirmed-cross setups.
-                    if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid or has_kt_cg_trial_7:
+                    if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid or has_kt_cg_trial_7 or has_kt_cg_trial_8:
                         data_by_tf["M5"] = _get_bars_cached(profile.symbol, "M5", 2000)
                     # Fetch M3 data when needed by kt_cg_trial_4/5/6 (trend detection).
                     if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6:
                         data_by_tf["M3"] = _get_bars_cached(profile.symbol, "M3", 3000)
-                    # Fetch D1 data for Trial #4/5 daily filters and Trial #7 ADR/reversal-risk context.
-                    if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_7:
-                        data_by_tf["D"] = _get_bars_cached(profile.symbol, "D", 60)
+                    # Fetch D1 data when needed by daily H/L filter (Trial #4/5/8).
+                    if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_8:
+                        data_by_tf["D"] = _get_bars_cached(profile.symbol, "D", 2)
                     # Tick always fetched fresh for live price detection
                     tick = adapter.get_tick(profile.symbol)
                     break
@@ -892,10 +871,22 @@ def main() -> None:
             if data_by_tf is None or tick is None:
                 continue
 
-            if has_kt_cg_trial_7:
+            # Trade management: breakeven and TP1 partial close (only for positions we opened)
+            _run_trade_management(profile, adapter, store, tick)
+
+            m1_df = data_by_tf["M1"]
+            m1_last_time = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
+            if last_seen_m1_time is None:
+                last_seen_m1_time = m1_last_time
+
+            is_new = m1_last_time != last_seen_m1_time
+
+            # Update shared daily H/L state for Trial #7 / Trial #8 when we have a new M1 bar
+            if (has_kt_cg_trial_7 or has_kt_cg_trial_8) and is_new:
                 now_date = pd.Timestamp.now(tz="UTC").date().isoformat()
                 mid_tick = (tick.bid + tick.ask) / 2.0
-                if trial7_daily_state.get("date_utc") != now_date:
+                date_changed = trial7_daily_state.get("date_utc") != now_date
+                if date_changed:
                     trial7_daily_state["date_utc"] = now_date
                     trial7_daily_state["today_open"] = float(mid_tick)
                     trial7_daily_state["today_high"] = float(mid_tick)
@@ -905,7 +896,6 @@ def main() -> None:
                     prev_lo = trial7_daily_state.get("today_low")
                     trial7_daily_state["today_high"] = float(mid_tick) if prev_hi is None else max(float(prev_hi), float(mid_tick))
                     trial7_daily_state["today_low"] = float(mid_tick) if prev_lo is None else min(float(prev_lo), float(mid_tick))
-
                 d_df_live = data_by_tf.get("D")
                 if d_df_live is not None and not d_df_live.empty and len(d_df_live) >= 2:
                     try:
@@ -921,26 +911,14 @@ def main() -> None:
                             trial7_daily_state["prev_day_low"] = float(prev_row["low"])
                     except Exception:
                         pass
-                # Persist daily state so mid-day restarts don't lose today_high/low
+                if date_changed and daily_level_filter is not None:
+                    daily_level_filter.reset(trial7_daily_state.get("prev_day_high"), trial7_daily_state.get("prev_day_low"))
                 try:
                     _ds_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
                     _ds_data["trial7_daily_state"] = trial7_daily_state
                     state_path.write_text(json.dumps(_ds_data, indent=2) + "\n", encoding="utf-8")
                 except Exception:
                     pass
-
-            # Trade management: breakeven and TP1 partial close (only for positions we opened)
-            try:
-                _run_trade_management(profile, adapter, store, tick)
-            except Exception as _tm_err:
-                print(f"[{profile.profile_name}] _run_trade_management error (loop continues): {_tm_err}")
-
-            m1_df = data_by_tf["M1"]
-            m1_last_time = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
-            if last_seen_m1_time is None:
-                last_seen_m1_time = m1_last_time
-
-            is_new = m1_last_time != last_seen_m1_time
 
             mkt = None
             if is_new or args.once:
@@ -1650,25 +1628,21 @@ def main() -> None:
                     if m1_df is None or m1_df.empty:
                         continue
                     bar_time_utc = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
-                    try:
-                        exec_result = execute_kt_cg_trial_4_policy_demo_only(
-                            adapter=adapter,
-                            profile=profile,
-                            log_dir=log_dir,
-                            policy=pol,
-                            context=t4_mkt,
-                            data_by_tf=data_by_tf,
-                            tick=tick,
-                            trades_df=trades_df,
-                            mode=mode,
-                            bar_time_utc=bar_time_utc,
-                            tier_state=tier_state,
-                            temp_overrides=temp_overrides,
-                            divergence_state=divergence_state,
-                        )
-                    except Exception as _t4_exec_err:
-                        print(f"[{profile.profile_name}] kt_cg_trial_4 execution error (skipping policy {pol.id}): {_t4_exec_err}")
-                        continue
+                    exec_result = execute_kt_cg_trial_4_policy_demo_only(
+                        adapter=adapter,
+                        profile=profile,
+                        log_dir=log_dir,
+                        policy=pol,
+                        context=t4_mkt,
+                        data_by_tf=data_by_tf,
+                        tick=tick,
+                        trades_df=trades_df,
+                        mode=mode,
+                        bar_time_utc=bar_time_utc,
+                        tier_state=tier_state,
+                        temp_overrides=temp_overrides,
+                        divergence_state=divergence_state,
+                    )
                     dec = exec_result["decision"]
                     tier_updates = exec_result.get("tier_updates", {})
                     divergence_updates = exec_result.get("divergence_updates", {})
@@ -1815,27 +1789,23 @@ def main() -> None:
                     if m1_df is None or m1_df.empty:
                         continue
                     bar_time_utc = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
-                    try:
-                        exec_result = execute_kt_cg_trial_5_policy_demo_only(
-                            adapter=adapter,
-                            profile=profile,
-                            log_dir=log_dir,
-                            policy=pol,
-                            context=t5_mkt,
-                            data_by_tf=data_by_tf,
-                            tick=tick,
-                            trades_df=trades_df,
-                            mode=mode,
-                            bar_time_utc=bar_time_utc,
-                            tier_state=tier_state,
-                            temp_overrides=temp_overrides,
-                            divergence_state=divergence_state,
-                            daily_reset_state=daily_reset_state_t5,
-                            exhaustion_state=exhaustion_state_t5,
-                        )
-                    except Exception as _t5_exec_err:
-                        print(f"[{profile.profile_name}] kt_cg_trial_5 execution error (skipping policy {pol.id}): {_t5_exec_err}")
-                        continue
+                    exec_result = execute_kt_cg_trial_5_policy_demo_only(
+                        adapter=adapter,
+                        profile=profile,
+                        log_dir=log_dir,
+                        policy=pol,
+                        context=t5_mkt,
+                        data_by_tf=data_by_tf,
+                        tick=tick,
+                        trades_df=trades_df,
+                        mode=mode,
+                        bar_time_utc=bar_time_utc,
+                        tier_state=tier_state,
+                        temp_overrides=temp_overrides,
+                        divergence_state=divergence_state,
+                        daily_reset_state=daily_reset_state_t5,
+                        exhaustion_state=exhaustion_state_t5,
+                    )
                     dec = exec_result["decision"]
                     tier_updates = exec_result.get("tier_updates", {})
                     divergence_updates = exec_result.get("divergence_updates", {})
@@ -1988,8 +1958,8 @@ def main() -> None:
                         temp_overrides=temp_overrides,
                     )
 
-            # Trial #7 execution — M5 Trend + Tiered Pullback + Slope Gate
-            if has_kt_cg_trial_7:
+            # Trial #7 / Trial #8 execution — M5 Trend + Tiered Pullback (+ Daily Level Filter for T8)
+            if has_kt_cg_trial_7 or has_kt_cg_trial_8:
                 t7_mkt = mkt
                 if t7_mkt is None:
                     spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
@@ -1998,8 +1968,7 @@ def main() -> None:
                 tier_state: dict[int, bool] = {}
                 try:
                     state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
-                    # Trial #7 uses its own key "t7_tier_fired" to avoid collision with Trial #6 "tier_fired"
-                    tier_fired_raw = state_data.get("t7_tier_fired") or state_data.get("tier_fired")
+                    tier_fired_raw = state_data.get("tier_fired")
                     if isinstance(tier_fired_raw, dict):
                         tier_state = {int(k): bool(v) for k, v in tier_fired_raw.items()}
                     else:
@@ -2015,47 +1984,60 @@ def main() -> None:
                     tier_state = {}
 
                 for pol in profile.execution.policies:
-                    if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "kt_cg_trial_7":
+                    pol_type = getattr(pol, "type", None)
+                    if not getattr(pol, "enabled", True) or pol_type not in ("kt_cg_trial_7", "kt_cg_trial_8"):
                         continue
                     m1_df = data_by_tf.get("M1")
                     if m1_df is None or m1_df.empty:
                         continue
                     bar_time_utc = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
-                    t7_data_by_tf = dict(data_by_tf)
-                    t7_data_by_tf["_trial7_daily_state"] = dict(trial7_daily_state)
-                    try:
+                    if pol_type == "kt_cg_trial_8":
+                        exec_result = execute_kt_cg_trial_8_policy_demo_only(
+                            adapter=adapter,
+                            profile=profile,
+                            log_dir=log_dir,
+                            policy=pol,
+                            context=t7_mkt,
+                            data_by_tf=data_by_tf,
+                            tick=tick,
+                            trades_df=trades_df,
+                            mode=mode,
+                            bar_time_utc=bar_time_utc,
+                            tier_state=tier_state,
+                            daily_level_filter=daily_level_filter,
+                            daily_state=trial7_daily_state,
+                        )
+                    else:
                         exec_result = execute_kt_cg_trial_7_policy_demo_only(
                             adapter=adapter,
                             profile=profile,
                             log_dir=log_dir,
                             policy=pol,
                             context=t7_mkt,
-                            data_by_tf=t7_data_by_tf,
+                            data_by_tf=data_by_tf,
                             tick=tick,
                             trades_df=trades_df,
                             mode=mode,
                             bar_time_utc=bar_time_utc,
                             tier_state=tier_state,
+                            daily_level_filter=None,
+                            daily_state=None,
                         )
-                    except Exception as _t7_exec_err:
-                        print(f"[{profile.profile_name}] kt_cg_trial_7 execution error (skipping policy {pol.id}): {_t7_exec_err}")
-                        continue
                     dec = exec_result["decision"]
                     tier_updates = exec_result.get("tier_updates", {})
                     t7_trigger_type = exec_result.get("trigger_type")
-                    t7_tier_number = exec_result.get("tiered_pullback_tier")
 
-                    # Persist tier state updates to runtime_state.json (Trial #7 uses "t7_tier_fired")
+                    # Persist tier state updates to runtime_state.json
                     if tier_updates:
                         try:
                             current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
-                            tf_dict = current_state_data.get("t7_tier_fired", {})
+                            tf_dict = current_state_data.get("tier_fired", {})
                             if not isinstance(tf_dict, dict):
                                 tf_dict = {}
                             for tier, new_state in tier_updates.items():
                                 tf_dict[str(tier)] = new_state
                                 tier_state[tier] = new_state
-                            current_state_data["t7_tier_fired"] = tf_dict
+                            current_state_data["tier_fired"] = tf_dict
                             state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
                         except Exception as e:
                             print(f"[{profile.profile_name}] Failed to persist Trial #7 tier state: {e}")
@@ -2068,52 +2050,39 @@ def main() -> None:
                             sl_pips = getattr(pol, "sl_pips", None)
                             if sl_pips is None:
                                 sl_pips = float(get_effective_risk(profile).min_stop_pips)
-                            tp_pips_effective = float(exec_result.get("tp_pips_effective") or getattr(pol, "tp_pips", 4.0))
-                            size_lots_effective = exec_result.get("size_lots_effective")
-                            if size_lots_effective is None:
-                                size_lots_effective = float(get_effective_risk(profile).max_lots)
-                            rr_result = exec_result.get("reversal_risk_result")
                             if side == "buy":
-                                tp_price = entry_price + tp_pips_effective * pip
+                                tp_price = entry_price + pol.tp_pips * pip
                                 sl_price = entry_price - sl_pips * pip
                             else:
-                                tp_price = entry_price - tp_pips_effective * pip
+                                tp_price = entry_price - pol.tp_pips * pip
                                 sl_price = entry_price + sl_pips * pip
-                            print(f"[{profile.profile_name}] TRADE PLACED: kt_cg_trial_7:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
+                            print(f"[{profile.profile_name}] TRADE PLACED: {pol_type}:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
                                 profile=profile,
                                 adapter=adapter,
                                 store=store,
-                                policy_type="kt_cg_trial_7",
+                                policy_type=pol_type,
                                 policy_id=pol.id,
                                 side=side,
                                 entry_price=entry_price,
                                 dec=dec,
                                 stop_price=sl_price,
                                 target_price=tp_price,
-                                size_lots=float(size_lots_effective),
                                 entry_type=t7_trigger_type,
-                                reversal_risk_result=rr_result if isinstance(rr_result, dict) else None,
-                                tier_number=int(t7_tier_number) if t7_tier_number is not None else None,
                             )
                             _append_trade_open_event(
-                                log_dir, f"kt_cg_trial_7:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
+                                log_dir, f"{pol_type}:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
                                 side, entry_price,
                                 trigger_type=_event_trigger_label(t7_trigger_type, dec.reason),
                                 entry_type=t7_trigger_type or "",
-                                context_snapshot={
-                                    "rr_score": (rr_result or {}).get("score") if isinstance(rr_result, dict) else None,
-                                    "rr_tier": (rr_result or {}).get("tier") if isinstance(rr_result, dict) else None,
-                                    "tp_pips_effective": tp_pips_effective,
-                                },
                             )
                         else:
-                            print(f"[{profile.profile_name}] kt_cg_trial_7 {pol.id} mode={mode} -> {dec.reason}")
+                            print(f"[{profile.profile_name}] {pol_type} {pol.id} mode={mode} -> {dec.reason}")
 
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,
-                        data_by_tf=t7_data_by_tf, mode=mode, adapter=adapter, policy=pol,
-                        policy_type="kt_cg_trial_7", tier_state=tier_state,
+                        data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
+                        policy_type=pol_type, tier_state=tier_state,
                         eval_result=exec_result,
                         exhaustion_result=exec_result.get("exhaustion_result"),
                     )
@@ -2149,23 +2118,19 @@ def main() -> None:
                     if m1_df is None or m1_df.empty:
                         continue
 
-                    try:
-                        exec_result = execute_kt_cg_trial_6_policy_demo_only(
-                            adapter=adapter,
-                            profile=profile,
-                            log_dir=log_dir,
-                            policy=pol,
-                            context=t6_mkt,
-                            data_by_tf=data_by_tf,
-                            tick=tick,
-                            trades_df=trades_df,
-                            mode=mode,
-                            tier_state=t6_tier_state,
-                            daily_reset_state=t6_daily_reset_state,
-                        )
-                    except Exception as _t6_exec_err:
-                        print(f"[{profile.profile_name}] kt_cg_trial_6 execution error (skipping policy {pol.id}): {_t6_exec_err}")
-                        continue
+                    exec_result = execute_kt_cg_trial_6_policy_demo_only(
+                        adapter=adapter,
+                        profile=profile,
+                        log_dir=log_dir,
+                        policy=pol,
+                        context=t6_mkt,
+                        data_by_tf=data_by_tf,
+                        tick=tick,
+                        trades_df=trades_df,
+                        mode=mode,
+                        tier_state=t6_tier_state,
+                        daily_reset_state=t6_daily_reset_state,
+                    )
                     dec = exec_result["decision"]
                     tier_updates = exec_result.get("tier_updates", {})
                     t6_trigger_type = exec_result.get("trigger_type")
@@ -2255,7 +2220,7 @@ def main() -> None:
 
             # Catch-all dashboard write for profiles not using KT/CG policy types.
             # Runs every poll cycle so positions + prices are always fresh.
-            if not (has_kt_cg_hybrid or has_kt_cg_ctp or has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6 or has_kt_cg_trial_7):
+            if not (has_kt_cg_hybrid or has_kt_cg_ctp or has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6 or has_kt_cg_trial_7 or has_kt_cg_trial_8):
                 if tick is not None and data_by_tf is not None:
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,

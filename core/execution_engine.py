@@ -33,6 +33,7 @@ from core.profile import (
     ProfileV1,
     get_effective_risk,
 )
+from core.daily_level_filter import DailyLevelFilter, drop_incomplete_m5_for_filter
 from core.risk_engine import evaluate_trade
 from core.signal_engine import (
     Signal,
@@ -4857,7 +4858,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
     adapter,
     profile: ProfileV1,
     log_dir: Path,
-    policy,  # ExecutionPolicyKtCgTrial7
+    policy,  # ExecutionPolicyKtCgTrial7 | ExecutionPolicyKtCgTrial8
     context: MarketContext,
     data_by_tf: dict[Timeframe, pd.DataFrame],
     tick: Tick,
@@ -4865,8 +4866,10 @@ def execute_kt_cg_trial_7_policy_demo_only(
     mode: str,
     bar_time_utc: str,
     tier_state: dict[int, bool],
+    daily_level_filter: Optional[DailyLevelFilter] = None,
+    daily_state: Optional[dict] = None,
 ) -> dict:
-    """Evaluate and execute KT/CG Trial #7 (demo only)."""
+    """Evaluate and execute KT/CG Trial #7 or #8 (demo only). T8: no EMA zone/reversal risk; daily level filter optional."""
     candidate_side: Optional[str] = None
     candidate_trigger: Optional[str] = None
     if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
@@ -4891,7 +4894,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
         }
 
     store = _store(log_dir)
-    rule_id = f"kt_cg_trial_7:{policy.id}:M1:{bar_time_utc}"
+    policy_type = getattr(policy, "type", "kt_cg_trial_7")
+    rule_id = f"{policy_type}:{policy.id}:M1:{bar_time_utc}"
 
     exhaustion_result = None
     tier_updates: dict[int, bool] = {}
@@ -4899,8 +4903,6 @@ def execute_kt_cg_trial_7_policy_demo_only(
     block_zone_entry_by_exhaustion = False
     cap_multiplier = 1.0
     cap_minimum = 1
-    rr_result: Optional[dict] = None
-    size_lots_effective: float = float(get_effective_risk(profile).max_lots)
 
     def _result_payload(
         decision: ExecutionDecision,
@@ -4915,9 +4917,6 @@ def execute_kt_cg_trial_7_policy_demo_only(
             "candidate_trigger": candidate_trigger,
             "side": candidate_side,
             "exhaustion_result": exhaustion_result,
-            "reversal_risk_result": rr_result,
-            "size_lots_effective": size_lots_effective,
-            "tiered_pullback_tier": tiered_pullback_tier,
         }
         if extra:
             payload.update(extra)
@@ -4997,7 +4996,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
             return f"trend_exhaustion: {ex_zone} blocks zone_entry (stretch={stretch}p)"
 
         cooldown_ok, cooldown_reason = _check_kt_cg_trial_4_cooldown(
-            store, profile.profile_name, policy.id, policy.cooldown_minutes, rule_prefix="kt_cg_trial_7"
+            store, profile.profile_name, policy.id, policy.cooldown_minutes, rule_prefix=policy_type
         )
         if not cooldown_ok:
             store.insert_execution(
@@ -5019,7 +5018,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
             return cooldown_reason or "zone_entry_cooldown"
 
         ema_zone_filter_enabled = getattr(policy, "ema_zone_filter_enabled", False)
-        if ema_zone_filter_enabled:
+        if ema_zone_filter_enabled and policy_type != "kt_cg_trial_8":
             m1_df_zone = data_by_tf.get("M1")
             if m1_df_zone is not None and not m1_df_zone.empty:
                 ok, reason, _details = _passes_ema_zone_slope_filter_trial_7(
@@ -5081,7 +5080,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
         # Do not mark tier as fired when tier trade did not execute.
         tier_updates = {int(k): bool(v) for k, v in tier_updates.items() if not bool(v)}
         eval_reasons = list(eval_reasons) + [fallback_prefix] + list(fallback.get("reasons") or [])
-        rule_id = f"kt_cg_trial_7:{policy.id}:M1:{bar_time_utc}"
+        rule_id = f"{policy_type}:{policy.id}:M1:{bar_time_utc}"
         return True, fallback_prefix
 
     if not passed or side is None:
@@ -5095,95 +5094,53 @@ def execute_kt_cg_trial_7_policy_demo_only(
             ExecutionDecision(attempted=True, placed=False, reason=zone_precheck_reason),
         )
 
-    # --- Reversal Risk Score (Trial #7) ---
-    # Must run after conditions pass so we have trend_side from result["m5_trend"].
-    if bool(getattr(policy, "use_reversal_risk_score", False)):
-        try:
-            from core.reversal_risk import compute_reversal_risk_score
-            m5_trend = result.get("m5_trend") or ("bull" if side == "buy" else "bear")
-            rr_result = compute_reversal_risk_score(
-                policy=policy,
-                data_by_tf=data_by_tf,
-                tick=tick,
-                pip_size=float(profile.pip_size),
-                trend_side=m5_trend,
-                trial7_daily_state=data_by_tf.get("_trial7_daily_state"),
+    # Daily Level Filter (Trial #8): applies to both zone_entry and tiered_pullback
+    if policy_type == "kt_cg_trial_8" and getattr(policy, "use_daily_level_filter", False) and daily_level_filter is not None and daily_state:
+        m5_df = data_by_tf.get("M5")
+        m5_closed = drop_incomplete_m5_for_filter(m5_df) if m5_df is not None and not m5_df.empty else pd.DataFrame()
+        current_price = (tick.bid + tick.ask) / 2.0
+        allowed, reason = daily_level_filter.should_allow_trade(
+            direction=side,
+            current_price=current_price,
+            yesterday_high=daily_state.get("prev_day_high"),
+            yesterday_low=daily_state.get("prev_day_low"),
+            today_high=daily_state.get("today_high"),
+            today_low=daily_state.get("today_low"),
+            m5_closed_candles=m5_closed,
+            current_date_utc=daily_state.get("date_utc"),
+            store=store,
+            profile_name=profile.profile_name,
+            symbol=profile.symbol,
+            mode=mode,
+            rule_id=rule_id,
+        )
+        if not allowed:
+            print(f"[{profile.profile_name}] kt_cg_trial_8 daily_level_filter: {reason}")
+            if store is not None:
+                store.insert_execution(
+                    {
+                        "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                        "profile": profile.profile_name,
+                        "symbol": profile.symbol,
+                        "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                        "mode": mode,
+                        "attempted": 1,
+                        "placed": 0,
+                        "reason": reason,
+                        "mt5_retcode": None,
+                        "mt5_order_id": None,
+                        "mt5_deal_id": None,
+                    }
+                )
+            return _result_payload(
+                ExecutionDecision(attempted=True, placed=False, reason=reason),
             )
-            rr_response = rr_result.get("response") or {}
-            rr_tier = str(rr_result.get("tier") or "low")
-            print(
-                f"[{profile.profile_name}] kt_cg_trial_7 reversal_risk: tier={rr_tier} "
-                f"score={rr_result.get('score', 0.0):.1f} trigger={trigger_type}"
-            )
-
-            # 1) Block zone entry if RR tier is above configured threshold
-            if trigger_type == "zone_entry" and bool(rr_response.get("block_zone_entry", False)):
-                store.insert_execution({
-                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
-                    "profile": profile.profile_name,
-                    "symbol": profile.symbol,
-                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
-                    "rule_id": rule_id,
-                    "mode": mode,
-                    "attempted": 1,
-                    "placed": 0,
-                    "reason": f"rr_block_zone_entry: tier={rr_tier}",
-                    "mt5_retcode": None,
-                    "mt5_order_id": None,
-                    "mt5_deal_id": None,
-                })
-                return _result_payload(
-                    ExecutionDecision(
-                        attempted=True,
-                        placed=False,
-                        reason=f"rr_block_zone_entry: reversal_risk tier={rr_tier}",
-                    ),
-                )
-
-            # 2) Block tiered pullback if triggered tier is shallower than RR minimum
-            rr_min_tier_ema = rr_response.get("min_tier_ema")
-            if (
-                trigger_type == "tiered_pullback"
-                and tiered_pullback_tier is not None
-                and rr_min_tier_ema is not None
-                and int(tiered_pullback_tier) < int(rr_min_tier_ema)
-            ):
-                store.insert_execution({
-                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
-                    "profile": profile.profile_name,
-                    "symbol": profile.symbol,
-                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
-                    "rule_id": rule_id,
-                    "mode": mode,
-                    "attempted": 1,
-                    "placed": 0,
-                    "reason": f"rr_min_tier_ema: tier={tiered_pullback_tier} < rr_min={rr_min_tier_ema} (rr_tier={rr_tier})",
-                    "mt5_retcode": None,
-                    "mt5_order_id": None,
-                    "mt5_deal_id": None,
-                })
-                return _result_payload(
-                    ExecutionDecision(
-                        attempted=True,
-                        placed=False,
-                        reason=f"rr_min_tier_ema: EMA{tiered_pullback_tier} < rr_min EMA{rr_min_tier_ema} (tier={rr_tier})",
-                    ),
-                )
-
-            # 3) Apply lot multiplier from reversal risk response
-            lot_mult = float(rr_response.get("lot_multiplier", 1.0))
-            if lot_mult < 1.0:
-                base_lots = float(get_effective_risk(profile).max_lots)
-                size_lots_effective = max(0.01, round(base_lots * lot_mult, 2))
-                print(
-                    f"[{profile.profile_name}] kt_cg_trial_7 rr_lot_adjust: "
-                    f"base={base_lots:.2f} x {lot_mult:.2f} = {size_lots_effective:.2f} (tier={rr_tier})"
-                )
-        except Exception as e:
-            print(f"[{profile.profile_name}] kt_cg_trial_7 reversal_risk ERROR (skipping): {e}")
+        if daily_level_filter.enabled:
+            snap = daily_level_filter.get_state_snapshot()
+            print(f"[{profile.profile_name}] kt_cg_trial_8 daily_level_filter state: {snap}")
 
     if trigger_type == "tiered_pullback" and tiered_pullback_tier:
-        rule_id = f"kt_cg_trial_7:{policy.id}:tier_{tiered_pullback_tier}"
+        rule_id = f"{policy_type}:{policy.id}:tier_{tiered_pullback_tier}"
 
     max_open_per_side = getattr(policy, "max_open_trades_per_side", None)
     if max_open_per_side is not None:
@@ -5206,7 +5163,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
                             trade_ext = pos.get("tradeClientExtensions")
                             if isinstance(trade_ext, dict):
                                 comment = str(trade_ext.get("comment") or "").strip()
-                        if comment and not comment.startswith("kt_cg_trial_7:"):
+                        if comment and not (comment.startswith("kt_cg_trial_7:") or comment.startswith("kt_cg_trial_8:")):
                             continue
                         units = float(pos.get("currentUnits") or pos.get("initialUnits") or 0)
                         if units > 0:
@@ -5233,8 +5190,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
                         reason=f"max_open_trades_per_side: {side_open} {side} trade(s) open (max {max_open_per_side})",
                     ),
                 )
-        except Exception as e:
-            print(f"[{profile.profile_name}] kt_cg_trial_7 WARNING: max_open_trades_per_side check failed ({e}), proceeding without cap")
+        except Exception:
+            pass
 
     try:
         open_trades = store.list_open_trades(profile.profile_name)
@@ -5250,8 +5207,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
                             _live_pos_ids.add(int(pid))
                         except (TypeError, ValueError):
                             pass
-        except Exception as e:
-            print(f"[{profile.profile_name}] kt_cg_trial_7 WARNING: failed to fetch live positions for cap check ({e}), using DB only")
+        except Exception:
+            pass
 
         def _row_still_open(row: dict) -> bool:
             if not _live_pos_ids:
@@ -5306,8 +5263,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
                             ),
                         )
             break
-    except Exception as e:
-        print(f"[{profile.profile_name}] kt_cg_trial_7 WARNING: open trade cap check failed ({e}), proceeding without per-trigger cap")
+    except Exception:
+        pass
 
     now_utc = datetime.now(timezone.utc)
     ok, reason = passes_session_filter(profile, now_utc)
@@ -5408,16 +5365,16 @@ def execute_kt_cg_trial_7_policy_demo_only(
     if policy.close_opposite_on_trade:
         closed = close_opposite_positions(adapter, profile, side, log_dir)
         if closed:
-            print(f"[{profile.profile_name}] kt_cg_trial_7: closed {len(closed)} opposite position(s) before {side.upper()}")
+            print(f"[{profile.profile_name}] {policy_type}: closed {len(closed)} opposite position(s) before {side.upper()}")
 
-    comment = f"kt_cg_trial_7:{policy.id}:{trigger_type}"
+    comment = f"{policy_type}:{policy.id}:{trigger_type}"
     if trigger_type == "tiered_pullback" and tiered_pullback_tier:
-        comment = f"kt_cg_trial_7:{policy.id}:tier_{tiered_pullback_tier}"
+        comment = f"{policy_type}:{policy.id}:tier_{tiered_pullback_tier}"
 
     res = adapter.order_send_market(
         symbol=profile.symbol,
         side=side,
-        volume_lots=float(size_lots_effective),
+        volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
         sl=candidate.stop_price,
         tp=candidate.target_price,
         comment=comment,
@@ -5447,7 +5404,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
     if placed:
         tier_info = f" tier_{tiered_pullback_tier}" if tiered_pullback_tier else ""
         print(
-            f"[{profile.profile_name}] TRADE PLACED: kt_cg_trial_7:{trigger_type}{tier_info} "
+            f"[{profile.profile_name}] TRADE PLACED: {policy_type}:{trigger_type}{tier_info} "
             f"| TP={effective_tp_pips:.2f}p (base={original_tp_pips:.2f}p zone={tp_zone})"
             f" | {'; '.join(eval_reasons)}"
         )
@@ -5467,6 +5424,40 @@ def execute_kt_cg_trial_7_policy_demo_only(
             "tp_pips_effective": float(effective_tp_pips),
             "tp_pips_base": float(original_tp_pips),
         },
+    )
+
+
+def execute_kt_cg_trial_8_policy_demo_only(
+    *,
+    adapter,
+    profile: ProfileV1,
+    log_dir: Path,
+    policy,
+    context,
+    data_by_tf,
+    tick,
+    trades_df,
+    mode: str,
+    bar_time_utc: str,
+    tier_state: dict[int, bool],
+    daily_level_filter: Optional[DailyLevelFilter] = None,
+    daily_state: Optional[dict] = None,
+) -> dict:
+    """Trial #8: delegates to Trial #7 flow with daily_level_filter and daily_state (no EMA zone, no reversal risk)."""
+    return execute_kt_cg_trial_7_policy_demo_only(
+        adapter=adapter,
+        profile=profile,
+        log_dir=log_dir,
+        policy=policy,
+        context=context,
+        data_by_tf=data_by_tf,
+        tick=tick,
+        trades_df=trades_df,
+        mode=mode,
+        bar_time_utc=bar_time_utc,
+        tier_state=tier_state,
+        daily_level_filter=daily_level_filter,
+        daily_state=daily_state,
     )
 
 

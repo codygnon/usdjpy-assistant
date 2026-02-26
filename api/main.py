@@ -2872,7 +2872,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 if not getattr(pol, "enabled", True):
                     continue
                 pt = getattr(pol, "type", "") or ""
-                if pt in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6", "kt_cg_trial_7"):
+                if pt in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6", "kt_cg_trial_7", "kt_cg_trial_8"):
                     _policy = pol
                     _policy_type = pt
                     break
@@ -2888,9 +2888,9 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                     data_by_tf["M1"] = _get_bars_cached(_adapter, profile.symbol, "M1", 3000)
                     if _policy_type in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6"):
                         data_by_tf["M3"] = _get_bars_cached(_adapter, profile.symbol, "M3", 3000)
-                    if _policy_type in ("kt_cg_trial_4", "kt_cg_trial_5"):
+                    if _policy_type in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_8"):
                         data_by_tf["D"] = _get_bars_cached(_adapter, profile.symbol, "D", 2)
-                    if _policy_type == "kt_cg_trial_7":
+                    if _policy_type in ("kt_cg_trial_7", "kt_cg_trial_8"):
                         data_by_tf["M5"] = _get_bars_cached(_adapter, profile.symbol, "M5", 2000)
                 except Exception:
                     pass
@@ -2941,7 +2941,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                             exhaustion_result = _detect_trend_flip_and_compute_exhaustion(
                                 m3_df, mid, pip_size, exhaustion_state or {}, _policy
                             )
-                    if _policy_type == "kt_cg_trial_7" and getattr(_policy, "trend_exhaustion_enabled", False):
+                    if _policy_type in ("kt_cg_trial_7", "kt_cg_trial_8") and getattr(_policy, "trend_exhaustion_enabled", False):
                         m5_df = data_by_tf.get("M5")
                         if m5_df is not None and not m5_df.empty:
                             from core.execution_engine import _compute_trial7_trend_exhaustion
@@ -3084,6 +3084,7 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
     is_trial_5 = pol_type == "kt_cg_trial_5"
     is_trial_4 = pol_type == "kt_cg_trial_4"
     is_trial_7 = pol_type == "kt_cg_trial_7"
+    is_trial_8 = pol_type == "kt_cg_trial_8"
 
     filters: dict[str, Any] = {}
 
@@ -3097,7 +3098,7 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
     if sbb is not None:
         filters["session_boundary_block"] = {"enabled": getattr(sbb, "enabled", False), "buffer_minutes": getattr(sbb, "buffer_minutes", 15)}
 
-    # EMA Zone Filter
+    # EMA Zone Filter (T7 only; T8 has no EMA zone filter)
     if hasattr(policy, "ema_zone_filter_enabled"):
         if is_trial_7:
             zone_entry_mode = getattr(policy, "zone_entry_mode", "ema_cross")
@@ -3122,6 +3123,21 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
             filters["m5_ema_distance_gate"] = {
                 "enabled": True,
                 "min_gap_pips": getattr(policy, "m5_min_ema_distance_pips", 1.0),
+            }
+        elif is_trial_8:
+            filters["zone_entry"] = {
+                "enabled": getattr(policy, "zone_entry_enabled", True),
+                "mode": "price_vs_ema5",
+                "mode_description": "M5 trend + live price vs M1 EMA5",
+            }
+            filters["m5_ema_distance_gate"] = {
+                "enabled": True,
+                "min_gap_pips": getattr(policy, "m5_min_ema_distance_pips", 1.0),
+            }
+            filters["daily_level_filter"] = {
+                "enabled": getattr(policy, "use_daily_level_filter", False),
+                "buffer_pips": getattr(policy, "daily_level_buffer_pips", 3.0),
+                "breakout_candles_required": getattr(policy, "daily_level_breakout_candles_required", 2),
             }
         else:
             filters["ema_zone_filter"] = {
@@ -3182,7 +3198,7 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
 
     # Trend Exhaustion
     if hasattr(policy, "trend_exhaustion_enabled"):
-        if is_trial_7:
+        if is_trial_7 or is_trial_8:
             filters["trend_exhaustion"] = {
                 "enabled": getattr(policy, "trend_exhaustion_enabled", False),
                 "mode": getattr(policy, "trend_exhaustion_mode", "session_and_side"),

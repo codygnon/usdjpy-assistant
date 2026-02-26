@@ -757,7 +757,7 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
     rr_adr_score_at_150_pct: float = 0.9
     rr_ema_spread_threshold_pips: float = 4.22
     rr_ema_spread_max_pips: float = 8.0
-    rr_htf_buffer_pips: float = 5.0  # DEPRECATED: use the three specific fields below; this field is not read by the engine
+    rr_htf_buffer_pips: float = 5.0
     rr_htf_swing_lookback: int = 30
     rr_htf_use_h4_levels: bool = True
     rr_htf_buffer_prev_day_pips: float = 8.0
@@ -799,6 +799,95 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
     rr_managed_exit_max_hold_underwater_min: float = 30.0
     rr_managed_exit_trail_activation_pips: float = 4.0
     rr_managed_exit_trail_distance_pips: float = 2.5
+
+
+class ExecutionPolicyKtCgTrial8(BaseModel):
+    """KT/CG Trial #8: T7 minus EMA zone filter and reversal risk; breakeven spread+buffer only; zone entry price vs M1 EMA5 only; Daily Level Filter."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["kt_cg_trial_8"] = "kt_cg_trial_8"
+    id: str = "kt_cg_trial_8_default"
+    enabled: bool = False
+
+    # M5 Trend EMAs
+    m5_trend_ema_fast: int = 9
+    m5_trend_ema_slow: int = 21
+    m5_min_ema_distance_pips: float = 1.0
+
+    # M1 Zone Entry - price vs M1 EMA5 only (no ema_cross)
+    zone_entry_enabled: bool = True
+    zone_entry_mode: Literal["price_vs_ema5"] = "price_vs_ema5"
+    m1_zone_entry_ema_fast: int = 5
+    m1_zone_entry_ema_slow: int = 9
+
+    # Tiered Pullback Configuration
+    tiered_pullback_enabled: bool = True
+    tier_ema_periods: tuple[int, ...] = (
+        9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+        28, 29, 30, 31, 32, 33, 34
+    )
+    tier_reset_buffer_pips: float = 1.0
+
+    close_opposite_on_trade: bool = True
+    cooldown_minutes: float = 3.0
+
+    tp_pips: float = 4.0
+    sl_pips: Optional[float] = 20.0
+    confirm_bars: int = 1
+
+    # Spread-Aware Breakeven: spread + buffer only (no fixed pips)
+    spread_aware_be_enabled: bool = False
+    spread_aware_be_trigger_mode: Literal["spread_relative"] = "spread_relative"
+    spread_aware_be_spread_buffer_pips: float = 1.0
+    spread_aware_be_apply_to_zone_entry: bool = True
+    spread_aware_be_apply_to_tiered_pullback: bool = True
+
+    # Trend exhaustion (same as T7)
+    trend_exhaustion_enabled: bool = False
+    trend_exhaustion_mode: Literal["global", "session", "session_and_side"] = "session_and_side"
+    trend_exhaustion_use_current_price: bool = True
+    trend_exhaustion_hysteresis_pips: float = 0.5
+    trend_exhaustion_p80_global: float = 12.03
+    trend_exhaustion_p90_global: float = 17.02
+    trend_exhaustion_p80_tokyo: float = 12.67
+    trend_exhaustion_p90_tokyo: float = 17.63
+    trend_exhaustion_p80_london: float = 11.06
+    trend_exhaustion_p90_london: float = 14.41
+    trend_exhaustion_p80_ny: float = 12.66
+    trend_exhaustion_p90_ny: float = 18.83
+    trend_exhaustion_p80_bull_tokyo: float = 11.85
+    trend_exhaustion_p90_bull_tokyo: float = 15.52
+    trend_exhaustion_p80_bull_london: float = 10.21
+    trend_exhaustion_p90_bull_london: float = 12.97
+    trend_exhaustion_p80_bull_ny: float = 11.21
+    trend_exhaustion_p90_bull_ny: float = 15.84
+    trend_exhaustion_p80_bear_tokyo: float = 13.44
+    trend_exhaustion_p90_bear_tokyo: float = 19.73
+    trend_exhaustion_p80_bear_london: float = 12.01
+    trend_exhaustion_p90_bear_london: float = 17.44
+    trend_exhaustion_p80_bear_ny: float = 13.97
+    trend_exhaustion_p90_bear_ny: float = 21.51
+    trend_exhaustion_extended_disable_zone_entry: bool = True
+    trend_exhaustion_very_extended_disable_zone_entry: bool = True
+    trend_exhaustion_extended_min_tier_period: int = 21
+    trend_exhaustion_very_extended_min_tier_period: int = 29
+    trend_exhaustion_very_extended_tighten_caps: bool = True
+    trend_exhaustion_very_extended_cap_multiplier: float = 0.5
+    trend_exhaustion_very_extended_cap_min: int = 1
+    trend_exhaustion_adaptive_tp_enabled: bool = False
+    trend_exhaustion_tp_extended_offset_pips: float = 1.0
+    trend_exhaustion_tp_very_extended_offset_pips: float = 2.0
+    trend_exhaustion_tp_min_pips: float = 0.5
+
+    max_open_trades_per_side: Optional[int] = 5
+    max_zone_entry_open: Optional[int] = 3
+    max_tiered_pullback_open: Optional[int] = 8
+
+    # Daily Level Filter (Trial #8 main feature)
+    use_daily_level_filter: bool = False
+    daily_level_buffer_pips: float = 3.0
+    daily_level_breakout_candles_required: int = 2
 
 
 class ExecutionPolicyKtCgTrial6(BaseModel):
@@ -890,6 +979,7 @@ ExecutionPolicy = Annotated[
         ExecutionPolicyKtCgTrial4,
         ExecutionPolicyKtCgTrial5,
         ExecutionPolicyKtCgTrial7,
+        ExecutionPolicyKtCgTrial8,
         ExecutionPolicyKtCgTrial6,
     ],
     Field(discriminator="type"),
@@ -1051,6 +1141,17 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
                         # Migrate cooldown_minutes -> 0 (replaced by Fresh Cross)
                         if "cooldown_minutes" in pol:
                             pol["cooldown_minutes"] = 0.0
+                    if isinstance(pol, dict) and pol.get("type") == "kt_cg_trial_8":
+                        # Trial #8: remove T7-only fields (no EMA zone filter, no reversal risk)
+                        pol.pop("ema_zone_filter_enabled", None)
+                        pol.pop("ema_zone_filter_lookback_bars", None)
+                        pol.pop("ema_zone_filter_ema5_min_slope_pips_per_bar", None)
+                        pol.pop("ema_zone_filter_ema9_min_slope_pips_per_bar", None)
+                        pol.pop("ema_zone_filter_ema21_min_slope_pips_per_bar", None)
+                        for k in list(pol.keys()):
+                            if k.startswith("rr_") or k == "use_reversal_risk_score":
+                                pol.pop(k, None)
+                        pol.pop("spread_aware_be_fixed_trigger_pips", None)
                     if isinstance(pol, dict) and pol.get("type") == "kt_cg_trial_7":
                         # Remove filters not used by Trial #7
                         pol.pop("tiered_atr_filter_enabled", None)

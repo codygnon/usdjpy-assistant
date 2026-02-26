@@ -3727,6 +3727,10 @@ interface EditedSettings {
   t7_rr_weight_adr_exhaustion: number;
   t7_rr_weight_htf_proximity: number;
   t7_rr_weight_ema_spread: number;
+  // Trial #8: Daily Level Filter
+  t8_use_daily_level_filter: boolean;
+  t8_daily_level_buffer_pips: number;
+  t8_daily_level_breakout_candles_required: number;
 }
 
 const TRIAL7_DEFAULT_TIER_EMA_PERIODS: number[] = [9, ...Array.from({ length: 24 }, (_, i) => i + 11)];
@@ -3908,6 +3912,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t7RrWeightAdr = 20;
       let t7RrWeightHtf = 15;
       let t7RrWeightEmaSpread = 10;
+      let t8UseDailyLevelFilter = false;
+      let t8DailyLevelBufferPips = 3.0;
+      let t8DailyLevelBreakoutCandlesRequired = 2;
       let maxOpenTradesPerSide = 5;
       let maxZoneEntryOpen = 3;
       let maxTieredPullbackOpen = 8;
@@ -4179,6 +4186,52 @@ function PresetsPage({ profile }: { profile: Profile }) {
             if ('rr_weight_htf_proximity' in pol) t7RrWeightHtf = (pol.rr_weight_htf_proximity as number) ?? 15;
             if ('rr_weight_ema_spread' in pol) t7RrWeightEmaSpread = (pol.rr_weight_ema_spread as number) ?? 10;
           }
+          if (pol.type === 'kt_cg_trial_8') {
+            t7M5TrendEmaFast = (pol.m5_trend_ema_fast as number) ?? 9;
+            t7M5TrendEmaSlow = (pol.m5_trend_ema_slow as number) ?? 21;
+            t7M5MinEmaDistancePips = (pol.m5_min_ema_distance_pips as number) ?? 1.0;
+            t7ZoneEntryMode = 'price_vs_ema5';
+            tierEmaPeriods = sanitizeTrial7TierPeriods(pol.tier_ema_periods as number[] | undefined);
+            policySlPips = (pol.sl_pips as number) ?? 20;
+            t7TrendExhaustionEnabled = (pol.trend_exhaustion_enabled as boolean) ?? false;
+            t7TrendExhaustionMode = (pol.trend_exhaustion_mode as 'global' | 'session' | 'session_and_side') ?? 'session_and_side';
+            t7TrendExhaustionUseCurrentPrice = (pol.trend_exhaustion_use_current_price as boolean) ?? true;
+            t7TrendExhaustionHysteresisPips = (pol.trend_exhaustion_hysteresis_pips as number) ?? 0.5;
+            t7TrendExhaustionP80Global = (pol.trend_exhaustion_p80_global as number) ?? 12.03;
+            t7TrendExhaustionP90Global = (pol.trend_exhaustion_p90_global as number) ?? 17.02;
+            t7TrendExhaustionP80Tokyo = (pol.trend_exhaustion_p80_tokyo as number) ?? 12.67;
+            t7TrendExhaustionP90Tokyo = (pol.trend_exhaustion_p90_tokyo as number) ?? 17.63;
+            t7TrendExhaustionP80London = (pol.trend_exhaustion_p80_london as number) ?? 11.06;
+            t7TrendExhaustionP90London = (pol.trend_exhaustion_p90_london as number) ?? 14.41;
+            t7TrendExhaustionP80Ny = (pol.trend_exhaustion_p80_ny as number) ?? 12.66;
+            t7TrendExhaustionP90Ny = (pol.trend_exhaustion_p90_ny as number) ?? 18.83;
+            t7TrendExhaustionP80BullTokyo = (pol.trend_exhaustion_p80_bull_tokyo as number) ?? 11.85;
+            t7TrendExhaustionP90BullTokyo = (pol.trend_exhaustion_p90_bull_tokyo as number) ?? 15.52;
+            t7TrendExhaustionP80BullLondon = (pol.trend_exhaustion_p80_bull_london as number) ?? 10.21;
+            t7TrendExhaustionP90BullLondon = (pol.trend_exhaustion_p90_bull_london as number) ?? 12.97;
+            t7TrendExhaustionP80BullNy = (pol.trend_exhaustion_p80_bull_ny as number) ?? 11.21;
+            t7TrendExhaustionP90BullNy = (pol.trend_exhaustion_p90_bull_ny as number) ?? 15.84;
+            t7TrendExhaustionP80BearTokyo = (pol.trend_exhaustion_p80_bear_tokyo as number) ?? 13.44;
+            t7TrendExhaustionP90BearTokyo = (pol.trend_exhaustion_p90_bear_tokyo as number) ?? 19.73;
+            t7TrendExhaustionP80BearLondon = (pol.trend_exhaustion_p80_bear_london as number) ?? 12.01;
+            t7TrendExhaustionP90BearLondon = (pol.trend_exhaustion_p90_bear_london as number) ?? 17.44;
+            t7TrendExhaustionP80BearNy = (pol.trend_exhaustion_p80_bear_ny as number) ?? 13.97;
+            t7TrendExhaustionP90BearNy = (pol.trend_exhaustion_p90_bear_ny as number) ?? 21.51;
+            t7TrendExhaustionExtendedDisableZoneEntry = (pol.trend_exhaustion_extended_disable_zone_entry as boolean) ?? true;
+            t7TrendExhaustionVeryExtendedDisableZoneEntry = (pol.trend_exhaustion_very_extended_disable_zone_entry as boolean) ?? true;
+            t7TrendExhaustionExtendedMinTierPeriod = (pol.trend_exhaustion_extended_min_tier_period as number) ?? 21;
+            t7TrendExhaustionVeryExtendedMinTierPeriod = (pol.trend_exhaustion_very_extended_min_tier_period as number) ?? 29;
+            t7TrendExhaustionVeryExtendedTightenCaps = (pol.trend_exhaustion_very_extended_tighten_caps as boolean) ?? true;
+            t7TrendExhaustionVeryExtendedCapMultiplier = (pol.trend_exhaustion_very_extended_cap_multiplier as number) ?? 0.5;
+            t7TrendExhaustionVeryExtendedCapMin = (pol.trend_exhaustion_very_extended_cap_min as number) ?? 1;
+            t7TrendExhaustionAdaptiveTpEnabled = (pol.trend_exhaustion_adaptive_tp_enabled as boolean) ?? false;
+            t7TrendExhaustionTpExtendedOffsetPips = (pol.trend_exhaustion_tp_extended_offset_pips as number) ?? 1.0;
+            t7TrendExhaustionTpVeryExtendedOffsetPips = (pol.trend_exhaustion_tp_very_extended_offset_pips as number) ?? 2.0;
+            t7TrendExhaustionTpMinPips = (pol.trend_exhaustion_tp_min_pips as number) ?? 0.5;
+            t8UseDailyLevelFilter = (pol.use_daily_level_filter as boolean) ?? false;
+            t8DailyLevelBufferPips = (pol.daily_level_buffer_pips as number) ?? 3.0;
+            t8DailyLevelBreakoutCandlesRequired = (pol.daily_level_breakout_candles_required as number) ?? 2;
+          }
           if (policyCooldown > 0 || policySlPips !== 20) break;
         }
       }
@@ -4349,6 +4402,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t7_rr_weight_adr_exhaustion: t7RrWeightAdr,
         t7_rr_weight_htf_proximity: t7RrWeightHtf,
         t7_rr_weight_ema_spread: t7RrWeightEmaSpread,
+        t8_use_daily_level_filter: t8UseDailyLevelFilter,
+        t8_daily_level_buffer_pips: t8DailyLevelBufferPips,
+        t8_daily_level_breakout_candles_required: t8DailyLevelBreakoutCandlesRequired,
       });
     }
   }, [showActiveSettings, currentProfile, tempSettings]);
@@ -4572,6 +4628,64 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.rr_weight_adr_exhaustion = Math.max(0, Math.min(100, editedSettings.t7_rr_weight_adr_exhaustion));
           updates.rr_weight_htf_proximity = Math.max(0, Math.min(100, editedSettings.t7_rr_weight_htf_proximity));
           updates.rr_weight_ema_spread = Math.max(0, Math.min(100, editedSettings.t7_rr_weight_ema_spread));
+        }
+        // Update Trial #8 settings (T7 minus EMA zone + reversal risk; spread+buffer BE only; zone = price_vs_ema5; Daily Level Filter)
+        if (pol.type === 'kt_cg_trial_8') {
+          updates.m5_trend_ema_fast = Math.max(1, editedSettings.t7_m5_trend_ema_fast);
+          updates.m5_trend_ema_slow = Math.max(1, editedSettings.t7_m5_trend_ema_slow);
+          updates.m5_min_ema_distance_pips = Math.max(0, editedSettings.t7_m5_min_ema_distance_pips);
+          updates.zone_entry_mode = 'price_vs_ema5';
+          updates.zone_entry_enabled = editedSettings.zone_entry_enabled;
+          updates.tier_ema_periods = sanitizeTrial7TierPeriods(editedSettings.tier_ema_periods);
+          updates.spread_aware_be_enabled = editedSettings.spread_aware_be_enabled;
+          updates.spread_aware_be_trigger_mode = 'spread_relative';
+          updates.spread_aware_be_spread_buffer_pips = Math.max(0, editedSettings.spread_aware_be_spread_buffer_pips);
+          updates.spread_aware_be_apply_to_zone_entry = editedSettings.spread_aware_be_apply_to_zone_entry;
+          updates.spread_aware_be_apply_to_tiered_pullback = editedSettings.spread_aware_be_apply_to_tiered_pullback;
+          updates.max_open_trades_per_side = Math.max(1, editedSettings.max_open_trades_per_side);
+          updates.max_zone_entry_open = Math.max(1, editedSettings.max_zone_entry_open);
+          updates.max_tiered_pullback_open = Math.max(1, editedSettings.max_tiered_pullback_open);
+          updates.sl_pips = Math.max(0.1, editedSettings.policy_sl_pips);
+          updates.cooldown_minutes = Math.max(0, editedSettings.policy_cooldown_minutes);
+          updates.tp_pips = Math.max(0.1, editedSettings.target_pips);
+          updates.trend_exhaustion_enabled = editedSettings.t7_trend_exhaustion_enabled;
+          updates.trend_exhaustion_mode = editedSettings.t7_trend_exhaustion_mode;
+          updates.trend_exhaustion_use_current_price = editedSettings.t7_trend_exhaustion_use_current_price;
+          updates.trend_exhaustion_hysteresis_pips = Math.max(0, editedSettings.t7_trend_exhaustion_hysteresis_pips);
+          updates.trend_exhaustion_p80_global = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_global);
+          updates.trend_exhaustion_p90_global = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_global);
+          updates.trend_exhaustion_p80_tokyo = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_tokyo);
+          updates.trend_exhaustion_p90_tokyo = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_tokyo);
+          updates.trend_exhaustion_p80_london = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_london);
+          updates.trend_exhaustion_p90_london = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_london);
+          updates.trend_exhaustion_p80_ny = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_ny);
+          updates.trend_exhaustion_p90_ny = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_ny);
+          updates.trend_exhaustion_p80_bull_tokyo = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_bull_tokyo);
+          updates.trend_exhaustion_p90_bull_tokyo = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_bull_tokyo);
+          updates.trend_exhaustion_p80_bull_london = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_bull_london);
+          updates.trend_exhaustion_p90_bull_london = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_bull_london);
+          updates.trend_exhaustion_p80_bull_ny = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_bull_ny);
+          updates.trend_exhaustion_p90_bull_ny = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_bull_ny);
+          updates.trend_exhaustion_p80_bear_tokyo = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_bear_tokyo);
+          updates.trend_exhaustion_p90_bear_tokyo = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_bear_tokyo);
+          updates.trend_exhaustion_p80_bear_london = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_bear_london);
+          updates.trend_exhaustion_p90_bear_london = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_bear_london);
+          updates.trend_exhaustion_p80_bear_ny = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_bear_ny);
+          updates.trend_exhaustion_p90_bear_ny = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_bear_ny);
+          updates.trend_exhaustion_extended_disable_zone_entry = editedSettings.t7_trend_exhaustion_extended_disable_zone_entry;
+          updates.trend_exhaustion_very_extended_disable_zone_entry = editedSettings.t7_trend_exhaustion_very_extended_disable_zone_entry;
+          updates.trend_exhaustion_extended_min_tier_period = Math.max(1, editedSettings.t7_trend_exhaustion_extended_min_tier_period);
+          updates.trend_exhaustion_very_extended_min_tier_period = Math.max(1, editedSettings.t7_trend_exhaustion_very_extended_min_tier_period);
+          updates.trend_exhaustion_very_extended_tighten_caps = editedSettings.t7_trend_exhaustion_very_extended_tighten_caps;
+          updates.trend_exhaustion_very_extended_cap_multiplier = Math.max(0.05, editedSettings.t7_trend_exhaustion_very_extended_cap_multiplier);
+          updates.trend_exhaustion_very_extended_cap_min = Math.max(1, editedSettings.t7_trend_exhaustion_very_extended_cap_min);
+          updates.trend_exhaustion_adaptive_tp_enabled = editedSettings.t7_trend_exhaustion_adaptive_tp_enabled;
+          updates.trend_exhaustion_tp_extended_offset_pips = Math.max(0, editedSettings.t7_trend_exhaustion_tp_extended_offset_pips);
+          updates.trend_exhaustion_tp_very_extended_offset_pips = Math.max(0, editedSettings.t7_trend_exhaustion_tp_very_extended_offset_pips);
+          updates.trend_exhaustion_tp_min_pips = Math.max(0.1, editedSettings.t7_trend_exhaustion_tp_min_pips);
+          updates.use_daily_level_filter = editedSettings.t8_use_daily_level_filter;
+          updates.daily_level_buffer_pips = Math.max(0, editedSettings.t8_daily_level_buffer_pips);
+          updates.daily_level_breakout_candles_required = Math.max(1, editedSettings.t8_daily_level_breakout_candles_required);
         }
         // Update Trial #6 settings
         if (pol.type === 'kt_cg_trial_6') {
@@ -5001,7 +5115,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                 </div>
               )}
               {/* Trial #4/#5/#7 shared settings block */}
-              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4' || pol.type === 'kt_cg_trial_5' || pol.type === 'kt_cg_trial_7') && (
+              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4' || pol.type === 'kt_cg_trial_5' || pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8') && (
                 <>
                 {/* Rolling Danger Zone + RSI Divergence (Trial #4 only) */}
                 {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4') && (
@@ -5120,12 +5234,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   </div>
                 </div>
                 )}
-                  {/* EMA Zone Entry Filter */}
+                  {/* EMA Zone Entry Filter (Trial #7 only; Trial #8 has no EMA zone filter) */}
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                      {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7')
-                        ? 'EMA Zone Entry Filter (Slope-Only Gate)'
-                        : 'EMA Zone Entry Filter (M1 EMA 9 vs 17)'}
+                      EMA Zone Entry Filter (Slope-Only Gate)
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
@@ -5282,6 +5395,44 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     </div>
                     )}
                   </div>
+                  )}
+                  {/* Daily Level Filter (Trial #8 only) */}
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8') && (
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Daily Level Filter (block trades near yesterday/today high/low until breakout confirmed)
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={editedSettings.t8_use_daily_level_filter}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t8_use_daily_level_filter: e.target.checked })}
+                            style={{ width: 18, height: 18, cursor: 'pointer' }} />
+                          <span style={{ fontWeight: 600, color: editedSettings.t8_use_daily_level_filter ? 'var(--success)' : 'var(--text-secondary)' }}>
+                            {editedSettings.t8_use_daily_level_filter ? 'ON' : 'OFF'}
+                          </span>
+                        </label>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Buffer (pips)</div>
+                        <input type="number" step="0.5" min="0" value={editedSettings.t8_daily_level_buffer_pips}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t8_daily_level_buffer_pips: parseFloat(e.target.value) || 3 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Block within N pips of level</div>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Breakout candles</div>
+                        <input type="number" step="1" min="1" max="5" value={editedSettings.t8_daily_level_breakout_candles_required}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t8_daily_level_breakout_candles_required: parseInt(e.target.value) || 2 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Closed M5 candles beyond level</div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
+                      Blocks longs near watched high and shorts near watched low; allows after 2 consecutive closed M5 beyond level. Levels roll to today&apos;s high/low after breakout.
+                    </div>
+                  </div>
+                  )}
                   {/* Trend Extension Exhaustion (Trial #5 only) */}
                   {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5') && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
@@ -5625,6 +5776,90 @@ function PresetsPage({ profile }: { profile: Profile }) {
                             </div>
                           </div>
                         </div>
+                      </div>
+                    </div>
+                    )}
+                  </div>
+                  )}
+                  {/* Reversal Risk (Trial #7) — directly under Trend Exhaustion; expands when ON */}
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Reversal Risk (Trial #7)
+                    </div>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6, marginBottom: 10 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={editedSettings.t7_use_reversal_risk_score}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t7_use_reversal_risk_score: e.target.checked })}
+                          style={{ width: 18, height: 18, cursor: 'pointer' }}
+                        />
+                        <span style={{ fontWeight: 600, color: editedSettings.t7_use_reversal_risk_score ? 'var(--success)' : 'var(--text-secondary)' }}>
+                          {editedSettings.t7_use_reversal_risk_score ? 'ON' : 'OFF'}
+                        </span>
+                      </label>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                        Score: RSI divergence, ADR exhaustion, HTF proximity, EMA spread. Reduces size / blocks at medium/high/critical. Turn ON to show options.
+                      </div>
+                    </div>
+                    {editedSettings.t7_use_reversal_risk_score && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Tier medium</div>
+                        <input type="number" step="0.5" min="0" max="100" value={editedSettings.t7_rr_tier_medium} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_tier_medium: parseFloat(e.target.value) || 58 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Tier high</div>
+                        <input type="number" step="0.5" min="0" max="100" value={editedSettings.t7_rr_tier_high} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_tier_high: parseFloat(e.target.value) || 65 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Tier critical</div>
+                        <input type="number" step="0.5" min="0" max="100" value={editedSettings.t7_rr_tier_critical} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_tier_critical: parseFloat(e.target.value) || 71 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Lot mult medium</div>
+                        <input type="number" step="0.05" min="0.01" max="1" value={editedSettings.t7_rr_medium_lot_multiplier} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_medium_lot_multiplier: parseFloat(e.target.value) || 0.75 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Lot mult high</div>
+                        <input type="number" step="0.05" min="0.01" max="1" value={editedSettings.t7_rr_high_lot_multiplier} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_high_lot_multiplier: parseFloat(e.target.value) || 0.5 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Lot mult critical</div>
+                        <input type="number" step="0.05" min="0.01" max="1" value={editedSettings.t7_rr_critical_lot_multiplier} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_critical_lot_multiplier: parseFloat(e.target.value) || 0.25 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Block zone entry above</div>
+                        <select value={editedSettings.t7_rr_block_zone_entry_above_tier} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_block_zone_entry_above_tier: (e.target.value as 'medium' | 'high' | 'critical') })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}>
+                          <option value="medium">medium</option>
+                          <option value="high">high</option>
+                          <option value="critical">critical</option>
+                        </select>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Managed exit at</div>
+                        <select value={editedSettings.t7_rr_use_managed_exit_at} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_use_managed_exit_at: (e.target.value as 'medium' | 'high' | 'critical') })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}>
+                          <option value="medium">medium</option>
+                          <option value="high">high</option>
+                          <option value="critical">critical</option>
+                        </select>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Weight RSI</div>
+                        <input type="number" step="1" min="0" max="100" value={editedSettings.t7_rr_weight_rsi_divergence} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_weight_rsi_divergence: parseInt(e.target.value) || 55 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Weight ADR</div>
+                        <input type="number" step="1" min="0" max="100" value={editedSettings.t7_rr_weight_adr_exhaustion} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_weight_adr_exhaustion: parseInt(e.target.value) || 20 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Weight HTF</div>
+                        <input type="number" step="1" min="0" max="100" value={editedSettings.t7_rr_weight_htf_proximity} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_weight_htf_proximity: parseInt(e.target.value) || 15 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Weight EMA spread</div>
+                        <input type="number" step="1" min="0" max="100" value={editedSettings.t7_rr_weight_ema_spread} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_weight_ema_spread: parseInt(e.target.value) || 10 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                       </div>
                     </div>
                     )}
@@ -6128,7 +6363,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                 </div>
               )}
               {/* View Settings (for Trial #4 / Trial #5 / Trial #7) */}
-              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4' || pol.type === 'kt_cg_trial_5' || pol.type === 'kt_cg_trial_7') && (
+              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4' || pol.type === 'kt_cg_trial_5' || pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8') && (
                 <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
                     {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7')
@@ -6407,89 +6642,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
                         When ON, blocks all entries for this many minutes before and after Tokyo/London/NY open and close.
                       </div>
-                    </div>
-                    )}
-                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
-                    <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                        Reversal Risk (Trial #7)
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                          <input
-                            type="checkbox"
-                            checked={editedSettings.t7_use_reversal_risk_score}
-                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_use_reversal_risk_score: e.target.checked })}
-                            style={{ width: 18, height: 18, cursor: 'pointer' }}
-                          />
-                          <span style={{ fontWeight: 600, color: editedSettings.t7_use_reversal_risk_score ? 'var(--success)' : 'var(--text-secondary)' }}>
-                            {editedSettings.t7_use_reversal_risk_score ? 'ON' : 'OFF'}
-                          </span>
-                        </label>
-                        <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                          Score combines RSI divergence, ADR exhaustion, HTF proximity, EMA spread. Reduces size / blocks at medium/high/critical.
-                        </span>
-                      </div>
-                      {editedSettings.t7_use_reversal_risk_score && (
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
-                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Tier medium</div>
-                          <input type="number" step="0.5" min="0" max="100" value={editedSettings.t7_rr_tier_medium} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_tier_medium: parseFloat(e.target.value) || 58 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                        </div>
-                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Tier high</div>
-                          <input type="number" step="0.5" min="0" max="100" value={editedSettings.t7_rr_tier_high} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_tier_high: parseFloat(e.target.value) || 65 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                        </div>
-                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Tier critical</div>
-                          <input type="number" step="0.5" min="0" max="100" value={editedSettings.t7_rr_tier_critical} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_tier_critical: parseFloat(e.target.value) || 71 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                        </div>
-                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Lot mult medium</div>
-                          <input type="number" step="0.05" min="0.01" max="1" value={editedSettings.t7_rr_medium_lot_multiplier} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_medium_lot_multiplier: parseFloat(e.target.value) || 0.75 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                        </div>
-                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Lot mult high</div>
-                          <input type="number" step="0.05" min="0.01" max="1" value={editedSettings.t7_rr_high_lot_multiplier} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_high_lot_multiplier: parseFloat(e.target.value) || 0.5 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                        </div>
-                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Lot mult critical</div>
-                          <input type="number" step="0.05" min="0.01" max="1" value={editedSettings.t7_rr_critical_lot_multiplier} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_critical_lot_multiplier: parseFloat(e.target.value) || 0.25 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                        </div>
-                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Block zone entry above</div>
-                          <select value={editedSettings.t7_rr_block_zone_entry_above_tier} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_block_zone_entry_above_tier: (e.target.value as 'medium' | 'high' | 'critical') })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}>
-                            <option value="medium">medium</option>
-                            <option value="high">high</option>
-                            <option value="critical">critical</option>
-                          </select>
-                        </div>
-                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Managed exit at</div>
-                          <select value={editedSettings.t7_rr_use_managed_exit_at} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_use_managed_exit_at: (e.target.value as 'medium' | 'high' | 'critical') })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}>
-                            <option value="medium">medium</option>
-                            <option value="high">high</option>
-                            <option value="critical">critical</option>
-                          </select>
-                        </div>
-                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Weight RSI</div>
-                          <input type="number" step="1" min="0" max="100" value={editedSettings.t7_rr_weight_rsi_divergence} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_weight_rsi_divergence: parseInt(e.target.value) || 55 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                        </div>
-                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Weight ADR</div>
-                          <input type="number" step="1" min="0" max="100" value={editedSettings.t7_rr_weight_adr_exhaustion} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_weight_adr_exhaustion: parseInt(e.target.value) || 20 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                        </div>
-                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Weight HTF</div>
-                          <input type="number" step="1" min="0" max="100" value={editedSettings.t7_rr_weight_htf_proximity} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_weight_htf_proximity: parseInt(e.target.value) || 15 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                        </div>
-                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Weight EMA spread</div>
-                          <input type="number" step="1" min="0" max="100" value={editedSettings.t7_rr_weight_ema_spread} onChange={(e) => setEditedSettings({ ...editedSettings, t7_rr_weight_ema_spread: parseInt(e.target.value) || 10 })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                        </div>
-                      </div>
-                      )}
                     </div>
                     )}
                   </div>
