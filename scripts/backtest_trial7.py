@@ -67,9 +67,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--m5-min-gap-pips", type=float, default=1.5, help="Trial #7 M5 EMA9/21 minimum distance in pips")
     p.add_argument("--ema-zone-filter", action="store_true", help="Enable Trial #7 EMA slope zone filter")
     p.add_argument("--rr-enabled", action="store_true", help="Enable reversal risk system (default off unless set)")
-    p.add_argument("--rr-tier-medium", type=float, default=58.0, help="RR medium threshold")
-    p.add_argument("--rr-tier-high", type=float, default=65.0, help="RR high threshold")
-    p.add_argument("--rr-tier-critical", type=float, default=71.0, help="RR critical threshold")
+    p.add_argument("--rr-tier-medium", type=float, default=50.0, help="RR medium threshold")
+    p.add_argument("--rr-tier-high", type=float, default=58.0, help="RR high threshold")
+    p.add_argument("--rr-tier-critical", type=float, default=65.0, help="RR critical threshold")
     p.add_argument("--rr-medium-lot-mult", type=float, default=0.75, help="RR medium lot multiplier")
     p.add_argument("--rr-high-lot-mult", type=float, default=0.50, help="RR high lot multiplier")
     p.add_argument("--rr-critical-lot-mult", type=float, default=0.25, help="RR critical lot multiplier")
@@ -82,7 +82,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--rr-use-managed-exit-at",
         choices=["medium", "high", "critical"],
-        default="high",
+        default="medium",
         help="Enable managed-exit for entries at/above this RR tier",
     )
     p.add_argument("--rr-adjust-exhaustion-thresholds", action="store_true", help="Enable RR exhaustion threshold boost")

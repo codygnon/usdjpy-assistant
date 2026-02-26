@@ -2006,6 +2006,7 @@ def main() -> None:
                             mode=mode,
                             bar_time_utc=bar_time_utc,
                             tier_state=tier_state,
+                            store=store,
                             daily_level_filter=daily_level_filter,
                             daily_state=trial7_daily_state,
                         )
@@ -2022,6 +2023,7 @@ def main() -> None:
                             mode=mode,
                             bar_time_utc=bar_time_utc,
                             tier_state=tier_state,
+                            store=store,
                             daily_level_filter=None,
                             daily_state=None,
                         )

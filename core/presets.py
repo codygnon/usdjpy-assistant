@@ -1612,6 +1612,13 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "max_open_trades_per_side": 5,
                     "max_zone_entry_open": 3,
                     "max_tiered_pullback_open": 8,
+                    # Reversal Risk defaults (tuned to engage more often than legacy 58/65/71)
+                    "use_reversal_risk_score": False,
+                    "rr_tier_medium": 50.0,
+                    "rr_tier_high": 58.0,
+                    "rr_tier_critical": 65.0,
+                    "rr_block_zone_entry_above_tier": "high",
+                    "rr_use_managed_exit_at": "medium",
                 },
             ],
         },

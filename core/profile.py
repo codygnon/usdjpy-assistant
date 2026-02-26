@@ -747,9 +747,9 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
     rr_htf_buffer_round_pips: float = 5.0
     rr_htf_buffer_swing_pips: float = 6.0
     rr_htf_score_decay_pips: float = 6.0
-    rr_tier_medium: float = 58.0
-    rr_tier_high: float = 65.0
-    rr_tier_critical: float = 71.0
+    rr_tier_medium: float = 50.0
+    rr_tier_high: float = 58.0
+    rr_tier_critical: float = 65.0
     rr_regime_adaptive_enabled: bool = True
     rr_regime_trending_tier_medium: Optional[float] = None
     rr_regime_trending_tier_high: Optional[float] = None
@@ -777,7 +777,7 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
     rr_exhaustion_medium_threshold_boost_pips: float = 0.5
     rr_exhaustion_high_threshold_boost_pips: float = 1.0
     rr_exhaustion_critical_threshold_boost_pips: float = 1.5
-    rr_use_managed_exit_at: Literal["medium", "high", "critical"] = "high"
+    rr_use_managed_exit_at: Literal["medium", "high", "critical"] = "medium"
     rr_managed_exit_hard_sl_pips: float = 72.0
     rr_managed_exit_max_hold_underwater_min: float = 30.0
     rr_managed_exit_trail_activation_pips: float = 4.0
@@ -1177,6 +1177,30 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
                             pol["trend_exhaustion_tp_very_extended_offset_pips"] = 2.0
                         if "trend_exhaustion_tp_min_pips" not in pol:
                             pol["trend_exhaustion_tp_min_pips"] = 0.5
+                        # Reversal Risk defaults tuned for better engagement
+                        if "rr_tier_medium" not in pol:
+                            pol["rr_tier_medium"] = 50.0
+                        if "rr_tier_high" not in pol:
+                            pol["rr_tier_high"] = 58.0
+                        if "rr_tier_critical" not in pol:
+                            pol["rr_tier_critical"] = 65.0
+                        if "rr_use_managed_exit_at" not in pol:
+                            pol["rr_use_managed_exit_at"] = "medium"
+                        # Upgrade legacy defaults (58/65/71 + managed@high) to tuned defaults.
+                        try:
+                            legacy_triplet = (
+                                float(pol.get("rr_tier_medium", 0.0)),
+                                float(pol.get("rr_tier_high", 0.0)),
+                                float(pol.get("rr_tier_critical", 0.0)),
+                            ) == (58.0, 65.0, 71.0)
+                            if legacy_triplet:
+                                pol["rr_tier_medium"] = 50.0
+                                pol["rr_tier_high"] = 58.0
+                                pol["rr_tier_critical"] = 65.0
+                                if str(pol.get("rr_use_managed_exit_at", "high")) == "high":
+                                    pol["rr_use_managed_exit_at"] = "medium"
+                        except Exception:
+                            pass
                         try:
                             pol["trend_exhaustion_tp_extended_offset_pips"] = max(
                                 0.0, float(pol.get("trend_exhaustion_tp_extended_offset_pips", 1.0))

@@ -4782,6 +4782,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
     mode: str,
     bar_time_utc: str,
     tier_state: dict[int, bool],
+    store=None,
     daily_level_filter: Optional[DailyLevelFilter] = None,
     daily_state: Optional[dict] = None,
 ) -> dict:
@@ -5351,6 +5352,7 @@ def execute_kt_cg_trial_8_policy_demo_only(
     mode: str,
     bar_time_utc: str,
     tier_state: dict[int, bool],
+    store=None,
     daily_level_filter: Optional[DailyLevelFilter] = None,
     daily_state: Optional[dict] = None,
 ) -> dict:
@@ -5367,6 +5369,7 @@ def execute_kt_cg_trial_8_policy_demo_only(
         mode=mode,
         bar_time_utc=bar_time_utc,
         tier_state=tier_state,
+        store=store,
         daily_level_filter=daily_level_filter,
         daily_state=daily_state,
     )
