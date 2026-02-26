@@ -57,7 +57,8 @@ def compute_regime(
     try:
         adx_series = adx_fn(m5_df, period=adx_period)
         adx_val = float(adx_series.iloc[-1]) if len(adx_series) else 0.0
-    except Exception:
+    except Exception as e:
+        print(f"[reversal_risk] compute_regime: ADX calculation failed ({e}), defaulting to 'transition'")
         return "transition"
 
     if adx_val >= trending_threshold:
@@ -73,8 +74,8 @@ def compute_regime(
             atr_val = float(atr_series.iloc[-1]) if len(atr_series) else 1e-10
             if atr_val > 0 and rng / atr_val >= atr_ratio_trending:
                 return "trending"
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[reversal_risk] compute_regime: ATR fallback failed ({e})")
     return "transition"
 
 
@@ -420,6 +421,14 @@ def _compute_ema_spread_component(
     close = m5_df["close"].astype(float)
     ema9 = ema_fn(close, 9)
     ema21 = ema_fn(close, 21)
+    if ema9.empty or ema21.empty:
+        return {
+            "name": "ema_spread",
+            "score": 0.0,
+            "spread_pips": None,
+            "overextended": False,
+            "details": "ema_calculation_empty",
+        }
     spread_pips = abs(float(ema9.iloc[-1]) - float(ema21.iloc[-1])) / float(pip_size)
 
     # Map 0..max_pips to 0..1 so any spread shows a non-zero score (avoids permanent 0.0/100)

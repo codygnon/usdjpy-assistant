@@ -534,6 +534,9 @@ export interface AdvancedTrade {
   post_sl_recovery_pips: number | null;
   preset_name: string | null;
   exit_reason: string | null;
+  entry_type: string | null;
+  reversal_risk_tier: string | null;
+  tier_number: number | null;
 }
 
 export interface AdvancedAnalyticsResponse {

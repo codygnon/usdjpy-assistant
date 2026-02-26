@@ -182,6 +182,10 @@ class SqliteStore:
             self._ensure_column(conn, "trades", "managed_exit_active", "INTEGER")
             self._ensure_column(conn, "trades", "managed_exit_sl_price", "REAL")
             self._ensure_column(conn, "trades", "managed_exit_last_action", "TEXT")
+            # v2.1: policy_type column for reliable trade identification (replaces notes-prefix heuristic)
+            self._ensure_column(conn, "trades", "policy_type", "TEXT")
+            # v2.2: tier_number for breakdown analytics (which EMA tier triggered the trade)
+            self._ensure_column(conn, "trades", "tier_number", "INTEGER")
             conn.commit()
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, col: str, col_type: str) -> None:

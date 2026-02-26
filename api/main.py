@@ -475,6 +475,55 @@ def get_profile(profile_path: str) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def _validate_profile_business_rules(profile: Any) -> list[str]:
+    """Return a list of business-logic validation errors for a parsed profile.
+
+    Pydantic handles type/schema checks; this catches cross-field semantic errors
+    that Pydantic cannot express (e.g. SL < TP pips, RR weights all zero).
+    """
+    errors: list[str] = []
+    for pol in getattr(getattr(profile, "execution", None), "policies", []):
+        pol_id = getattr(pol, "id", str(getattr(pol, "type", "unknown")))
+        pol_type = getattr(pol, "type", "")
+
+        # SL must be >= TP for scalp strategies to have positive RR
+        sl = getattr(pol, "sl_pips", None)
+        tp = getattr(pol, "tp_pips", None)
+        if sl is not None and tp is not None and float(sl) < float(tp):
+            errors.append(f"Policy {pol_id}: sl_pips ({sl}) < tp_pips ({tp}) — negative risk/reward")
+
+        # RR tier thresholds must be ordered: medium < high < critical
+        if pol_type in ("kt_cg_trial_7",):
+            t_med = getattr(pol, "rr_tier_medium", None)
+            t_hi = getattr(pol, "rr_tier_high", None)
+            t_crit = getattr(pol, "rr_tier_critical", None)
+            if t_med is not None and t_hi is not None and float(t_med) >= float(t_hi):
+                errors.append(f"Policy {pol_id}: rr_tier_medium ({t_med}) >= rr_tier_high ({t_hi})")
+            if t_hi is not None and t_crit is not None and float(t_hi) >= float(t_crit):
+                errors.append(f"Policy {pol_id}: rr_tier_high ({t_hi}) >= rr_tier_critical ({t_crit})")
+
+            # RR weights must not all be zero (would cause division-by-zero fallback silently)
+            w_sum = sum(max(0, int(getattr(pol, f, 0))) for f in (
+                "rr_weight_rsi_divergence", "rr_weight_adr_exhaustion",
+                "rr_weight_htf_proximity", "rr_weight_ema_spread",
+            ))
+            if w_sum == 0:
+                errors.append(f"Policy {pol_id}: all rr_weight_* fields are 0 — reversal risk score will always be 0")
+
+            # RR lot multipliers must be in (0, 1]
+            for field in ("rr_medium_lot_multiplier", "rr_high_lot_multiplier", "rr_critical_lot_multiplier"):
+                val = getattr(pol, field, None)
+                if val is not None and (float(val) <= 0 or float(val) > 1.0):
+                    errors.append(f"Policy {pol_id}: {field} ({val}) must be in (0, 1.0]")
+
+        # Cooldown must not be negative
+        cd = getattr(pol, "cooldown_minutes", None)
+        if cd is not None and float(cd) < 0:
+            errors.append(f"Policy {pol_id}: cooldown_minutes ({cd}) must be >= 0")
+
+    return errors
+
+
 @app.put("/api/profiles/{profile_path:path}")
 def save_profile(profile_path: str, req: ProfileUpdateRequest) -> dict[str, str]:
     """Save updated profile data to disk."""
@@ -482,14 +531,24 @@ def save_profile(profile_path: str, req: ProfileUpdateRequest) -> dict[str, str]
     path = _resolve_profile_path(profile_path)
     try:
         profile = ProfileV1.model_validate(req.profile_data)
+        biz_errors = _validate_profile_business_rules(profile)
+        if biz_errors:
+            raise HTTPException(status_code=422, detail="; ".join(biz_errors))
         save_profile_v1(profile, path)
         return {"status": "saved", "path": str(path)}
+    except HTTPException:
+        raise
     except ValidationError as e:
         if "extra_forbidden" in str(e) or "Extra inputs" in str(e):
             try:
                 profile = ProfileV1AllowExtra.model_validate(req.profile_data)
+                biz_errors = _validate_profile_business_rules(profile)
+                if biz_errors:
+                    raise HTTPException(status_code=422, detail="; ".join(biz_errors))
                 save_profile_v1(profile, path)
                 return {"status": "saved", "path": str(path)}
+            except HTTPException:
+                raise
             except Exception as fallback_e:
                 raise HTTPException(status_code=400, detail=str(fallback_e))
         raise HTTPException(status_code=400, detail=str(e))
@@ -1987,6 +2046,9 @@ def get_advanced_analytics(
         mfe = float(row["max_favorable_pips"]) if pd.notna(row.get("max_favorable_pips")) else None
         recovery = float(row["post_sl_recovery_pips"]) if pd.notna(row.get("post_sl_recovery_pips")) else None
 
+        entry_type_val = row.get("entry_type")
+        rr_tier_val = row.get("reversal_risk_tier")
+        tier_number_val = row.get("tier_number")
         trades_list.append({
             "trade_id": str(row.get("trade_id") or ""),
             "side": side,
@@ -2004,6 +2066,9 @@ def get_advanced_analytics(
             "post_sl_recovery_pips": recovery,
             "preset_name": str(row.get("preset_name") or ""),
             "exit_reason": str(row.get("exit_reason") or ""),
+            "entry_type": str(entry_type_val) if entry_type_val is not None else None,
+            "reversal_risk_tier": str(rr_tier_val) if rr_tier_val is not None else None,
+            "tier_number": int(tier_number_val) if tier_number_val is not None else None,
         })
 
     total_profit_currency = None

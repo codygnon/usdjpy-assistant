@@ -4899,6 +4899,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
     block_zone_entry_by_exhaustion = False
     cap_multiplier = 1.0
     cap_minimum = 1
+    rr_result: Optional[dict] = None
+    size_lots_effective: float = float(get_effective_risk(profile).max_lots)
 
     def _result_payload(
         decision: ExecutionDecision,
@@ -4913,6 +4915,9 @@ def execute_kt_cg_trial_7_policy_demo_only(
             "candidate_trigger": candidate_trigger,
             "side": candidate_side,
             "exhaustion_result": exhaustion_result,
+            "reversal_risk_result": rr_result,
+            "size_lots_effective": size_lots_effective,
+            "tiered_pullback_tier": tiered_pullback_tier,
         }
         if extra:
             payload.update(extra)
@@ -5090,6 +5095,93 @@ def execute_kt_cg_trial_7_policy_demo_only(
             ExecutionDecision(attempted=True, placed=False, reason=zone_precheck_reason),
         )
 
+    # --- Reversal Risk Score (Trial #7) ---
+    # Must run after conditions pass so we have trend_side from result["m5_trend"].
+    if bool(getattr(policy, "use_reversal_risk_score", False)):
+        try:
+            from core.reversal_risk import compute_reversal_risk_score
+            m5_trend = result.get("m5_trend") or ("bull" if side == "buy" else "bear")
+            rr_result = compute_reversal_risk_score(
+                policy=policy,
+                data_by_tf=data_by_tf,
+                tick=tick,
+                pip_size=float(profile.pip_size),
+                trend_side=m5_trend,
+                trial7_daily_state=data_by_tf.get("_trial7_daily_state"),
+            )
+            rr_response = rr_result.get("response") or {}
+            rr_tier = str(rr_result.get("tier") or "low")
+            print(
+                f"[{profile.profile_name}] kt_cg_trial_7 reversal_risk: tier={rr_tier} "
+                f"score={rr_result.get('score', 0.0):.1f} trigger={trigger_type}"
+            )
+
+            # 1) Block zone entry if RR tier is above configured threshold
+            if trigger_type == "zone_entry" and bool(rr_response.get("block_zone_entry", False)):
+                store.insert_execution({
+                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "profile": profile.profile_name,
+                    "symbol": profile.symbol,
+                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                    "rule_id": rule_id,
+                    "mode": mode,
+                    "attempted": 1,
+                    "placed": 0,
+                    "reason": f"rr_block_zone_entry: tier={rr_tier}",
+                    "mt5_retcode": None,
+                    "mt5_order_id": None,
+                    "mt5_deal_id": None,
+                })
+                return _result_payload(
+                    ExecutionDecision(
+                        attempted=True,
+                        placed=False,
+                        reason=f"rr_block_zone_entry: reversal_risk tier={rr_tier}",
+                    ),
+                )
+
+            # 2) Block tiered pullback if triggered tier is shallower than RR minimum
+            rr_min_tier_ema = rr_response.get("min_tier_ema")
+            if (
+                trigger_type == "tiered_pullback"
+                and tiered_pullback_tier is not None
+                and rr_min_tier_ema is not None
+                and int(tiered_pullback_tier) < int(rr_min_tier_ema)
+            ):
+                store.insert_execution({
+                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "profile": profile.profile_name,
+                    "symbol": profile.symbol,
+                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                    "rule_id": rule_id,
+                    "mode": mode,
+                    "attempted": 1,
+                    "placed": 0,
+                    "reason": f"rr_min_tier_ema: tier={tiered_pullback_tier} < rr_min={rr_min_tier_ema} (rr_tier={rr_tier})",
+                    "mt5_retcode": None,
+                    "mt5_order_id": None,
+                    "mt5_deal_id": None,
+                })
+                return _result_payload(
+                    ExecutionDecision(
+                        attempted=True,
+                        placed=False,
+                        reason=f"rr_min_tier_ema: EMA{tiered_pullback_tier} < rr_min EMA{rr_min_tier_ema} (tier={rr_tier})",
+                    ),
+                )
+
+            # 3) Apply lot multiplier from reversal risk response
+            lot_mult = float(rr_response.get("lot_multiplier", 1.0))
+            if lot_mult < 1.0:
+                base_lots = float(get_effective_risk(profile).max_lots)
+                size_lots_effective = max(0.01, round(base_lots * lot_mult, 2))
+                print(
+                    f"[{profile.profile_name}] kt_cg_trial_7 rr_lot_adjust: "
+                    f"base={base_lots:.2f} x {lot_mult:.2f} = {size_lots_effective:.2f} (tier={rr_tier})"
+                )
+        except Exception as e:
+            print(f"[{profile.profile_name}] kt_cg_trial_7 reversal_risk ERROR (skipping): {e}")
+
     if trigger_type == "tiered_pullback" and tiered_pullback_tier:
         rule_id = f"kt_cg_trial_7:{policy.id}:tier_{tiered_pullback_tier}"
 
@@ -5141,8 +5233,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
                         reason=f"max_open_trades_per_side: {side_open} {side} trade(s) open (max {max_open_per_side})",
                     ),
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[{profile.profile_name}] kt_cg_trial_7 WARNING: max_open_trades_per_side check failed ({e}), proceeding without cap")
 
     try:
         open_trades = store.list_open_trades(profile.profile_name)
@@ -5158,8 +5250,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
                             _live_pos_ids.add(int(pid))
                         except (TypeError, ValueError):
                             pass
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[{profile.profile_name}] kt_cg_trial_7 WARNING: failed to fetch live positions for cap check ({e}), using DB only")
 
         def _row_still_open(row: dict) -> bool:
             if not _live_pos_ids:
@@ -5214,8 +5306,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
                             ),
                         )
             break
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[{profile.profile_name}] kt_cg_trial_7 WARNING: open trade cap check failed ({e}), proceeding without per-trigger cap")
 
     now_utc = datetime.now(timezone.utc)
     ok, reason = passes_session_filter(profile, now_utc)
@@ -5325,7 +5417,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
     res = adapter.order_send_market(
         symbol=profile.symbol,
         side=side,
-        volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
+        volume_lots=float(size_lots_effective),
         sl=candidate.stop_price,
         tp=candidate.target_price,
         comment=comment,

@@ -757,7 +757,7 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
     rr_adr_score_at_150_pct: float = 0.9
     rr_ema_spread_threshold_pips: float = 4.22
     rr_ema_spread_max_pips: float = 8.0
-    rr_htf_buffer_pips: float = 5.0
+    rr_htf_buffer_pips: float = 5.0  # DEPRECATED: use the three specific fields below; this field is not read by the engine
     rr_htf_swing_lookback: int = 30
     rr_htf_use_h4_levels: bool = True
     rr_htf_buffer_prev_day_pips: float = 8.0
