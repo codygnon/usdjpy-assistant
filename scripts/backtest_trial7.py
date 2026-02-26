@@ -65,6 +65,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--tp-pips", type=float, default=6.0, help="TP in pips (default: 6.0)")
     p.add_argument("--sl-pips", type=float, default=20.0, help="SL in pips (default: 20.0)")
     p.add_argument("--m5-min-gap-pips", type=float, default=1.5, help="Trial #7 M5 EMA9/21 minimum distance in pips")
+    p.add_argument("--ema-zone-filter", action="store_true", help="Enable Trial #7 EMA slope zone filter")
     p.add_argument("--out", default="research_out/trial7_backtest_report.json", help="Output JSON report path")
     return p.parse_args()
 
@@ -109,7 +110,13 @@ def session_name(ts: pd.Timestamp) -> str:
     return "ny"
 
 
-def build_policy(*, tp_pips: float, sl_pips: float, m5_min_gap_pips: float) -> SimpleNamespace:
+def build_policy(
+    *,
+    tp_pips: float,
+    sl_pips: float,
+    m5_min_gap_pips: float,
+    ema_zone_filter_enabled: bool,
+) -> SimpleNamespace:
     # Exactly as requested by user for first pass backtest.
     return SimpleNamespace(
         type="kt_cg_trial_7",
@@ -134,8 +141,8 @@ def build_policy(*, tp_pips: float, sl_pips: float, m5_min_gap_pips: float) -> S
         max_open_trades_per_side=5,
         max_zone_entry_open=3,
         max_tiered_pullback_open=6,
-        # Keep zone slope filter ON per latest request
-        ema_zone_filter_enabled=True,
+        # Trial #7 zone slope filter toggle
+        ema_zone_filter_enabled=bool(ema_zone_filter_enabled),
         ema_zone_filter_lookback_bars=3,
         ema_zone_filter_ema5_min_slope_pips_per_bar=0.10,
         ema_zone_filter_ema9_min_slope_pips_per_bar=0.08,
@@ -308,8 +315,21 @@ def pip_value_usd_per_lot(price: float) -> float:
     return 1000.0 / p
 
 
-def backtest(m1: pd.DataFrame, spread_pips: float, base_lot: float, tp_pips: float, sl_pips: float, m5_min_gap_pips: float) -> dict:
-    policy = build_policy(tp_pips=tp_pips, sl_pips=sl_pips, m5_min_gap_pips=m5_min_gap_pips)
+def backtest(
+    m1: pd.DataFrame,
+    spread_pips: float,
+    base_lot: float,
+    tp_pips: float,
+    sl_pips: float,
+    m5_min_gap_pips: float,
+    ema_zone_filter_enabled: bool,
+) -> dict:
+    policy = build_policy(
+        tp_pips=tp_pips,
+        sl_pips=sl_pips,
+        m5_min_gap_pips=m5_min_gap_pips,
+        ema_zone_filter_enabled=ema_zone_filter_enabled,
+    )
     profile = SimpleNamespace(profile_name="backtest", symbol="USDJPY", pip_size=PIP_SIZE)
 
     m5 = resample_ohlc(m1, "5min")
@@ -780,6 +800,7 @@ def main() -> int:
             "tp_pips": float(args.tp_pips),
             "sl_pips": float(args.sl_pips),
             "m5_min_gap_pips": float(args.m5_min_gap_pips),
+            "ema_zone_filter_enabled": bool(args.ema_zone_filter),
         },
         "results": backtest(
             m1=m1,
@@ -788,6 +809,7 @@ def main() -> int:
             tp_pips=float(args.tp_pips),
             sl_pips=float(args.sl_pips),
             m5_min_gap_pips=float(args.m5_min_gap_pips),
+            ema_zone_filter_enabled=bool(args.ema_zone_filter),
         ),
     }
 

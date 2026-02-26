@@ -4728,7 +4728,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         activePresetName = activePresetName ? `${activePresetName} (customized)` : 'custom (customized)';
       }
 
-      const hasTrial7 = policies.some((p: Record<string, unknown>) => p.type === 'kt_cg_trial_7');
+      const hasTrial7 = policies.some((p: Record<string, unknown>) => p.type === 'kt_cg_trial_7' || p.type === 'kt_cg_trial_8');
       const currentStrategy = currentProfile.strategy as Record<string, unknown> | undefined;
       const currentFilters = currentStrategy?.filters as Record<string, unknown> | undefined;
 
@@ -6368,12 +6368,14 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
                     {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7')
                       ? 'View Settings (Trial #7)'
-                      : ((execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5')
-                        ? 'View Settings (Trial #5)'
-                        : 'EMA Override Settings (Trial #4)')}
+                      : ((execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8')
+                        ? 'View Settings (Trial #8)'
+                        : ((execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5')
+                          ? 'View Settings (Trial #5)'
+                          : 'EMA Override Settings (Trial #4)'))}
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
-                    {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                    {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8') && (
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                         M3 Trend – fast / slow EMAs (default 5 / 9)
@@ -6517,7 +6519,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         When price touches M1 EMA tiers, triggers entry. Each tier fires once per touch and resets when price moves away.
                       </div>
                     </div>
-                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5' || pol.type === 'kt_cg_trial_7') && (
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5' || pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8') && (
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                         Max Open Trades Per Side
@@ -6535,7 +6537,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       </div>
                     </div>
                     )}
-                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8') && (
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                         Max Zone Entries Open
@@ -6550,7 +6552,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       />
                     </div>
                     )}
-                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8') && (
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                         Max Tiered Pullback Open
@@ -6565,7 +6567,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       />
                     </div>
                     )}
-                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8') && (
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                         M5 Trend EMAs (fast/slow)
@@ -6591,7 +6593,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       </div>
                     </div>
                     )}
-                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8') && (
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                         M5 EMA9/21 Min Distance (pips)
@@ -6605,14 +6607,14 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         style={{ width: '100%', padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
                       />
                       <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
-                        Blocks all Trial #7 entries while |EMA9-EMA21| on M5 is below this threshold.
+                        Blocks all Trial #7/8 entries while |EMA9-EMA21| on M5 is below this threshold.
                       </div>
                     </div>
                     )}
-                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8') && (
                     <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                       <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                        Session boundary block (Trial #7)
+                        Session boundary block (Trial #7/8)
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                         <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
