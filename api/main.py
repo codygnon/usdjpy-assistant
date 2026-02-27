@@ -2865,7 +2865,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
             except Exception:
                 _tick = None
         if _tick is not None:
-            # First enabled KT/CG Trial policy for rich filters
+            # First enabled KT/CG Trial policy (or Session Momentum v5.3) for rich filters
             _policy = None
             _policy_type = ""
             for pol in getattr(profile.execution, "policies", []) or []:
@@ -2876,6 +2876,16 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                     _policy = pol
                     _policy_type = pt
                     break
+            # If no KT/CG policy is active, fall back to session_momentum_v5 (v5.3).
+            if _policy is None:
+                for pol in getattr(profile.execution, "policies", []) or []:
+                    if not getattr(pol, "enabled", True):
+                        continue
+                    pt = getattr(pol, "type", "") or ""
+                    if pt == "session_momentum_v5":
+                        _policy = pol
+                        _policy_type = pt
+                        break
             data_by_tf: dict = {}
             daily_reset_state: Optional[dict] = None
             exhaustion_state: Optional[dict] = None
@@ -2890,8 +2900,10 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         data_by_tf["M3"] = _get_bars_cached(_adapter, profile.symbol, "M3", 3000)
                     if _policy_type in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_8"):
                         data_by_tf["D"] = _get_bars_cached(_adapter, profile.symbol, "D", 2)
-                    if _policy_type in ("kt_cg_trial_7", "kt_cg_trial_8"):
+                    if _policy_type in ("kt_cg_trial_7", "kt_cg_trial_8", "session_momentum_v5"):
                         data_by_tf["M5"] = _get_bars_cached(_adapter, profile.symbol, "M5", 2000)
+                    if _policy_type == "session_momentum_v5":
+                        data_by_tf["H1"] = _get_bars_cached(_adapter, profile.symbol, "H1", 200)
                 except Exception:
                     pass
                 try:

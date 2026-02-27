@@ -52,9 +52,13 @@ from core.dashboard_models import (
     append_trade_event, write_dashboard_state,
 )
 from core.dashboard_reporters import (
-    collect_trial_2_context, collect_trial_3_context,
-    collect_trial_4_context, collect_trial_5_context,
-    collect_trial_6_context, collect_trial_7_context,
+    collect_trial_2_context,
+    collect_trial_3_context,
+    collect_trial_4_context,
+    collect_trial_5_context,
+    collect_trial_6_context,
+    collect_trial_7_context,
+    collect_smv5_context,
 )
 from storage.sqlite_store import SqliteStore
 
@@ -433,6 +437,16 @@ def _build_and_write_dashboard(
             context_items = collect_trial_2_context(policy, data_by_tf, tick, pip_size)
         elif policy_type == "kt_cg_counter_trend_pullback":
             context_items = collect_trial_3_context(policy, data_by_tf, tick, pip_size)
+        elif policy_type == "session_momentum_v5":
+            # Session Momentum v5.3 context (trend, sessions, entries, spread)
+            context_items = collect_smv5_context(
+                policy_for_context,
+                data_by_tf,
+                tick,
+                pip_size,
+                store=store,
+                profile_name=profile.profile_name,
+            )
 
         candidate_side = None
         candidate_trigger = None
@@ -1337,6 +1351,19 @@ def main() -> None:
                         )
                     else:
                         print(f"[{profile.profile_name}] session_momentum_v5 {pol.id} mode={mode} -> {dec.reason}")
+
+                    # Dashboard assembly for Session Momentum v5.3
+                    _build_and_write_dashboard(
+                        profile=profile,
+                        store=store,
+                        log_dir=log_dir,
+                        tick=tick,
+                        data_by_tf=data_by_tf,
+                        mode=mode,
+                        adapter=adapter,
+                        policy=pol,
+                        policy_type="session_momentum_v5",
+                    )
 
             # Bollinger Bands policies
             if has_bollinger and mkt is not None:

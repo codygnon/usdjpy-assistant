@@ -33,6 +33,12 @@ from core.dashboard_reporters import (
     report_trial7_reversal_risk,
     report_open_trade_cap_by_entry_type,
     report_daily_level_filter,
+    # Session Momentum v5.3 reporters
+    report_smv5_trend_strength,
+    report_smv5_session_window,
+    report_smv5_london_entries,
+    report_smv5_max_open,
+    report_smv5_max_daily,
 )
 
 # Attribute names that can be overridden by Apply Temporary Settings (same as execution engine).
@@ -250,6 +256,41 @@ def build_dashboard_filters(
     if max_spread is None and hasattr(profile, "risk"):
         max_spread = getattr(profile.risk, "max_spread_pips", None)
     filters.append(report_spread(spread_pips, max_spread))
+
+    # ------------------------------------------------------------------
+    # Session Momentum v5.3 filters
+    # ------------------------------------------------------------------
+    if policy_type == "session_momentum_v5" and policy is not None:
+        # Trend strength (H1 + M5 slope)
+        filters.append(report_smv5_trend_strength(policy, data_by_tf, pip_size))
+        # Session window + entry cutoff
+        filters.append(report_smv5_session_window(policy))
+        # London entry cap
+        filters.append(
+            report_smv5_london_entries(
+                policy,
+                store=store,
+                profile_name=getattr(profile, "profile_name", ""),
+            )
+        )
+        # Max open trades
+        filters.append(
+            report_smv5_max_open(
+                policy,
+                store=store,
+                profile_name=getattr(profile, "profile_name", ""),
+                adapter=adapter,
+                profile=profile,
+            )
+        )
+        # Max daily entries
+        filters.append(
+            report_smv5_max_daily(
+                policy,
+                store=store,
+                profile_name=getattr(profile, "profile_name", ""),
+            )
+        )
 
     if policy_type == "kt_cg_trial_4" and policy is not None:
         filters.append(report_tiered_atr_trial_4(policy, data_by_tf.get("M1"), pip_size, trigger_type))

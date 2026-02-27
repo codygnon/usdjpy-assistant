@@ -1847,7 +1847,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
         "risk": {
             "max_lots": 20.0,
             "require_stop": True,
-            "min_stop_pips": 4.0,
+            "min_stop_pips": 5.0,
             "max_spread_pips": 3.0,
             "max_trades_per_day": 7,
             "max_open_trades": 1,

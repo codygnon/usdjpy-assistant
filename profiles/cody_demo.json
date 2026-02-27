@@ -11,7 +11,7 @@
   "risk": {
     "max_lots": 7.1,
     "require_stop": true,
-    "min_stop_pips": 12.0,
+    "min_stop_pips": 5.0,
     "max_spread_pips": 5.0,
     "max_trades_per_day": 25,
     "cooldown_minutes_after_loss": 0,
@@ -22,7 +22,7 @@
   "effective_risk": {
     "max_lots": 7.1,
     "require_stop": true,
-    "min_stop_pips": 12.0,
+    "min_stop_pips": 5.0,
     "max_spread_pips": 5.0,
     "max_trades_per_day": 25,
     "cooldown_minutes_after_loss": 0,
