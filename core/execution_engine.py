@@ -6582,6 +6582,14 @@ def evaluate_session_momentum_v5(
     if h1 is None or h1.empty or len(h1) < policy.h1_ema_slow + 5:
         return _no[:-1] + (["H1 data insufficient"],)
 
+    # Use only completed bars so evaluation is deterministic regardless of poll timing.
+    m1 = drop_incomplete_last_bar(m1.copy(), "M1")
+    m5 = drop_incomplete_last_bar(m5.copy(), "M5")
+    if len(m1) < max(policy.m1_ema_slow, 30):
+        return _no[:-1] + (["M1 data insufficient (after drop incomplete)"],)
+    if len(m5) < policy.sl_lookback + 1:
+        return _no[:-1] + (["M5 data insufficient (after drop incomplete)"],)
+
     now_utc = datetime.now(timezone.utc)
     hour_float = now_utc.hour + now_utc.minute / 60.0
 
@@ -6756,7 +6764,7 @@ def evaluate_session_momentum_v5(
 
     # --- 12. Structural SL ---
     entry_price = tick.ask if side == "buy" else tick.bid
-    m5_completed = m5.iloc[-(policy.sl_lookback + 1):-1]  # last N completed M5 bars
+    m5_completed = m5.iloc[-policy.sl_lookback:]  # last N completed M5 bars (m5 already dropped incomplete)
     if len(m5_completed) < policy.sl_lookback:
         return _no[:-1] + (["insufficient M5 bars for structural SL"],)
 

@@ -1316,13 +1316,26 @@ def main() -> None:
                         else:
                             print(f"[{profile.profile_name}] session_momentum {pol.id} mode={mode} -> {dec.reason}")
 
-            # Session momentum v5.3 policies
+            # Session momentum v5.3 policies (entry only on new M1 bar close for deterministic results)
             if has_session_momentum_v5 and mkt is None:
                 mkt = _compute_mkt(profile, tick, data_by_tf)
             if has_session_momentum_v5 and mkt is not None:
                 trades_df = store.read_trades_df(profile.profile_name)
                 for pol in profile.execution.policies:
                     if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "session_momentum_v5":
+                        continue
+                    if not (is_new or args.once):
+                        _build_and_write_dashboard(
+                            profile=profile,
+                            store=store,
+                            log_dir=log_dir,
+                            tick=tick,
+                            data_by_tf=data_by_tf,
+                            mode=mode,
+                            adapter=adapter,
+                            policy=pol,
+                            policy_type="session_momentum_v5",
+                        )
                         continue
                     dec = execute_session_momentum_v5_policy_demo_only(
                         adapter=adapter,
