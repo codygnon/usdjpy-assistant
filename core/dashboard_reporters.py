@@ -1128,6 +1128,12 @@ def collect_smv5_context(
     london_end = getattr(policy, "london_end_hour", 16.0)
     ny_start = getattr(policy, "ny_start_hour", 13.0) + getattr(policy, "ny_start_delay_minutes", 5) / 60.0
     ny_end = getattr(policy, "ny_end_hour", 21.0)
+
+    # Backwards-compatible migration for older profiles that still have 6.5–11.0 / 16.0
+    if london_start == 6.5 and london_end == 11.0:
+        london_start, london_end = 8.0, 16.0
+    if ny_end == 16.0:
+        ny_end = 21.0
     sessions_cfg = getattr(policy, "sessions", "both")
 
     in_london = london_start <= hour_float < london_end and sessions_cfg != "ny_only"
@@ -1308,6 +1314,12 @@ def report_smv5_session_window(policy) -> FilterReport:
     london_end = getattr(policy, "london_end_hour", 16.0)
     ny_start = getattr(policy, "ny_start_hour", 13.0) + getattr(policy, "ny_start_delay_minutes", 5) / 60.0
     ny_end = getattr(policy, "ny_end_hour", 21.0)
+
+    # Backwards-compatible migration for older profiles that still have 6.5–11.0 / 16.0
+    if london_start == 6.5 and london_end == 11.0:
+        london_start, london_end = 8.0, 16.0
+    if ny_end == 16.0:
+        ny_end = 21.0
     sessions_cfg = getattr(policy, "sessions", "both")
     cutoff = getattr(policy, "session_entry_cutoff_minutes", 45)
 
@@ -1348,6 +1360,10 @@ def report_smv5_london_entries(
     today_str = now_utc.strftime("%Y-%m-%d")
     london_start = getattr(policy, "london_start_hour", 8.0)
     london_end = getattr(policy, "london_end_hour", 16.0)
+
+    # Backwards-compatible migration for older profiles that still have 6.5–11.0
+    if london_start == 6.5 and london_end == 11.0:
+        london_start, london_end = 8.0, 16.0
     london_max = getattr(policy, "london_max_entries", 2)
 
     london_entries = 0
@@ -1384,20 +1400,21 @@ def report_smv5_london_entries(
 def report_smv5_max_open(
     policy, store=None, profile_name: str = "", adapter=None, profile=None,
 ) -> FilterReport:
-    """Report max open positions for Session Momentum v5.3."""
+    """Report max open positions for Session Momentum v5.3.
+
+    Only counts trades opened by the smv5 policy (notes startswith auto:session_momentum_v5:).
+    """
     max_open = getattr(policy, "max_open", 1)
 
     open_count = 0
-    if adapter is not None and profile is not None:
-        try:
-            positions = adapter.get_open_positions(profile.symbol)
-            open_count = len(positions) if positions else 0
-        except Exception:
-            pass
-    if open_count == 0 and store is not None and profile_name:
+    if store is not None and profile_name:
         try:
             open_trades = store.list_open_trades(profile_name)
-            open_count = len(list(open_trades))
+            for t in open_trades:
+                row = dict(t) if hasattr(t, "keys") else t
+                notes = str(row.get("notes", "") or "")
+                if notes.startswith("auto:session_momentum_v5:"):
+                    open_count += 1
         except Exception:
             pass
 

@@ -6591,6 +6591,14 @@ def evaluate_session_momentum_v5(
     ny_start = policy.ny_start_hour + policy.ny_start_delay_minutes / 60.0
     ny_end = policy.ny_end_hour
 
+    # Backwards-compatible migration: older profiles used London 6.5–11.0 and NY end 16.0.
+    # Align them with the global session filter defaults (London 8–16, NY 13–21 UTC)
+    # unless the user has explicitly customized them away from the old defaults.
+    if london_start == 6.5 and london_end == 11.0:
+        london_start, london_end = 8.0, 16.0
+    if ny_end == 16.0:
+        ny_end = 21.0
+
     in_london = london_start <= hour_float < london_end and policy.sessions != "ny_only"
     in_ny = ny_start <= hour_float < ny_end and policy.sessions != "london_only"
 
@@ -6608,12 +6616,15 @@ def evaluate_session_momentum_v5(
     if spread_pips > policy.max_spread_pips:
         return _no[:-1] + ([f"spread too high: {spread_pips:.1f} > {policy.max_spread_pips}"],)
 
-    # --- 5. Max open ---
-    if trades_df is not None and not trades_df.empty:
-        open_mask = trades_df["exit_price"].isna() if "exit_price" in trades_df.columns else pd.Series(False, index=trades_df.index)
+    # --- 5. Max open (v5.3-only trades) ---
+    open_count = 0
+    if trades_df is not None and not trades_df.empty and "exit_price" in trades_df.columns:
+        open_mask = trades_df["exit_price"].isna()
+        # Only count open trades created by the Session Momentum v5.3 policy
+        if "notes" in trades_df.columns:
+            v5_mask = trades_df["notes"].astype(str).str.startswith("auto:session_momentum_v5:")
+            open_mask = open_mask & v5_mask
         open_count = int(open_mask.sum())
-    else:
-        open_count = 0
     if open_count >= policy.max_open:
         return _no[:-1] + ([f"max open reached: {open_count}/{policy.max_open}"],)
 
