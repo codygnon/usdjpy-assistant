@@ -1123,11 +1123,11 @@ def collect_smv5_context(
     now_utc = datetime.now(timezone.utc)
     hour_float = now_utc.hour + now_utc.minute / 60.0
 
-    # Session window
-    london_start = getattr(policy, "london_start_hour", 6.5)
-    london_end = getattr(policy, "london_end_hour", 11.0)
+    # Session window (defaults aligned with global session filter: London 8-16, NY 13-21 UTC)
+    london_start = getattr(policy, "london_start_hour", 8.0)
+    london_end = getattr(policy, "london_end_hour", 16.0)
     ny_start = getattr(policy, "ny_start_hour", 13.0) + getattr(policy, "ny_start_delay_minutes", 5) / 60.0
-    ny_end = getattr(policy, "ny_end_hour", 16.0)
+    ny_end = getattr(policy, "ny_end_hour", 21.0)
     sessions_cfg = getattr(policy, "sessions", "both")
 
     in_london = london_start <= hour_float < london_end and sessions_cfg != "ny_only"
@@ -1304,10 +1304,10 @@ def report_smv5_session_window(policy) -> FilterReport:
     now_utc = datetime.now(timezone.utc)
     hour_float = now_utc.hour + now_utc.minute / 60.0
 
-    london_start = getattr(policy, "london_start_hour", 6.5)
-    london_end = getattr(policy, "london_end_hour", 11.0)
+    london_start = getattr(policy, "london_start_hour", 8.0)
+    london_end = getattr(policy, "london_end_hour", 16.0)
     ny_start = getattr(policy, "ny_start_hour", 13.0) + getattr(policy, "ny_start_delay_minutes", 5) / 60.0
-    ny_end = getattr(policy, "ny_end_hour", 16.0)
+    ny_end = getattr(policy, "ny_end_hour", 21.0)
     sessions_cfg = getattr(policy, "sessions", "both")
     cutoff = getattr(policy, "session_entry_cutoff_minutes", 45)
 
@@ -1346,8 +1346,8 @@ def report_smv5_london_entries(
     """Report London entry cap for Session Momentum v5.3."""
     now_utc = datetime.now(timezone.utc)
     today_str = now_utc.strftime("%Y-%m-%d")
-    london_start = getattr(policy, "london_start_hour", 6.5)
-    london_end = getattr(policy, "london_end_hour", 11.0)
+    london_start = getattr(policy, "london_start_hour", 8.0)
+    london_end = getattr(policy, "london_end_hour", 16.0)
     london_max = getattr(policy, "london_max_entries", 2)
 
     london_entries = 0
@@ -1356,6 +1356,10 @@ def report_smv5_london_entries(
             trades_df = store.read_trades_df(profile_name)
             if trades_df is not None and not trades_df.empty and "timestamp_utc" in trades_df.columns:
                 for _, row in trades_df.iterrows():
+                    # Only count trades opened by the Session Momentum v5.3 policy
+                    notes = str(row.get("notes", "") or "")
+                    if not notes.startswith("auto:session_momentum_v5:"):
+                        continue
                     ts = str(row.get("timestamp_utc", ""))
                     if ts.startswith(today_str):
                         try:
@@ -1421,6 +1425,10 @@ def report_smv5_max_daily(
             trades_df = store.read_trades_df(profile_name)
             if trades_df is not None and not trades_df.empty and "timestamp_utc" in trades_df.columns:
                 for _, row in trades_df.iterrows():
+                    # Only count trades opened by the Session Momentum v5.3 policy
+                    notes = str(row.get("notes", "") or "")
+                    if not notes.startswith("auto:session_momentum_v5:"):
+                        continue
                     ts = str(row.get("timestamp_utc", ""))
                     if ts.startswith(today_str):
                         entries_today += 1

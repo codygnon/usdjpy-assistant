@@ -262,11 +262,12 @@ class ExecutionPolicySessionMomentumV5(BaseModel):
     id: str = "session_momentum_v5_default"
     enabled: bool = True
 
-    # Session windows (UTC hours, float)
-    london_start_hour: float = 6.5
-    london_end_hour: float = 11.0
+    # Session windows (UTC hours, float). Defaults aligned with global session filter:
+    # London 08:00-16:00 UTC, New York 13:00-21:00 UTC.
+    london_start_hour: float = 8.0
+    london_end_hour: float = 16.0
     ny_start_hour: float = 13.0
-    ny_end_hour: float = 16.0
+    ny_end_hour: float = 21.0
     ny_start_delay_minutes: int = 5
     session_entry_cutoff_minutes: int = 45
     sessions: Literal["both", "ny_only", "london_only"] = "both"

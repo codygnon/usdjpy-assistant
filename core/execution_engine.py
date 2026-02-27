@@ -6617,16 +6617,20 @@ def evaluate_session_momentum_v5(
     if open_count >= policy.max_open:
         return _no[:-1] + ([f"max open reached: {open_count}/{policy.max_open}"],)
 
-    # --- 6. Max entries today + London cap ---
+    # --- 6. Max entries today + London cap (v5.3-only trades) ---
     today_str = now_utc.strftime("%Y-%m-%d")
     entries_today = 0
     london_entries_today = 0
     if trades_df is not None and not trades_df.empty and "timestamp_utc" in trades_df.columns:
         for _, row in trades_df.iterrows():
+            # Only count trades opened by the Session Momentum v5.3 policy
+            notes = str(row.get("notes", "") or "")
+            if not notes.startswith("auto:session_momentum_v5:"):
+                continue
             ts = str(row.get("timestamp_utc", ""))
             if ts.startswith(today_str):
                 entries_today += 1
-                # Check if entry was during London session
+                # Check if entry was during London session (for London cap)
                 try:
                     entry_hour = float(ts[11:13]) + float(ts[14:16]) / 60.0
                     if london_start <= entry_hour < london_end:
