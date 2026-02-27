@@ -42,6 +42,7 @@ class PresetId(str, Enum):
     KT_CG_TRIAL_7 = "kt_cg_trial_7"
     KT_CG_TRIAL_8 = "kt_cg_trial_8"
     M5_M1_EMA_CROSS_9_21 = "m5_m1_ema_cross_9_21"
+    SESSION_MOMENTUM_V5_STRONG_ONLY = "session_momentum_v5_strong_only"
 
 
 # ---------------------------------------------------------------------------
@@ -1821,6 +1822,89 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "lots_multiplier_strong": 1.0,  # full size for strong momentum
                     "lots_multiplier_moderate": 0.75,  # 75% for moderate
                     "lots_multiplier_weak": 0.5,  # 50% for weak/flat
+                },
+            ],
+        },
+    },
+    # -----------------------------------------------------------------------
+    PresetId.SESSION_MOMENTUM_V5_STRONG_ONLY: {
+        "name": "Session Momentum v5.3 (Strong-Only)",
+        "description": "Backtested M1 pullback-to-recovery system: enters during London/NY sessions when H1 trend is strong, uses M5 structural SL, scaled TP with trailing, and risk-parity lot sizing. London capped at 2 entries/day. Tested at +112 pips, +$6.5k on 100k over 49 days under realistic spread.",
+        "pros": [
+            "Risk-parity sizing: consistent dollar risk per trade regardless of SL width",
+            "Strong-trend filter ensures only high-conviction entries",
+            "Structural SL from M5 swing levels (not arbitrary fixed pips)",
+            "Scaled exit: TP1 partial close + trailing stop + TP2 runner",
+            "London capped at 2 entries/day to prevent loss cascades",
+            "Max spread gate (3.0 pips) prevents bad-spread entries",
+        ],
+        "cons": [
+            "~1.7 trades/day — lower frequency than scalping presets",
+            "Requires M1, M5, and H1 data simultaneously",
+            "London session is slightly negative in pips (contained by sizing)",
+            "Strong-only filter means no trades during ranging/weak markets",
+        ],
+        "risk": {
+            "max_lots": 20.0,
+            "require_stop": True,
+            "min_stop_pips": 4.0,
+            "max_spread_pips": 3.0,
+            "max_trades_per_day": 7,
+            "max_open_trades": 1,
+            "risk_per_trade_pct": 0.75,
+        },
+        "strategy": {
+            "filters": {
+                "alignment": {"enabled": False},
+                "ema_stack_filter": {"enabled": False},
+                "atr_filter": {"enabled": False},
+                "session_filter": {"enabled": True, "sessions": ["London", "NewYork"]},
+            },
+            "setups": {
+                "m1_cross_entry": {"enabled": False},
+            },
+        },
+        "trade_management": {
+            "target": {
+                "mode": "scaled",
+                "tp1_pips": None,
+                "tp1_close_percent": 30.0,
+                "tp2_mode": "runner",
+                "trail_after_tp1": True,
+                "trail_type": "ema",
+                "trail_ema": 21,
+            },
+            "breakeven": {"enabled": True, "after_pips": 0.5},
+        },
+        "execution": {
+            "loop_poll_seconds": 3.0,
+            "loop_poll_seconds_fast": 1.0,
+            "policies": [
+                {
+                    "type": "session_momentum_v5",
+                    "id": "smv5_strong_only",
+                    "enabled": True,
+                    "sessions": "both",
+                    "strength_allow": "strong_only",
+                    "sizing_mode": "risk_parity",
+                    "risk_per_trade_pct": 0.75,
+                    "account_size": 100000.0,
+                    "rp_min_lot": 1.0,
+                    "rp_max_lot": 20.0,
+                    "sl_buffer": 1.5,
+                    "london_max_entries": 2,
+                    "max_spread_pips": 3.0,
+                    "session_entry_cutoff_minutes": 45,
+                    "ny_start_delay_minutes": 5,
+                    "london_start_hour": 6.5,
+                    "strong_slope": 0.6,
+                    "strong_tp1": 2.0,
+                    "strong_tp2": 4.0,
+                    "strong_tp1_close_pct": 0.3,
+                    "strong_trail_buffer": 6.0,
+                    "strong_trail_ema": 21,
+                    "be_offset": 0.5,
+                    "close_full_risk_at_session_end": True,
                 },
             ],
         },

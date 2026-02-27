@@ -62,6 +62,7 @@ class TradeEvent:
     profit: Optional[float] = None
     exit_reason: Optional[str] = None
     context_snapshot: dict[str, Any] = field(default_factory=dict)
+    spread_at_entry: Optional[float] = None
 
 
 @dataclass

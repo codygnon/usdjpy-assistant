@@ -640,6 +640,7 @@ export interface TradeEvent {
   profit: number | null;
   exit_reason: string | null;
   context_snapshot: Record<string, unknown>;
+  spread_at_entry: number | null;
 }
 
 export async function getDashboard(profileName: string, profilePath?: string): Promise<DashboardState> {

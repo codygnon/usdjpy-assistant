@@ -32,6 +32,7 @@ from core.execution_engine import (
     execute_kt_cg_trial_8_policy_demo_only,
     execute_price_level_policy_demo_only,
     execute_session_momentum_policy_demo_only,
+    execute_session_momentum_v5_policy_demo_only,
     execute_signal_demo_only,
     execute_vwap_policy_demo_only,
 )
@@ -738,6 +739,10 @@ def main() -> None:
             getattr(p, "type", None) == "kt_cg_trial_8" and getattr(p, "enabled", True)
             for p in profile.execution.policies
         )
+        has_session_momentum_v5 = any(
+            getattr(p, "type", None) == "session_momentum_v5" and getattr(p, "enabled", True)
+            for p in profile.execution.policies
+        )
         # Confirmed-cross setups can now use M5; detect if any do so we fetch M5 bars.
         m5_cross_setup_ids = {
             sid
@@ -761,7 +766,7 @@ def main() -> None:
         _candle_cache: dict[str, tuple[float, pd.DataFrame]] = {}
         _CANDLE_TTL: dict[str, float] = {
             "M1": 55.0, "M3": 175.0, "M5": 295.0, "M15": 895.0,
-            "H4": 14395.0, "D": 300.0,
+            "H1": 3595.0, "H4": 14395.0, "D": 300.0,
         }
 
         # Logging state for Trial #5 — reduce log spam
@@ -850,12 +855,15 @@ def main() -> None:
                         "M15": _get_bars_cached(profile.symbol, "M15", 2000),
                         "M1": _get_bars_cached(profile.symbol, "M1", 3000),
                     }
-                    # Fetch M5 data when needed by ema_pullback, kt_cg_ctp, kt_cg_hybrid, or M5 confirmed-cross setups.
-                    if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid or has_kt_cg_trial_7 or has_kt_cg_trial_8:
+                    # Fetch M5 data when needed by ema_pullback, kt_cg_ctp, kt_cg_hybrid, M5 confirmed-cross, or session_momentum_v5.
+                    if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_session_momentum_v5:
                         data_by_tf["M5"] = _get_bars_cached(profile.symbol, "M5", 2000)
                     # Fetch M3 data when needed by kt_cg_trial_4/5/6 (trend detection).
                     if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6:
                         data_by_tf["M3"] = _get_bars_cached(profile.symbol, "M3", 3000)
+                    # Fetch H1 data when needed by session_momentum_v5 (H1 trend).
+                    if has_session_momentum_v5:
+                        data_by_tf["H1"] = _get_bars_cached(profile.symbol, "H1", 200)
                     # Fetch D1 data when needed by daily H/L filter (Trial #4/5/8).
                     if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_8:
                         data_by_tf["D"] = _get_bars_cached(profile.symbol, "D", 2)
@@ -1293,6 +1301,42 @@ def main() -> None:
                             )
                         else:
                             print(f"[{profile.profile_name}] session_momentum {pol.id} mode={mode} -> {dec.reason}")
+
+            # Session momentum v5.3 policies
+            if has_session_momentum_v5 and mkt is None:
+                mkt = _compute_mkt(profile, tick, data_by_tf)
+            if has_session_momentum_v5 and mkt is not None:
+                trades_df = store.read_trades_df(profile.profile_name)
+                for pol in profile.execution.policies:
+                    if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "session_momentum_v5":
+                        continue
+                    dec = execute_session_momentum_v5_policy_demo_only(
+                        adapter=adapter,
+                        profile=profile,
+                        log_dir=log_dir,
+                        policy=pol,
+                        context=mkt,
+                        data_by_tf=data_by_tf,
+                        tick=tick,
+                        trades_df=trades_df,
+                        mode=mode,
+                    )
+                    if dec.placed:
+                        side = dec.side or "buy"
+                        entry_price = tick.ask if side == "buy" else tick.bid
+                        print(f"[{profile.profile_name}] TRADE PLACED: session_momentum_v5:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
+                        _insert_trade_for_policy(
+                            profile=profile,
+                            adapter=adapter,
+                            store=store,
+                            policy_type="session_momentum_v5",
+                            policy_id=pol.id,
+                            side=side,
+                            entry_price=entry_price,
+                            dec=dec,
+                        )
+                    else:
+                        print(f"[{profile.profile_name}] session_momentum_v5 {pol.id} mode={mode} -> {dec.reason}")
 
             # Bollinger Bands policies
             if has_bollinger and mkt is not None:

@@ -252,6 +252,94 @@ class ExecutionPolicySessionMomentum(BaseModel):
     use_session_high_low_stops: bool = False  # Use session high/low as SL instead of fixed pips
 
 
+class ExecutionPolicySessionMomentumV5(BaseModel):
+    """Session Momentum v5.3: M1 pullback-to-recovery in Strong H1 trend,
+    risk-parity sizing, structural SL, scaled TP/trail, session gating."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["session_momentum_v5"] = "session_momentum_v5"
+    id: str = "session_momentum_v5_default"
+    enabled: bool = True
+
+    # Session windows (UTC hours, float)
+    london_start_hour: float = 6.5
+    london_end_hour: float = 11.0
+    ny_start_hour: float = 13.0
+    ny_end_hour: float = 16.0
+    ny_start_delay_minutes: int = 5
+    session_entry_cutoff_minutes: int = 45
+    sessions: Literal["both", "ny_only", "london_only"] = "both"
+
+    # H1 trend
+    h1_ema_fast: int = 20
+    h1_ema_slow: int = 50
+
+    # M5 setup
+    m5_ema_fast: int = 9
+    m5_ema_slow: int = 21
+    slope_bars: int = 6
+    strong_slope: float = 0.6
+    weak_slope: float = 0.2
+
+    # Strength gating
+    strength_allow: Literal["strong_only", "strong_normal", "all"] = "strong_only"
+
+    # M1 entry trigger
+    m1_ema_fast: int = 8
+    m1_ema_slow: int = 21
+    entry_min_body_pips: float = 1.0
+
+    # SL
+    sl_lookback: int = 6
+    sl_buffer: float = 1.5
+    sl_floor_pips: float = 4.0
+    sl_max_pips: float = 12.0
+
+    # TP (multiples of SL distance)
+    strong_tp1: float = 2.0
+    strong_tp2: float = 4.0
+    normal_tp1: float = 1.5
+    normal_tp2: float = 2.5
+
+    # TP1 partial close fraction
+    strong_tp1_close_pct: float = 0.3
+    normal_tp1_close_pct: float = 0.5
+
+    # Trailing stop
+    strong_trail_buffer: float = 6.0
+    normal_trail_buffer: float = 3.0
+    strong_trail_ema: int = 21
+    normal_trail_ema: int = 9
+    trail_start_after_tp1_mult: float = 0.5
+
+    # Breakeven
+    be_offset: float = 0.5
+
+    # Risk-parity sizing
+    sizing_mode: Literal["risk_parity", "fixed"] = "risk_parity"
+    risk_per_trade_pct: float = 0.75
+    account_size: float = 100000.0
+    fixed_lots: float = 0.1
+    rp_min_lot: float = 1.0
+    rp_max_lot: float = 20.0
+
+    # Caps
+    max_open: int = 1
+    max_entries_day: int = 7
+    london_max_entries: int = 2
+    max_spread_pips: float = 3.0
+
+    # Cooldowns (M1 bars)
+    cooldown_win: int = 2
+    cooldown_loss: int = 6
+    cooldown_scratch: int = 4
+    scratch_threshold_pips: float = 1.0
+
+    # Session-end
+    close_full_risk_at_session_end: bool = True
+
+
 class ExecutionPolicyBollingerBands(BaseModel):
     """Bollinger Bands policy: Mean reversion at lower/upper band with optional regime filter."""
 
@@ -951,6 +1039,7 @@ ExecutionPolicy = Annotated[
         ExecutionPolicyIndicator,
         ExecutionPolicyBreakout,
         ExecutionPolicySessionMomentum,
+        ExecutionPolicySessionMomentumV5,
         ExecutionPolicyBollingerBands,
         ExecutionPolicyVWAP,
         ExecutionPolicyEmaPullback,

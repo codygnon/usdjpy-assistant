@@ -461,7 +461,26 @@ function TradeCard({ event, isNew }: { event: TradeEvent; isNew: boolean }) {
         <EntryTypePill type={event.entry_type} />
         {event.trigger_type && <span style={{ color: colors.textSecondary, fontSize: 10 }}>{event.trigger_type}</span>}
         <span style={{ ...mono, color: colors.textPrimary }}>{event.price.toFixed(3)}</span>
+        {!isClose && event.spread_at_entry != null && (
+          <span style={{ color: colors.textSecondary, fontSize: 10, ...mono, marginLeft: 4 }}>
+            spread: {event.spread_at_entry.toFixed(1)}p
+          </span>
+        )}
       </div>
+      {!isClose && event.context_snapshot?.trend_strength != null && (
+        <div style={{ display: 'flex', gap: 8, fontSize: 10, marginTop: 2, color: colors.textSecondary }}>
+          <span>Strength: <span style={{ color: colors.textPrimary }}>{String(event.context_snapshot.trend_strength)}</span></span>
+          {event.context_snapshot.sl_distance_pips != null && (
+            <span>SL: <span style={{ color: colors.red, ...mono }}>{Number(event.context_snapshot.sl_distance_pips).toFixed(1)}p</span></span>
+          )}
+          {event.context_snapshot.tp1_pips != null && (
+            <span>TP1: <span style={{ color: colors.green, ...mono }}>{Number(event.context_snapshot.tp1_pips).toFixed(1)}p</span></span>
+          )}
+          {event.context_snapshot.lot_size != null && (
+            <span>Lots: <span style={mono}>{Number(event.context_snapshot.lot_size).toFixed(2)}</span></span>
+          )}
+        </div>
+      )}
       {isClose && (
         <div style={{ display: 'flex', gap: 10, fontSize: 11, marginTop: 2 }}>
           {event.pips != null && <PipsValue pips={event.pips} />}
@@ -471,6 +490,11 @@ function TradeCard({ event, isNew }: { event: TradeEvent; isNew: boolean }) {
             </span>
           )}
           {event.exit_reason && <span style={{ color: colors.textSecondary }}>{event.exit_reason}</span>}
+          {event.context_snapshot?.spread_at_entry != null && (
+            <span style={{ color: colors.textSecondary, ...mono, fontSize: 11 }}>
+              entry spread: {Number(event.context_snapshot.spread_at_entry).toFixed(1)}p
+            </span>
+          )}
         </div>
       )}
     </div>
