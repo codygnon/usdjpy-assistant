@@ -2294,9 +2294,20 @@ def main() -> None:
                         eval_result=exec_result,
                     )
 
-            # Catch-all dashboard write for profiles not using KT/CG policy types.
-            # Runs every poll cycle so positions + prices are always fresh.
-            if not (has_kt_cg_hybrid or has_kt_cg_ctp or has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6 or has_kt_cg_trial_7 or has_kt_cg_trial_8):
+            # Catch-all dashboard write for profiles not using KT/CG policy types
+            # or Session Momentum v5.3. Runs every poll cycle so positions +
+            # prices are always fresh, but we skip it when smv5 or KT/CG
+            # policies are active to avoid overwriting their richer context.
+            if not (
+                has_kt_cg_hybrid
+                or has_kt_cg_ctp
+                or has_kt_cg_trial_4
+                or has_kt_cg_trial_5
+                or has_kt_cg_trial_6
+                or has_kt_cg_trial_7
+                or has_kt_cg_trial_8
+                or has_session_momentum_v5
+            ):
                 if tick is not None and data_by_tf is not None:
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,
