@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
 
 import pandas as pd
+
+# Allow running from either repo root or scripts/ directory.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
 from core.execution_engine import (
     _evaluate_kt_cg_trial_7_zone_only_candidate,
@@ -36,6 +41,13 @@ class Position:
     rr_use_managed_exit: bool
     rr_lot_multiplier: float
     exhaustion_zone: str
+    entry_session: str
+    initial_sl_pips: float
+    initial_tp_pips: float
+    max_favorable_pips: float
+    max_adverse_pips: float
+    was_ever_positive: bool
+    first_positive_time: Optional[pd.Timestamp]
 
 
 @dataclass
@@ -55,10 +67,33 @@ class ClosedTrade:
     rr_tier: Optional[str]
     rr_score: Optional[float]
     exhaustion_zone: str
+    entry_session: str
+    initial_sl_pips: float
+    initial_tp_pips: float
+    mae_pips: float
+    mfe_pips: float
+    time_to_first_positive_sec: Optional[float]
+    underwater_whole_trade: bool
+    hit_tp_before_meaningful_dd: bool
+    mfe_before_stop_pips: Optional[float]
+    reversal_trap_flag: bool
+    path_tag: str
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Backtest Trial #7 with calibrated RR and exhaustion settings.")
+    baseline_cmd = (
+        "Baseline (features off):\n"
+        "  python scripts/backtest_trial7.py --in USDJPY_M1_50k_new.csv "
+        "--spread-pips 1.75 --tp-pips 7 --sl-pips 50 --m5-min-gap-pips 3.0 "
+        "--ema-zone-filter --tier-periods \"25,27,29,33,34\" --max-zone-open 1 --max-tier-open 6 "
+        "--spread-aware-be --spread-aware-be-mode spread_relative --spread-aware-be-buffer-pips 0.5 "
+        "--out research_out/trial7_baseline.json"
+    )
+    p = argparse.ArgumentParser(
+        description="Backtest Trial #7 with calibrated RR/exhaustion and optional session/structural SLTP modes.",
+        epilog=baseline_cmd,
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
     p.add_argument("--in", dest="inputs", action="append", required=True, help="Input M1 CSV path (repeatable)")
     p.add_argument("--spread-pips", type=float, default=1.8, help="Fixed spread in pips (default: 1.8)")
     p.add_argument("--base-lot", type=float, default=0.1, help="Base lot size before RR multipliers (default: 0.1)")
@@ -66,6 +101,45 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sl-pips", type=float, default=20.0, help="SL in pips (default: 20.0)")
     p.add_argument("--m5-min-gap-pips", type=float, default=1.5, help="Trial #7 M5 EMA9/21 minimum distance in pips")
     p.add_argument("--ema-zone-filter", action="store_true", help="Enable Trial #7 EMA slope zone filter")
+    p.add_argument("--tier-periods", default="9,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34", help="Comma-separated active tier EMA periods")
+    p.add_argument("--max-zone-open", type=int, default=3, help="Max open zone-entry trades")
+    p.add_argument("--max-tier-open", type=int, default=6, help="Max open tiered-pullback trades")
+    p.add_argument("--spread-aware-be", action="store_true", help="Enable spread-aware breakeven")
+    p.add_argument(
+        "--spread-aware-be-mode",
+        choices=["fixed_pips", "spread_relative"],
+        default="fixed_pips",
+        help="Spread-aware BE trigger mode",
+    )
+    p.add_argument("--spread-aware-be-fixed-trigger-pips", type=float, default=5.0, help="Spread-aware BE fixed trigger pips")
+    p.add_argument("--spread-aware-be-buffer-pips", type=float, default=1.0, help="Spread-aware BE spread buffer pips")
+    p.add_argument("--session-tp-sl", action="store_true", help="Enable session-based TP/SL mapping and dead-hours trade skip")
+    p.add_argument("--session-tp-tokyo", type=float, default=15.0, help="Tokyo TP in pips (00:00-09:00 UTC)")
+    p.add_argument("--session-sl-tokyo", type=float, default=10.0, help="Tokyo SL in pips (00:00-09:00 UTC)")
+    p.add_argument("--session-tp-london-open", type=float, default=25.0, help="London open TP in pips (07:00-10:00 UTC)")
+    p.add_argument("--session-sl-london-open", type=float, default=12.0, help="London open SL in pips (07:00-10:00 UTC)")
+    p.add_argument("--session-tp-ny-overlap", type=float, default=20.0, help="NY overlap TP in pips (12:00-16:00 UTC)")
+    p.add_argument("--session-sl-ny-overlap", type=float, default=10.0, help="NY overlap SL in pips (12:00-16:00 UTC)")
+    p.add_argument("--session-dead-start", type=int, default=20, help="Dead-hours start UTC hour inclusive")
+    p.add_argument("--session-dead-end", type=int, default=23, help="Dead-hours end UTC hour exclusive")
+    p.add_argument("--structural-sl", action="store_true", help="Enable structure-based SL/TP (TP=2x SL distance)")
+    p.add_argument("--structural-sl-lookback", type=int, default=5, help="Lookback bars for structural swing high/low")
+    p.add_argument("--structural-sl-buffer-pips", type=float, default=0.5, help="Buffer beyond structural swing for SL")
+    p.add_argument("--structural-sl-max-pips", type=float, default=12.0, help="Skip candidate if structural SL distance exceeds this")
+    p.add_argument("--no-progress-exit", action="store_true", help="Enable no-progress invalidation exits")
+    p.add_argument("--np-stage1-min", type=float, default=12.0, help="Stage-1 age threshold (minutes)")
+    p.add_argument("--np-stage1-max-mfe-pips", type=float, default=1.5, help="Stage-1 max MFE threshold (pips)")
+    p.add_argument("--np-stage1-loss-pips", type=float, default=12.0, help="Stage-1 minimum loss threshold (pips)")
+    p.add_argument("--np-stage2-min", type=float, default=20.0, help="Stage-2 age threshold (minutes)")
+    p.add_argument("--np-stage2-max-mfe-pips", type=float, default=2.5, help="Stage-2 max MFE threshold (pips)")
+    p.add_argument("--np-stage2-loss-pips", type=float, default=18.0, help="Stage-2 minimum loss threshold (pips)")
+    p.add_argument("--np-opposite-bars", type=int, default=2, help="Consecutive opposite EMA5/9 bars needed to force close while trade is negative (0 disables)")
+    p.add_argument(
+        "--underwater-exit-min",
+        type=float,
+        default=0.0,
+        help="Close any still-underwater trade at market after N minutes (0 disables)",
+    )
     p.add_argument("--rr-enabled", action="store_true", help="Enable reversal risk system (default off unless set)")
     p.add_argument("--rr-tier-medium", type=float, default=50.0, help="RR medium threshold")
     p.add_argument("--rr-tier-high", type=float, default=58.0, help="RR high threshold")
@@ -111,6 +185,22 @@ def load_m1(paths: list[str]) -> pd.DataFrame:
     return out
 
 
+def parse_tier_periods(raw: str) -> tuple[int, ...]:
+    vals: list[int] = []
+    for tok in (raw or "").split(","):
+        t = tok.strip()
+        if not t:
+            continue
+        try:
+            vals.append(int(t))
+        except ValueError:
+            continue
+    uniq = sorted(set(vals))
+    if not uniq:
+        return tuple([9] + list(range(11, 35)))
+    return tuple(uniq)
+
+
 def resample_ohlc(m1: pd.DataFrame, rule: str) -> pd.DataFrame:
     d = m1.set_index("time").sort_index()
     out = (
@@ -131,12 +221,74 @@ def session_name(ts: pd.Timestamp) -> str:
     return "ny"
 
 
+def _hour_in_window(hour_utc: int, start_hour: int, end_hour: int) -> bool:
+    """Inclusive start, exclusive end; supports wrap-around windows (e.g. 22->2)."""
+    h = int(hour_utc) % 24
+    s = int(start_hour) % 24
+    e = int(end_hour) % 24
+    if s == e:
+        return False
+    if s < e:
+        return s <= h < e
+    return h >= s or h < e
+
+
+def classify_entry_session(ts: pd.Timestamp, dead_start: int, dead_end: int) -> str:
+    """
+    Session labels for TP/SL mapping.
+    Priority when overlaps occur:
+    - dead
+    - london_open (07-10) takes precedence over tokyo (00-09)
+    - ny_overlap (12-16)
+    - tokyo (00-09)
+    - other
+    """
+    hour = int(ts.hour)
+    if _hour_in_window(hour, dead_start, dead_end):
+        return "dead"
+    if 7 <= hour < 10:
+        return "london_open"
+    if 12 <= hour < 16:
+        return "ny_overlap"
+    if 0 <= hour < 9:
+        return "tokyo"
+    return "other"
+
+
+def resolve_session_tp_sl(
+    *,
+    entry_session: str,
+    default_tp_pips: float,
+    default_sl_pips: float,
+    tp_tokyo: float,
+    sl_tokyo: float,
+    tp_london_open: float,
+    sl_london_open: float,
+    tp_ny_overlap: float,
+    sl_ny_overlap: float,
+) -> tuple[float, float]:
+    if entry_session == "tokyo":
+        return float(tp_tokyo), float(sl_tokyo)
+    if entry_session == "london_open":
+        return float(tp_london_open), float(sl_london_open)
+    if entry_session == "ny_overlap":
+        return float(tp_ny_overlap), float(sl_ny_overlap)
+    return float(default_tp_pips), float(default_sl_pips)
+
+
 def build_policy(
     *,
     tp_pips: float,
     sl_pips: float,
     m5_min_gap_pips: float,
     ema_zone_filter_enabled: bool,
+    tier_periods: tuple[int, ...],
+    max_zone_open: int,
+    max_tier_open: int,
+    spread_aware_be_enabled: bool,
+    spread_aware_be_mode: str,
+    spread_aware_be_fixed_trigger_pips: float,
+    spread_aware_be_buffer_pips: float,
     rr_enabled: bool,
     rr_tier_medium: float,
     rr_tier_high: float,
@@ -163,7 +315,7 @@ def build_policy(
         m1_zone_entry_ema_fast=5,
         m1_zone_entry_ema_slow=9,
         tiered_pullback_enabled=True,
-        tier_ema_periods=tuple([9] + list(range(11, 35))),
+        tier_ema_periods=tuple(tier_periods),
         tier_reset_buffer_pips=1.0,
         cooldown_minutes=3.0,
         sl_pips=float(sl_pips),
@@ -171,15 +323,18 @@ def build_policy(
         confirm_bars=1,
         # Caps
         max_open_trades_per_side=5,
-        max_zone_entry_open=3,
-        max_tiered_pullback_open=6,
+        max_zone_entry_open=max(1, int(max_zone_open)),
+        max_tiered_pullback_open=max(1, int(max_tier_open)),
         # Trial #7 zone slope filter toggle
         ema_zone_filter_enabled=bool(ema_zone_filter_enabled),
         ema_zone_filter_lookback_bars=3,
         ema_zone_filter_ema5_min_slope_pips_per_bar=0.10,
         ema_zone_filter_ema9_min_slope_pips_per_bar=0.08,
         ema_zone_filter_ema21_min_slope_pips_per_bar=0.05,
-        spread_aware_be_enabled=False,
+        spread_aware_be_enabled=bool(spread_aware_be_enabled),
+        spread_aware_be_trigger_mode=str(spread_aware_be_mode),
+        spread_aware_be_fixed_trigger_pips=float(spread_aware_be_fixed_trigger_pips),
+        spread_aware_be_spread_buffer_pips=float(spread_aware_be_buffer_pips),
         session_boundary_block_enabled=False,
         # Trend exhaustion
         trend_exhaustion_enabled=True,
@@ -347,6 +502,50 @@ def pip_value_usd_per_lot(price: float) -> float:
     return 1000.0 / p
 
 
+def resolve_structural_stop_and_target(
+    *,
+    side: str,
+    entry_price: float,
+    m1_slice: pd.DataFrame,
+    lookback_bars: int,
+    buffer_pips: float,
+    max_sl_pips: float,
+) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float], Optional[str]]:
+    """
+    Returns:
+      stop_price, target_price, sl_distance_pips, tp_distance_pips, skip_reason
+    """
+    if m1_slice is None or m1_slice.empty:
+        return None, None, None, None, "structural_data_missing"
+    lb = max(1, int(lookback_bars))
+    w = m1_slice.tail(lb)
+    buf = max(0.0, float(buffer_pips)) * PIP_SIZE
+    s = str(side).lower()
+    if s == "buy":
+        swing = float(w["low"].min())
+        stop = swing - buf
+        if stop >= float(entry_price):
+            return None, None, None, None, "structural_invalid"
+        sl_dist = abs(float(entry_price) - stop) / PIP_SIZE
+        if sl_dist > float(max_sl_pips):
+            return None, None, sl_dist, None, "structural_wide"
+        tp_dist = 2.0 * sl_dist
+        target = float(entry_price) + tp_dist * PIP_SIZE
+        return stop, target, sl_dist, tp_dist, None
+    if s == "sell":
+        swing = float(w["high"].max())
+        stop = swing + buf
+        if stop <= float(entry_price):
+            return None, None, None, None, "structural_invalid"
+        sl_dist = abs(float(entry_price) - stop) / PIP_SIZE
+        if sl_dist > float(max_sl_pips):
+            return None, None, sl_dist, None, "structural_wide"
+        tp_dist = 2.0 * sl_dist
+        target = float(entry_price) - tp_dist * PIP_SIZE
+        return stop, target, sl_dist, tp_dist, None
+    return None, None, None, None, "side_invalid"
+
+
 def backtest(
     m1: pd.DataFrame,
     spread_pips: float,
@@ -355,6 +554,35 @@ def backtest(
     sl_pips: float,
     m5_min_gap_pips: float,
     ema_zone_filter_enabled: bool,
+    tier_periods: tuple[int, ...],
+    max_zone_open: int,
+    max_tier_open: int,
+    spread_aware_be_enabled: bool,
+    spread_aware_be_mode: str,
+    spread_aware_be_fixed_trigger_pips: float,
+    spread_aware_be_buffer_pips: float,
+    session_tp_sl: bool,
+    session_tp_tokyo: float,
+    session_sl_tokyo: float,
+    session_tp_london_open: float,
+    session_sl_london_open: float,
+    session_tp_ny_overlap: float,
+    session_sl_ny_overlap: float,
+    session_dead_start: int,
+    session_dead_end: int,
+    structural_sl: bool,
+    structural_sl_lookback: int,
+    structural_sl_buffer_pips: float,
+    structural_sl_max_pips: float,
+    no_progress_exit: bool,
+    np_stage1_min: float,
+    np_stage1_max_mfe_pips: float,
+    np_stage1_loss_pips: float,
+    np_stage2_min: float,
+    np_stage2_max_mfe_pips: float,
+    np_stage2_loss_pips: float,
+    np_opposite_bars: int,
+    underwater_exit_min: float,
     rr_enabled: bool,
     rr_tier_medium: float,
     rr_tier_high: float,
@@ -372,6 +600,13 @@ def backtest(
         sl_pips=sl_pips,
         m5_min_gap_pips=m5_min_gap_pips,
         ema_zone_filter_enabled=ema_zone_filter_enabled,
+        tier_periods=tier_periods,
+        max_zone_open=max_zone_open,
+        max_tier_open=max_tier_open,
+        spread_aware_be_enabled=spread_aware_be_enabled,
+        spread_aware_be_mode=spread_aware_be_mode,
+        spread_aware_be_fixed_trigger_pips=spread_aware_be_fixed_trigger_pips,
+        spread_aware_be_buffer_pips=spread_aware_be_buffer_pips,
         rr_enabled=rr_enabled,
         rr_tier_medium=rr_tier_medium,
         rr_tier_high=rr_tier_high,
@@ -402,6 +637,9 @@ def backtest(
     open_positions: list[Position] = []
     closed_trades: list[ClosedTrade] = []
     blocked_reasons: dict[str, int] = {}
+    candidate_session_counts: dict[str, int] = {}
+    structural_skipped_wide = 0
+    structural_skipped_invalid = 0
 
     trade_id_seq = 0
     last_trade_time: Optional[pd.Timestamp] = None
@@ -425,6 +663,42 @@ def backtest(
         nonlocal open_positions
         pips = ((exit_price - pos.entry_price) / PIP_SIZE) if pos.side == "buy" else ((pos.entry_price - exit_price) / PIP_SIZE)
         usd = pips * pip_value_usd_per_lot(exit_price) * pos.lots
+        time_to_first_positive_sec: Optional[float] = None
+        if pos.first_positive_time is not None:
+            time_to_first_positive_sec = float((pos.first_positive_time - pos.entry_time).total_seconds())
+        underwater_whole_trade = bool(pos.max_favorable_pips <= 0.0)
+        meaningful_dd_threshold_pips = 2.0
+        hit_tp_before_meaningful_dd = bool(reason == "tp" and pos.max_adverse_pips <= meaningful_dd_threshold_pips)
+        mfe_before_stop_pips = (
+            float(pos.max_favorable_pips)
+            if reason in {
+                "sl",
+                "managed_exit_hard_sl",
+                "managed_exit_time_underwater",
+                "time_exit_underwater",
+                "no_progress_exit_stage1",
+                "no_progress_exit_stage2",
+                "no_progress_exit_opposite_ema",
+            }
+            else None
+        )
+        reversal_trap_flag = bool(
+            (pips < 0)
+            and underwater_whole_trade
+            and (pos.max_adverse_pips >= max(10.0, 0.60 * float(pos.initial_sl_pips)))
+        )
+        if hit_tp_before_meaningful_dd:
+            path_tag = "clean_tp"
+        elif reason == "tp":
+            path_tag = "tp_after_drawdown"
+        elif reversal_trap_flag:
+            path_tag = "reversal_trap"
+        elif pips < 0 and underwater_whole_trade:
+            path_tag = "underwater_loss"
+        elif pips < 0:
+            path_tag = "loss_after_partial_progress"
+        else:
+            path_tag = "other"
         closed_trades.append(
             ClosedTrade(
                 trade_id=pos.trade_id,
@@ -442,6 +716,17 @@ def backtest(
                 rr_tier=pos.rr_tier,
                 rr_score=pos.rr_score,
                 exhaustion_zone=pos.exhaustion_zone,
+                entry_session=pos.entry_session,
+                initial_sl_pips=float(pos.initial_sl_pips),
+                initial_tp_pips=float(pos.initial_tp_pips),
+                mae_pips=float(pos.max_adverse_pips),
+                mfe_pips=float(pos.max_favorable_pips),
+                time_to_first_positive_sec=time_to_first_positive_sec,
+                underwater_whole_trade=underwater_whole_trade,
+                hit_tp_before_meaningful_dd=hit_tp_before_meaningful_dd,
+                mfe_before_stop_pips=mfe_before_stop_pips,
+                reversal_trap_flag=reversal_trap_flag,
+                path_tag=path_tag,
             )
         )
         open_positions = [x for x in open_positions if x.trade_id != pos.trade_id]
@@ -492,8 +777,34 @@ def backtest(
         ask_low = lo + half_spread
         ask_high = hi + half_spread
 
+        # Optional no-progress invalidation context (per bar).
+        buy_opposite_ema_persist = False
+        sell_opposite_ema_persist = False
+        if bool(no_progress_exit) and int(np_opposite_bars) > 0:
+            np_window = m1.iloc[max(0, i - 240) : i + 1]["close"].astype(float)
+            if len(np_window) >= int(np_opposite_bars):
+                ema5_np = np_window.ewm(span=5, adjust=False).mean()
+                ema9_np = np_window.ewm(span=9, adjust=False).mean()
+                n = int(np_opposite_bars)
+                buy_opposite_ema_persist = bool((ema5_np.tail(n) < ema9_np.tail(n)).all())
+                sell_opposite_ema_persist = bool((ema5_np.tail(n) > ema9_np.tail(n)).all())
+
         # iterate over snapshot list to allow closes
         for pos in list(open_positions):
+            # Update MAE/MFE path metrics from intrabar extremes before checking exits.
+            if pos.side == "buy":
+                bar_best_pips = (bid_high - pos.entry_price) / PIP_SIZE
+                bar_worst_pips = (bid_low - pos.entry_price) / PIP_SIZE
+            else:
+                bar_best_pips = (pos.entry_price - ask_low) / PIP_SIZE
+                bar_worst_pips = (pos.entry_price - ask_high) / PIP_SIZE
+            pos.max_favorable_pips = max(float(pos.max_favorable_pips), float(bar_best_pips))
+            pos.max_adverse_pips = max(float(pos.max_adverse_pips), max(0.0, float(-bar_worst_pips)))
+            if bar_best_pips > 0.0:
+                pos.was_ever_positive = True
+                if pos.first_positive_time is None:
+                    pos.first_positive_time = ts
+
             # 1) hard TP/SL checks (conservative: if both hit same bar -> SL first)
             if pos.side == "buy":
                 sl_hit = bid_low <= pos.stop_price
@@ -541,6 +852,68 @@ def backtest(
                         if new_sl < pos.stop_price:
                             pos.stop_price = new_sl
 
+            # 2b) Optional global time-based underwater exit for all trades (RR-independent)
+            if float(underwater_exit_min) > 0.0:
+                current_exit = bid if pos.side == "buy" else ask
+                current_pips = ((current_exit - pos.entry_price) / PIP_SIZE) if pos.side == "buy" else ((pos.entry_price - current_exit) / PIP_SIZE)
+                age_min = (ts - pos.entry_time).total_seconds() / 60.0
+                if age_min >= float(underwater_exit_min) and current_pips < 0:
+                    close_position(pos, ts, current_exit, "time_exit_underwater")
+                    continue
+
+            # 2c) Optional no-progress invalidation exit (target reversal-trap class).
+            if bool(no_progress_exit):
+                current_exit = bid if pos.side == "buy" else ask
+                current_pips = ((current_exit - pos.entry_price) / PIP_SIZE) if pos.side == "buy" else ((pos.entry_price - current_exit) / PIP_SIZE)
+                age_min = (ts - pos.entry_time).total_seconds() / 60.0
+                mfe_pips = float(pos.max_favorable_pips)
+
+                if (
+                    age_min >= float(np_stage1_min)
+                    and mfe_pips < float(np_stage1_max_mfe_pips)
+                    and current_pips <= -float(np_stage1_loss_pips)
+                ):
+                    close_position(pos, ts, current_exit, "no_progress_exit_stage1")
+                    continue
+
+                if (
+                    age_min >= float(np_stage2_min)
+                    and mfe_pips < float(np_stage2_max_mfe_pips)
+                    and current_pips <= -float(np_stage2_loss_pips)
+                ):
+                    close_position(pos, ts, current_exit, "no_progress_exit_stage2")
+                    continue
+
+                if current_pips < 0:
+                    if pos.side == "buy" and buy_opposite_ema_persist:
+                        close_position(pos, ts, current_exit, "no_progress_exit_opposite_ema")
+                        continue
+                    if pos.side == "sell" and sell_opposite_ema_persist:
+                        close_position(pos, ts, current_exit, "no_progress_exit_opposite_ema")
+                        continue
+
+            # 3) spread-aware breakeven (zone/tier entries only)
+            if bool(getattr(policy, "spread_aware_be_enabled", False)) and pos.entry_type in ("zone_entry", "tiered_pullback"):
+                trigger_mode = str(getattr(policy, "spread_aware_be_trigger_mode", "fixed_pips"))
+                if trigger_mode == "spread_relative":
+                    trigger_pips = float(spread_pips) + float(getattr(policy, "spread_aware_be_spread_buffer_pips", 1.0))
+                else:
+                    trigger_pips = float(getattr(policy, "spread_aware_be_fixed_trigger_pips", 5.0))
+                tp_dist_pips = abs(pos.target_price - pos.entry_price) / PIP_SIZE
+                if tp_dist_pips >= trigger_pips:
+                    check_price = bid if pos.side == "buy" else ask
+                    profit_pips = ((check_price - pos.entry_price) / PIP_SIZE) if pos.side == "buy" else ((pos.entry_price - check_price) / PIP_SIZE)
+                    if profit_pips >= trigger_pips:
+                        # Mirror run-loop behavior: move SL to entry +/- current spread.
+                        if pos.side == "buy":
+                            new_sl = pos.entry_price + (float(spread_pips) * PIP_SIZE)
+                            if new_sl > pos.stop_price:
+                                pos.stop_price = new_sl
+                        else:
+                            new_sl = pos.entry_price - (float(spread_pips) * PIP_SIZE)
+                            if new_sl < pos.stop_price:
+                                pos.stop_price = new_sl
+
         # Build TF slices (trimmed windows for speed)
         m1_slice = m1.iloc[max(0, i - 900) : i + 1][["time", "open", "high", "low", "close"]].copy()
         m5_slice = m5.iloc[max(0, p5 - 600) : p5 + 1][["time", "open", "high", "low", "close"]].copy() if p5 >= 0 else pd.DataFrame(columns=["time", "open", "high", "low", "close"])
@@ -581,6 +954,13 @@ def backtest(
         trigger_type = str(result.get("trigger_type") or "")
         tier_period = result.get("tiered_pullback_tier")
         trend_side = str(result.get("m5_trend") or ("bull" if side == "buy" else "bear"))
+        entry_session = classify_entry_session(ts, session_dead_start, session_dead_end)
+        candidate_session_counts[entry_session] = candidate_session_counts.get(entry_session, 0) + 1
+
+        # Session mode can block new entries during dead hours.
+        if bool(session_tp_sl) and entry_session == "dead":
+            blocked_reasons["dead_hours"] = blocked_reasons.get("dead_hours", 0) + 1
+            continue
 
         # Reversal risk score
         rr_result: Optional[dict] = None
@@ -709,10 +1089,49 @@ def backtest(
         # Place trade
         trade_id_seq += 1
         entry_price = ask if side == "buy" else bid
-        sl_pips = float(getattr(policy, "sl_pips", 20.0))
-        tp_pips = float(getattr(policy, "tp_pips", 6.0))
-        stop = entry_price - sl_pips * PIP_SIZE if side == "buy" else entry_price + sl_pips * PIP_SIZE
-        target = entry_price + tp_pips * PIP_SIZE if side == "buy" else entry_price - tp_pips * PIP_SIZE
+        default_sl_pips = float(getattr(policy, "sl_pips", 20.0))
+        default_tp_pips = float(getattr(policy, "tp_pips", 6.0))
+        sl_dist_pips = default_sl_pips
+        tp_dist_pips = default_tp_pips
+
+        # Mode interaction:
+        # - structural_sl ON => structural SL/TP (session mode only affects dead-hours skip)
+        # - session_tp_sl ON & structural_sl OFF => session TP/SL mapping
+        # - otherwise fixed TP/SL from args/policy
+        if bool(structural_sl):
+            stop, target, sl_calc, tp_calc, skip_reason = resolve_structural_stop_and_target(
+                side=side,
+                entry_price=entry_price,
+                m1_slice=m1_slice,
+                lookback_bars=structural_sl_lookback,
+                buffer_pips=structural_sl_buffer_pips,
+                max_sl_pips=structural_sl_max_pips,
+            )
+            if skip_reason == "structural_wide":
+                structural_skipped_wide += 1
+                blocked_reasons["skipped_structural_wide"] = blocked_reasons.get("skipped_structural_wide", 0) + 1
+                continue
+            if skip_reason is not None or stop is None or target is None or sl_calc is None or tp_calc is None:
+                structural_skipped_invalid += 1
+                blocked_reasons["skipped_structural_invalid"] = blocked_reasons.get("skipped_structural_invalid", 0) + 1
+                continue
+            sl_dist_pips = float(sl_calc)
+            tp_dist_pips = float(tp_calc)
+        else:
+            if bool(session_tp_sl):
+                tp_dist_pips, sl_dist_pips = resolve_session_tp_sl(
+                    entry_session=entry_session,
+                    default_tp_pips=default_tp_pips,
+                    default_sl_pips=default_sl_pips,
+                    tp_tokyo=session_tp_tokyo,
+                    sl_tokyo=session_sl_tokyo,
+                    tp_london_open=session_tp_london_open,
+                    sl_london_open=session_sl_london_open,
+                    tp_ny_overlap=session_tp_ny_overlap,
+                    sl_ny_overlap=session_sl_ny_overlap,
+                )
+            stop = entry_price - sl_dist_pips * PIP_SIZE if side == "buy" else entry_price + sl_dist_pips * PIP_SIZE
+            target = entry_price + tp_dist_pips * PIP_SIZE if side == "buy" else entry_price - tp_dist_pips * PIP_SIZE
         lots = max(0.01, float(base_lot) * max(0.01, rr_lot_mult))
         rr_use_managed = _rr_tier_at_or_above(rr_tier, str(getattr(policy, "rr_use_managed_exit_at", "high")))
 
@@ -732,6 +1151,13 @@ def backtest(
                 rr_use_managed_exit=rr_use_managed,
                 rr_lot_multiplier=float(rr_lot_mult),
                 exhaustion_zone=ex_zone,
+                entry_session=entry_session,
+                initial_sl_pips=float(sl_dist_pips),
+                initial_tp_pips=float(tp_dist_pips),
+                max_favorable_pips=0.0,
+                max_adverse_pips=float(spread_pips),
+                was_ever_positive=False,
+                first_positive_time=None,
             )
         )
 
@@ -767,6 +1193,52 @@ def backtest(
                 "max_open_sell": max_open_sell,
             },
             "blocked_reasons": blocked_reasons,
+            "modes": {
+                "session_tp_sl": bool(session_tp_sl),
+                "structural_sl": bool(structural_sl),
+                "no_progress_exit": bool(no_progress_exit),
+                "underwater_exit_min": float(underwater_exit_min),
+                "tp_sl_mode": "structural" if bool(structural_sl) else ("session" if bool(session_tp_sl) else "fixed"),
+            },
+            "session_mode": {
+                "dead_hours_start": int(session_dead_start),
+                "dead_hours_end": int(session_dead_end),
+                "candidate_session_counts": dict(candidate_session_counts),
+                "dead_hours_skipped": int(blocked_reasons.get("dead_hours", 0)),
+                "tp_sl_pips": {
+                    "tokyo": {"tp": float(session_tp_tokyo), "sl": float(session_sl_tokyo)},
+                    "london_open": {"tp": float(session_tp_london_open), "sl": float(session_sl_london_open)},
+                    "ny_overlap": {"tp": float(session_tp_ny_overlap), "sl": float(session_sl_ny_overlap)},
+                    "other": {"tp": float(tp_pips), "sl": float(sl_pips)},
+                },
+            },
+            "structural_mode": {
+                "enabled": bool(structural_sl),
+                "lookback_bars": int(structural_sl_lookback),
+                "buffer_pips": float(structural_sl_buffer_pips),
+                "max_sl_pips": float(structural_sl_max_pips),
+                "skipped_structural_wide": int(structural_skipped_wide),
+                "skipped_structural_invalid": int(structural_skipped_invalid),
+                "skipped_structural_wide_pct_of_candidates": round(
+                    (float(structural_skipped_wide) / max(1, sum(candidate_session_counts.values()))) * 100.0,
+                    3,
+                ),
+            },
+            "no_progress_mode": {
+                "enabled": bool(no_progress_exit),
+                "stage1_min": float(np_stage1_min),
+                "stage1_max_mfe_pips": float(np_stage1_max_mfe_pips),
+                "stage1_loss_pips": float(np_stage1_loss_pips),
+                "stage2_min": float(np_stage2_min),
+                "stage2_max_mfe_pips": float(np_stage2_max_mfe_pips),
+                "stage2_loss_pips": float(np_stage2_loss_pips),
+                "opposite_bars": int(np_opposite_bars),
+                "exits": {
+                    "stage1": 0,
+                    "stage2": 0,
+                    "opposite_ema": 0,
+                },
+            },
             "trades": [],
         }
 
@@ -813,6 +1285,51 @@ def backtest(
         .reset_index()
         .sort_values("trades", ascending=False)
     )
+    by_entry_session = (
+        tdf.groupby("entry_session", dropna=False)
+        .agg(trades=("trade_id", "size"), win_rate=("is_win", "mean"), net_pips=("pips", "sum"), net_usd=("usd", "sum"))
+        .reset_index()
+        .sort_values("trades", ascending=False)
+    )
+    by_path_tag = (
+        tdf.groupby("path_tag", dropna=False)
+        .agg(
+            trades=("trade_id", "size"),
+            win_rate=("is_win", "mean"),
+            avg_pips=("pips", "mean"),
+            net_pips=("pips", "sum"),
+            net_usd=("usd", "sum"),
+            avg_mae_pips=("mae_pips", "mean"),
+            avg_mfe_pips=("mfe_pips", "mean"),
+        )
+        .reset_index()
+        .sort_values("trades", ascending=False)
+    )
+    no_progress_stage1_exits = int((tdf["exit_reason"] == "no_progress_exit_stage1").sum())
+    no_progress_stage2_exits = int((tdf["exit_reason"] == "no_progress_exit_stage2").sum())
+    no_progress_opposite_exits = int((tdf["exit_reason"] == "no_progress_exit_opposite_ema").sum())
+
+    underwater_count = int(tdf["underwater_whole_trade"].sum())
+    reversal_trap_count = int(tdf["reversal_trap_flag"].sum())
+    stopped = tdf[
+        tdf["exit_reason"].isin(
+            [
+                "sl",
+                "managed_exit_hard_sl",
+                "managed_exit_time_underwater",
+                "time_exit_underwater",
+                "no_progress_exit_stage1",
+                "no_progress_exit_stage2",
+                "no_progress_exit_opposite_ema",
+            ]
+        )
+    ]
+    mfe_before_stop_median = float(stopped["mfe_before_stop_pips"].dropna().median()) if not stopped.empty else None
+    time_to_positive_median_sec = (
+        float(tdf["time_to_first_positive_sec"].dropna().median())
+        if tdf["time_to_first_positive_sec"].notna().any()
+        else None
+    )
 
     return {
         "summary": {
@@ -835,6 +1352,94 @@ def backtest(
         "by_rr_tier": by_rr.to_dict("records"),
         "by_exhaustion_zone": by_ex.to_dict("records"),
         "by_exit_reason": by_exit.to_dict("records"),
+        "by_entry_session": by_entry_session.to_dict("records"),
+        "by_path_tag": by_path_tag.to_dict("records"),
+        "modes": {
+            "session_tp_sl": bool(session_tp_sl),
+            "structural_sl": bool(structural_sl),
+            "no_progress_exit": bool(no_progress_exit),
+            "underwater_exit_min": float(underwater_exit_min),
+            "tp_sl_mode": "structural" if bool(structural_sl) else ("session" if bool(session_tp_sl) else "fixed"),
+        },
+        "session_mode": {
+            "dead_hours_start": int(session_dead_start),
+            "dead_hours_end": int(session_dead_end),
+            "candidate_session_counts": dict(candidate_session_counts),
+            "dead_hours_skipped": int(blocked_reasons.get("dead_hours", 0)),
+            "tp_sl_pips": {
+                "tokyo": {"tp": float(session_tp_tokyo), "sl": float(session_sl_tokyo)},
+                "london_open": {"tp": float(session_tp_london_open), "sl": float(session_sl_london_open)},
+                "ny_overlap": {"tp": float(session_tp_ny_overlap), "sl": float(session_sl_ny_overlap)},
+                "other": {"tp": float(tp_pips), "sl": float(sl_pips)},
+            },
+        },
+        "structural_mode": {
+            "enabled": bool(structural_sl),
+            "lookback_bars": int(structural_sl_lookback),
+            "buffer_pips": float(structural_sl_buffer_pips),
+            "max_sl_pips": float(structural_sl_max_pips),
+            "skipped_structural_wide": int(structural_skipped_wide),
+            "skipped_structural_invalid": int(structural_skipped_invalid),
+            "skipped_structural_wide_pct_of_candidates": round(
+                (float(structural_skipped_wide) / max(1, sum(candidate_session_counts.values()))) * 100.0,
+                3,
+                ),
+        },
+        "no_progress_mode": {
+            "enabled": bool(no_progress_exit),
+            "stage1_min": float(np_stage1_min),
+            "stage1_max_mfe_pips": float(np_stage1_max_mfe_pips),
+            "stage1_loss_pips": float(np_stage1_loss_pips),
+            "stage2_min": float(np_stage2_min),
+            "stage2_max_mfe_pips": float(np_stage2_max_mfe_pips),
+            "stage2_loss_pips": float(np_stage2_loss_pips),
+            "opposite_bars": int(np_opposite_bars),
+            "exits": {
+                "stage1": no_progress_stage1_exits,
+                "stage2": no_progress_stage2_exits,
+                "opposite_ema": no_progress_opposite_exits,
+            },
+        },
+        "path_metrics": {
+            "underwater_whole_trade_count": underwater_count,
+            "underwater_whole_trade_pct": round((underwater_count / len(tdf)) * 100.0, 3),
+            "reversal_trap_count": reversal_trap_count,
+            "reversal_trap_pct": round((reversal_trap_count / len(tdf)) * 100.0, 3),
+            "mae_median_pips": round(float(tdf["mae_pips"].median()), 3),
+            "mfe_median_pips": round(float(tdf["mfe_pips"].median()), 3),
+            "mfe_before_stop_median_pips": round(mfe_before_stop_median, 3) if mfe_before_stop_median is not None else None,
+            "time_to_first_positive_median_sec": round(time_to_positive_median_sec, 3) if time_to_positive_median_sec is not None else None,
+        },
+        "trades_with_path_tags": tdf[
+            [
+                "trade_id",
+                "side",
+                "entry_type",
+                "tier_period",
+                "entry_time",
+                "exit_time",
+                "entry_price",
+                "exit_price",
+                "lots",
+                "pips",
+                "usd",
+                "exit_reason",
+                "rr_tier",
+                "rr_score",
+                "exhaustion_zone",
+                "entry_session",
+                "initial_sl_pips",
+                "initial_tp_pips",
+                "mae_pips",
+                "mfe_pips",
+                "time_to_first_positive_sec",
+                "underwater_whole_trade",
+                "hit_tp_before_meaningful_dd",
+                "mfe_before_stop_pips",
+                "reversal_trap_flag",
+                "path_tag",
+            ]
+        ].to_dict("records"),
         "trades_sample": tdf.tail(20).to_dict("records"),
     }
 
@@ -855,6 +1460,36 @@ def main() -> int:
             "sl_pips": float(args.sl_pips),
             "m5_min_gap_pips": float(args.m5_min_gap_pips),
             "ema_zone_filter_enabled": bool(args.ema_zone_filter),
+            "tier_periods": parse_tier_periods(args.tier_periods),
+            "max_open_trades_per_side": 5,
+            "max_zone_open": int(args.max_zone_open),
+            "max_tier_open": int(args.max_tier_open),
+            "spread_aware_be_enabled": bool(args.spread_aware_be),
+            "spread_aware_be_mode": str(args.spread_aware_be_mode),
+            "spread_aware_be_fixed_trigger_pips": float(args.spread_aware_be_fixed_trigger_pips),
+            "spread_aware_be_buffer_pips": float(args.spread_aware_be_buffer_pips),
+            "session_tp_sl": bool(args.session_tp_sl),
+            "session_tp_tokyo": float(args.session_tp_tokyo),
+            "session_sl_tokyo": float(args.session_sl_tokyo),
+            "session_tp_london_open": float(args.session_tp_london_open),
+            "session_sl_london_open": float(args.session_sl_london_open),
+            "session_tp_ny_overlap": float(args.session_tp_ny_overlap),
+            "session_sl_ny_overlap": float(args.session_sl_ny_overlap),
+            "session_dead_start": int(args.session_dead_start),
+            "session_dead_end": int(args.session_dead_end),
+            "structural_sl": bool(args.structural_sl),
+            "structural_sl_lookback": int(args.structural_sl_lookback),
+            "structural_sl_buffer_pips": float(args.structural_sl_buffer_pips),
+            "structural_sl_max_pips": float(args.structural_sl_max_pips),
+            "no_progress_exit": bool(args.no_progress_exit),
+            "np_stage1_min": float(args.np_stage1_min),
+            "np_stage1_max_mfe_pips": float(args.np_stage1_max_mfe_pips),
+            "np_stage1_loss_pips": float(args.np_stage1_loss_pips),
+            "np_stage2_min": float(args.np_stage2_min),
+            "np_stage2_max_mfe_pips": float(args.np_stage2_max_mfe_pips),
+            "np_stage2_loss_pips": float(args.np_stage2_loss_pips),
+            "np_opposite_bars": int(args.np_opposite_bars),
+            "underwater_exit_min": float(args.underwater_exit_min),
             "rr_enabled": bool(args.rr_enabled),
             "rr_tier_medium": float(args.rr_tier_medium),
             "rr_tier_high": float(args.rr_tier_high),
@@ -875,6 +1510,35 @@ def main() -> int:
             sl_pips=float(args.sl_pips),
             m5_min_gap_pips=float(args.m5_min_gap_pips),
             ema_zone_filter_enabled=bool(args.ema_zone_filter),
+            tier_periods=parse_tier_periods(args.tier_periods),
+            max_zone_open=int(args.max_zone_open),
+            max_tier_open=int(args.max_tier_open),
+            spread_aware_be_enabled=bool(args.spread_aware_be),
+            spread_aware_be_mode=str(args.spread_aware_be_mode),
+            spread_aware_be_fixed_trigger_pips=float(args.spread_aware_be_fixed_trigger_pips),
+            spread_aware_be_buffer_pips=float(args.spread_aware_be_buffer_pips),
+            session_tp_sl=bool(args.session_tp_sl),
+            session_tp_tokyo=float(args.session_tp_tokyo),
+            session_sl_tokyo=float(args.session_sl_tokyo),
+            session_tp_london_open=float(args.session_tp_london_open),
+            session_sl_london_open=float(args.session_sl_london_open),
+            session_tp_ny_overlap=float(args.session_tp_ny_overlap),
+            session_sl_ny_overlap=float(args.session_sl_ny_overlap),
+            session_dead_start=int(args.session_dead_start),
+            session_dead_end=int(args.session_dead_end),
+            structural_sl=bool(args.structural_sl),
+            structural_sl_lookback=int(args.structural_sl_lookback),
+            structural_sl_buffer_pips=float(args.structural_sl_buffer_pips),
+            structural_sl_max_pips=float(args.structural_sl_max_pips),
+            no_progress_exit=bool(args.no_progress_exit),
+            np_stage1_min=float(args.np_stage1_min),
+            np_stage1_max_mfe_pips=float(args.np_stage1_max_mfe_pips),
+            np_stage1_loss_pips=float(args.np_stage1_loss_pips),
+            np_stage2_min=float(args.np_stage2_min),
+            np_stage2_max_mfe_pips=float(args.np_stage2_max_mfe_pips),
+            np_stage2_loss_pips=float(args.np_stage2_loss_pips),
+            np_opposite_bars=int(args.np_opposite_bars),
+            underwater_exit_min=float(args.underwater_exit_min),
             rr_enabled=bool(args.rr_enabled),
             rr_tier_medium=float(args.rr_tier_medium),
             rr_tier_high=float(args.rr_tier_high),

@@ -1,0 +1,263 @@
+{
+  "config": {
+    "inputs": [
+      "/Users/codygnon/Documents/usdjpy_assistant/USDJPY_M1_50k_new.csv"
+    ],
+    "bars_m1": 50000,
+    "start_utc": "2026-01-06 06:21:00+00:00",
+    "end_utc": "2026-02-24 04:30:00+00:00",
+    "pip_size": 0.01,
+    "spread_mode": "fixed",
+    "spread_avg_target_pips": 1.8,
+    "spread_avg_actual_pips": 1.8,
+    "spread_min_pips": 1.0,
+    "spread_max_pips": 2.2,
+    "base_lot": 0.1,
+    "trend": {
+      "h1_ema_fast": 20,
+      "h1_ema_slow": 50
+    },
+    "sessions_utc": {
+      "london": [
+        7.0,
+        11.0
+      ],
+      "ny_overlap": [
+        13.0,
+        16.0
+      ],
+      "entry_sessions_mode": "both"
+    },
+    "mode1": {
+      "range_minutes": 30,
+      "range_min_pips": 5.0,
+      "range_max_pips": 20.0,
+      "breakout_margin_pips": 1.0,
+      "mode1_only": true
+    },
+    "mode2": {
+      "impulse_lookback_bars": 10,
+      "impulse_min_body_pips": 3.0,
+      "pullback_lookback_bars": 10,
+      "cooldown_bars": 6
+    },
+    "risk": {
+      "sl_floor_pips": 4.0,
+      "sl_buffer_pips": 1.5,
+      "sl_mode1_max_pips": 15.0,
+      "sl_mode2_lookback_bars": 5,
+      "sl_mode2_max_pips": 12.0,
+      "tp1_multiplier": 1.5,
+      "tp2_multiplier": 2.5,
+      "tp1_close_fraction": 0.5,
+      "be_offset_pips": 1.0,
+      "trail_buffer_pips": 3.0
+    },
+    "caps": {
+      "max_open_positions": 1,
+      "max_entries_per_day": 3,
+      "loss_after_first_full_sl_lot_mult": 1.0
+    }
+  },
+  "results": {
+    "summary": {
+      "trades": 5,
+      "wins": 3,
+      "losses": 2,
+      "win_rate": 60.0,
+      "net_pips": 25.526,
+      "net_usd": 16.211,
+      "avg_win_pips": 18.309,
+      "avg_loss_pips": -14.7,
+      "median_win_pips": 18.073,
+      "median_loss_pips": -14.7,
+      "breakeven_win_rate_est": 44.534,
+      "profit_factor": 1.8682,
+      "max_drawdown_usd": 18.573,
+      "max_open_positions": 1
+    },
+    "by_mode": [
+      {
+        "entry_mode": 1,
+        "trades": 5,
+        "wins": 3,
+        "losses": 2,
+        "win_rate": 60.0,
+        "net_pips": 25.526402604344867,
+        "net_usd": 16.211335774691555
+      }
+    ],
+    "by_session": [
+      {
+        "entry_session": "ny_overlap",
+        "trades": 4,
+        "wins": 2,
+        "losses": 2,
+        "win_rate": 50.0,
+        "net_pips": 7.4538563190998275,
+        "net_usd": 4.751154164186948
+      },
+      {
+        "entry_session": "london",
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "win_rate": 100.0,
+        "net_pips": 18.07254628524504,
+        "net_usd": 11.460181610504609
+      }
+    ],
+    "by_exit_reason": [
+      {
+        "exit_reason": "tp1_then_trail",
+        "trades": 3,
+        "wins": 3,
+        "losses": 0,
+        "win_rate": 100.0,
+        "net_pips": 54.926402604340296,
+        "net_usd": 34.78394388478406
+      },
+      {
+        "exit_reason": "sl",
+        "trades": 2,
+        "wins": 0,
+        "losses": 2,
+        "win_rate": 0.0,
+        "net_pips": -29.39999999999543,
+        "net_usd": -18.572608110092503
+      }
+    ],
+    "exit_reason_counts": {
+      "tp1_then_trail": 3,
+      "sl": 2
+    },
+    "closed_trades": [
+      {
+        "trade_id": 1,
+        "side": "buy",
+        "entry_mode": 1,
+        "entry_session": "ny_overlap",
+        "entry_time": "2026-01-08 13:35:00+00:00",
+        "exit_time": "2026-01-08 14:57:00+00:00",
+        "entry_price": 156.795,
+        "exit_price": 156.96228549180782,
+        "sl_pips": 14.399999999997704,
+        "tp1_pips": 21.599999999996555,
+        "tp2_pips": 35.99999999999426,
+        "pips": 19.164274590390562,
+        "usd": 12.207342485753937,
+        "exit_reason": "tp1_then_trail",
+        "entry_day": "2026-01-08"
+      },
+      {
+        "trade_id": 2,
+        "side": "buy",
+        "entry_mode": 1,
+        "entry_session": "london",
+        "entry_time": "2026-01-09 07:35:00+00:00",
+        "exit_time": "2026-01-09 10:26:00+00:00",
+        "entry_price": 157.511,
+        "exit_price": 157.65645092570492,
+        "sl_pips": 14.399999999997704,
+        "tp1_pips": 21.599999999996555,
+        "tp2_pips": 35.99999999999426,
+        "pips": 18.07254628524504,
+        "usd": 11.460181610504609,
+        "exit_reason": "tp1_then_trail",
+        "entry_day": "2026-01-09"
+      },
+      {
+        "trade_id": 3,
+        "side": "buy",
+        "entry_mode": 1,
+        "entry_session": "ny_overlap",
+        "entry_time": "2026-01-13 14:45:00+00:00",
+        "exit_time": "2026-01-13 16:52:00+00:00",
+        "entry_price": 158.944,
+        "exit_price": 159.0802916345741,
+        "sl_pips": 14.499999999998181,
+        "tp1_pips": 21.74999999999727,
+        "tp2_pips": 36.24999999999545,
+        "pips": 17.689581728704695,
+        "usd": 11.116419788525512,
+        "exit_reason": "tp1_then_trail",
+        "entry_day": "2026-01-13"
+      },
+      {
+        "trade_id": 4,
+        "side": "buy",
+        "entry_mode": 1,
+        "entry_session": "ny_overlap",
+        "entry_time": "2026-01-15 15:05:00+00:00",
+        "exit_time": "2026-01-15 15:34:00+00:00",
+        "entry_price": 158.689,
+        "exit_price": 158.53900000000002,
+        "sl_pips": 14.999999999997726,
+        "tp1_pips": 22.49999999999659,
+        "tp2_pips": 37.499999999994316,
+        "pips": -14.999999999997726,
+        "usd": -9.461394357222972,
+        "exit_reason": "sl",
+        "entry_day": "2026-01-15"
+      },
+      {
+        "trade_id": 5,
+        "side": "sell",
+        "entry_mode": 1,
+        "entry_session": "ny_overlap",
+        "entry_time": "2026-01-19 13:40:00+00:00",
+        "exit_time": "2026-01-19 15:46:00+00:00",
+        "entry_price": 157.90300000000002,
+        "exit_price": 158.047,
+        "sl_pips": 14.399999999997704,
+        "tp1_pips": 21.599999999996555,
+        "tp2_pips": 35.99999999999426,
+        "pips": -14.399999999997704,
+        "usd": -9.11121375286953,
+        "exit_reason": "sl",
+        "entry_day": "2026-01-19"
+      }
+    ],
+    "daily": [
+      {
+        "entry_day": "2026-01-08",
+        "trades": 1,
+        "wins": 1,
+        "net_pips": 19.164274590390562,
+        "net_usd": 12.207342485753937
+      },
+      {
+        "entry_day": "2026-01-09",
+        "trades": 1,
+        "wins": 1,
+        "net_pips": 18.07254628524504,
+        "net_usd": 11.460181610504609
+      },
+      {
+        "entry_day": "2026-01-13",
+        "trades": 1,
+        "wins": 1,
+        "net_pips": 17.689581728704695,
+        "net_usd": 11.116419788525512
+      },
+      {
+        "entry_day": "2026-01-15",
+        "trades": 1,
+        "wins": 0,
+        "net_pips": -14.999999999997726,
+        "net_usd": -9.461394357222972
+      },
+      {
+        "entry_day": "2026-01-19",
+        "trades": 1,
+        "wins": 0,
+        "net_pips": -14.399999999997704,
+        "net_usd": -9.11121375286953
+      }
+    ],
+    "blocked_reasons": {
+      "h1_insufficient_bars": 900,
+      "sl_too_wide_mode_1": 497
+    }
+  }
+}

@@ -1,0 +1,286 @@
+{
+  "config": {
+    "inputs": [
+      "/Users/codygnon/Documents/usdjpy_assistant/USDJPY_M1_50k_new.csv"
+    ],
+    "bars_m1": 50000,
+    "start_utc": "2026-01-06 06:21:00+00:00",
+    "end_utc": "2026-02-24 04:30:00+00:00",
+    "pip_size": 0.01,
+    "spread_mode": "fixed",
+    "spread_avg_target_pips": 1.8,
+    "spread_avg_actual_pips": 1.8,
+    "spread_min_pips": 1.0,
+    "spread_max_pips": 2.2,
+    "base_lot": 0.1,
+    "d1_ema_period": 20,
+    "h4_ema_fast": 9,
+    "h4_ema_slow": 21,
+    "h4_min_gap_pips": 3.0,
+    "d1_neutral_pips": 0.5,
+    "d1_neutral_use_h4": false,
+    "sessions_utc": {
+      "tokyo_range": [
+        0.0,
+        7.0
+      ],
+      "london": [
+        7.0,
+        11.5
+      ],
+      "ny_overlap": [
+        12.5,
+        16.0
+      ]
+    },
+    "mode_a": {
+      "breakout_pips": 2.0,
+      "retest_pips": 2.0,
+      "retest_window_bars": 90,
+      "enabled": true
+    },
+    "mode_b": {
+      "level_proximity_pips": 3.0,
+      "pullback_bars": 3,
+      "confirm_proximity_pips": 5.0,
+      "enabled": true,
+      "london_only": true,
+      "half_size": true,
+      "require_rejection": false,
+      "rejection_probe_pips": 1.0
+    },
+    "key_levels": {
+      "h4_swing_lookback": 20,
+      "h4_swing_keep": 3,
+      "round_step_price": 0.5,
+      "round_steps_price": [
+        0.5
+      ],
+      "round_steps_pips": [
+        50.0
+      ]
+    },
+    "risk": {
+      "sl_lookback_m5": 20,
+      "sl_buffer_pips": 1.5,
+      "sl_max_pips": 12.0,
+      "sl_min_pips": null,
+      "sl_floor_pips": 5.0,
+      "tp1_mult": 1.5,
+      "tp2_mult": 4.0,
+      "tp1_close_fraction": 0.6,
+      "trail_buffer_pips": 3.0
+    },
+    "profiles": {
+      "mode_a_only": false,
+      "mode_b_london_only": true,
+      "mode_b_half_size": true
+    },
+    "caps": {
+      "max_open_positions": 1,
+      "max_entries_per_day": 2,
+      "second_entry_loss_mult": 0.5
+    }
+  },
+  "results": {
+    "summary": {
+      "trades": 6,
+      "wins": 1,
+      "losses": 5,
+      "win_rate": 16.667,
+      "net_pips": -40.266,
+      "net_usd": -12.962,
+      "avg_win_pips": 7.534,
+      "avg_loss_pips": -9.56,
+      "profit_factor": 0.1576,
+      "max_drawdown_usd": 10.873,
+      "max_open_positions": 1
+    },
+    "by_entry_mode": [
+      {
+        "entry_mode": "B",
+        "trades": 6,
+        "win_rate": 16.666666666666664,
+        "net_pips": -40.26632917936638,
+        "net_usd": -12.961874593271085
+      }
+    ],
+    "by_session": [
+      {
+        "entry_session": "london",
+        "trades": 6,
+        "win_rate": 16.666666666666664,
+        "net_pips": -40.26632917936638,
+        "net_usd": -12.961874593271085
+      }
+    ],
+    "closed_trades": [
+      {
+        "trade_id": 1,
+        "side": "buy",
+        "entry_mode": "B",
+        "entry_session": "london",
+        "entry_time": "2026-01-12 07:01:00+00:00",
+        "exit_time": "2026-01-12 07:09:00+00:00",
+        "entry_price": 158.015,
+        "exit_price": 157.949,
+        "sl_pips": 6.599999999997408,
+        "tp1_pips": 9.899999999996112,
+        "tp2_pips": 26.39999999998963,
+        "pips": -6.599999999997408,
+        "usd": -2.089281983424209,
+        "exit_reason": "sl",
+        "level_name": "round_below_0.5000",
+        "level_price": 158.0,
+        "entry_day": "2026-01-12"
+      },
+      {
+        "trade_id": 2,
+        "side": "buy",
+        "entry_mode": "B",
+        "entry_session": "london",
+        "entry_time": "2026-01-14 10:20:00+00:00",
+        "exit_time": "2026-01-14 10:33:00+00:00",
+        "entry_price": 158.76299999999998,
+        "exit_price": 158.65300000000002,
+        "sl_pips": 10.99999999999568,
+        "tp1_pips": 16.49999999999352,
+        "tp2_pips": 43.99999999998272,
+        "pips": -10.99999999999568,
+        "usd": -3.4666851556528018,
+        "exit_reason": "sl",
+        "level_name": "current_day_low",
+        "level_price": 158.725,
+        "entry_day": "2026-01-14"
+      },
+      {
+        "trade_id": 3,
+        "side": "sell",
+        "entry_mode": "B",
+        "entry_session": "london",
+        "entry_time": "2026-01-29 07:14:00+00:00",
+        "exit_time": "2026-01-29 07:20:00+00:00",
+        "entry_price": 153.055,
+        "exit_price": 153.171,
+        "sl_pips": 11.599999999998545,
+        "tp1_pips": 17.399999999997817,
+        "tp2_pips": 46.39999999999418,
+        "pips": -11.599999999998545,
+        "usd": -3.7866175712107855,
+        "exit_reason": "sl",
+        "level_name": "h4_swing_high_2",
+        "level_price": 153.072,
+        "entry_day": "2026-01-29"
+      },
+      {
+        "trade_id": 4,
+        "side": "sell",
+        "entry_mode": "B",
+        "entry_session": "london",
+        "entry_time": "2026-02-13 09:23:00+00:00",
+        "exit_time": "2026-02-13 10:03:00+00:00",
+        "entry_price": 153.616,
+        "exit_price": 153.54915822948445,
+        "sl_pips": 5.3999999999973625,
+        "tp1_pips": 8.099999999996044,
+        "tp2_pips": 21.59999999998945,
+        "pips": 7.533670820620273,
+        "usd": 2.4533247438071797,
+        "exit_reason": "tp1_then_trail",
+        "level_name": "current_day_high",
+        "level_price": 153.64,
+        "entry_day": "2026-02-13"
+      },
+      {
+        "trade_id": 5,
+        "side": "sell",
+        "entry_mode": "B",
+        "entry_session": "london",
+        "entry_time": "2026-02-16 08:18:00+00:00",
+        "exit_time": "2026-02-16 08:22:00+00:00",
+        "entry_price": 153.347,
+        "exit_price": 153.422,
+        "sl_pips": 7.499999999998863,
+        "tp1_pips": 11.249999999998295,
+        "tp2_pips": 29.999999999995453,
+        "pips": -7.499999999998863,
+        "usd": -2.44423876627826,
+        "exit_reason": "sl",
+        "level_name": "current_day_high",
+        "level_price": 153.382,
+        "entry_day": "2026-02-16"
+      },
+      {
+        "trade_id": 6,
+        "side": "sell",
+        "entry_mode": "B",
+        "entry_session": "london",
+        "entry_time": "2026-02-17 10:11:00+00:00",
+        "exit_time": "2026-02-17 10:14:00+00:00",
+        "entry_price": 152.85000000000002,
+        "exit_price": 152.96099999999998,
+        "sl_pips": 11.099999999996157,
+        "tp1_pips": 16.649999999994236,
+        "tp2_pips": 44.39999999998463,
+        "pips": -11.099999999996157,
+        "usd": -3.628375860512209,
+        "exit_reason": "sl",
+        "level_name": "prev_day_high",
+        "level_price": 152.866,
+        "entry_day": "2026-02-17"
+      }
+    ],
+    "daily": [
+      {
+        "entry_day": "2026-01-12",
+        "trades": 1,
+        "wins": 0,
+        "net_pips": -6.599999999997408,
+        "net_usd": -2.089281983424209
+      },
+      {
+        "entry_day": "2026-01-14",
+        "trades": 1,
+        "wins": 0,
+        "net_pips": -10.99999999999568,
+        "net_usd": -3.4666851556528018
+      },
+      {
+        "entry_day": "2026-01-29",
+        "trades": 1,
+        "wins": 0,
+        "net_pips": -11.599999999998545,
+        "net_usd": -3.7866175712107855
+      },
+      {
+        "entry_day": "2026-02-13",
+        "trades": 1,
+        "wins": 1,
+        "net_pips": 7.533670820620273,
+        "net_usd": 2.4533247438071797
+      },
+      {
+        "entry_day": "2026-02-16",
+        "trades": 1,
+        "wins": 0,
+        "net_pips": -7.499999999998863,
+        "net_usd": -2.44423876627826
+      },
+      {
+        "entry_day": "2026-02-17",
+        "trades": 1,
+        "wins": 0,
+        "net_pips": -11.099999999996157,
+        "net_usd": -3.628375860512209
+      }
+    ],
+    "blocked_reasons": {
+      "mode_b_session_restricted": 5250,
+      "d1_h4_disagree": 2820,
+      "h4_gap": 900,
+      "trend_insufficient_bars": 480,
+      "d1_neutral": 480,
+      "sl_too_wide": 126
+    }
+  }
+}
