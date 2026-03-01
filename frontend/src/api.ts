@@ -187,6 +187,22 @@ export interface TempEmaSettings {
   up_m1_ema_mid: number | null;
   up_m1_ema_slow: number | null;
   up_m1_ema_veto: number | null;
+  // Uncle Parsh H1 Breakout: H1 Detection
+  up_h1_lookback_hours: number | null;
+  up_h1_swing_strength: number | null;
+  up_h1_cluster_tolerance_pips: number | null;
+  up_h1_min_touches_for_major: number | null;
+  // Uncle Parsh H1 Breakout: M5 Catalyst
+  up_power_close_body_pct: number | null;
+  up_velocity_pips: number | null;
+  // Uncle Parsh H1 Breakout: Exit Strategy
+  up_initial_sl_spread_plus_pips: number | null;
+  up_tp1_pips: number | null;
+  up_tp1_close_pct: number | null;
+  up_be_spread_plus_pips: number | null;
+  up_trail_ema_period: number | null;
+  // Uncle Parsh H1 Breakout: Discipline
+  up_max_spread_pips: number | null;
 }
 
 export async function getTempSettings(profileName: string): Promise<TempEmaSettings> {

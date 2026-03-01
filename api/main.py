@@ -400,6 +400,22 @@ class TempEmaSettingsUpdate(BaseModel):
     up_m1_ema_mid: Optional[int] = None
     up_m1_ema_slow: Optional[int] = None
     up_m1_ema_veto: Optional[int] = None
+    # Uncle Parsh H1 Breakout: H1 Detection
+    up_h1_lookback_hours: Optional[int] = None
+    up_h1_swing_strength: Optional[int] = None
+    up_h1_cluster_tolerance_pips: Optional[float] = None
+    up_h1_min_touches_for_major: Optional[int] = None
+    # Uncle Parsh H1 Breakout: M5 Catalyst
+    up_power_close_body_pct: Optional[float] = None
+    up_velocity_pips: Optional[float] = None
+    # Uncle Parsh H1 Breakout: Exit Strategy
+    up_initial_sl_spread_plus_pips: Optional[float] = None
+    up_tp1_pips: Optional[float] = None
+    up_tp1_close_pct: Optional[float] = None
+    up_be_spread_plus_pips: Optional[float] = None
+    up_trail_ema_period: Optional[int] = None
+    # Uncle Parsh H1 Breakout: Discipline
+    up_max_spread_pips: Optional[float] = None
 
 
 class ApplyPresetRequest(BaseModel):
@@ -722,6 +738,18 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
         "up_m1_ema_mid": state.temp_up_m1_ema_mid,
         "up_m1_ema_slow": state.temp_up_m1_ema_slow,
         "up_m1_ema_veto": state.temp_up_m1_ema_veto,
+        "up_h1_lookback_hours": state.temp_up_h1_lookback_hours,
+        "up_h1_swing_strength": state.temp_up_h1_swing_strength,
+        "up_h1_cluster_tolerance_pips": state.temp_up_h1_cluster_tolerance_pips,
+        "up_h1_min_touches_for_major": state.temp_up_h1_min_touches_for_major,
+        "up_power_close_body_pct": state.temp_up_power_close_body_pct,
+        "up_velocity_pips": state.temp_up_velocity_pips,
+        "up_initial_sl_spread_plus_pips": state.temp_up_initial_sl_spread_plus_pips,
+        "up_tp1_pips": state.temp_up_tp1_pips,
+        "up_tp1_close_pct": state.temp_up_tp1_close_pct,
+        "up_be_spread_plus_pips": state.temp_up_be_spread_plus_pips,
+        "up_trail_ema_period": state.temp_up_trail_ema_period,
+        "up_max_spread_pips": state.temp_up_max_spread_pips,
     }
 
 
@@ -766,6 +794,18 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
         temp_up_m1_ema_mid=req.up_m1_ema_mid,
         temp_up_m1_ema_slow=req.up_m1_ema_slow,
         temp_up_m1_ema_veto=req.up_m1_ema_veto,
+        temp_up_h1_lookback_hours=req.up_h1_lookback_hours,
+        temp_up_h1_swing_strength=req.up_h1_swing_strength,
+        temp_up_h1_cluster_tolerance_pips=req.up_h1_cluster_tolerance_pips,
+        temp_up_h1_min_touches_for_major=req.up_h1_min_touches_for_major,
+        temp_up_power_close_body_pct=req.up_power_close_body_pct,
+        temp_up_velocity_pips=req.up_velocity_pips,
+        temp_up_initial_sl_spread_plus_pips=req.up_initial_sl_spread_plus_pips,
+        temp_up_tp1_pips=req.up_tp1_pips,
+        temp_up_tp1_close_pct=req.up_tp1_close_pct,
+        temp_up_be_spread_plus_pips=req.up_be_spread_plus_pips,
+        temp_up_trail_ema_period=req.up_trail_ema_period,
+        temp_up_max_spread_pips=req.up_max_spread_pips,
     )
     save_state(state_path, new_state)
     return {"status": "saved"}

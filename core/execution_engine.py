@@ -6562,6 +6562,7 @@ def evaluate_h1_breakout_conditions(
     level_state: list[dict],
     is_new_m1: bool,
     is_new_m5: bool,
+    temp_overrides: Optional[dict] = None,
 ) -> dict:
     """Evaluate Uncle Parsh H1 Breakout conditions.
 
@@ -6577,6 +6578,26 @@ def evaluate_h1_breakout_conditions(
     }
     """
     from core.h1_level_detector import H1Level, H1LevelDetector
+
+    # Resolve overridable fields (temp_overrides takes precedence over policy)
+    def _ov(field, default=None):
+        if temp_overrides and field in temp_overrides and temp_overrides[field] is not None:
+            return temp_overrides[field]
+        return getattr(policy, field, default)
+
+    ov_m5_trend_ema_fast = _ov("m5_trend_ema_fast")
+    ov_m5_trend_ema_slow = _ov("m5_trend_ema_slow")
+    ov_m1_ema_fast = _ov("m1_ema_fast")
+    ov_m1_ema_mid = _ov("m1_ema_mid")
+    ov_m1_ema_slow = _ov("m1_ema_slow")
+    ov_m1_ema_veto = _ov("m1_ema_veto")
+    ov_h1_lookback_hours = _ov("h1_lookback_hours")
+    ov_h1_swing_strength = _ov("h1_swing_strength")
+    ov_h1_cluster_tolerance_pips = _ov("h1_cluster_tolerance_pips")
+    ov_h1_min_touches_for_major = _ov("h1_min_touches_for_major")
+    ov_power_close_body_pct = _ov("power_close_body_pct")
+    ov_velocity_pips = _ov("velocity_pips")
+    ov_max_spread_pips = _ov("max_spread_pips")
 
     reasons: list[str] = []
     no_signal = {
@@ -6595,8 +6616,8 @@ def evaluate_h1_breakout_conditions(
 
     # ----- M5 Trend EMA alignment -----
     m5_close = m5_df["close"].astype(float)
-    m5_ema_fast = ema_fn(m5_close, policy.m5_trend_ema_fast)
-    m5_ema_slow = ema_fn(m5_close, policy.m5_trend_ema_slow)
+    m5_ema_fast = ema_fn(m5_close, ov_m5_trend_ema_fast)
+    m5_ema_slow = ema_fn(m5_close, ov_m5_trend_ema_slow)
     if m5_ema_fast.empty or m5_ema_slow.empty or pd.isna(m5_ema_fast.iloc[-1]) or pd.isna(m5_ema_slow.iloc[-1]):
         reasons.append("M5 EMA not ready")
         return no_signal
@@ -6614,10 +6635,10 @@ def evaluate_h1_breakout_conditions(
     # ----- Detect / reload H1 levels -----
     current_date = pd.Timestamp.now(tz="UTC").date().isoformat()
     detector = H1LevelDetector({
-        "h1_lookback_hours": policy.h1_lookback_hours,
-        "h1_swing_strength": policy.h1_swing_strength,
-        "h1_cluster_tolerance_pips": policy.h1_cluster_tolerance_pips,
-        "h1_min_touches_for_major": policy.h1_min_touches_for_major,
+        "h1_lookback_hours": ov_h1_lookback_hours,
+        "h1_swing_strength": ov_h1_swing_strength,
+        "h1_cluster_tolerance_pips": ov_h1_cluster_tolerance_pips,
+        "h1_min_touches_for_major": ov_h1_min_touches_for_major,
         "h1_min_distance_between_levels_pips": policy.h1_min_distance_between_levels_pips,
         "pip_size": pip_size,
     })
@@ -6653,7 +6674,7 @@ def evaluate_h1_breakout_conditions(
                     "high": float(m5_last["high"]),
                     "low": float(m5_last["low"]),
                 }
-                if detector.check_power_close(lv, candle_dict, pip_size):
+                if detector.check_power_close(lv, candle_dict, pip_size, ov_power_close_body_pct):
                     lv.is_broken = True
                     lv.break_time = m5_last_time
                     lv.power_close_bar_index = m5_bar_count - 1
@@ -6670,7 +6691,7 @@ def evaluate_h1_breakout_conditions(
                     bars_since_break = (m5_bar_count - 1) - lv.power_close_bar_index
                     if bars_since_break >= 2:
                         vel = detector.check_velocity(
-                            lv, float(m5_last["close"]), pip_size, policy.velocity_pips
+                            lv, float(m5_last["close"]), pip_size, ov_velocity_pips
                         )
                         lv.velocity_type = vel
                         lv.velocity_checked = True
@@ -6685,10 +6706,10 @@ def evaluate_h1_breakout_conditions(
         return no_signal
 
     m1_close = m1_df["close"].astype(float)
-    m1_ema_fast = ema_fn(m1_close, policy.m1_ema_fast)
-    m1_ema_mid = ema_fn(m1_close, policy.m1_ema_mid)
-    m1_ema_slow = ema_fn(m1_close, policy.m1_ema_slow)
-    m1_ema_veto = ema_fn(m1_close, policy.m1_ema_veto)
+    m1_ema_fast = ema_fn(m1_close, ov_m1_ema_fast)
+    m1_ema_mid = ema_fn(m1_close, ov_m1_ema_mid)
+    m1_ema_slow = ema_fn(m1_close, ov_m1_ema_slow)
+    m1_ema_veto = ema_fn(m1_close, ov_m1_ema_veto)
 
     if any(s.empty or pd.isna(s.iloc[-1]) for s in [m1_ema_fast, m1_ema_mid, m1_ema_slow, m1_ema_veto]):
         reasons.append("M1 EMAs not ready")
@@ -6721,7 +6742,7 @@ def evaluate_h1_breakout_conditions(
         if side == "buy" and last_m1_close < ema_veto_val:
             # Price too deep below 35 EMA for a buy
             pass  # veto only triggers if close is far past on WRONG side
-        if side == "buy" and last_m1_close > ema_veto_val + (policy.velocity_pips * pip_size):
+        if side == "buy" and last_m1_close > ema_veto_val + (ov_velocity_pips * pip_size):
             pass  # Not a veto — price is extended bullish, which is fine
 
         # Veto check: close on wrong side of 35 EMA
@@ -6794,6 +6815,7 @@ def execute_h1_breakout_policy_demo_only(
     level_state: list[dict],
     is_new_m1: bool,
     is_new_m5: bool,
+    temp_overrides: Optional[dict] = None,
 ) -> dict:
     """Evaluate Uncle Parsh H1 Breakout policy and optionally place a market order.
 
@@ -6815,10 +6837,21 @@ def execute_h1_breakout_policy_demo_only(
 
     pip_size = float(profile.pip_size)
 
+    # Resolve overridable fields
+    def _ov(field, default=None):
+        if temp_overrides and field in temp_overrides and temp_overrides[field] is not None:
+            return temp_overrides[field]
+        return getattr(policy, field, default)
+
+    ov_max_spread_pips = _ov("max_spread_pips")
+    ov_initial_sl_spread_plus_pips = _ov("initial_sl_spread_plus_pips")
+    ov_tp1_pips = _ov("tp1_pips")
+
     # Evaluate conditions
     result = evaluate_h1_breakout_conditions(
         policy, data_by_tf, tick, pip_size,
         level_state, is_new_m1, is_new_m5,
+        temp_overrides=temp_overrides,
     )
     passed = result["passed"]
     side = result["side"]
@@ -6842,8 +6875,8 @@ def execute_h1_breakout_policy_demo_only(
 
     # Spread veto
     current_spread_pips = (tick.ask - tick.bid) / pip_size
-    if current_spread_pips > policy.max_spread_pips:
-        reason = f"spread_veto: {current_spread_pips:.1f}p > max {policy.max_spread_pips}p"
+    if current_spread_pips > ov_max_spread_pips:
+        reason = f"spread_veto: {current_spread_pips:.1f}p > max {ov_max_spread_pips}p"
         store.insert_execution({
             "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
             "profile": profile.profile_name, "symbol": profile.symbol,
@@ -6858,8 +6891,8 @@ def execute_h1_breakout_policy_demo_only(
     # Build candidate
     entry_price = tick.ask if side == "buy" else tick.bid
     current_spread = tick.ask - tick.bid
-    sl_distance = current_spread + policy.initial_sl_spread_plus_pips * pip_size
-    tp_distance = policy.tp1_pips * pip_size
+    sl_distance = current_spread + ov_initial_sl_spread_plus_pips * pip_size
+    tp_distance = ov_tp1_pips * pip_size
 
     if side == "buy":
         stop = entry_price - sl_distance

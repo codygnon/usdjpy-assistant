@@ -60,6 +60,26 @@ class RuntimeState:
     temp_up_m1_ema_slow: Optional[int] = None
     temp_up_m1_ema_veto: Optional[int] = None
 
+    # Uncle Parsh H1 Breakout: H1 Detection overrides
+    temp_up_h1_lookback_hours: Optional[int] = None
+    temp_up_h1_swing_strength: Optional[int] = None
+    temp_up_h1_cluster_tolerance_pips: Optional[float] = None
+    temp_up_h1_min_touches_for_major: Optional[int] = None
+
+    # Uncle Parsh H1 Breakout: M5 Catalyst overrides
+    temp_up_power_close_body_pct: Optional[float] = None
+    temp_up_velocity_pips: Optional[float] = None
+
+    # Uncle Parsh H1 Breakout: Exit Strategy overrides
+    temp_up_initial_sl_spread_plus_pips: Optional[float] = None
+    temp_up_tp1_pips: Optional[float] = None
+    temp_up_tp1_close_pct: Optional[float] = None
+    temp_up_be_spread_plus_pips: Optional[float] = None
+    temp_up_trail_ema_period: Optional[int] = None
+
+    # Uncle Parsh H1 Breakout: Discipline overrides
+    temp_up_max_spread_pips: Optional[float] = None
+
 
 def _load_tier_fired(data: dict) -> dict:
     """Load tier_fired from JSON data with backward compat for old tier_X_fired keys."""
@@ -113,6 +133,18 @@ def load_state(path: str | Path) -> RuntimeState:
         temp_up_m1_ema_mid=data.get("temp_up_m1_ema_mid"),
         temp_up_m1_ema_slow=data.get("temp_up_m1_ema_slow"),
         temp_up_m1_ema_veto=data.get("temp_up_m1_ema_veto"),
+        temp_up_h1_lookback_hours=data.get("temp_up_h1_lookback_hours"),
+        temp_up_h1_swing_strength=data.get("temp_up_h1_swing_strength"),
+        temp_up_h1_cluster_tolerance_pips=data.get("temp_up_h1_cluster_tolerance_pips"),
+        temp_up_h1_min_touches_for_major=data.get("temp_up_h1_min_touches_for_major"),
+        temp_up_power_close_body_pct=data.get("temp_up_power_close_body_pct"),
+        temp_up_velocity_pips=data.get("temp_up_velocity_pips"),
+        temp_up_initial_sl_spread_plus_pips=data.get("temp_up_initial_sl_spread_plus_pips"),
+        temp_up_tp1_pips=data.get("temp_up_tp1_pips"),
+        temp_up_tp1_close_pct=data.get("temp_up_tp1_close_pct"),
+        temp_up_be_spread_plus_pips=data.get("temp_up_be_spread_plus_pips"),
+        temp_up_trail_ema_period=data.get("temp_up_trail_ema_period"),
+        temp_up_max_spread_pips=data.get("temp_up_max_spread_pips"),
     )
 
 
@@ -151,6 +183,18 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "temp_up_m1_ema_mid": state.temp_up_m1_ema_mid,
                 "temp_up_m1_ema_slow": state.temp_up_m1_ema_slow,
                 "temp_up_m1_ema_veto": state.temp_up_m1_ema_veto,
+                "temp_up_h1_lookback_hours": state.temp_up_h1_lookback_hours,
+                "temp_up_h1_swing_strength": state.temp_up_h1_swing_strength,
+                "temp_up_h1_cluster_tolerance_pips": state.temp_up_h1_cluster_tolerance_pips,
+                "temp_up_h1_min_touches_for_major": state.temp_up_h1_min_touches_for_major,
+                "temp_up_power_close_body_pct": state.temp_up_power_close_body_pct,
+                "temp_up_velocity_pips": state.temp_up_velocity_pips,
+                "temp_up_initial_sl_spread_plus_pips": state.temp_up_initial_sl_spread_plus_pips,
+                "temp_up_tp1_pips": state.temp_up_tp1_pips,
+                "temp_up_tp1_close_pct": state.temp_up_tp1_close_pct,
+                "temp_up_be_spread_plus_pips": state.temp_up_be_spread_plus_pips,
+                "temp_up_trail_ema_period": state.temp_up_trail_ema_period,
+                "temp_up_max_spread_pips": state.temp_up_max_spread_pips,
             },
             indent=2,
             sort_keys=False,

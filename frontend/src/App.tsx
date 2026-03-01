@@ -3738,6 +3738,22 @@ interface EditedSettings {
   up_m1_ema_mid: number | null;
   up_m1_ema_slow: number | null;
   up_m1_ema_veto: number | null;
+  // Uncle Parsh H1 Breakout: H1 Detection
+  up_h1_lookback_hours: number | null;
+  up_h1_swing_strength: number | null;
+  up_h1_cluster_tolerance_pips: number | null;
+  up_h1_min_touches_for_major: number | null;
+  // Uncle Parsh H1 Breakout: M5 Catalyst
+  up_power_close_body_pct: number | null;
+  up_velocity_pips: number | null;
+  // Uncle Parsh H1 Breakout: Exit Strategy
+  up_initial_sl_spread_plus_pips: number | null;
+  up_tp1_pips: number | null;
+  up_tp1_close_pct: number | null;
+  up_be_spread_plus_pips: number | null;
+  up_trail_ema_period: number | null;
+  // Uncle Parsh H1 Breakout: Discipline
+  up_max_spread_pips: number | null;
 }
 
 const TRIAL7_DEFAULT_TIER_EMA_PERIODS: number[] = [9, ...Array.from({ length: 24 }, (_, i) => i + 11)];
@@ -4419,6 +4435,22 @@ function PresetsPage({ profile }: { profile: Profile }) {
         up_m1_ema_mid: tempSettings?.up_m1_ema_mid ?? null,
         up_m1_ema_slow: tempSettings?.up_m1_ema_slow ?? null,
         up_m1_ema_veto: tempSettings?.up_m1_ema_veto ?? null,
+        // Uncle Parsh H1 Breakout: H1 Detection
+        up_h1_lookback_hours: tempSettings?.up_h1_lookback_hours ?? null,
+        up_h1_swing_strength: tempSettings?.up_h1_swing_strength ?? null,
+        up_h1_cluster_tolerance_pips: tempSettings?.up_h1_cluster_tolerance_pips ?? null,
+        up_h1_min_touches_for_major: tempSettings?.up_h1_min_touches_for_major ?? null,
+        // Uncle Parsh H1 Breakout: M5 Catalyst
+        up_power_close_body_pct: tempSettings?.up_power_close_body_pct ?? null,
+        up_velocity_pips: tempSettings?.up_velocity_pips ?? null,
+        // Uncle Parsh H1 Breakout: Exit Strategy
+        up_initial_sl_spread_plus_pips: tempSettings?.up_initial_sl_spread_plus_pips ?? null,
+        up_tp1_pips: tempSettings?.up_tp1_pips ?? null,
+        up_tp1_close_pct: tempSettings?.up_tp1_close_pct ?? null,
+        up_be_spread_plus_pips: tempSettings?.up_be_spread_plus_pips ?? null,
+        up_trail_ema_period: tempSettings?.up_trail_ema_period ?? null,
+        // Uncle Parsh H1 Breakout: Discipline
+        up_max_spread_pips: tempSettings?.up_max_spread_pips ?? null,
       });
     }
   }, [showActiveSettings, currentProfile, tempSettings]);
@@ -4795,6 +4827,18 @@ function PresetsPage({ profile }: { profile: Profile }) {
           settings.up_m1_ema_mid = editedSettings.up_m1_ema_mid;
           settings.up_m1_ema_slow = editedSettings.up_m1_ema_slow;
           settings.up_m1_ema_veto = editedSettings.up_m1_ema_veto;
+          settings.up_h1_lookback_hours = editedSettings.up_h1_lookback_hours;
+          settings.up_h1_swing_strength = editedSettings.up_h1_swing_strength;
+          settings.up_h1_cluster_tolerance_pips = editedSettings.up_h1_cluster_tolerance_pips;
+          settings.up_h1_min_touches_for_major = editedSettings.up_h1_min_touches_for_major;
+          settings.up_power_close_body_pct = editedSettings.up_power_close_body_pct;
+          settings.up_velocity_pips = editedSettings.up_velocity_pips;
+          settings.up_initial_sl_spread_plus_pips = editedSettings.up_initial_sl_spread_plus_pips;
+          settings.up_tp1_pips = editedSettings.up_tp1_pips;
+          settings.up_tp1_close_pct = editedSettings.up_tp1_close_pct;
+          settings.up_be_spread_plus_pips = editedSettings.up_be_spread_plus_pips;
+          settings.up_trail_ema_period = editedSettings.up_trail_ema_period;
+          settings.up_max_spread_pips = editedSettings.up_max_spread_pips;
         }
         await api.updateTempSettings(profile.name, settings);
       }
@@ -6794,19 +6838,19 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
                     <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Lookback (hours)</div>
-                      <input type="number" step="1" min="12" max="168" value={(execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_lookback_hours as number ?? 48} readOnly style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, opacity: 0.7 }} />
+                      <input type="number" step="1" min="12" max="168" value={editedSettings.up_h1_lookback_hours ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_lookback_hours as number ?? 48)} onChange={(e) => setEditedSettings({ ...editedSettings, up_h1_lookback_hours: e.target.value ? parseInt(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                     </div>
                     <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Swing Strength</div>
-                      <input type="number" step="1" min="1" max="10" value={(execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_swing_strength as number ?? 3} readOnly style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, opacity: 0.7 }} />
+                      <input type="number" step="1" min="1" max="10" value={editedSettings.up_h1_swing_strength ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_swing_strength as number ?? 3)} onChange={(e) => setEditedSettings({ ...editedSettings, up_h1_swing_strength: e.target.value ? parseInt(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                     </div>
                     <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Cluster Tolerance (pips)</div>
-                      <input type="number" step="0.5" min="1" max="20" value={(execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_cluster_tolerance_pips as number ?? 5.0} readOnly style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, opacity: 0.7 }} />
+                      <input type="number" step="0.5" min="1" max="20" value={editedSettings.up_h1_cluster_tolerance_pips ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_cluster_tolerance_pips as number ?? 5.0)} onChange={(e) => setEditedSettings({ ...editedSettings, up_h1_cluster_tolerance_pips: e.target.value ? parseFloat(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                     </div>
                     <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Min Touches</div>
-                      <input type="number" step="1" min="1" max="10" value={(execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_min_touches_for_major as number ?? 2} readOnly style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, opacity: 0.7 }} />
+                      <input type="number" step="1" min="1" max="10" value={editedSettings.up_h1_min_touches_for_major ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_min_touches_for_major as number ?? 2)} onChange={(e) => setEditedSettings({ ...editedSettings, up_h1_min_touches_for_major: e.target.value ? parseInt(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                     </div>
                   </div>
 
@@ -6824,11 +6868,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       </div>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Power Close Body %</div>
-                        <input type="number" step="0.05" min="0.1" max="1.0" value={(execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.power_close_body_pct as number ?? 0.25} readOnly style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, opacity: 0.7 }} />
+                        <input type="number" step="0.05" min="0.1" max="1.0" value={editedSettings.up_power_close_body_pct ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.power_close_body_pct as number ?? 0.25)} onChange={(e) => setEditedSettings({ ...editedSettings, up_power_close_body_pct: e.target.value ? parseFloat(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                       </div>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Velocity (pips)</div>
-                        <input type="number" step="0.5" min="1" max="20" value={(execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.velocity_pips as number ?? 5.0} readOnly style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, opacity: 0.7 }} />
+                        <input type="number" step="0.5" min="1" max="20" value={editedSettings.up_velocity_pips ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.velocity_pips as number ?? 5.0)} onChange={(e) => setEditedSettings({ ...editedSettings, up_velocity_pips: e.target.value ? parseFloat(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                       </div>
                     </div>
                   </div>
@@ -6865,23 +6909,23 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 8 }}>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>SL: Spread + pips</div>
-                        <input type="number" step="0.5" value={(execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.initial_sl_spread_plus_pips as number ?? 2.0} readOnly style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, opacity: 0.7 }} />
+                        <input type="number" step="0.5" value={editedSettings.up_initial_sl_spread_plus_pips ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.initial_sl_spread_plus_pips as number ?? 2.0)} onChange={(e) => setEditedSettings({ ...editedSettings, up_initial_sl_spread_plus_pips: e.target.value ? parseFloat(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                       </div>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>TP1 (pips)</div>
-                        <input type="number" step="0.5" value={(execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.tp1_pips as number ?? 6.0} readOnly style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, opacity: 0.7 }} />
+                        <input type="number" step="0.5" value={editedSettings.up_tp1_pips ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.tp1_pips as number ?? 6.0)} onChange={(e) => setEditedSettings({ ...editedSettings, up_tp1_pips: e.target.value ? parseFloat(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                       </div>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>TP1 Close %</div>
-                        <input type="number" step="5" value={(execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.tp1_close_pct as number ?? 50} readOnly style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, opacity: 0.7 }} />
+                        <input type="number" step="5" value={editedSettings.up_tp1_close_pct ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.tp1_close_pct as number ?? 50)} onChange={(e) => setEditedSettings({ ...editedSettings, up_tp1_close_pct: e.target.value ? parseFloat(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                       </div>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>BE: Spread + pips</div>
-                        <input type="number" step="0.5" value={(execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.be_spread_plus_pips as number ?? 2.0} readOnly style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, opacity: 0.7 }} />
+                        <input type="number" step="0.5" value={editedSettings.up_be_spread_plus_pips ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.be_spread_plus_pips as number ?? 2.0)} onChange={(e) => setEditedSettings({ ...editedSettings, up_be_spread_plus_pips: e.target.value ? parseFloat(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                       </div>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Trail EMA Period</div>
-                        <input type="number" step="1" value={(execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.trail_ema_period as number ?? 21} readOnly style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, opacity: 0.7 }} />
+                        <input type="number" step="1" value={editedSettings.up_trail_ema_period ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.trail_ema_period as number ?? 21)} onChange={(e) => setEditedSettings({ ...editedSettings, up_trail_ema_period: e.target.value ? parseInt(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                       </div>
                     </div>
                     <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
@@ -6895,7 +6939,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max Spread (pips)</div>
-                        <input type="number" step="0.5" value={(execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.max_spread_pips as number ?? 3.0} readOnly style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600, opacity: 0.7 }} />
+                        <input type="number" step="0.5" value={editedSettings.up_max_spread_pips ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.max_spread_pips as number ?? 3.0)} onChange={(e) => setEditedSettings({ ...editedSettings, up_max_spread_pips: e.target.value ? parseFloat(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                       </div>
                     </div>
                   </div>

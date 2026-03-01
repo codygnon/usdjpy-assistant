@@ -263,8 +263,8 @@ class H1LevelDetector:
 
         return result
 
-    def check_power_close(self, level: H1Level, m5_candle: dict, pip_size: float) -> bool:
-        """Check if M5 candle has 25%+ body past the level.
+    def check_power_close(self, level: H1Level, m5_candle: dict, pip_size: float, body_pct: float = 0.25) -> bool:
+        """Check if M5 candle has body_pct+ body past the level.
 
         Body = abs(close - open). For bull break (close > level):
         body_past = close - level. Ratio = body_past / body_total >= threshold.
@@ -281,12 +281,12 @@ class H1LevelDetector:
         if is_bull_candle and c > level.price:
             # Bull breakout above level
             body_past = c - level.price
-            if body_past > 0 and (body_past / body) >= 0.25:
+            if body_past > 0 and (body_past / body) >= body_pct:
                 return True
         elif not is_bull_candle and c < level.price:
             # Bear breakout below level
             body_past = level.price - c
-            if body_past > 0 and (body_past / body) >= 0.25:
+            if body_past > 0 and (body_past / body) >= body_pct:
                 return True
 
         return False

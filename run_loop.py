@@ -200,9 +200,26 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
 
     # Find Uncle Parsh policy if present
     up_policy = None
+    up_tm_overrides: dict = {}
     for pol in profile.execution.policies:
         if getattr(pol, "type", None) == "uncle_parsh_h1_breakout" and getattr(pol, "enabled", True):
             up_policy = pol
+            # Load temp overrides for trade management fields
+            try:
+                _up_sp = Path("runtime") / profile.profile_name / "runtime_state.json"
+                if _up_sp.exists():
+                    _up_sd = json.loads(_up_sp.read_text(encoding="utf-8"))
+                    for _fld, _sk in [
+                        ("tp1_pips", "temp_up_tp1_pips"),
+                        ("tp1_close_pct", "temp_up_tp1_close_pct"),
+                        ("be_spread_plus_pips", "temp_up_be_spread_plus_pips"),
+                        ("trail_ema_period", "temp_up_trail_ema_period"),
+                    ]:
+                        _v = _up_sd.get(_sk)
+                        if _v is not None:
+                            up_tm_overrides[_fld] = _v
+            except Exception:
+                pass
             break
 
     has_simple_be = breakeven and getattr(breakeven, "enabled", False)
@@ -327,8 +344,8 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
         # 2) Uncle Parsh H1 Breakout trade management (TP1 + BE + trailing EMA)
         if up_policy is not None and entry_type in ("power_break", "sniper"):
             tp1_done = trade_row.get("tp1_partial_done") or 0
-            up_tp1_pips = up_policy.tp1_pips
-            up_tp1_pct = up_policy.tp1_close_pct
+            up_tp1_pips = up_tm_overrides.get("tp1_pips", up_policy.tp1_pips)
+            up_tp1_pct = up_tm_overrides.get("tp1_close_pct", up_policy.tp1_close_pct)
 
             # TP1 partial close
             if not tp1_done:
@@ -350,7 +367,8 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                             position_type=position_type,
                         )
                         # Move SL to BE (entry + spread + be_spread_plus_pips)
-                        be_offset = current_spread + up_policy.be_spread_plus_pips * pip
+                        _ov_be_pips = up_tm_overrides.get("be_spread_plus_pips", up_policy.be_spread_plus_pips)
+                        be_offset = current_spread + _ov_be_pips * pip
                         if side == "buy":
                             be_sl = entry + be_offset
                         else:
@@ -365,11 +383,12 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
             elif tp1_done:
                 try:
                     # Get M1 data for EMA calculation
+                    _ov_trail_period = up_tm_overrides.get("trail_ema_period", up_policy.trail_ema_period)
                     m1_df_trail = adapter.get_bars(profile.symbol, "M1", 100)
-                    if m1_df_trail is not None and not m1_df_trail.empty and len(m1_df_trail) > up_policy.trail_ema_period:
+                    if m1_df_trail is not None and not m1_df_trail.empty and len(m1_df_trail) > _ov_trail_period:
                         from core.indicators import ema as ema_fn
                         m1_close_trail = m1_df_trail["close"].astype(float)
-                        trail_ema = ema_fn(m1_close_trail, up_policy.trail_ema_period)
+                        trail_ema = ema_fn(m1_close_trail, _ov_trail_period)
                         if not trail_ema.empty and pd.notna(trail_ema.iloc[-1]):
                             ema_val = float(trail_ema.iloc[-1])
                             prev_be_sl = trade_row.get("breakeven_sl_price")
@@ -2361,6 +2380,37 @@ def main() -> None:
                 except Exception:
                     up_level_state = []
 
+                # Build Uncle Parsh temp overrides from runtime_state.json
+                up_temp_overrides: dict = {}
+                try:
+                    _up_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                    _up_override_keys = [
+                        ("m5_trend_ema_fast", "temp_up_m5_ema_fast"),
+                        ("m5_trend_ema_slow", "temp_up_m5_ema_slow"),
+                        ("m1_ema_fast", "temp_up_m1_ema_fast"),
+                        ("m1_ema_mid", "temp_up_m1_ema_mid"),
+                        ("m1_ema_slow", "temp_up_m1_ema_slow"),
+                        ("m1_ema_veto", "temp_up_m1_ema_veto"),
+                        ("h1_lookback_hours", "temp_up_h1_lookback_hours"),
+                        ("h1_swing_strength", "temp_up_h1_swing_strength"),
+                        ("h1_cluster_tolerance_pips", "temp_up_h1_cluster_tolerance_pips"),
+                        ("h1_min_touches_for_major", "temp_up_h1_min_touches_for_major"),
+                        ("power_close_body_pct", "temp_up_power_close_body_pct"),
+                        ("velocity_pips", "temp_up_velocity_pips"),
+                        ("initial_sl_spread_plus_pips", "temp_up_initial_sl_spread_plus_pips"),
+                        ("tp1_pips", "temp_up_tp1_pips"),
+                        ("tp1_close_pct", "temp_up_tp1_close_pct"),
+                        ("be_spread_plus_pips", "temp_up_be_spread_plus_pips"),
+                        ("trail_ema_period", "temp_up_trail_ema_period"),
+                        ("max_spread_pips", "temp_up_max_spread_pips"),
+                    ]
+                    for field_name, state_key in _up_override_keys:
+                        val = _up_state_data.get(state_key)
+                        if val is not None:
+                            up_temp_overrides[field_name] = val
+                except Exception:
+                    up_temp_overrides = {}
+
                 for pol in profile.execution.policies:
                     if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "uncle_parsh_h1_breakout":
                         continue
@@ -2382,6 +2432,7 @@ def main() -> None:
                         level_state=up_level_state,
                         is_new_m1=is_new,
                         is_new_m5=is_new_m5_up,
+                        temp_overrides=up_temp_overrides or None,
                     )
                     dec = exec_result["decision"]
                     up_level_updates = exec_result.get("level_updates", [])
@@ -2403,8 +2454,10 @@ def main() -> None:
                             entry_price = tick.ask if side == "buy" else tick.bid
                             pip = float(profile.pip_size)
                             current_spread = tick.ask - tick.bid
-                            sl_distance = current_spread + pol.initial_sl_spread_plus_pips * pip
-                            tp_distance = pol.tp1_pips * pip
+                            _ov_sl_pips = up_temp_overrides.get("initial_sl_spread_plus_pips", pol.initial_sl_spread_plus_pips)
+                            _ov_tp1_pips = up_temp_overrides.get("tp1_pips", pol.tp1_pips)
+                            sl_distance = current_spread + _ov_sl_pips * pip
+                            tp_distance = _ov_tp1_pips * pip
                             if side == "buy":
                                 tp_price = entry_price + tp_distance
                                 sl_price = entry_price - sl_distance
