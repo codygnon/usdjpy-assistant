@@ -317,8 +317,8 @@ function FilterRow({ filter, depth = 0 }: { filter: FilterReport; depth?: number
             <span title={filter.block_reason || ''} style={{ color: colors.red, fontSize: 14, cursor: 'help' }}>✗</span>
           )}
         </td>
-        <td style={{ padding: '4px 8px', fontSize: 11, color: colors.red }}>
-          {filter.block_reason && !filter.is_clear ? filter.block_reason : ''}
+        <td style={{ padding: '4px 8px', fontSize: 11, color: colors.textSecondary }}>
+          {filter.explanation ?? (filter.block_reason && !filter.is_clear ? filter.block_reason : '')}
         </td>
       </tr>
       {hasSubs && expanded && filter.sub_filters.map(sub => (

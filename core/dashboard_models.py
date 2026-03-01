@@ -16,6 +16,7 @@ from typing import Any, Optional
 
 @dataclass
 class FilterReport:
+    """Single filter status for the dashboard. Reporters may set `explanation` for a user-friendly one-liner (pass or fail); the UI shows it in the Reason column when present."""
     filter_id: str
     display_name: str
     enabled: bool
@@ -23,6 +24,7 @@ class FilterReport:
     current_value: str = ""
     threshold: str = ""
     block_reason: Optional[str] = None
+    explanation: Optional[str] = None  # Plain-English one-liner for user (pass or fail)
     sub_filters: list["FilterReport"] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 

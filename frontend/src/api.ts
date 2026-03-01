@@ -596,6 +596,8 @@ export interface FilterReport {
   current_value: string;
   threshold: string;
   block_reason: string | null;
+  /** Plain-English one-liner for user (pass or fail). */
+  explanation?: string | null;
   sub_filters: FilterReport[];
   metadata: Record<string, unknown>;
 }

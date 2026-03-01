@@ -1164,32 +1164,69 @@ def collect_trial_6_context(
 
 
 def report_h1_levels(policy, data_by_tf, level_state) -> FilterReport:
-    """Show detected H1 levels, their status (watching/broken/active), touch counts."""
+    """Show detected H1 levels, their status (watching/broken/active), touch counts.
+    Sub_filters list one row per level with type and broken status for dropdown.
+    """
     if not level_state:
         return FilterReport(
             filter_id="h1_levels", display_name="H1 S/R Levels",
             enabled=True, is_clear=True,
             current_value="No levels detected",
+            explanation="No H1 levels in range. Check lookback and symbol.",
         )
     watching = sum(1 for lv in level_state if lv.get("state") == "watching")
     catalyst = sum(1 for lv in level_state if lv.get("state") == "catalyst")
     ready = sum(1 for lv in level_state if lv.get("state") == "ready")
     voided = sum(1 for lv in level_state if lv.get("voided", False))
     total = len(level_state)
+    has_broken = (ready + catalyst) > 0
 
     level_details = []
-    for lv in level_state[:5]:  # Show top 5
+    sub_filters_list: list[FilterReport] = []
+    for i, lv in enumerate(level_state):
         price = lv.get("price", 0)
         lt = lv.get("level_type", "?")
         st = lv.get("state", "?")
         tc = lv.get("touch_count", 0)
         level_details.append(f"{price:.3f} ({lt}) [{st}] tc={tc}")
+        broken_this = st in ("catalyst", "ready")
+        threshold_str = ""
+        if broken_this:
+            bd = lv.get("break_direction", "")
+            if bd:
+                threshold_str = f"break: {bd}"
+        if lv.get("voided", False):
+            sub_expl = "Voided (e.g. by 35 EMA)."
+        elif st == "ready":
+            sub_expl = "Ready for entry."
+        elif st == "catalyst":
+            sub_expl = "Broken; waiting for second bar to confirm momentum."
+        else:
+            sub_expl = "Watching; need M5 close past level."
+        sub_filters_list.append(FilterReport(
+            filter_id=f"h1_level_{i}",
+            display_name=f"{price:.3f} ({lt})",
+            enabled=True,
+            is_clear=broken_this,
+            current_value=f"{st} tc={tc}",
+            threshold=threshold_str,
+            explanation=sub_expl,
+        ))
+
+    if has_broken:
+        main_expl = "At least one level broken; ready once M1 entry aligns."
+    elif voided and ready == 0 and catalyst == 0:
+        main_expl = "Levels voided (e.g. by 35 EMA)."
+    else:
+        main_expl = "No level broken yet. Need an M5 candle to close past a level."
 
     return FilterReport(
         filter_id="h1_levels", display_name="H1 S/R Levels",
-        enabled=True, is_clear=ready > 0,
+        enabled=True, is_clear=has_broken,
         current_value=f"{total} levels: {watching}W {catalyst}C {ready}R {voided}V",
-        threshold="; ".join(level_details) if level_details else "none",
+        threshold="; ".join(level_details[:5]) if level_details else "none",
+        sub_filters=sub_filters_list,
+        explanation=main_expl,
     )
 
 
@@ -1203,6 +1240,7 @@ def report_m5_trend_alignment(policy, data_by_tf) -> FilterReport:
             filter_id="m5_trend", display_name="M5 Trend (EMA)",
             enabled=True, is_clear=False,
             current_value="No M5 data",
+            explanation="No M5 data yet.",
         )
     m5_close = m5_df["close"].astype(float)
     fast = ema_fn(m5_close, policy.m5_trend_ema_fast)
@@ -1212,38 +1250,72 @@ def report_m5_trend_alignment(policy, data_by_tf) -> FilterReport:
             filter_id="m5_trend", display_name="M5 Trend (EMA)",
             enabled=True, is_clear=False,
             current_value="EMA not ready",
+            explanation="EMA not ready yet.",
         )
     f_val = float(fast.iloc[-1])
     s_val = float(slow.iloc[-1])
     trend = "BULL" if f_val > s_val else ("BEAR" if f_val < s_val else "FLAT")
     gap = abs(f_val - s_val)
+    if trend == "FLAT":
+        expl = "Trend not clear. Need EMA 9 clearly above or below EMA 21."
+    else:
+        expl = f"M5 trend is {trend}. OK for aligned entries."
     return FilterReport(
         filter_id="m5_trend", display_name="M5 Trend (EMA)",
         enabled=True, is_clear=trend != "FLAT",
         current_value=f"{trend} (EMA{policy.m5_trend_ema_fast}={f_val:.3f} vs EMA{policy.m5_trend_ema_slow}={s_val:.3f}, gap={gap:.3f})",
         threshold=f"EMA {policy.m5_trend_ema_fast}/{policy.m5_trend_ema_slow}",
+        explanation=expl,
     )
 
 
 def report_m5_power_close_status(policy, data_by_tf, level_state) -> FilterReport:
-    """Which levels have had Power Closes, velocity type, waiting for velocity check."""
+    """Which levels have had Power Closes, velocity type, waiting for velocity check.
+    Sub_filters list one row per breakout for dropdown.
+    """
     broken = [lv for lv in (level_state or []) if lv.get("is_broken", False)]
     if not broken:
         return FilterReport(
             filter_id="power_close", display_name="M5 Power Close",
             enabled=True, is_clear=False,
             current_value="No breakouts yet",
+            explanation="No breakout yet. Need M5 candle body to close past level.",
         )
     details = []
-    for lv in broken[:3]:
-        vel = lv.get("velocity_type", "pending")
+    sub_filters_list: list[FilterReport] = []
+    any_ready = any(lv.get("state") == "ready" for lv in broken)
+    any_catalyst = any(lv.get("state") == "catalyst" for lv in broken)
+    for i, lv in enumerate(broken):
+        price = lv.get("price", 0)
+        lt = lv.get("level_type", "?")
+        vel = lv.get("velocity_type") or "pending"
         st = lv.get("state", "?")
-        details.append(f"{lv['price']:.3f}: {lv.get('break_direction','?')} vel={vel} [{st}]")
+        bd = lv.get("break_direction", "?")
+        details.append(f"{price:.3f}: {bd} vel={vel} [{st}]")
+        if st == "ready":
+            sub_expl = "Ready for entry."
+        else:
+            sub_expl = "Broken; waiting for second bar to confirm momentum."
+        sub_filters_list.append(FilterReport(
+            filter_id=f"power_close_{i}",
+            display_name=f"{price:.3f} ({lt})",
+            enabled=True,
+            is_clear=st in ("catalyst", "ready"),
+            current_value=f"{bd} vel={vel} [{st}]",
+            threshold="",
+            explanation=sub_expl,
+        ))
+    if any_ready:
+        main_expl = "Breakout confirmed; ready for M1 entry."
+    else:
+        main_expl = "Power close done. Need one more M5 bar to confirm momentum."
     return FilterReport(
         filter_id="power_close", display_name="M5 Power Close",
-        enabled=True, is_clear=any(lv.get("state") == "ready" for lv in broken),
+        enabled=True, is_clear=any(lv.get("state") in ("catalyst", "ready") for lv in broken),
         current_value=f"{len(broken)} breakout(s)",
         threshold="; ".join(details),
+        sub_filters=sub_filters_list,
+        explanation=main_expl,
     )
 
 
@@ -1257,6 +1329,7 @@ def report_m1_entry_status(policy, data_by_tf, tick) -> FilterReport:
             filter_id="m1_entry", display_name="M1 Entry Status",
             enabled=True, is_clear=False,
             current_value="No M1 data",
+            explanation="No M1 data yet.",
         )
     m1_close = m1_df["close"].astype(float)
     ema5 = ema_fn(m1_close, policy.m1_ema_fast)
@@ -1268,6 +1341,7 @@ def report_m1_entry_status(policy, data_by_tf, tick) -> FilterReport:
             filter_id="m1_entry", display_name="M1 Entry Status",
             enabled=True, is_clear=False,
             current_value="EMAs not ready",
+            explanation="EMAs not ready yet.",
         )
     e5 = float(ema5.iloc[-1])
     e9 = float(ema9.iloc[-1])
@@ -1278,27 +1352,41 @@ def report_m1_entry_status(policy, data_by_tf, tick) -> FilterReport:
     bear_stack = e5 < e9 < e21
     stack_str = "BULL" if bull_stack else ("BEAR" if bear_stack else "MIXED")
     veto_str = ""
-    if last_close < e35 - 0.02:
+    veto_buy = last_close < e35 - 0.02
+    veto_sell = last_close > e35 + 0.02
+    if veto_buy:
         veto_str = " | 35EMA VETO(buy)"
-    elif last_close > e35 + 0.02:
+    elif veto_sell:
         veto_str = " | 35EMA VETO(sell)"
+    stack_ok = bull_stack or bear_stack
+    veto_active = veto_buy or veto_sell
+    entry_ok = stack_ok and not veto_active
+    if not stack_ok:
+        expl = "M1 EMAs not stacked for entry (need 5>9>21 for buy or 5<9<21 for sell)."
+    elif veto_active:
+        expl = "Price past 35 EMA on wrong side — setup voided."
+    else:
+        expl = "M1 stack aligned; entry allowed if other filters pass."
     return FilterReport(
         filter_id="m1_entry", display_name="M1 Entry Status",
-        enabled=True, is_clear=bull_stack or bear_stack,
+        enabled=True, is_clear=entry_ok,
         current_value=f"Stack: {stack_str} (5={e5:.3f} 9={e9:.3f} 21={e21:.3f}){veto_str}",
         threshold=f"EMA {policy.m1_ema_fast}/{policy.m1_ema_mid}/{policy.m1_ema_slow}, veto={policy.m1_ema_veto}",
+        explanation=expl,
     )
 
 
 def report_up_spread_veto(policy, tick, pip_size: float) -> FilterReport:
     """Current spread vs max_spread_pips for Uncle Parsh."""
     spread_pips = (tick.ask - tick.bid) / pip_size
-    max_spread = policy.max_spread_pips
+    max_spread = float(policy.max_spread_pips)
     ok = spread_pips <= max_spread
+    expl = "Spread OK." if ok else f"Spread too high. No entry until spread is {max_spread:.0f}p or less."
     return FilterReport(
         filter_id="up_spread", display_name="Spread Check",
         enabled=True, is_clear=ok,
         current_value=f"{spread_pips:.1f} pips",
         threshold=f"Max: {max_spread} pips",
         block_reason=None if ok else f"Spread {spread_pips:.1f}p > max {max_spread}p",
+        explanation=expl,
     )
