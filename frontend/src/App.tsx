@@ -3731,6 +3731,13 @@ interface EditedSettings {
   t8_use_daily_level_filter: boolean;
   t8_daily_level_buffer_pips: number;
   t8_daily_level_breakout_candles_required: number;
+  // Uncle Parsh H1 Breakout EMA overrides
+  up_m5_ema_fast: number | null;
+  up_m5_ema_slow: number | null;
+  up_m1_ema_fast: number | null;
+  up_m1_ema_mid: number | null;
+  up_m1_ema_slow: number | null;
+  up_m1_ema_veto: number | null;
 }
 
 const TRIAL7_DEFAULT_TIER_EMA_PERIODS: number[] = [9, ...Array.from({ length: 24 }, (_, i) => i + 11)];

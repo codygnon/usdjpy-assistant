@@ -180,6 +180,13 @@ export interface TempEmaSettings {
   m3_trend_ema_slow: number | null;
   m1_t4_zone_entry_ema_fast: number | null;
   m1_t4_zone_entry_ema_slow: number | null;
+  // Uncle Parsh H1 Breakout EMA overrides
+  up_m5_ema_fast: number | null;
+  up_m5_ema_slow: number | null;
+  up_m1_ema_fast: number | null;
+  up_m1_ema_mid: number | null;
+  up_m1_ema_slow: number | null;
+  up_m1_ema_veto: number | null;
 }
 
 export async function getTempSettings(profileName: string): Promise<TempEmaSettings> {

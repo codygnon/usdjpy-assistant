@@ -252,6 +252,16 @@ class ExecutionPolicySessionMomentum(BaseModel):
     use_session_high_low_stops: bool = False  # Use session high/low as SL instead of fixed pips
 
 
+class ExecutionPolicySessionMomentumV5(BaseModel):
+    """Session momentum v5 policy: advanced backtest-driven variant with 150+ tunable params."""
+
+    model_config = ConfigDict(extra="allow")
+
+    type: Literal["session_momentum_v5"] = "session_momentum_v5"
+    id: str = "session_momentum_v5_default"
+    enabled: bool = False
+
+
 class ExecutionPolicyBollingerBands(BaseModel):
     """Bollinger Bands policy: Mean reversion at lower/upper band with optional regime filter."""
 
@@ -987,6 +997,7 @@ ExecutionPolicy = Annotated[
         ExecutionPolicyIndicator,
         ExecutionPolicyBreakout,
         ExecutionPolicySessionMomentum,
+        ExecutionPolicySessionMomentumV5,
         ExecutionPolicyBollingerBands,
         ExecutionPolicyVWAP,
         ExecutionPolicyEmaPullback,
