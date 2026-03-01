@@ -55,6 +55,7 @@ from core.dashboard_reporters import (
     collect_trial_2_context, collect_trial_3_context,
     collect_trial_4_context, collect_trial_5_context,
     collect_trial_6_context, collect_trial_7_context,
+    collect_uncle_parsh_context,
 )
 from storage.sqlite_store import SqliteStore
 
@@ -553,6 +554,11 @@ def _build_and_write_dashboard(
             context_items = collect_trial_2_context(policy, data_by_tf, tick, pip_size)
         elif policy_type == "kt_cg_counter_trend_pullback":
             context_items = collect_trial_3_context(policy, data_by_tf, tick, pip_size)
+        elif policy_type == "uncle_parsh_h1_breakout":
+            context_items = collect_uncle_parsh_context(
+                policy_for_context, data_by_tf, tick, pip_size,
+                eval_result=eval_result,
+            )
 
         candidate_side = None
         candidate_trigger = None

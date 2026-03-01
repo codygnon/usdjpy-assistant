@@ -2849,6 +2849,78 @@ def _get_dashboard_adapter(profile):
     return adapter
 
 
+def _fetch_live_positions(profile_name: str, profile_path: Optional[str] = None) -> list[dict[str, Any]]:
+    """Fetch open positions from the broker for dashboard display. Returns [] on any failure."""
+    resolved_path: Optional[Path] = None
+    if profile_path:
+        try:
+            p = _resolve_profile_path(profile_path)
+            if p.exists():
+                resolved_path = p
+        except Exception:
+            pass
+    if resolved_path is None:
+        for p in _list_profile_paths():
+            if p.stem == profile_name:
+                resolved_path = p
+                break
+    if resolved_path is None:
+        return []
+    try:
+        profile = load_profile_v1(str(resolved_path))
+    except Exception:
+        return []
+    from datetime import datetime, timezone
+    import pandas as _pd_dash
+    now_utc = datetime.now(timezone.utc)
+    pip_size = float(profile.pip_size)
+    positions: list[dict] = []
+    try:
+        adapter = _get_dashboard_adapter(profile)
+        tick = adapter.get_tick(profile.symbol)
+        mid = (tick.bid + tick.ask) / 2.0
+        for t in adapter.get_open_positions(profile.symbol):
+            units = float(t.get("currentUnits", 0) or 0)
+            s = "buy" if units > 0 else "sell"
+            size_lots = abs(units) / 100_000.0 if units else 0.0
+            entry = float(t.get("price", 0) or 0)
+            unrealized = (mid - entry) / pip_size if s == "buy" else (entry - mid) / pip_size
+            age = 0.0
+            try:
+                t0 = _pd_dash.to_datetime(t.get("openTime"), utc=True)
+                age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
+            except Exception:
+                pass
+            sl = tp = None
+            try:
+                if t.get("stopLossOrder"):
+                    sl = float(t["stopLossOrder"]["price"])
+            except Exception:
+                pass
+            try:
+                if t.get("takeProfitOrder"):
+                    tp = float(t["takeProfitOrder"]["price"])
+            except Exception:
+                pass
+            positions.append({
+                "trade_id": str(t.get("id", "")),
+                "side": s,
+                "entry_price": entry,
+                "size_lots": round(size_lots, 4),
+                "entry_type": None,
+                "current_price": mid,
+                "unrealized_pips": round(unrealized, 1),
+                "age_minutes": round(age, 1),
+                "stop_price": sl,
+                "target_price": tp,
+                "breakeven_applied": False,
+            })
+    except Exception as e:
+        print(f"[api] _fetch_live_positions failed for '{profile_name}': {e}")
+        return []
+    return positions
+
+
 def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
     """Build a live dashboard state directly from the broker (no run-loop file required)."""
     from datetime import datetime, timezone
@@ -3398,6 +3470,11 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
             result["stale"] = False if loop_running else stale
             result["stale_age_seconds"] = 0.0 if loop_running else stale_age_seconds
             result["data_source"] = "run_loop_file"
+            # Override positions with live broker data so Open Positions panel matches OANDA
+            try:
+                result["positions"] = _fetch_live_positions(profile_name, profile_path)
+            except Exception:
+                result["positions"] = []
             return result
 
         return {

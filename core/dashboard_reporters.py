@@ -1069,6 +1069,57 @@ def collect_trial_3_context(
     return collect_trial_2_context(policy, data_by_tf, tick, pip_size)
 
 
+def collect_uncle_parsh_context(
+    policy, data_by_tf: dict, tick, pip_size: float,
+    eval_result: Optional[dict] = None,
+) -> list[ContextItem]:
+    """Collect context items for Uncle Parsh H1 Breakout dashboard display."""
+    items: list[ContextItem] = []
+
+    # M5 Trend (EMA 9/21)
+    m5_df = data_by_tf.get("M5")
+    if m5_df is not None and not m5_df.empty:
+        from core.indicators import ema as ema_fn
+        m5_close = m5_df["close"]
+        fast_p = getattr(policy, "m5_trend_ema_fast", 9)
+        slow_p = getattr(policy, "m5_trend_ema_slow", 21)
+        if len(m5_df) > slow_p:
+            fast_v = float(ema_fn(m5_close, fast_p).iloc[-1])
+            slow_v = float(ema_fn(m5_close, slow_p).iloc[-1])
+            trend = "BULL" if fast_v > slow_v else "BEAR"
+            items.append(ContextItem("M5 Trend", trend, "trend"))
+            items.append(ContextItem(f"M5 EMA{fast_p}", f"{fast_v:.3f}", "trend"))
+            items.append(ContextItem(f"M5 EMA{slow_p}", f"{slow_v:.3f}", "trend"))
+
+    # M1 Entry EMAs (5/9/21/35)
+    m1_df = data_by_tf.get("M1")
+    if m1_df is not None and not m1_df.empty:
+        from core.indicators import ema as ema_fn
+        m1_close = m1_df["close"]
+        for attr, label in [
+            ("m1_ema_fast", "M1 EMA5"),
+            ("m1_ema_mid", "M1 EMA9"),
+            ("m1_ema_slow", "M1 EMA21"),
+            ("m1_ema_veto", "M1 EMA35"),
+        ]:
+            period = getattr(policy, attr, 9 if "mid" in attr else 21)
+            if len(m1_df) > period:
+                val = float(ema_fn(m1_close, period).iloc[-1])
+                items.append(ContextItem(label, f"{val:.3f}", "entry"))
+
+    # H1 levels summary from eval result
+    if eval_result and isinstance(eval_result.get("level_updates"), list):
+        level_count = len(eval_result["level_updates"])
+        items.append(ContextItem("H1 Levels", str(level_count), "levels"))
+
+    # Price / spread
+    items.append(ContextItem("Bid", f"{tick.bid:.3f}", "price"))
+    items.append(ContextItem("Ask", f"{tick.ask:.3f}", "price"))
+    items.append(ContextItem("Spread", f"{(tick.ask - tick.bid) / pip_size:.1f}p", "price"))
+
+    return items
+
+
 def collect_trial_6_context(
     policy, data_by_tf: dict, tick, tier_state: dict,
     eval_result: Optional[dict], pip_size: float,
