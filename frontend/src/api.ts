@@ -531,7 +531,7 @@ export interface OpenTrade {
   financing?: number;
 }
 
-export async function getOpenTrades(profileName: string, profilePath?: string, sync = false): Promise<OpenTrade[]> {
+export async function getOpenTrades(profileName: string, profilePath?: string, sync = true): Promise<OpenTrade[]> {
   const params = new URLSearchParams();
   if (profilePath) params.set('profile_path', profilePath);
   if (sync) params.set('sync', 'true');

@@ -2094,10 +2094,11 @@ def get_advanced_analytics(
 
 
 @app.get("/api/data/{profile_name}/open-trades")
-def get_open_trades(profile_name: str, profile_path: Optional[str] = None, sync: bool = False) -> list[dict[str, Any]]:
+def get_open_trades(profile_name: str, profile_path: Optional[str] = None, sync: bool = True) -> list[dict[str, Any]]:
     """Get open trades (trades without exit_price).
 
-    Syncs with broker first to detect any trades closed externally.
+    Syncs with broker first (default) to detect any trades closed externally (e.g. on OANDA).
+    Ensures displayed open positions and max_open_trades logic match the broker.
     Also includes live unrealized_pl and financing from broker.
     """
     store = _store_for(profile_name)
@@ -2149,6 +2150,20 @@ def get_open_trades(profile_name: str, profile_path: Optional[str] = None, sync:
             except (TypeError, ValueError):
                 pass
         result.append(d)
+
+    # When we have live broker data, return only trades that are still open on the broker.
+    # This keeps open position count and max_open_trades in sync with OANDA even if DB sync failed.
+    if broker_live:
+        broker_ids = set(broker_live.keys())
+        filtered = []
+        for r in result:
+            try:
+                pid = r.get("mt5_position_id")
+                if pid is not None and int(pid) in broker_ids:
+                    filtered.append(r)
+            except (TypeError, ValueError):
+                pass
+        result = filtered
     return result
 
 
