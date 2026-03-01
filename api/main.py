@@ -393,6 +393,13 @@ class TempEmaSettingsUpdate(BaseModel):
     m3_trend_ema_slow: Optional[int] = None
     m1_t4_zone_entry_ema_fast: Optional[int] = None
     m1_t4_zone_entry_ema_slow: Optional[int] = None
+    # Uncle Parsh H1 Breakout fields
+    up_m5_ema_fast: Optional[int] = None
+    up_m5_ema_slow: Optional[int] = None
+    up_m1_ema_fast: Optional[int] = None
+    up_m1_ema_mid: Optional[int] = None
+    up_m1_ema_slow: Optional[int] = None
+    up_m1_ema_veto: Optional[int] = None
 
 
 class ApplyPresetRequest(BaseModel):
@@ -683,7 +690,13 @@ def update_runtime_state(profile_name: str, req: RuntimeStateUpdate) -> dict[str
         daily_reset_settled=old.daily_reset_settled,
         trend_flip_price=old.trend_flip_price,
         trend_flip_direction=old.trend_flip_direction,
-
+        bb_tier_fired=old.bb_tier_fired,
+        temp_up_m5_ema_fast=old.temp_up_m5_ema_fast,
+        temp_up_m5_ema_slow=old.temp_up_m5_ema_slow,
+        temp_up_m1_ema_fast=old.temp_up_m1_ema_fast,
+        temp_up_m1_ema_mid=old.temp_up_m1_ema_mid,
+        temp_up_m1_ema_slow=old.temp_up_m1_ema_slow,
+        temp_up_m1_ema_veto=old.temp_up_m1_ema_veto,
     )
     save_state(state_path, new_state)
     return {"status": "saved"}
@@ -703,6 +716,12 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
         "m3_trend_ema_slow": state.temp_m3_trend_ema_slow,
         "m1_t4_zone_entry_ema_fast": state.temp_m1_t4_zone_entry_ema_fast,
         "m1_t4_zone_entry_ema_slow": state.temp_m1_t4_zone_entry_ema_slow,
+        "up_m5_ema_fast": state.temp_up_m5_ema_fast,
+        "up_m5_ema_slow": state.temp_up_m5_ema_slow,
+        "up_m1_ema_fast": state.temp_up_m1_ema_fast,
+        "up_m1_ema_mid": state.temp_up_m1_ema_mid,
+        "up_m1_ema_slow": state.temp_up_m1_ema_slow,
+        "up_m1_ema_veto": state.temp_up_m1_ema_veto,
     }
 
 
@@ -739,7 +758,14 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
         trend_flip_direction=old.trend_flip_direction,
         trend_flip_time=old.trend_flip_time,
         # Preserve BB tier state (Trial #6)
-
+        bb_tier_fired=old.bb_tier_fired,
+        # Uncle Parsh H1 Breakout temp overrides
+        temp_up_m5_ema_fast=req.up_m5_ema_fast,
+        temp_up_m5_ema_slow=req.up_m5_ema_slow,
+        temp_up_m1_ema_fast=req.up_m1_ema_fast,
+        temp_up_m1_ema_mid=req.up_m1_ema_mid,
+        temp_up_m1_ema_slow=req.up_m1_ema_slow,
+        temp_up_m1_ema_veto=req.up_m1_ema_veto,
     )
     save_state(state_path, new_state)
     return {"status": "saved"}
@@ -2865,7 +2891,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
             except Exception:
                 _tick = None
         if _tick is not None:
-            # First enabled KT/CG Trial policy (or Session Momentum v5.3) for rich filters
+            # First enabled KT/CG Trial policy for rich filters
             _policy = None
             _policy_type = ""
             for pol in getattr(profile.execution, "policies", []) or []:
@@ -2876,16 +2902,6 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                     _policy = pol
                     _policy_type = pt
                     break
-            # If no KT/CG policy is active, fall back to session_momentum_v5 (v5.3).
-            if _policy is None:
-                for pol in getattr(profile.execution, "policies", []) or []:
-                    if not getattr(pol, "enabled", True):
-                        continue
-                    pt = getattr(pol, "type", "") or ""
-                    if pt == "session_momentum_v5":
-                        _policy = pol
-                        _policy_type = pt
-                        break
             data_by_tf: dict = {}
             daily_reset_state: Optional[dict] = None
             exhaustion_state: Optional[dict] = None
@@ -2900,10 +2916,8 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         data_by_tf["M3"] = _get_bars_cached(_adapter, profile.symbol, "M3", 3000)
                     if _policy_type in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_8"):
                         data_by_tf["D"] = _get_bars_cached(_adapter, profile.symbol, "D", 2)
-                    if _policy_type in ("kt_cg_trial_7", "kt_cg_trial_8", "session_momentum_v5"):
+                    if _policy_type in ("kt_cg_trial_7", "kt_cg_trial_8"):
                         data_by_tf["M5"] = _get_bars_cached(_adapter, profile.symbol, "M5", 2000)
-                    if _policy_type == "session_momentum_v5":
-                        data_by_tf["H1"] = _get_bars_cached(_adapter, profile.symbol, "H1", 200)
                 except Exception:
                     pass
                 try:

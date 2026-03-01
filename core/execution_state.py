@@ -52,6 +52,14 @@ class RuntimeState:
     # Trial #6 BB Reversal Tier State (offset_index -> fired bool)
     bb_tier_fired: dict = field(default_factory=dict)
 
+    # Uncle Parsh H1 Breakout temp overrides
+    temp_up_m5_ema_fast: Optional[int] = None
+    temp_up_m5_ema_slow: Optional[int] = None
+    temp_up_m1_ema_fast: Optional[int] = None
+    temp_up_m1_ema_mid: Optional[int] = None
+    temp_up_m1_ema_slow: Optional[int] = None
+    temp_up_m1_ema_veto: Optional[int] = None
+
 
 def _load_tier_fired(data: dict) -> dict:
     """Load tier_fired from JSON data with backward compat for old tier_X_fired keys."""
@@ -99,6 +107,12 @@ def load_state(path: str | Path) -> RuntimeState:
         trend_flip_direction=data.get("trend_flip_direction"),
         trend_flip_time=data.get("trend_flip_time"),
         bb_tier_fired={int(k): bool(v) for k, v in data.get("bb_tier_fired", {}).items()},
+        temp_up_m5_ema_fast=data.get("temp_up_m5_ema_fast"),
+        temp_up_m5_ema_slow=data.get("temp_up_m5_ema_slow"),
+        temp_up_m1_ema_fast=data.get("temp_up_m1_ema_fast"),
+        temp_up_m1_ema_mid=data.get("temp_up_m1_ema_mid"),
+        temp_up_m1_ema_slow=data.get("temp_up_m1_ema_slow"),
+        temp_up_m1_ema_veto=data.get("temp_up_m1_ema_veto"),
     )
 
 
@@ -131,6 +145,12 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "trend_flip_direction": state.trend_flip_direction,
                 "trend_flip_time": state.trend_flip_time,
                 "bb_tier_fired": state.bb_tier_fired,
+                "temp_up_m5_ema_fast": state.temp_up_m5_ema_fast,
+                "temp_up_m5_ema_slow": state.temp_up_m5_ema_slow,
+                "temp_up_m1_ema_fast": state.temp_up_m1_ema_fast,
+                "temp_up_m1_ema_mid": state.temp_up_m1_ema_mid,
+                "temp_up_m1_ema_slow": state.temp_up_m1_ema_slow,
+                "temp_up_m1_ema_veto": state.temp_up_m1_ema_veto,
             },
             indent=2,
             sort_keys=False,

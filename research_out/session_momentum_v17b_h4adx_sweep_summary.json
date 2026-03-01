@@ -1,0 +1,122 @@
+[
+  {
+    "h4_adx_min": 16,
+    "dataset": "50k",
+    "trades": 93,
+    "win_rate": 51.613,
+    "net_usd": 33291.923,
+    "profit_factor": 2.2301,
+    "v5_h4_adx_too_low": 590,
+    "dec_2025_trades": 0
+  },
+  {
+    "h4_adx_min": 16,
+    "dataset": "250k",
+    "trades": 474,
+    "win_rate": 34.388,
+    "net_usd": -27152.737,
+    "profit_factor": 0.8793,
+    "v5_h4_adx_too_low": 1005,
+    "dec_2025_trades": 59
+  },
+  {
+    "h4_adx_min": 18,
+    "dataset": "50k",
+    "trades": 93,
+    "win_rate": 51.613,
+    "net_usd": 33291.923,
+    "profit_factor": 2.2301,
+    "v5_h4_adx_too_low": 825,
+    "dec_2025_trades": 0
+  },
+  {
+    "h4_adx_min": 18,
+    "dataset": "250k",
+    "trades": 468,
+    "win_rate": 34.829,
+    "net_usd": -23551.04,
+    "profit_factor": 0.8964,
+    "v5_h4_adx_too_low": 2070,
+    "dec_2025_trades": 59
+  },
+  {
+    "h4_adx_min": 20,
+    "dataset": "50k",
+    "trades": 80,
+    "win_rate": 48.75,
+    "net_usd": 22976.648,
+    "profit_factor": 1.8793,
+    "v5_h4_adx_too_low": 1900,
+    "dec_2025_trades": 0
+  },
+  {
+    "h4_adx_min": 20,
+    "dataset": "250k",
+    "trades": 450,
+    "win_rate": 34.0,
+    "net_usd": -32078.029,
+    "profit_factor": 0.8456,
+    "v5_h4_adx_too_low": 3675,
+    "dec_2025_trades": 59
+  },
+  {
+    "h4_adx_min": 22,
+    "dataset": "50k",
+    "trades": 72,
+    "win_rate": 48.611,
+    "net_usd": 22338.264,
+    "profit_factor": 1.9215,
+    "v5_h4_adx_too_low": 2827,
+    "dec_2025_trades": 0
+  },
+  {
+    "h4_adx_min": 22,
+    "dataset": "250k",
+    "trades": 435,
+    "win_rate": 33.563,
+    "net_usd": -32238.261,
+    "profit_factor": 0.8293,
+    "v5_h4_adx_too_low": 5315,
+    "dec_2025_trades": 59
+  },
+  {
+    "h4_adx_min": 24,
+    "dataset": "50k",
+    "trades": 63,
+    "win_rate": 50.794,
+    "net_usd": 24703.381,
+    "profit_factor": 2.2575,
+    "v5_h4_adx_too_low": 3495,
+    "dec_2025_trades": 0
+  },
+  {
+    "h4_adx_min": 24,
+    "dataset": "250k",
+    "trades": 419,
+    "win_rate": 33.652,
+    "net_usd": -26908.225,
+    "profit_factor": 0.8498,
+    "v5_h4_adx_too_low": 7225,
+    "dec_2025_trades": 59
+  },
+  {
+    "h4_adx_min": 26,
+    "dataset": "50k",
+    "trades": 61,
+    "win_rate": 52.459,
+    "net_usd": 25753.885,
+    "profit_factor": 2.4191,
+    "v5_h4_adx_too_low": 3735,
+    "dec_2025_trades": 0
+  },
+  {
+    "h4_adx_min": 26,
+    "dataset": "250k",
+    "trades": 409,
+    "win_rate": 33.741,
+    "net_usd": -27199.424,
+    "profit_factor": 0.8526,
+    "v5_h4_adx_too_low": 9195,
+    "dec_2025_trades": 59
+  }
+]

@@ -252,95 +252,6 @@ class ExecutionPolicySessionMomentum(BaseModel):
     use_session_high_low_stops: bool = False  # Use session high/low as SL instead of fixed pips
 
 
-class ExecutionPolicySessionMomentumV5(BaseModel):
-    """Session Momentum v5.3: M1 pullback-to-recovery in Strong H1 trend,
-    risk-parity sizing, structural SL, scaled TP/trail, session gating."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["session_momentum_v5"] = "session_momentum_v5"
-    id: str = "session_momentum_v5_default"
-    enabled: bool = True
-
-    # Session windows (UTC hours, float). Defaults aligned with global session filter:
-    # London 08:00-16:00 UTC, New York 13:00-21:00 UTC.
-    london_start_hour: float = 8.0
-    london_end_hour: float = 16.0
-    ny_start_hour: float = 13.0
-    ny_end_hour: float = 21.0
-    ny_start_delay_minutes: int = 5
-    session_entry_cutoff_minutes: int = 45
-    sessions: Literal["both", "ny_only", "london_only"] = "both"
-
-    # H1 trend
-    h1_ema_fast: int = 20
-    h1_ema_slow: int = 50
-
-    # M5 setup
-    m5_ema_fast: int = 9
-    m5_ema_slow: int = 21
-    slope_bars: int = 6
-    strong_slope: float = 0.6
-    weak_slope: float = 0.2
-
-    # Strength gating
-    strength_allow: Literal["strong_only", "strong_normal", "all"] = "strong_only"
-
-    # M1 entry trigger
-    m1_ema_fast: int = 8
-    m1_ema_slow: int = 21
-    entry_min_body_pips: float = 1.0
-
-    # SL
-    sl_lookback: int = 6
-    sl_buffer: float = 1.5
-    sl_floor_pips: float = 4.0
-    sl_max_pips: float = 12.0
-
-    # TP (multiples of SL distance)
-    strong_tp1: float = 2.0
-    strong_tp2: float = 4.0
-    normal_tp1: float = 1.5
-    normal_tp2: float = 2.5
-
-    # TP1 partial close fraction
-    strong_tp1_close_pct: float = 0.3
-    normal_tp1_close_pct: float = 0.5
-
-    # Trailing stop
-    strong_trail_buffer: float = 6.0
-    normal_trail_buffer: float = 3.0
-    strong_trail_ema: int = 21
-    normal_trail_ema: int = 9
-    trail_start_after_tp1_mult: float = 0.5
-
-    # Breakeven
-    be_offset: float = 0.5
-
-    # Risk-parity sizing
-    sizing_mode: Literal["risk_parity", "fixed"] = "risk_parity"
-    risk_per_trade_pct: float = 0.75
-    account_size: float = 100000.0
-    fixed_lots: float = 0.1
-    rp_min_lot: float = 1.0
-    rp_max_lot: float = 20.0
-
-    # Caps
-    max_open: int = 1
-    max_entries_day: int = 7
-    london_max_entries: int = 2
-    max_spread_pips: float = 3.0
-
-    # Cooldowns (M1 bars)
-    cooldown_win: int = 2
-    cooldown_loss: int = 6
-    cooldown_scratch: int = 4
-    scratch_threshold_pips: float = 1.0
-
-    # Session-end
-    close_full_risk_at_session_end: bool = True
-
-
 class ExecutionPolicyBollingerBands(BaseModel):
     """Bollinger Bands policy: Mean reversion at lower/upper band with optional regime filter."""
 
@@ -1033,6 +944,42 @@ class ExecutionPolicyKtCgTrial6(BaseModel):
     spread_aware_be_apply_to_bb_reversal: bool = True
 
 
+class ExecutionPolicyUncleParshH1Breakout(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["uncle_parsh_h1_breakout"] = "uncle_parsh_h1_breakout"
+    id: str = "uncle_parsh_h1_breakout"
+    enabled: bool = True
+
+    # --- H1 Level Detection ---
+    h1_lookback_hours: int = 48
+    h1_swing_strength: int = 3           # bars each side for swing detection
+    h1_cluster_tolerance_pips: float = 5.0
+    h1_min_touches_for_major: int = 2    # bounces needed for cluster -> major S/R
+    h1_min_distance_between_levels_pips: float = 10.0  # minimum gap between levels
+
+    # --- M5 Momentum Catalyst ---
+    m5_trend_ema_fast: int = 9
+    m5_trend_ema_slow: int = 21
+    power_close_body_pct: float = 0.25   # 25% body past level
+    velocity_pips: float = 5.0           # >5 pips at 2nd M5 close = Power Break
+
+    # --- M1 Entry ---
+    m1_ema_fast: int = 5
+    m1_ema_mid: int = 9
+    m1_ema_slow: int = 21
+    m1_ema_veto: int = 35                # close past this -> setup voided
+
+    # --- Exit Strategy ---
+    initial_sl_spread_plus_pips: float = 2.0   # SL = spread + 2 pips
+    tp1_pips: float = 6.0
+    tp1_close_pct: float = 50.0
+    be_spread_plus_pips: float = 2.0     # BE = entry + spread + 2
+    trail_ema_period: int = 21           # M1 EMA for trailing SL
+
+    # --- Risk / Discipline ---
+    max_spread_pips: float = 3.0
+
+
 ExecutionPolicy = Annotated[
     Union[
         ExecutionPolicyConfirmedCross,
@@ -1040,7 +987,6 @@ ExecutionPolicy = Annotated[
         ExecutionPolicyIndicator,
         ExecutionPolicyBreakout,
         ExecutionPolicySessionMomentum,
-        ExecutionPolicySessionMomentumV5,
         ExecutionPolicyBollingerBands,
         ExecutionPolicyVWAP,
         ExecutionPolicyEmaPullback,
@@ -1052,6 +998,7 @@ ExecutionPolicy = Annotated[
         ExecutionPolicyKtCgTrial7,
         ExecutionPolicyKtCgTrial8,
         ExecutionPolicyKtCgTrial6,
+        ExecutionPolicyUncleParshH1Breakout,
     ],
     Field(discriminator="type"),
 ]

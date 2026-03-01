@@ -29,7 +29,6 @@ from core.profile import (
     ExecutionPolicyKtCgTrial6,
     ExecutionPolicyPriceLevelTrend,
     ExecutionPolicySessionMomentum,
-    ExecutionPolicySessionMomentumV5,
     ExecutionPolicyVWAP,
     ProfileV1,
     get_effective_risk,
@@ -6552,383 +6551,388 @@ def execute_kt_cg_trial_6_policy_demo_only(
 
 
 # ---------------------------------------------------------------------------
-# Session Momentum v5.3
+# Uncle Parsh H1 Breakout Scalper
 # ---------------------------------------------------------------------------
 
-def evaluate_session_momentum_v5(
-    profile: ProfileV1,
-    policy: ExecutionPolicySessionMomentumV5,
-    data_by_tf: dict[Timeframe, pd.DataFrame],
-    tick: Tick,
-    trades_df: Optional[pd.DataFrame],
-) -> tuple[bool, Optional[str], float, float, float, float, str, list[str]]:
-    """Evaluate Session Momentum v5.3 entry conditions.
+def evaluate_h1_breakout_conditions(
+    policy,
+    data_by_tf: dict,
+    tick,
+    pip_size: float,
+    level_state: list[dict],
+    is_new_m1: bool,
+    is_new_m5: bool,
+) -> dict:
+    """Evaluate Uncle Parsh H1 Breakout conditions.
 
-    Returns (should_enter, side, lot_size, sl_pips, tp1_pips, tp2_pips,
-             trend_strength, reasons).
+    Returns:
+    {
+        "passed": bool,
+        "side": Optional[str],
+        "reasons": list[str],
+        "entry_type": str,         # "power_break" or "sniper"
+        "level_price": float,      # which H1 level triggered
+        "level_updates": list,     # updated level state to persist
+        "m5_trend": str,           # "bull", "bear", or "flat"
+    }
     """
-    _no = (False, None, 0.0, 0.0, 0.0, 0.0, "", [])
-    pip = float(profile.pip_size)
+    from core.h1_level_detector import H1Level, H1LevelDetector
+
     reasons: list[str] = []
+    no_signal = {
+        "passed": False, "side": None, "reasons": reasons,
+        "entry_type": "", "level_price": 0.0,
+        "level_updates": level_state, "m5_trend": "flat",
+    }
 
-    # --- 1. Get data ---
-    m1 = data_by_tf.get("M1")
-    m5 = data_by_tf.get("M5")
-    h1 = data_by_tf.get("H1")
-    if m1 is None or m1.empty or len(m1) < max(policy.m1_ema_slow, 30):
-        return _no[:-1] + (["M1 data insufficient"],)
-    if m5 is None or m5.empty or len(m5) < max(policy.m5_ema_slow, policy.sl_lookback) + 5:
-        return _no[:-1] + (["M5 data insufficient"],)
-    if h1 is None or h1.empty or len(h1) < policy.h1_ema_slow + 5:
-        return _no[:-1] + (["H1 data insufficient"],)
+    h1_df = data_by_tf.get("H1")
+    m5_df = data_by_tf.get("M5")
+    m1_df = data_by_tf.get("M1")
 
-    # Use only completed bars so evaluation is deterministic regardless of poll timing.
-    m1 = drop_incomplete_last_bar(m1.copy(), "M1")
-    m5 = drop_incomplete_last_bar(m5.copy(), "M5")
-    if len(m1) < max(policy.m1_ema_slow, 30):
-        return _no[:-1] + (["M1 data insufficient (after drop incomplete)"],)
-    if len(m5) < policy.sl_lookback + 1:
-        return _no[:-1] + (["M5 data insufficient (after drop incomplete)"],)
+    if h1_df is None or h1_df.empty or m5_df is None or m5_df.empty or m1_df is None or m1_df.empty:
+        reasons.append("missing data (H1/M5/M1)")
+        return no_signal
 
-    now_utc = datetime.now(timezone.utc)
-    hour_float = now_utc.hour + now_utc.minute / 60.0
+    # ----- M5 Trend EMA alignment -----
+    m5_close = m5_df["close"].astype(float)
+    m5_ema_fast = ema_fn(m5_close, policy.m5_trend_ema_fast)
+    m5_ema_slow = ema_fn(m5_close, policy.m5_trend_ema_slow)
+    if m5_ema_fast.empty or m5_ema_slow.empty or pd.isna(m5_ema_fast.iloc[-1]) or pd.isna(m5_ema_slow.iloc[-1]):
+        reasons.append("M5 EMA not ready")
+        return no_signal
 
-    # --- 2. Session window ---
-    london_start = policy.london_start_hour
-    london_end = policy.london_end_hour
-    ny_start = policy.ny_start_hour + policy.ny_start_delay_minutes / 60.0
-    ny_end = policy.ny_end_hour
+    fast_val = float(m5_ema_fast.iloc[-1])
+    slow_val = float(m5_ema_slow.iloc[-1])
+    if fast_val > slow_val:
+        m5_trend = "bull"
+    elif fast_val < slow_val:
+        m5_trend = "bear"
+    else:
+        m5_trend = "flat"
+    no_signal["m5_trend"] = m5_trend
 
-    # Backwards-compatible migration: older profiles used London 6.5–11.0 and NY end 16.0.
-    # Align them with the global session filter defaults (London 8–16, NY 13–21 UTC)
-    # unless the user has explicitly customized them away from the old defaults.
-    if london_start == 6.5 and london_end == 11.0:
-        london_start, london_end = 8.0, 16.0
-    if ny_end == 16.0:
-        ny_end = 21.0
+    # ----- Detect / reload H1 levels -----
+    current_date = pd.Timestamp.now(tz="UTC").date().isoformat()
+    detector = H1LevelDetector({
+        "h1_lookback_hours": policy.h1_lookback_hours,
+        "h1_swing_strength": policy.h1_swing_strength,
+        "h1_cluster_tolerance_pips": policy.h1_cluster_tolerance_pips,
+        "h1_min_touches_for_major": policy.h1_min_touches_for_major,
+        "h1_min_distance_between_levels_pips": policy.h1_min_distance_between_levels_pips,
+        "pip_size": pip_size,
+    })
 
-    in_london = london_start <= hour_float < london_end and policy.sessions != "ny_only"
-    in_ny = ny_start <= hour_float < ny_end and policy.sessions != "london_only"
+    # Rebuild levels from persisted state or detect fresh
+    levels: list[H1Level] = []
+    if level_state:
+        levels = [H1Level.from_dict(d) for d in level_state]
+    else:
+        levels = detector.detect_levels(h1_df, current_date)
 
-    if not in_london and not in_ny:
-        return _no[:-1] + (["outside session window"],)
+    if not levels:
+        reasons.append("no H1 levels detected")
+        no_signal["level_updates"] = []
+        return no_signal
 
-    # --- 3. Entry cutoff ---
-    session_end = london_end if in_london else ny_end
-    minutes_to_end = (session_end - hour_float) * 60
-    if minutes_to_end < policy.session_entry_cutoff_minutes:
-        return _no[:-1] + ([f"entry cutoff: {minutes_to_end:.0f}m to session end"],)
+    # ----- Process M5 Power Close on new M5 bar -----
+    m5_df_sorted = m5_df.copy().sort_values("time")
+    m5_last = m5_df_sorted.iloc[-1]
+    m5_last_time = str(pd.to_datetime(m5_last["time"], utc=True).isoformat())
+    m5_bar_count = len(m5_df_sorted)
 
-    # --- 4. Spread gate ---
-    spread_pips = (tick.ask - tick.bid) / pip
-    if spread_pips > policy.max_spread_pips:
-        return _no[:-1] + ([f"spread too high: {spread_pips:.1f} > {policy.max_spread_pips}"],)
-
-    # --- 5. Max open (v5.3-only trades) ---
-    open_count = 0
-    if trades_df is not None and not trades_df.empty and "exit_price" in trades_df.columns:
-        open_mask = trades_df["exit_price"].isna()
-        # Only count open trades created by the Session Momentum v5.3 policy
-        if "notes" in trades_df.columns:
-            v5_mask = trades_df["notes"].astype(str).str.startswith("auto:session_momentum_v5:")
-            open_mask = open_mask & v5_mask
-        open_count = int(open_mask.sum())
-    if open_count >= policy.max_open:
-        return _no[:-1] + ([f"max open reached: {open_count}/{policy.max_open}"],)
-
-    # --- 6. Max entries today + London cap (v5.3-only trades) ---
-    today_str = now_utc.strftime("%Y-%m-%d")
-    entries_today = 0
-    london_entries_today = 0
-    if trades_df is not None and not trades_df.empty and "timestamp_utc" in trades_df.columns:
-        for _, row in trades_df.iterrows():
-            # Only count trades opened by the Session Momentum v5.3 policy
-            notes = str(row.get("notes", "") or "")
-            if not notes.startswith("auto:session_momentum_v5:"):
+    if is_new_m5:
+        for lv in levels:
+            if lv.voided:
                 continue
-            ts = str(row.get("timestamp_utc", ""))
-            if ts.startswith(today_str):
-                entries_today += 1
-                # Check if entry was during London session (for London cap)
-                try:
-                    entry_hour = float(ts[11:13]) + float(ts[14:16]) / 60.0
-                    if london_start <= entry_hour < london_end:
-                        london_entries_today += 1
-                except (ValueError, IndexError):
-                    pass
-    if entries_today >= policy.max_entries_day:
-        return _no[:-1] + ([f"max daily entries: {entries_today}/{policy.max_entries_day}"],)
-    if in_london and london_entries_today >= policy.london_max_entries:
-        return _no[:-1] + ([f"London cap: {london_entries_today}/{policy.london_max_entries}"],)
 
-    # --- 7. Cooldown ---
-    if trades_df is not None and not trades_df.empty and "exit_price" in trades_df.columns:
-        closed = trades_df[trades_df["exit_price"].notna()].copy()
-        if not closed.empty:
-            closed = closed.sort_values("timestamp_utc", ascending=False)
-            last = closed.iloc[0]
-            last_exit_ts = pd.to_datetime(last.get("exit_timestamp_utc", last.get("timestamp_utc")), utc=True)
-            bars_since = max(0, (now_utc - last_exit_ts).total_seconds() / 60.0)  # M1 bars ~ minutes
-            pips_result = float(last.get("pips", 0) or 0)
-            if abs(pips_result) < policy.scratch_threshold_pips:
-                cd = policy.cooldown_scratch
-            elif pips_result > 0:
-                cd = policy.cooldown_win
-            else:
-                cd = policy.cooldown_loss
-            if bars_since < cd:
-                return _no[:-1] + ([f"cooldown: {bars_since:.0f}/{cd} M1 bars"],)
+            # Check Power Close for watching levels
+            if lv.state == "watching":
+                candle_dict = {
+                    "open": float(m5_last["open"]),
+                    "close": float(m5_last["close"]),
+                    "high": float(m5_last["high"]),
+                    "low": float(m5_last["low"]),
+                }
+                if detector.check_power_close(lv, candle_dict, pip_size):
+                    lv.is_broken = True
+                    lv.break_time = m5_last_time
+                    lv.power_close_bar_index = m5_bar_count - 1
+                    lv.state = "catalyst"
+                    # Determine break direction from candle
+                    if float(m5_last["close"]) > lv.price:
+                        lv.break_direction = "bull"
+                    else:
+                        lv.break_direction = "bear"
 
-    # --- 8. H1 trend direction ---
-    h1_close = h1["close"].astype(float)
-    h1_ema_fast = ema_fn(h1_close, policy.h1_ema_fast)
-    h1_ema_slow_s = ema_fn(h1_close, policy.h1_ema_slow)
-    if pd.isna(h1_ema_fast.iloc[-1]) or pd.isna(h1_ema_slow_s.iloc[-1]):
-        return _no[:-1] + (["H1 EMA insufficient"],)
-    h1_fast_val = float(h1_ema_fast.iloc[-1])
-    h1_slow_val = float(h1_ema_slow_s.iloc[-1])
-    if h1_fast_val > h1_slow_val:
-        side = "buy"
-    elif h1_fast_val < h1_slow_val:
-        side = "sell"
-    else:
-        return _no[:-1] + (["H1 trend flat"],)
+            # Check velocity for catalyst levels (2nd M5 bar after break)
+            elif lv.state == "catalyst" and not lv.velocity_checked:
+                if lv.power_close_bar_index is not None:
+                    bars_since_break = (m5_bar_count - 1) - lv.power_close_bar_index
+                    if bars_since_break >= 2:
+                        vel = detector.check_velocity(
+                            lv, float(m5_last["close"]), pip_size, policy.velocity_pips
+                        )
+                        lv.velocity_type = vel
+                        lv.velocity_checked = True
+                        lv.entry_mode = "power_break" if vel == "power" else "sniper"
+                        lv.state = "ready"
 
-    # --- 9. M5 trend strength ---
-    m5_close = m5["close"].astype(float)
-    m5_ema_fast_s = ema_fn(m5_close, policy.m5_ema_fast)
-    m5_ema_slow_s = ema_fn(m5_close, policy.m5_ema_slow)
-    if pd.isna(m5_ema_fast_s.iloc[-1]) or pd.isna(m5_ema_slow_s.iloc[-1]):
-        return _no[:-1] + (["M5 EMA insufficient"],)
-    if len(m5_ema_fast_s) < policy.slope_bars:
-        return _no[:-1] + (["M5 slope data insufficient"],)
+    # ----- M1 Entry Conditions for ready levels -----
+    if not is_new_m1:
+        # Only evaluate M1 entries on new M1 bar close
+        no_signal["level_updates"] = [lv.to_dict() for lv in levels]
+        reasons.append("waiting for new M1 bar")
+        return no_signal
 
-    slope_raw = (float(m5_ema_fast_s.iloc[-1]) - float(m5_ema_fast_s.iloc[-policy.slope_bars])) / policy.slope_bars
-    slope_pips = abs(slope_raw) / pip
-    if slope_pips >= policy.strong_slope:
-        trend_strength = "Strong"
-    elif slope_pips >= policy.weak_slope:
-        trend_strength = "Normal"
-    else:
-        trend_strength = "Weak"
+    m1_close = m1_df["close"].astype(float)
+    m1_ema_fast = ema_fn(m1_close, policy.m1_ema_fast)
+    m1_ema_mid = ema_fn(m1_close, policy.m1_ema_mid)
+    m1_ema_slow = ema_fn(m1_close, policy.m1_ema_slow)
+    m1_ema_veto = ema_fn(m1_close, policy.m1_ema_veto)
 
-    # Strength gating
-    if policy.strength_allow == "strong_only" and trend_strength != "Strong":
-        return _no[:-1] + ([f"strength gate: {trend_strength} (need Strong)"],)
-    if policy.strength_allow == "strong_normal" and trend_strength == "Weak":
-        return _no[:-1] + ([f"strength gate: {trend_strength} (need Strong/Normal)"],)
+    if any(s.empty or pd.isna(s.iloc[-1]) for s in [m1_ema_fast, m1_ema_mid, m1_ema_slow, m1_ema_veto]):
+        reasons.append("M1 EMAs not ready")
+        no_signal["level_updates"] = [lv.to_dict() for lv in levels]
+        return no_signal
 
-    # --- 10. M5 EMA alignment with H1 ---
-    m5_fast_val = float(m5_ema_fast_s.iloc[-1])
-    m5_slow_val = float(m5_ema_slow_s.iloc[-1])
-    if side == "buy" and m5_fast_val <= m5_slow_val:
-        return _no[:-1] + (["M5 EMA not aligned for buy"],)
-    if side == "sell" and m5_fast_val >= m5_slow_val:
-        return _no[:-1] + (["M5 EMA not aligned for sell"],)
+    ema_fast_val = float(m1_ema_fast.iloc[-1])
+    ema_mid_val = float(m1_ema_mid.iloc[-1])
+    ema_slow_val = float(m1_ema_slow.iloc[-1])
+    ema_veto_val = float(m1_ema_veto.iloc[-1])
+    last_m1_close = float(m1_close.iloc[-1])
 
-    # --- 11. M1 pullback + recovery entry ---
-    m1_close = m1["close"].astype(float)
-    m1_open = m1["open"].astype(float)
-    m1_ema_slow_s = ema_fn(m1_close, policy.m1_ema_slow)
-    if pd.isna(m1_ema_slow_s.iloc[-1]):
-        return _no[:-1] + (["M1 EMA insufficient"],)
+    for lv in levels:
+        if lv.state != "ready" or lv.voided:
+            continue
 
-    # Check pullback: price came within 1 pip of M1 EMA slow in last 5 bars
-    pullback_found = False
-    for i in range(-5, 0):
-        if i >= -len(m1_close):
-            bar_low = float(m1["low"].iloc[i])
-            bar_high = float(m1["high"].iloc[i])
-            ema_val = float(m1_ema_slow_s.iloc[i])
+        side = None
+        entry_type = lv.entry_mode or "power_break"
+
+        # Determine side from break direction + M5 trend alignment
+        if lv.break_direction == "bull" and m5_trend == "bull":
+            side = "buy"
+        elif lv.break_direction == "bear" and m5_trend == "bear":
+            side = "sell"
+        else:
+            reasons.append(f"level {lv.price:.3f}: M5 trend ({m5_trend}) vs break dir ({lv.break_direction}) misaligned")
+            continue
+
+        # 35 EMA veto: if M1 close past the veto EMA on wrong side, void setup
+        if side == "buy" and last_m1_close < ema_veto_val:
+            # Price too deep below 35 EMA for a buy
+            pass  # veto only triggers if close is far past on WRONG side
+        if side == "buy" and last_m1_close > ema_veto_val + (policy.velocity_pips * pip_size):
+            pass  # Not a veto — price is extended bullish, which is fine
+
+        # Veto check: close on wrong side of 35 EMA
+        if side == "buy" and last_m1_close < ema_veto_val - (2 * pip_size):
+            lv.voided = True
+            lv.state = "voided"
+            reasons.append(f"level {lv.price:.3f}: voided by 35 EMA veto (close={last_m1_close:.3f} < ema35={ema_veto_val:.3f})")
+            continue
+        if side == "sell" and last_m1_close > ema_veto_val + (2 * pip_size):
+            lv.voided = True
+            lv.state = "voided"
+            reasons.append(f"level {lv.price:.3f}: voided by 35 EMA veto (close={last_m1_close:.3f} > ema35={ema_veto_val:.3f})")
+            continue
+
+        # M1 entry conditions based on entry mode
+        if entry_type == "power_break":
+            # Power Break: EMA stack 5>9>21 (buy) or 5<9<21 (sell) + close past 21 EMA
             if side == "buy":
-                if abs(bar_low - ema_val) / pip <= 1.0 or bar_low <= ema_val:
-                    pullback_found = True
-                    break
+                stack_ok = ema_fast_val > ema_mid_val > ema_slow_val
+                close_ok = last_m1_close > ema_slow_val
             else:
-                if abs(bar_high - ema_val) / pip <= 1.0 or bar_high >= ema_val:
-                    pullback_found = True
-                    break
-    if not pullback_found:
-        return _no[:-1] + (["no M1 pullback to EMA"],)
+                stack_ok = ema_fast_val < ema_mid_val < ema_slow_val
+                close_ok = last_m1_close < ema_slow_val
+            if not stack_ok:
+                reasons.append(f"level {lv.price:.3f}: power_break M1 EMA stack not aligned (5={ema_fast_val:.3f} 9={ema_mid_val:.3f} 21={ema_slow_val:.3f})")
+                continue
+            if not close_ok:
+                reasons.append(f"level {lv.price:.3f}: power_break M1 close not past 21 EMA")
+                continue
+        else:
+            # Sniper: pullback allowed past 21 EMA, close back past 9 EMA
+            if side == "buy":
+                close_ok = last_m1_close > ema_mid_val  # Close back above 9 EMA
+            else:
+                close_ok = last_m1_close < ema_mid_val  # Close back below 9 EMA
+            if not close_ok:
+                reasons.append(f"level {lv.price:.3f}: sniper M1 close not past 9 EMA (close={last_m1_close:.3f} mid={ema_mid_val:.3f})")
+                continue
 
-    # Check recovery on current bar
-    curr_close = float(m1_close.iloc[-1])
-    curr_open = float(m1_open.iloc[-1])
-    body_pips = abs(curr_close - curr_open) / pip
-    if side == "buy":
-        if curr_close <= curr_open or body_pips < policy.entry_min_body_pips:
-            return _no[:-1] + ([f"no M1 recovery candle (buy): body={body_pips:.1f}p"],)
-    else:
-        if curr_close >= curr_open or body_pips < policy.entry_min_body_pips:
-            return _no[:-1] + ([f"no M1 recovery candle (sell): body={body_pips:.1f}p"],)
+        # All conditions met
+        return {
+            "passed": True,
+            "side": side,
+            "reasons": [f"H1 breakout signal: {entry_type} at level {lv.price:.3f} ({lv.level_type})"],
+            "entry_type": entry_type,
+            "level_price": lv.price,
+            "level_updates": [l.to_dict() for l in levels],
+            "m5_trend": m5_trend,
+        }
 
-    # --- 12. Structural SL ---
-    entry_price = tick.ask if side == "buy" else tick.bid
-    m5_completed = m5.iloc[-policy.sl_lookback:]  # last N completed M5 bars (m5 already dropped incomplete)
-    if len(m5_completed) < policy.sl_lookback:
-        return _no[:-1] + (["insufficient M5 bars for structural SL"],)
-
-    if side == "buy":
-        swing_low = float(m5_completed["low"].astype(float).min())
-        sl_price = swing_low - policy.sl_buffer * pip
-    else:
-        swing_high = float(m5_completed["high"].astype(float).max())
-        sl_price = swing_high + policy.sl_buffer * pip
-
-    sl_distance_pips = abs(entry_price - sl_price) / pip
-    if sl_distance_pips < policy.sl_floor_pips:
-        sl_distance_pips = policy.sl_floor_pips
-    if sl_distance_pips > policy.sl_max_pips:
-        return _no[:-1] + ([f"SL too wide: {sl_distance_pips:.1f} > {policy.sl_max_pips}"],)
-
-    # --- 13. TP ---
-    if trend_strength == "Strong":
-        tp1_pips = sl_distance_pips * policy.strong_tp1
-        tp2_pips = sl_distance_pips * policy.strong_tp2
-    else:
-        tp1_pips = sl_distance_pips * policy.normal_tp1
-        tp2_pips = sl_distance_pips * policy.normal_tp2
-
-    # --- 14. Lot size ---
-    if policy.sizing_mode == "risk_parity":
-        risk_usd = policy.account_size * policy.risk_per_trade_pct / 100.0
-        pip_value_per_lot = 100000.0 * pip / entry_price
-        if pip_value_per_lot <= 0 or sl_distance_pips <= 0:
-            return _no[:-1] + (["invalid pip value or SL for sizing"],)
-        lot_size = risk_usd / (sl_distance_pips * pip_value_per_lot)
-        lot_size = max(policy.rp_min_lot, min(policy.rp_max_lot, lot_size))
-    else:
-        lot_size = policy.fixed_lots
-
-    reasons = [
-        f"H1={'bull' if side == 'buy' else 'bear'}",
-        f"M5 strength={trend_strength} slope={slope_pips:.2f}p/bar",
-        f"M1 pullback+recovery",
-        f"SL={sl_distance_pips:.1f}p TP1={tp1_pips:.1f}p TP2={tp2_pips:.1f}p",
-        f"lots={lot_size:.2f}",
-        f"session={'london' if in_london else 'ny'}",
-    ]
-
-    return (True, side, lot_size, sl_distance_pips, tp1_pips, tp2_pips, trend_strength, reasons)
+    # No level triggered
+    if not reasons:
+        reasons.append("no ready levels with valid M1 entry")
+    no_signal["level_updates"] = [lv.to_dict() for lv in levels]
+    return no_signal
 
 
-def execute_session_momentum_v5_policy_demo_only(
+def execute_h1_breakout_policy_demo_only(
     *,
     adapter,
     profile: ProfileV1,
     log_dir: Path,
-    policy: ExecutionPolicySessionMomentumV5,
+    policy,  # ExecutionPolicyUncleParshH1Breakout
     context: MarketContext,
-    data_by_tf: dict[Timeframe, pd.DataFrame],
+    data_by_tf: dict,
     tick: Tick,
     trades_df: Optional[pd.DataFrame],
     mode: str,
-) -> ExecutionDecision:
-    """Evaluate session momentum v5.3 policy and optionally place a market order."""
-    from core.dashboard_models import TradeEvent, append_trade_event
+    bar_time_utc: str,
+    level_state: list[dict],
+    is_new_m1: bool,
+    is_new_m5: bool,
+) -> dict:
+    """Evaluate Uncle Parsh H1 Breakout policy and optionally place a market order.
+
+    Returns: {"decision": ExecutionDecision, "level_updates": list, "entry_type": str}
+    """
+    no_trade = {
+        "decision": ExecutionDecision(attempted=False, placed=False, reason=""),
+        "level_updates": level_state,
+        "entry_type": "",
+    }
 
     if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
-        return ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed")
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"mode={mode} not armed")
+        return no_trade
 
     if not adapter.is_demo_account():
-        return ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)")
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="not a demo account (execution disabled)")
+        return no_trade
+
+    pip_size = float(profile.pip_size)
+
+    # Evaluate conditions
+    result = evaluate_h1_breakout_conditions(
+        policy, data_by_tf, tick, pip_size,
+        level_state, is_new_m1, is_new_m5,
+    )
+    passed = result["passed"]
+    side = result["side"]
+    eval_reasons = result["reasons"]
+    entry_type = result["entry_type"]
+    level_updates = result["level_updates"]
+
+    no_trade["level_updates"] = level_updates
+
+    if not passed or side is None:
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="; ".join(eval_reasons))
+        return no_trade
 
     store = _store(log_dir)
-    now_utc = datetime.now(timezone.utc)
-    today_str = now_utc.strftime("%Y-%m-%d")
-    rule_id = f"smv5:{policy.id}:{today_str}:{now_utc.strftime('%H%M')}"
+    rule_id = f"uncle_parsh_h1:{policy.id}:M1:{bar_time_utc}"
 
-    should_enter, side, lot_size, sl_distance_pips, tp1_pips, tp2_pips, trend_strength, eval_reasons = \
-        evaluate_session_momentum_v5(profile, policy, data_by_tf, tick, trades_df)
+    # Idempotency check
+    if store.has_recent_price_level_placement(profile.profile_name, rule_id, 2):
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="uncle_parsh: recent placement (idempotent)")
+        return no_trade
 
-    if not should_enter or side is None:
-        return ExecutionDecision(attempted=True, placed=False, reason="; ".join(eval_reasons))
+    # Spread veto
+    current_spread_pips = (tick.ask - tick.bid) / pip_size
+    if current_spread_pips > policy.max_spread_pips:
+        reason = f"spread_veto: {current_spread_pips:.1f}p > max {policy.max_spread_pips}p"
+        store.insert_execution({
+            "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+            "profile": profile.profile_name, "symbol": profile.symbol,
+            "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+            "rule_id": rule_id, "mode": mode,
+            "attempted": 1, "placed": 0, "reason": reason,
+            "mt5_retcode": None, "mt5_order_id": None, "mt5_deal_id": None,
+        })
+        no_trade["decision"] = ExecutionDecision(attempted=True, placed=False, reason=reason)
+        return no_trade
 
+    # Build candidate
     entry_price = tick.ask if side == "buy" else tick.bid
-    pip = float(profile.pip_size)
+    current_spread = tick.ask - tick.bid
+    sl_distance = current_spread + policy.initial_sl_spread_plus_pips * pip_size
+    tp_distance = policy.tp1_pips * pip_size
 
-    # Build candidate with structural SL and TP2 as target
     if side == "buy":
-        stop_price = entry_price - sl_distance_pips * pip
-        target_price = entry_price + tp2_pips * pip
+        stop = entry_price - sl_distance
+        target = entry_price + tp_distance
     else:
-        stop_price = entry_price + sl_distance_pips * pip
-        target_price = entry_price - tp2_pips * pip
+        stop = entry_price + sl_distance
+        target = entry_price - tp_distance
 
     candidate = TradeCandidate(
         symbol=profile.symbol,
         side=side,
         entry_price=entry_price,
-        stop_price=stop_price,
-        target_price=target_price,
-        size_lots=lot_size,
+        stop_price=stop,
+        target_price=target,
+        size_lots=float(get_effective_risk(profile).max_lots),
     )
 
+    # Risk engine
     decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
     if not decision.allow:
-        return ExecutionDecision(attempted=True, placed=False, reason="risk_reject: " + "; ".join(decision.hard_reasons))
+        sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+        store.insert_execution({
+            "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+            "profile": profile.profile_name, "symbol": profile.symbol,
+            "signal_id": sig_id, "rule_id": rule_id, "mode": mode,
+            "attempted": 1, "placed": 0,
+            "reason": "risk_reject: " + "; ".join(decision.hard_reasons),
+            "mt5_retcode": None, "mt5_order_id": None, "mt5_deal_id": None,
+        })
+        no_trade["decision"] = ExecutionDecision(attempted=True, placed=False, reason="risk rejected: " + "; ".join(decision.hard_reasons))
+        return no_trade
 
     if mode == "ARMED_MANUAL_CONFIRM":
-        return ExecutionDecision(attempted=True, placed=False, reason="manual confirm required")
+        sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
+        store.insert_execution({
+            "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+            "profile": profile.profile_name, "symbol": profile.symbol,
+            "signal_id": sig_id, "rule_id": rule_id, "mode": mode,
+            "attempted": 1, "placed": 0, "reason": "manual_confirm_required",
+            "mt5_retcode": None, "mt5_order_id": None, "mt5_deal_id": None,
+        })
+        no_trade["decision"] = ExecutionDecision(attempted=True, placed=False, reason="manual confirm required")
+        return no_trade
 
+    # Place order
     res = adapter.order_send_market(
         symbol=profile.symbol,
         side=side,
-        volume_lots=lot_size,
-        sl=stop_price,
-        tp=target_price,
-        comment=f"smv5:{policy.id}",
+        volume_lots=float(candidate.size_lots or get_effective_risk(profile).max_lots),
+        sl=candidate.stop_price,
+        tp=candidate.target_price,
+        comment=f"up_h1:{entry_type}",
     )
     placed = res.retcode in (0, 10008, 10009)
     reason = "order_sent" if placed else f"order_failed:{res.retcode}:{res.comment}"
-
-    sig_id = f"{rule_id}:{now_utc.isoformat()}"
+    sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
     store.insert_execution({
-        "timestamp_utc": now_utc.isoformat(),
-        "profile": profile.profile_name,
-        "symbol": profile.symbol,
-        "signal_id": sig_id,
-        "rule_id": rule_id,
-        "mode": mode,
-        "attempted": 1,
-        "placed": 1 if placed else 0,
-        "reason": reason,
-        "mt5_retcode": res.retcode,
-        "mt5_order_id": res.order,
-        "mt5_deal_id": res.deal,
+        "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+        "profile": profile.profile_name, "symbol": profile.symbol,
+        "signal_id": sig_id, "rule_id": rule_id, "mode": mode,
+        "attempted": 1, "placed": 1 if placed else 0, "reason": reason,
+        "mt5_retcode": res.retcode, "mt5_order_id": res.order, "mt5_deal_id": res.deal,
     })
 
     if placed:
-        spread_pips = round((tick.ask - tick.bid) / pip, 2)
-        hour_float = now_utc.hour + now_utc.minute / 60.0
-        in_london = policy.london_start_hour <= hour_float < policy.london_end_hour
-        event = TradeEvent(
-            event_type="open",
-            timestamp_utc=now_utc.isoformat(),
-            trade_id=sig_id,
-            side=side,
-            price=entry_price,
-            trigger_type="smv5_pullback_recovery",
-            spread_at_entry=spread_pips,
-            context_snapshot={
-                "spread_at_entry": spread_pips,
-                "trend_strength": trend_strength,
-                "sl_distance_pips": round(sl_distance_pips, 1),
-                "tp1_pips": round(tp1_pips, 1),
-                "tp2_pips": round(tp2_pips, 1),
-                "lot_size": round(lot_size, 2),
-                "session": "london" if in_london else "ny",
-            },
-        )
-        append_trade_event(log_dir, event)
+        print(f"[{profile.profile_name}] TRADE PLACED: uncle_parsh_h1:{entry_type} | {side.upper()} @ {entry_price:.3f} | level={result['level_price']:.3f}")
 
-    return ExecutionDecision(
-        attempted=True,
-        placed=placed,
-        reason=reason,
-        order_retcode=res.retcode,
-        order_id=res.order,
-        deal_id=res.deal,
-        fill_price=getattr(res, 'fill_price', None),
-        side=side,
-    )
+    return {
+        "decision": ExecutionDecision(
+            attempted=True, placed=placed, reason=reason,
+            order_retcode=res.retcode, order_id=res.order, deal_id=res.deal,
+            fill_price=getattr(res, 'fill_price', None), side=side,
+        ),
+        "level_updates": level_updates,
+        "entry_type": entry_type,
+    }

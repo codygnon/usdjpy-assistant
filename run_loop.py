@@ -22,6 +22,7 @@ from core.execution_engine import (
     execute_bollinger_policy_demo_only,
     execute_breakout_policy_demo_only,
     execute_ema_pullback_policy_demo_only,
+    execute_h1_breakout_policy_demo_only,
     execute_indicator_policy_demo_only,
     execute_kt_cg_ctp_policy_demo_only,
     execute_kt_cg_hybrid_policy_demo_only,
@@ -32,7 +33,6 @@ from core.execution_engine import (
     execute_kt_cg_trial_8_policy_demo_only,
     execute_price_level_policy_demo_only,
     execute_session_momentum_policy_demo_only,
-    execute_session_momentum_v5_policy_demo_only,
     execute_signal_demo_only,
     execute_vwap_policy_demo_only,
 )
@@ -52,13 +52,9 @@ from core.dashboard_models import (
     append_trade_event, write_dashboard_state,
 )
 from core.dashboard_reporters import (
-    collect_trial_2_context,
-    collect_trial_3_context,
-    collect_trial_4_context,
-    collect_trial_5_context,
-    collect_trial_6_context,
-    collect_trial_7_context,
-    collect_smv5_context,
+    collect_trial_2_context, collect_trial_3_context,
+    collect_trial_4_context, collect_trial_5_context,
+    collect_trial_6_context, collect_trial_7_context,
 )
 from storage.sqlite_store import SqliteStore
 
@@ -202,9 +198,16 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                 t4_spread_be = pol
             break
 
+    # Find Uncle Parsh policy if present
+    up_policy = None
+    for pol in profile.execution.policies:
+        if getattr(pol, "type", None) == "uncle_parsh_h1_breakout" and getattr(pol, "enabled", True):
+            up_policy = pol
+            break
+
     has_simple_be = breakeven and getattr(breakeven, "enabled", False)
     has_scaled = target and getattr(target, "mode", None) == "scaled" and getattr(target, "tp1_pips", None)
-    if not has_simple_be and not has_scaled and t4_spread_be is None:
+    if not has_simple_be and not has_scaled and t4_spread_be is None and up_policy is None:
         return
     try:
         open_positions = adapter.get_open_positions(profile.symbol)
@@ -321,8 +324,102 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                         adapter.update_position_stop_loss(position_id, profile.symbol, entry)
                         store.update_trade(trade_id, {"breakeven_applied": 1})
                         print(f"[{profile.profile_name}] breakeven applied position {position_id}")
-        # 2) TP1 partial close
-        if target and getattr(target, "mode", None) == "scaled":
+        # 2) Uncle Parsh H1 Breakout trade management (TP1 + BE + trailing EMA)
+        if up_policy is not None and entry_type in ("power_break", "sniper"):
+            tp1_done = trade_row.get("tp1_partial_done") or 0
+            up_tp1_pips = up_policy.tp1_pips
+            up_tp1_pct = up_policy.tp1_close_pct
+
+            # TP1 partial close
+            if not tp1_done:
+                reached_buy = mid >= entry + float(up_tp1_pips) * pip
+                reached_sell = mid <= entry - float(up_tp1_pips) * pip
+                if (side == "buy" and reached_buy) or (side == "sell" and reached_sell):
+                    if isinstance(pos, dict):
+                        current_units = pos.get("currentUnits") or 0
+                        current_lots = abs(int(current_units)) / 100_000.0
+                    else:
+                        current_lots = float(getattr(pos, "volume", 0) or 0)
+                    close_lots = current_lots * (float(up_tp1_pct) / 100.0)
+                    position_type = 1 if side == "sell" else 0
+                    try:
+                        adapter.close_position(
+                            ticket=position_id,
+                            symbol=profile.symbol,
+                            volume=close_lots,
+                            position_type=position_type,
+                        )
+                        # Move SL to BE (entry + spread + be_spread_plus_pips)
+                        be_offset = current_spread + up_policy.be_spread_plus_pips * pip
+                        if side == "buy":
+                            be_sl = entry + be_offset
+                        else:
+                            be_sl = entry - be_offset
+                        adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
+                        store.update_trade(trade_id, {"tp1_partial_done": 1, "breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
+                        print(f"[{profile.profile_name}] UP TP1 partial close + BE: pos {position_id} ({up_tp1_pct}%) SL->{be_sl:.3f}")
+                    except Exception as e:
+                        print(f"[{profile.profile_name}] UP TP1/BE error pos {position_id}: {e}")
+
+            # Trailing M1 EMA stop for runner (after TP1 done)
+            elif tp1_done:
+                try:
+                    # Get M1 data for EMA calculation
+                    m1_df_trail = adapter.get_bars(profile.symbol, "M1", 100)
+                    if m1_df_trail is not None and not m1_df_trail.empty and len(m1_df_trail) > up_policy.trail_ema_period:
+                        from core.indicators import ema as ema_fn
+                        m1_close_trail = m1_df_trail["close"].astype(float)
+                        trail_ema = ema_fn(m1_close_trail, up_policy.trail_ema_period)
+                        if not trail_ema.empty and pd.notna(trail_ema.iloc[-1]):
+                            ema_val = float(trail_ema.iloc[-1])
+                            prev_be_sl = trade_row.get("breakeven_sl_price")
+                            if prev_be_sl is not None:
+                                prev_be_sl = float(prev_be_sl)
+
+                            # Ratchet trailing SL favorably
+                            if side == "buy":
+                                new_trail_sl = ema_val - (1.0 * pip)  # 1 pip buffer below EMA
+                                if prev_be_sl is not None:
+                                    new_trail_sl = max(new_trail_sl, prev_be_sl)
+                            else:
+                                new_trail_sl = ema_val + (1.0 * pip)  # 1 pip buffer above EMA
+                                if prev_be_sl is not None:
+                                    new_trail_sl = min(new_trail_sl, prev_be_sl)
+
+                            # Update SL if moved favorably
+                            if prev_be_sl is None or abs(new_trail_sl - prev_be_sl) > pip * 0.1:
+                                should_update = False
+                                if side == "buy" and (prev_be_sl is None or new_trail_sl > prev_be_sl):
+                                    should_update = True
+                                elif side == "sell" and (prev_be_sl is None or new_trail_sl < prev_be_sl):
+                                    should_update = True
+                                if should_update:
+                                    adapter.update_position_stop_loss(position_id, profile.symbol, round(new_trail_sl, 3))
+                                    store.update_trade(trade_id, {"breakeven_sl_price": round(new_trail_sl, 5)})
+
+                            # Check if M1 bar close is on wrong side of 21 EMA -> close runner
+                            last_m1_close = float(m1_close_trail.iloc[-1])
+                            if side == "buy" and last_m1_close < ema_val:
+                                position_type = 0  # BUY position
+                                if isinstance(pos, dict):
+                                    vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                else:
+                                    vol = float(getattr(pos, "volume", 0) or 0)
+                                adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                print(f"[{profile.profile_name}] UP runner closed (BUY close < EMA21): pos {position_id}")
+                            elif side == "sell" and last_m1_close > ema_val:
+                                position_type = 1  # SELL position
+                                if isinstance(pos, dict):
+                                    vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                else:
+                                    vol = float(getattr(pos, "volume", 0) or 0)
+                                adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                print(f"[{profile.profile_name}] UP runner closed (SELL close > EMA21): pos {position_id}")
+                except Exception as e:
+                    print(f"[{profile.profile_name}] UP trailing EMA error pos {position_id}: {e}")
+
+        # 2) TP1 partial close (for non-uncle_parsh policies)
+        elif target and getattr(target, "mode", None) == "scaled":
             tp1_pips = getattr(target, "tp1_pips", None)
             tp1_pct = getattr(target, "tp1_close_percent", None)
             if tp1_pips is not None and tp1_pct is not None:
@@ -437,16 +534,6 @@ def _build_and_write_dashboard(
             context_items = collect_trial_2_context(policy, data_by_tf, tick, pip_size)
         elif policy_type == "kt_cg_counter_trend_pullback":
             context_items = collect_trial_3_context(policy, data_by_tf, tick, pip_size)
-        elif policy_type == "session_momentum_v5":
-            # Session Momentum v5.3 context (trend, sessions, entries, spread)
-            context_items = collect_smv5_context(
-                policy_for_context,
-                data_by_tf,
-                tick,
-                pip_size,
-                store=store,
-                profile_name=profile.profile_name,
-            )
 
         candidate_side = None
         candidate_trigger = None
@@ -749,12 +836,12 @@ def main() -> None:
             getattr(p, "type", None) == "kt_cg_trial_7" and getattr(p, "enabled", True)
             for p in profile.execution.policies
         )
-        has_kt_cg_trial_8 = any(
-            getattr(p, "type", None) == "kt_cg_trial_8" and getattr(p, "enabled", True)
+        has_uncle_parsh = any(
+            getattr(p, "type", None) == "uncle_parsh_h1_breakout" and getattr(p, "enabled", True)
             for p in profile.execution.policies
         )
-        has_session_momentum_v5 = any(
-            getattr(p, "type", None) == "session_momentum_v5" and getattr(p, "enabled", True)
+        has_kt_cg_trial_8 = any(
+            getattr(p, "type", None) == "kt_cg_trial_8" and getattr(p, "enabled", True)
             for p in profile.execution.policies
         )
         # Confirmed-cross setups can now use M5; detect if any do so we fetch M5 bars.
@@ -869,18 +956,18 @@ def main() -> None:
                         "M15": _get_bars_cached(profile.symbol, "M15", 2000),
                         "M1": _get_bars_cached(profile.symbol, "M1", 3000),
                     }
-                    # Fetch M5 data when needed by ema_pullback, kt_cg_ctp, kt_cg_hybrid, M5 confirmed-cross, or session_momentum_v5.
-                    if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_session_momentum_v5:
+                    # Fetch M5 data when needed by ema_pullback, kt_cg_ctp, kt_cg_hybrid, M5 confirmed-cross, or uncle_parsh.
+                    if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_uncle_parsh:
                         data_by_tf["M5"] = _get_bars_cached(profile.symbol, "M5", 2000)
                     # Fetch M3 data when needed by kt_cg_trial_4/5/6 (trend detection).
                     if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6:
                         data_by_tf["M3"] = _get_bars_cached(profile.symbol, "M3", 3000)
-                    # Fetch H1 data when needed by session_momentum_v5 (H1 trend).
-                    if has_session_momentum_v5:
-                        data_by_tf["H1"] = _get_bars_cached(profile.symbol, "H1", 200)
                     # Fetch D1 data when needed by daily H/L filter (Trial #4/5/8).
                     if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_8:
                         data_by_tf["D"] = _get_bars_cached(profile.symbol, "D", 2)
+                    # Fetch H1 data when needed by Uncle Parsh H1 Breakout.
+                    if has_uncle_parsh:
+                        data_by_tf["H1"] = _get_bars_cached(profile.symbol, "H1", 200)
                     # Tick always fetched fresh for live price detection
                     tick = adapter.get_tick(profile.symbol)
                     break
@@ -1315,68 +1402,6 @@ def main() -> None:
                             )
                         else:
                             print(f"[{profile.profile_name}] session_momentum {pol.id} mode={mode} -> {dec.reason}")
-
-            # Session momentum v5.3 policies (entry only on new M1 bar close for deterministic results)
-            if has_session_momentum_v5 and mkt is None:
-                mkt = _compute_mkt(profile, tick, data_by_tf)
-            if has_session_momentum_v5 and mkt is not None:
-                trades_df = store.read_trades_df(profile.profile_name)
-                for pol in profile.execution.policies:
-                    if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "session_momentum_v5":
-                        continue
-                    if not (is_new or args.once):
-                        _build_and_write_dashboard(
-                            profile=profile,
-                            store=store,
-                            log_dir=log_dir,
-                            tick=tick,
-                            data_by_tf=data_by_tf,
-                            mode=mode,
-                            adapter=adapter,
-                            policy=pol,
-                            policy_type="session_momentum_v5",
-                        )
-                        continue
-                    dec = execute_session_momentum_v5_policy_demo_only(
-                        adapter=adapter,
-                        profile=profile,
-                        log_dir=log_dir,
-                        policy=pol,
-                        context=mkt,
-                        data_by_tf=data_by_tf,
-                        tick=tick,
-                        trades_df=trades_df,
-                        mode=mode,
-                    )
-                    if dec.placed:
-                        side = dec.side or "buy"
-                        entry_price = tick.ask if side == "buy" else tick.bid
-                        print(f"[{profile.profile_name}] TRADE PLACED: session_momentum_v5:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
-                        _insert_trade_for_policy(
-                            profile=profile,
-                            adapter=adapter,
-                            store=store,
-                            policy_type="session_momentum_v5",
-                            policy_id=pol.id,
-                            side=side,
-                            entry_price=entry_price,
-                            dec=dec,
-                        )
-                    else:
-                        print(f"[{profile.profile_name}] session_momentum_v5 {pol.id} mode={mode} -> {dec.reason}")
-
-                    # Dashboard assembly for Session Momentum v5.3
-                    _build_and_write_dashboard(
-                        profile=profile,
-                        store=store,
-                        log_dir=log_dir,
-                        tick=tick,
-                        data_by_tf=data_by_tf,
-                        mode=mode,
-                        adapter=adapter,
-                        policy=pol,
-                        policy_type="session_momentum_v5",
-                    )
 
             # Bollinger Bands policies
             if has_bollinger and mkt is not None:
@@ -2307,20 +2332,123 @@ def main() -> None:
                         eval_result=exec_result,
                     )
 
-            # Catch-all dashboard write for profiles not using KT/CG policy types
-            # or Session Momentum v5.3. Runs every poll cycle so positions +
-            # prices are always fresh, but we skip it when smv5 or KT/CG
-            # policies are active to avoid overwriting their richer context.
-            if not (
-                has_kt_cg_hybrid
-                or has_kt_cg_ctp
-                or has_kt_cg_trial_4
-                or has_kt_cg_trial_5
-                or has_kt_cg_trial_6
-                or has_kt_cg_trial_7
-                or has_kt_cg_trial_8
-                or has_session_momentum_v5
-            ):
+            # Uncle Parsh H1 Breakout execution
+            if has_uncle_parsh:
+                up_mkt = mkt
+                if up_mkt is None:
+                    spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
+                    up_mkt = MarketContext(spread_pips=float(spread_pips), alignment_score=0)
+                trades_df = store.read_trades_df(profile.profile_name)
+
+                # Track M5 bar changes
+                m5_df_up = data_by_tf.get("M5")
+                if m5_df_up is not None and not m5_df_up.empty:
+                    m5_last_time_up = pd.to_datetime(m5_df_up["time"].iloc[-1], utc=True).isoformat()
+                else:
+                    m5_last_time_up = ""
+                is_new_m5_up = m5_last_time_up != getattr(_run_trade_management, '_last_m5_time_up', None)
+
+                # Load level state from runtime_state.json
+                up_level_state: list[dict] = []
+                try:
+                    state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                    up_level_state = state_data.get("h1_breakout_levels", [])
+                    # Daily reset: clear levels when date changes
+                    stored_scan_date = state_data.get("h1_breakout_scan_date", "")
+                    current_date_up = pd.Timestamp.now(tz="UTC").date().isoformat()
+                    if stored_scan_date != current_date_up:
+                        up_level_state = []
+                except Exception:
+                    up_level_state = []
+
+                for pol in profile.execution.policies:
+                    if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "uncle_parsh_h1_breakout":
+                        continue
+                    m1_df_up = data_by_tf.get("M1")
+                    if m1_df_up is None or m1_df_up.empty:
+                        continue
+                    bar_time_utc = pd.to_datetime(m1_df_up["time"].iloc[-1], utc=True).isoformat()
+                    exec_result = execute_h1_breakout_policy_demo_only(
+                        adapter=adapter,
+                        profile=profile,
+                        log_dir=log_dir,
+                        policy=pol,
+                        context=up_mkt,
+                        data_by_tf=data_by_tf,
+                        tick=tick,
+                        trades_df=trades_df,
+                        mode=mode,
+                        bar_time_utc=bar_time_utc,
+                        level_state=up_level_state,
+                        is_new_m1=is_new,
+                        is_new_m5=is_new_m5_up,
+                    )
+                    dec = exec_result["decision"]
+                    up_level_updates = exec_result.get("level_updates", [])
+                    up_entry_type = exec_result.get("entry_type", "")
+
+                    # Persist level state to runtime_state.json
+                    try:
+                        current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                        current_state_data["h1_breakout_levels"] = up_level_updates
+                        current_state_data["h1_breakout_scan_date"] = pd.Timestamp.now(tz="UTC").date().isoformat()
+                        current_state_data["last_m5_time_up"] = m5_last_time_up
+                        state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
+                    except Exception as e:
+                        print(f"[{profile.profile_name}] Failed to persist H1 breakout level state: {e}")
+
+                    if dec.attempted:
+                        if dec.placed:
+                            side = dec.side or "buy"
+                            entry_price = tick.ask if side == "buy" else tick.bid
+                            pip = float(profile.pip_size)
+                            current_spread = tick.ask - tick.bid
+                            sl_distance = current_spread + pol.initial_sl_spread_plus_pips * pip
+                            tp_distance = pol.tp1_pips * pip
+                            if side == "buy":
+                                tp_price = entry_price + tp_distance
+                                sl_price = entry_price - sl_distance
+                            else:
+                                tp_price = entry_price - tp_distance
+                                sl_price = entry_price + sl_distance
+                            print(f"[{profile.profile_name}] TRADE PLACED: uncle_parsh:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
+                            _insert_trade_for_policy(
+                                profile=profile,
+                                adapter=adapter,
+                                store=store,
+                                policy_type="uncle_parsh_h1_breakout",
+                                policy_id=pol.id,
+                                side=side,
+                                entry_price=entry_price,
+                                dec=dec,
+                                stop_price=sl_price,
+                                target_price=tp_price,
+                                entry_type=up_entry_type,
+                            )
+                            _append_trade_open_event(
+                                log_dir, f"uncle_parsh:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
+                                side, entry_price,
+                                trigger_type=up_entry_type or "",
+                                entry_type=up_entry_type or "",
+                            )
+                        else:
+                            if dec.reason and "waiting" not in dec.reason:
+                                print(f"[{profile.profile_name}] uncle_parsh {pol.id} mode={mode} -> {dec.reason}")
+
+                    # Dashboard assembly for Uncle Parsh
+                    _build_and_write_dashboard(
+                        profile=profile, store=store, log_dir=log_dir, tick=tick,
+                        data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
+                        policy_type="uncle_parsh_h1_breakout",
+                        eval_result=exec_result,
+                    )
+
+                # Update M5 time tracker
+                _run_trade_management._last_m5_time_up = m5_last_time_up
+
+            # Catch-all dashboard write for profiles not using KT/CG policy types.
+            # Runs every poll cycle so positions + prices are always fresh.
+            if not (has_kt_cg_hybrid or has_kt_cg_ctp or has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6 or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_uncle_parsh):
                 if tick is not None and data_by_tf is not None:
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,

@@ -1108,355 +1108,146 @@ def collect_trial_6_context(
 
 
 # ---------------------------------------------------------------------------
-# Session Momentum v5.3 reporters
+# Uncle Parsh H1 Breakout reporters
 # ---------------------------------------------------------------------------
 
 
-def collect_smv5_context(
-    policy, data_by_tf: dict, tick, pip_size: float,
-    store=None, profile_name: str = "",
-) -> list[ContextItem]:
-    """Collect context items for Session Momentum v5.3."""
+def report_h1_levels(policy, data_by_tf, level_state) -> FilterReport:
+    """Show detected H1 levels, their status (watching/broken/active), touch counts."""
+    if not level_state:
+        return FilterReport(
+            filter_id="h1_levels", display_name="H1 S/R Levels",
+            enabled=True, is_clear=True,
+            current_value="No levels detected",
+        )
+    watching = sum(1 for lv in level_state if lv.get("state") == "watching")
+    catalyst = sum(1 for lv in level_state if lv.get("state") == "catalyst")
+    ready = sum(1 for lv in level_state if lv.get("state") == "ready")
+    voided = sum(1 for lv in level_state if lv.get("voided", False))
+    total = len(level_state)
+
+    level_details = []
+    for lv in level_state[:5]:  # Show top 5
+        price = lv.get("price", 0)
+        lt = lv.get("level_type", "?")
+        st = lv.get("state", "?")
+        tc = lv.get("touch_count", 0)
+        level_details.append(f"{price:.3f} ({lt}) [{st}] tc={tc}")
+
+    return FilterReport(
+        filter_id="h1_levels", display_name="H1 S/R Levels",
+        enabled=True, is_clear=ready > 0,
+        current_value=f"{total} levels: {watching}W {catalyst}C {ready}R {voided}V",
+        threshold="; ".join(level_details) if level_details else "none",
+    )
+
+
+def report_m5_trend_alignment(policy, data_by_tf) -> FilterReport:
+    """M5 EMA 9 vs 21 alignment status."""
     from core.indicators import ema as ema_fn
 
-    items: list[ContextItem] = []
-    now_utc = datetime.now(timezone.utc)
-    hour_float = now_utc.hour + now_utc.minute / 60.0
-
-    # Session window (defaults aligned with global session filter: London 8-16, NY 13-21 UTC)
-    london_start = getattr(policy, "london_start_hour", 8.0)
-    london_end = getattr(policy, "london_end_hour", 16.0)
-    ny_start = getattr(policy, "ny_start_hour", 13.0) + getattr(policy, "ny_start_delay_minutes", 5) / 60.0
-    ny_end = getattr(policy, "ny_end_hour", 21.0)
-
-    # Backwards-compatible migration for older profiles that still have 6.5–11.0 / 16.0
-    if london_start == 6.5 and london_end == 11.0:
-        london_start, london_end = 8.0, 16.0
-    if ny_end == 16.0:
-        ny_end = 21.0
-    sessions_cfg = getattr(policy, "sessions", "both")
-
-    in_london = london_start <= hour_float < london_end and sessions_cfg != "ny_only"
-    in_ny = ny_start <= hour_float < ny_end and sessions_cfg != "london_only"
-    if in_london:
-        session_label = "London"
-    elif in_ny:
-        session_label = "New York"
-    else:
-        session_label = "None"
-    items.append(ContextItem("Session", session_label, "session"))
-
-    # H1 Trend
-    h1_df = data_by_tf.get("H1")
-    h1_trend = "—"
-    if h1_df is not None and not h1_df.empty:
-        h1_fast_p = getattr(policy, "h1_ema_fast", 20)
-        h1_slow_p = getattr(policy, "h1_ema_slow", 50)
-        if len(h1_df) > h1_slow_p:
-            h1_close = h1_df["close"].astype(float)
-            h1_fv = float(ema_fn(h1_close, h1_fast_p).iloc[-1])
-            h1_sv = float(ema_fn(h1_close, h1_slow_p).iloc[-1])
-            h1_trend = "Bullish" if h1_fv > h1_sv else "Bearish"
-            items.append(ContextItem("H1 Trend", h1_trend, "trend"))
-            items.append(ContextItem(f"H1 EMA{h1_fast_p}", f"{h1_fv:.3f}", "trend"))
-            items.append(ContextItem(f"H1 EMA{h1_slow_p}", f"{h1_sv:.3f}", "trend"))
-        else:
-            items.append(ContextItem("H1 Trend", "Insufficient data", "trend"))
-    else:
-        items.append(ContextItem("H1 Trend", "No H1 data", "trend"))
-
-    # M5 Trend strength
     m5_df = data_by_tf.get("M5")
-    trend_strength = "—"
-    if m5_df is not None and not m5_df.empty:
-        m5_fast_p = getattr(policy, "m5_ema_fast", 9)
-        m5_slow_p = getattr(policy, "m5_ema_slow", 21)
-        slope_bars = getattr(policy, "slope_bars", 6)
-        strong_slope = getattr(policy, "strong_slope", 0.6)
-        weak_slope = getattr(policy, "weak_slope", 0.2)
-        if len(m5_df) > max(m5_slow_p, slope_bars):
-            m5_close = m5_df["close"].astype(float)
-            m5_fv_s = ema_fn(m5_close, m5_fast_p)
-            m5_sv = float(ema_fn(m5_close, m5_slow_p).iloc[-1])
-            m5_fv = float(m5_fv_s.iloc[-1])
-            slope_raw = (float(m5_fv_s.iloc[-1]) - float(m5_fv_s.iloc[-slope_bars])) / slope_bars
-            slope_pips = abs(slope_raw) / pip_size
-            if slope_pips >= strong_slope:
-                trend_strength = "Strong"
-            elif slope_pips >= weak_slope:
-                trend_strength = "Normal"
-            else:
-                trend_strength = "Weak"
-            alignment = "Aligned" if (h1_trend == "Bullish" and m5_fv > m5_sv) or (h1_trend == "Bearish" and m5_fv < m5_sv) else "Not aligned"
-            items.append(ContextItem("M5 Slope", f"{slope_pips:+.2f} p/bar ({trend_strength})", "trend"))
-            items.append(ContextItem("M5 Alignment", alignment, "trend"))
-
-    # M1 EMA for pullback
-    m1_df = data_by_tf.get("M1")
-    if m1_df is not None and not m1_df.empty:
-        m1_slow_p = getattr(policy, "m1_ema_slow", 21)
-        if len(m1_df) > m1_slow_p:
-            m1_close = m1_df["close"].astype(float)
-            m1_ema_val = float(ema_fn(m1_close, m1_slow_p).iloc[-1])
-            items.append(ContextItem(f"M1 EMA{m1_slow_p}", f"{m1_ema_val:.3f}", "entry"))
-
-    # Entry counts
-    today_str = now_utc.strftime("%Y-%m-%d")
-    entries_today = 0
-    london_entries = 0
-    ny_entries = 0
-    if store is not None and profile_name:
-        try:
-            trades_df = store.read_trades_df(profile_name)
-            if trades_df is not None and not trades_df.empty and "timestamp_utc" in trades_df.columns:
-                for _, row in trades_df.iterrows():
-                    ts = str(row.get("timestamp_utc", ""))
-                    if ts.startswith(today_str):
-                        entries_today += 1
-                        try:
-                            entry_hour = float(ts[11:13]) + float(ts[14:16]) / 60.0
-                            if london_start <= entry_hour < london_end:
-                                london_entries += 1
-                            elif ny_start <= entry_hour < ny_end:
-                                ny_entries += 1
-                        except (ValueError, IndexError):
-                            pass
-        except Exception:
-            pass
-    max_day = getattr(policy, "max_entries_day", 7)
-    london_max = getattr(policy, "london_max_entries", 2)
-    items.append(ContextItem("Entries Today", f"{entries_today} / {max_day}", "entries"))
-    items.append(ContextItem("London Entries", f"{london_entries} / {london_max}", "entries"))
-    items.append(ContextItem("NY Entries", f"{ny_entries}", "entries"))
-
-    # Strength gating
-    items.append(ContextItem("Strength Gate", str(getattr(policy, "strength_allow", "strong_only")), "filters"))
-
-    # Price
-    items.append(ContextItem("Bid", f"{tick.bid:.3f}", "price"))
-    items.append(ContextItem("Ask", f"{tick.ask:.3f}", "price"))
-    items.append(ContextItem("Spread", f"{(tick.ask - tick.bid) / pip_size:.1f}p", "price"))
-
-    return items
-
-
-def report_smv5_trend_strength(
-    policy, data_by_tf: dict, pip_size: float,
-) -> FilterReport:
-    """Report trend strength filter for Session Momentum v5.3."""
-    from core.indicators import ema as ema_fn
-
-    h1_df = data_by_tf.get("H1")
-    m5_df = data_by_tf.get("M5")
-    strength_allow = getattr(policy, "strength_allow", "strong_only")
-
-    if h1_df is None or h1_df.empty or m5_df is None or m5_df.empty:
+    if m5_df is None or m5_df.empty:
         return FilterReport(
-            filter_id="smv5_trend_strength", display_name="Trend Strength (H1/M5)",
+            filter_id="m5_trend", display_name="M5 Trend (EMA)",
             enabled=True, is_clear=False,
-            current_value="No data", threshold=strength_allow,
-            block_reason="insufficient data",
+            current_value="No M5 data",
         )
-
-    h1_fast_p = getattr(policy, "h1_ema_fast", 20)
-    h1_slow_p = getattr(policy, "h1_ema_slow", 50)
-    m5_fast_p = getattr(policy, "m5_ema_fast", 9)
-    slope_bars = getattr(policy, "slope_bars", 6)
-    strong_slope = getattr(policy, "strong_slope", 0.6)
-    weak_slope = getattr(policy, "weak_slope", 0.2)
-
-    if len(h1_df) <= h1_slow_p or len(m5_df) <= max(m5_fast_p, slope_bars):
-        return FilterReport(
-            filter_id="smv5_trend_strength", display_name="Trend Strength (H1/M5)",
-            enabled=True, is_clear=False,
-            current_value="Insufficient bars", threshold=strength_allow,
-            block_reason="insufficient bars for EMA",
-        )
-
-    h1_close = h1_df["close"].astype(float)
-    h1_fv = float(ema_fn(h1_close, h1_fast_p).iloc[-1])
-    h1_sv = float(ema_fn(h1_close, h1_slow_p).iloc[-1])
-    h1_dir = "Bull" if h1_fv > h1_sv else "Bear"
-
     m5_close = m5_df["close"].astype(float)
-    m5_ema_fast_s = ema_fn(m5_close, m5_fast_p)
-    slope_raw = (float(m5_ema_fast_s.iloc[-1]) - float(m5_ema_fast_s.iloc[-slope_bars])) / slope_bars
-    slope_pips = abs(slope_raw) / pip_size
-    if slope_pips >= strong_slope:
-        strength = "Strong"
-    elif slope_pips >= weak_slope:
-        strength = "Normal"
-    else:
-        strength = "Weak"
-
-    if strength_allow == "strong_only":
-        is_clear = strength == "Strong"
-    elif strength_allow == "strong_normal":
-        is_clear = strength in ("Strong", "Normal")
-    else:
-        is_clear = True
-
-    return FilterReport(
-        filter_id="smv5_trend_strength", display_name="Trend Strength (H1/M5)",
-        enabled=True, is_clear=is_clear,
-        current_value=f"H1={h1_dir} M5={strength} ({slope_pips:.2f}p/bar)",
-        threshold=strength_allow,
-        block_reason=f"trend {strength}, need {strength_allow}" if not is_clear else None,
-    )
-
-
-def report_smv5_session_window(policy) -> FilterReport:
-    """Report session window filter for Session Momentum v5.3."""
-    now_utc = datetime.now(timezone.utc)
-    hour_float = now_utc.hour + now_utc.minute / 60.0
-
-    london_start = getattr(policy, "london_start_hour", 8.0)
-    london_end = getattr(policy, "london_end_hour", 16.0)
-    ny_start = getattr(policy, "ny_start_hour", 13.0) + getattr(policy, "ny_start_delay_minutes", 5) / 60.0
-    ny_end = getattr(policy, "ny_end_hour", 21.0)
-
-    # Backwards-compatible migration for older profiles that still have 6.5–11.0 / 16.0
-    if london_start == 6.5 and london_end == 11.0:
-        london_start, london_end = 8.0, 16.0
-    if ny_end == 16.0:
-        ny_end = 21.0
-    sessions_cfg = getattr(policy, "sessions", "both")
-    cutoff = getattr(policy, "session_entry_cutoff_minutes", 45)
-
-    in_london = london_start <= hour_float < london_end and sessions_cfg != "ny_only"
-    in_ny = ny_start <= hour_float < ny_end and sessions_cfg != "london_only"
-
-    if in_london:
-        session_end = london_end
-        label = "London"
-    elif in_ny:
-        session_end = ny_end
-        label = "NY"
-    else:
+    fast = ema_fn(m5_close, policy.m5_trend_ema_fast)
+    slow = ema_fn(m5_close, policy.m5_trend_ema_slow)
+    if fast.empty or slow.empty or pd.isna(fast.iloc[-1]) or pd.isna(slow.iloc[-1]):
         return FilterReport(
-            filter_id="smv5_session_window", display_name="v5.3 Session Window",
+            filter_id="m5_trend", display_name="M5 Trend (EMA)",
             enabled=True, is_clear=False,
-            current_value=f"UTC {now_utc.strftime('%H:%M')}",
-            threshold=f"London {london_start:.1f}-{london_end:.1f} / NY {ny_start:.1f}-{ny_end:.1f}",
-            block_reason="outside session window",
+            current_value="EMA not ready",
         )
-
-    minutes_to_end = (session_end - hour_float) * 60
-    past_cutoff = minutes_to_end < cutoff
+    f_val = float(fast.iloc[-1])
+    s_val = float(slow.iloc[-1])
+    trend = "BULL" if f_val > s_val else ("BEAR" if f_val < s_val else "FLAT")
+    gap = abs(f_val - s_val)
     return FilterReport(
-        filter_id="smv5_session_window", display_name="v5.3 Session Window",
-        enabled=True, is_clear=not past_cutoff,
-        current_value=f"{label} ({minutes_to_end:.0f}m left)",
-        threshold=f"Cutoff: {cutoff}m before end",
-        block_reason=f"entry cutoff: {minutes_to_end:.0f}m to session end" if past_cutoff else None,
+        filter_id="m5_trend", display_name="M5 Trend (EMA)",
+        enabled=True, is_clear=trend != "FLAT",
+        current_value=f"{trend} (EMA{policy.m5_trend_ema_fast}={f_val:.3f} vs EMA{policy.m5_trend_ema_slow}={s_val:.3f}, gap={gap:.3f})",
+        threshold=f"EMA {policy.m5_trend_ema_fast}/{policy.m5_trend_ema_slow}",
     )
 
 
-def report_smv5_london_entries(
-    policy, store=None, profile_name: str = "",
-) -> FilterReport:
-    """Report London entry cap for Session Momentum v5.3."""
-    now_utc = datetime.now(timezone.utc)
-    today_str = now_utc.strftime("%Y-%m-%d")
-    london_start = getattr(policy, "london_start_hour", 8.0)
-    london_end = getattr(policy, "london_end_hour", 16.0)
-
-    # Backwards-compatible migration for older profiles that still have 6.5–11.0
-    if london_start == 6.5 and london_end == 11.0:
-        london_start, london_end = 8.0, 16.0
-    london_max = getattr(policy, "london_max_entries", 2)
-
-    london_entries = 0
-    if store is not None and profile_name:
-        try:
-            trades_df = store.read_trades_df(profile_name)
-            if trades_df is not None and not trades_df.empty and "timestamp_utc" in trades_df.columns:
-                for _, row in trades_df.iterrows():
-                    # Only count trades opened by the Session Momentum v5.3 policy
-                    notes = str(row.get("notes", "") or "")
-                    if not notes.startswith("auto:session_momentum_v5:"):
-                        continue
-                    ts = str(row.get("timestamp_utc", ""))
-                    if ts.startswith(today_str):
-                        try:
-                            entry_hour = float(ts[11:13]) + float(ts[14:16]) / 60.0
-                            if london_start <= entry_hour < london_end:
-                                london_entries += 1
-                        except (ValueError, IndexError):
-                            pass
-        except Exception:
-            pass
-
-    is_clear = london_entries < london_max
+def report_m5_power_close_status(policy, data_by_tf, level_state) -> FilterReport:
+    """Which levels have had Power Closes, velocity type, waiting for velocity check."""
+    broken = [lv for lv in (level_state or []) if lv.get("is_broken", False)]
+    if not broken:
+        return FilterReport(
+            filter_id="power_close", display_name="M5 Power Close",
+            enabled=True, is_clear=False,
+            current_value="No breakouts yet",
+        )
+    details = []
+    for lv in broken[:3]:
+        vel = lv.get("velocity_type", "pending")
+        st = lv.get("state", "?")
+        details.append(f"{lv['price']:.3f}: {lv.get('break_direction','?')} vel={vel} [{st}]")
     return FilterReport(
-        filter_id="smv5_london_entries", display_name="London Entries Today",
-        enabled=True, is_clear=is_clear,
-        current_value=f"{london_entries} / {london_max}",
-        threshold=f"<= {london_max}",
-        block_reason=f"max London entries reached ({london_entries}/{london_max})" if not is_clear else None,
+        filter_id="power_close", display_name="M5 Power Close",
+        enabled=True, is_clear=any(lv.get("state") == "ready" for lv in broken),
+        current_value=f"{len(broken)} breakout(s)",
+        threshold="; ".join(details),
     )
 
 
-def report_smv5_max_open(
-    policy, store=None, profile_name: str = "", adapter=None, profile=None,
-) -> FilterReport:
-    """Report max open positions for Session Momentum v5.3.
+def report_m1_entry_status(policy, data_by_tf, tick) -> FilterReport:
+    """M1 EMA stack (5/9/21) status, 35 EMA veto status."""
+    from core.indicators import ema as ema_fn
 
-    Only counts trades opened by the smv5 policy (notes startswith auto:session_momentum_v5:).
-    """
-    max_open = getattr(policy, "max_open", 1)
-
-    open_count = 0
-    if store is not None and profile_name:
-        try:
-            open_trades = store.list_open_trades(profile_name)
-            for t in open_trades:
-                row = dict(t) if hasattr(t, "keys") else t
-                notes = str(row.get("notes", "") or "")
-                if notes.startswith("auto:session_momentum_v5:"):
-                    open_count += 1
-        except Exception:
-            pass
-
-    is_clear = open_count < max_open
+    m1_df = data_by_tf.get("M1")
+    if m1_df is None or m1_df.empty:
+        return FilterReport(
+            filter_id="m1_entry", display_name="M1 Entry Status",
+            enabled=True, is_clear=False,
+            current_value="No M1 data",
+        )
+    m1_close = m1_df["close"].astype(float)
+    ema5 = ema_fn(m1_close, policy.m1_ema_fast)
+    ema9 = ema_fn(m1_close, policy.m1_ema_mid)
+    ema21 = ema_fn(m1_close, policy.m1_ema_slow)
+    ema35 = ema_fn(m1_close, policy.m1_ema_veto)
+    if any(s.empty or pd.isna(s.iloc[-1]) for s in [ema5, ema9, ema21, ema35]):
+        return FilterReport(
+            filter_id="m1_entry", display_name="M1 Entry Status",
+            enabled=True, is_clear=False,
+            current_value="EMAs not ready",
+        )
+    e5 = float(ema5.iloc[-1])
+    e9 = float(ema9.iloc[-1])
+    e21 = float(ema21.iloc[-1])
+    e35 = float(ema35.iloc[-1])
+    last_close = float(m1_close.iloc[-1])
+    bull_stack = e5 > e9 > e21
+    bear_stack = e5 < e9 < e21
+    stack_str = "BULL" if bull_stack else ("BEAR" if bear_stack else "MIXED")
+    veto_str = ""
+    if last_close < e35 - 0.02:
+        veto_str = " | 35EMA VETO(buy)"
+    elif last_close > e35 + 0.02:
+        veto_str = " | 35EMA VETO(sell)"
     return FilterReport(
-        filter_id="smv5_max_open", display_name="Max Open Trades",
-        enabled=True, is_clear=is_clear,
-        current_value=f"{open_count} / {max_open}",
-        threshold=f"< {max_open}",
-        block_reason=f"max open reached ({open_count}/{max_open})" if not is_clear else None,
+        filter_id="m1_entry", display_name="M1 Entry Status",
+        enabled=True, is_clear=bull_stack or bear_stack,
+        current_value=f"Stack: {stack_str} (5={e5:.3f} 9={e9:.3f} 21={e21:.3f}){veto_str}",
+        threshold=f"EMA {policy.m1_ema_fast}/{policy.m1_ema_mid}/{policy.m1_ema_slow}, veto={policy.m1_ema_veto}",
     )
 
 
-def report_smv5_max_daily(
-    policy, store=None, profile_name: str = "",
-) -> FilterReport:
-    """Report max daily entries for Session Momentum v5.3."""
-    now_utc = datetime.now(timezone.utc)
-    today_str = now_utc.strftime("%Y-%m-%d")
-    max_day = getattr(policy, "max_entries_day", 7)
-
-    entries_today = 0
-    if store is not None and profile_name:
-        try:
-            trades_df = store.read_trades_df(profile_name)
-            if trades_df is not None and not trades_df.empty and "timestamp_utc" in trades_df.columns:
-                for _, row in trades_df.iterrows():
-                    # Only count trades opened by the Session Momentum v5.3 policy
-                    notes = str(row.get("notes", "") or "")
-                    if not notes.startswith("auto:session_momentum_v5:"):
-                        continue
-                    ts = str(row.get("timestamp_utc", ""))
-                    if ts.startswith(today_str):
-                        entries_today += 1
-        except Exception:
-            pass
-
-    is_clear = entries_today < max_day
+def report_up_spread_veto(policy, tick, pip_size: float) -> FilterReport:
+    """Current spread vs max_spread_pips for Uncle Parsh."""
+    spread_pips = (tick.ask - tick.bid) / pip_size
+    max_spread = policy.max_spread_pips
+    ok = spread_pips <= max_spread
     return FilterReport(
-        filter_id="smv5_max_daily", display_name="Max Daily Entries",
-        enabled=True, is_clear=is_clear,
-        current_value=f"{entries_today} / {max_day}",
-        threshold=f"< {max_day}",
-        block_reason=f"max daily entries reached ({entries_today}/{max_day})" if not is_clear else None,
+        filter_id="up_spread", display_name="Spread Check",
+        enabled=True, is_clear=ok,
+        current_value=f"{spread_pips:.1f} pips",
+        threshold=f"Max: {max_spread} pips",
+        block_reason=None if ok else f"Spread {spread_pips:.1f}p > max {max_spread}p",
     )
