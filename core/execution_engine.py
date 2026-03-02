@@ -6687,16 +6687,23 @@ def evaluate_h1_breakout_conditions(
 
             # Check velocity for catalyst levels (2nd M5 bar after break)
             elif lv.state == "catalyst" and not lv.velocity_checked:
-                if lv.power_close_bar_index is not None:
-                    bars_since_break = (m5_bar_count - 1) - lv.power_close_bar_index
-                    if bars_since_break >= 2:
-                        vel = detector.check_velocity(
-                            lv, float(m5_last["close"]), pip_size, ov_velocity_pips
-                        )
-                        lv.velocity_type = vel
-                        lv.velocity_checked = True
-                        lv.entry_mode = "power_break" if vel == "power" else "sniper"
-                        lv.state = "ready"
+                if lv.break_time:
+                    try:
+                        break_ts = pd.Timestamp(lv.break_time, tz="UTC")
+                        m5_times = pd.to_datetime(m5_df_sorted["time"], utc=True, errors="coerce")
+                        bars_since_break = (m5_times > break_ts).sum()
+                    except Exception:
+                        bars_since_break = 0
+                else:
+                    bars_since_break = 0
+                if bars_since_break >= 2:
+                    vel = detector.check_velocity(
+                        lv, float(m5_last["close"]), pip_size, ov_velocity_pips
+                    )
+                    lv.velocity_type = vel
+                    lv.velocity_checked = True
+                    lv.entry_mode = "power_break" if vel == "power" else "sniper"
+                    lv.state = "ready"
 
     # ----- M1 Entry Conditions for ready levels -----
     if not is_new_m1:
