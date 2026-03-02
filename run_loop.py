@@ -2393,13 +2393,6 @@ def main() -> None:
                     _up_override_keys = [
                         ("m5_trend_ema_fast", "temp_up_m5_ema_fast"),
                         ("m5_trend_ema_slow", "temp_up_m5_ema_slow"),
-                        ("m1_ema_fast", "temp_up_m1_ema_fast"),
-                        ("m1_ema_mid", "temp_up_m1_ema_mid"),
-                        ("m1_ema_slow", "temp_up_m1_ema_slow"),
-                        ("m1_ema_veto", "temp_up_m1_ema_veto"),
-                        ("m1_ema_veto_enabled", "temp_up_m1_ema_veto_enabled"),
-                        ("m1_ema_veto_buffer_pips", "temp_up_m1_ema_veto_buffer_pips"),
-                        ("m1_entry_stack_mode", "temp_up_m1_entry_stack_mode"),
                         ("h1_lookback_hours", "temp_up_h1_lookback_hours"),
                         ("h1_swing_strength", "temp_up_h1_swing_strength"),
                         ("h1_cluster_tolerance_pips", "temp_up_h1_cluster_tolerance_pips"),

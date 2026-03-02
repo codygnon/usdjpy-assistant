@@ -6587,10 +6587,6 @@ def evaluate_h1_breakout_conditions(
 
     ov_m5_trend_ema_fast = _ov("m5_trend_ema_fast")
     ov_m5_trend_ema_slow = _ov("m5_trend_ema_slow")
-    ov_m1_ema_fast = _ov("m1_ema_fast")
-    ov_m1_ema_mid = _ov("m1_ema_mid")
-    ov_m1_ema_slow = _ov("m1_ema_slow")
-    ov_m1_ema_veto = _ov("m1_ema_veto")
     ov_h1_lookback_hours = _ov("h1_lookback_hours")
     ov_h1_swing_strength = _ov("h1_swing_strength")
     ov_h1_cluster_tolerance_pips = _ov("h1_cluster_tolerance_pips")
@@ -6598,9 +6594,6 @@ def evaluate_h1_breakout_conditions(
     ov_power_close_body_pct = _ov("power_close_body_pct")
     ov_velocity_pips = _ov("velocity_pips")
     ov_max_spread_pips = _ov("max_spread_pips")
-    ov_m1_ema_veto_enabled = _ov("m1_ema_veto_enabled", True)
-    ov_m1_ema_veto_buffer_pips = _ov("m1_ema_veto_buffer_pips", 2.0)
-    ov_m1_entry_stack_mode = _ov("m1_entry_stack_mode", "full")
 
     reasons: list[str] = []
     no_signal = {
@@ -6708,38 +6701,18 @@ def evaluate_h1_breakout_conditions(
                     lv.entry_mode = "power_break" if vel == "power" else "sniper"
                     lv.state = "ready"
 
-    # ----- M1 Entry Conditions for ready levels -----
+    # ----- Entry on ready levels (no M1 entry logic: no stack/veto check) -----
     if not is_new_m1:
-        # Only evaluate M1 entries on new M1 bar close
         no_signal["level_updates"] = [lv.to_dict() for lv in levels]
         reasons.append("waiting for new M1 bar")
         return no_signal
-
-    m1_close = m1_df["close"].astype(float)
-    m1_ema_fast = ema_fn(m1_close, ov_m1_ema_fast)
-    m1_ema_mid = ema_fn(m1_close, ov_m1_ema_mid)
-    m1_ema_slow = ema_fn(m1_close, ov_m1_ema_slow)
-    m1_ema_veto = ema_fn(m1_close, ov_m1_ema_veto)
-
-    if any(s.empty or pd.isna(s.iloc[-1]) for s in [m1_ema_fast, m1_ema_mid, m1_ema_slow, m1_ema_veto]):
-        reasons.append("M1 EMAs not ready")
-        no_signal["level_updates"] = [lv.to_dict() for lv in levels]
-        return no_signal
-
-    ema_fast_val = float(m1_ema_fast.iloc[-1])
-    ema_mid_val = float(m1_ema_mid.iloc[-1])
-    ema_slow_val = float(m1_ema_slow.iloc[-1])
-    ema_veto_val = float(m1_ema_veto.iloc[-1])
-    last_m1_close = float(m1_close.iloc[-1])
 
     for lv in levels:
         if lv.state != "ready" or lv.voided:
             continue
 
-        side = None
         entry_type = lv.entry_mode or "power_break"
-
-        # Determine side from break direction + M5 trend alignment
+        side = None
         if lv.break_direction == "bull" and m5_trend == "bull":
             side = "buy"
         elif lv.break_direction == "bear" and m5_trend == "bear":
@@ -6748,54 +6721,7 @@ def evaluate_h1_breakout_conditions(
             reasons.append(f"level {lv.price:.3f}: M5 trend ({m5_trend}) vs break dir ({lv.break_direction}) misaligned")
             continue
 
-        # 35 EMA veto: if enabled, close past veto EMA on wrong side voids setup
-        veto_buffer = float(ov_m1_ema_veto_buffer_pips) * pip_size
-        if ov_m1_ema_veto_enabled:
-            if side == "buy" and last_m1_close < ema_veto_val - veto_buffer:
-                lv.voided = True
-                lv.state = "voided"
-                reasons.append(f"level {lv.price:.3f}: voided by 35 EMA veto (close={last_m1_close:.3f} < ema35={ema_veto_val:.3f})")
-                continue
-            if side == "sell" and last_m1_close > ema_veto_val + veto_buffer:
-                lv.voided = True
-                lv.state = "voided"
-                reasons.append(f"level {lv.price:.3f}: voided by 35 EMA veto (close={last_m1_close:.3f} > ema35={ema_veto_val:.3f})")
-                continue
-
-        # M1 entry conditions based on entry mode
-        if entry_type == "power_break":
-            # Power Break: stack (full 5>9>21 or relaxed 9 vs 21) + close past 21 EMA
-            if str(ov_m1_entry_stack_mode) == "nine_vs_21":
-                if side == "buy":
-                    stack_ok = ema_mid_val > ema_slow_val  # 9 > 21
-                else:
-                    stack_ok = ema_mid_val < ema_slow_val  # 9 < 21
-            else:
-                if side == "buy":
-                    stack_ok = ema_fast_val > ema_mid_val > ema_slow_val
-                else:
-                    stack_ok = ema_fast_val < ema_mid_val < ema_slow_val
-            if side == "buy":
-                close_ok = last_m1_close > ema_slow_val
-            else:
-                close_ok = last_m1_close < ema_slow_val
-            if not stack_ok:
-                reasons.append(f"level {lv.price:.3f}: power_break M1 EMA stack not aligned (5={ema_fast_val:.3f} 9={ema_mid_val:.3f} 21={ema_slow_val:.3f})")
-                continue
-            if not close_ok:
-                reasons.append(f"level {lv.price:.3f}: power_break M1 close not past 21 EMA")
-                continue
-        else:
-            # Sniper: pullback allowed past 21 EMA, close back past 9 EMA
-            if side == "buy":
-                close_ok = last_m1_close > ema_mid_val  # Close back above 9 EMA
-            else:
-                close_ok = last_m1_close < ema_mid_val  # Close back below 9 EMA
-            if not close_ok:
-                reasons.append(f"level {lv.price:.3f}: sniper M1 close not past 9 EMA (close={last_m1_close:.3f} mid={ema_mid_val:.3f})")
-                continue
-
-        # All conditions met
+        # Ready level + M5 trend aligned -> pass (no M1 stack or veto)
         return {
             "passed": True,
             "side": side,
@@ -6806,9 +6732,8 @@ def evaluate_h1_breakout_conditions(
             "m5_trend": m5_trend,
         }
 
-    # No level triggered
     if not reasons:
-        reasons.append("no ready levels with valid M1 entry")
+        reasons.append("no ready levels with M5 trend aligned")
     no_signal["level_updates"] = [lv.to_dict() for lv in levels]
     return no_signal
 

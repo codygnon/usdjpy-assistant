@@ -183,10 +183,6 @@ export interface TempEmaSettings {
   // Uncle Parsh H1 Breakout EMA overrides
   up_m5_ema_fast: number | null;
   up_m5_ema_slow: number | null;
-  up_m1_ema_fast: number | null;
-  up_m1_ema_mid: number | null;
-  up_m1_ema_slow: number | null;
-  up_m1_ema_veto: number | null;
   // Uncle Parsh H1 Breakout: H1 Detection
   up_h1_lookback_hours: number | null;
   up_h1_swing_strength: number | null;

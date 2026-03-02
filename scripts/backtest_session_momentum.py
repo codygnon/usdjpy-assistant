@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 
@@ -263,6 +264,15 @@ DEFAULTS: dict[str, object] = {
     "v5_rp_min_lot": 1.0,
     "v5_rp_max_lot": 20.0,
     "v5_daily_loss_limit_usd": 1500.0,
+    "v5_london_daily_loss_usd": 600.0,
+    "v5_ny_daily_loss_usd": 600.0,
+    "v5_tokyo_daily_loss_usd": 300.0,
+    "v5_atr_pct_filter_enabled": False,
+    "v5_atr_pct_cap": 0.67,
+    "v5_atr_pct_lookback": 200,
+    "v5_nonmover_exit_enabled": False,
+    "v5_nonmover_minutes": 10.0,
+    "v5_nonmover_mfe_pips": 1.0,
     "v5_stale_exit_enabled": True,
     "v5_stale_exit_bars": 25,
     "v5_stale_exit_underwater_pct": 0.5,
@@ -372,6 +382,7 @@ class OpenPosition:
     entry_signal_mode: Optional[str] = None
     wr_size_scale: float = 1.0
     conviction_scale: float = 1.0
+    peak_mfe_pips: float = 0.0
 
 
 @dataclass
@@ -692,6 +703,15 @@ def _full_parser() -> argparse.ArgumentParser:
     p.add_argument("--v5-hybrid-london-boost", type=float)
     p.add_argument("--v5-hybrid-ny-boost", type=float)
     p.add_argument("--v5-daily-loss-limit-usd", type=float)
+    p.add_argument("--v5-london-daily-loss-usd", type=float)
+    p.add_argument("--v5-ny-daily-loss-usd", type=float)
+    p.add_argument("--v5-tokyo-daily-loss-usd", type=float)
+    p.add_argument("--v5-atr-pct-filter-enabled", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-atr-pct-cap", type=float)
+    p.add_argument("--v5-atr-pct-lookback", type=int)
+    p.add_argument("--v5-nonmover-exit-enabled", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-nonmover-minutes", type=float)
+    p.add_argument("--v5-nonmover-mfe-pips", type=float)
     p.add_argument("--v5-stale-exit-enabled", type=parse_bool, nargs="?", const=True)
     p.add_argument("--v5-stale-exit-bars", type=int)
     p.add_argument("--v5-stale-exit-underwater-pct", type=float)
@@ -2975,10 +2995,10 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
     session_stop_marked: set[str] = set()
     win_bonus_applied_count = 0
     daily_stop_days: set[str] = set()
-    daily_stop_usd_days: set[str] = set()
+    daily_stop_usd_sessions: set[str] = set()
     weekly_stop_keys: set[str] = set()
     realized_day_pips: dict[str, float] = {}
-    realized_day_usd: dict[str, float] = {}
+    realized_day_usd_by_session: dict[str, float] = {}
     realized_week_pips: dict[str, float] = {}
     max_consecutive_wins = 0
     trail_delayed_count = 0
@@ -3245,13 +3265,20 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
 
         # Realized pips for day/week loss breakers.
         realized_day_pips[exit_day_key] = float(realized_day_pips.get(exit_day_key, 0.0) + pips)
-        realized_day_usd[exit_day_key] = float(realized_day_usd.get(exit_day_key, 0.0) + float(pos.realized_usd))
+        sess_day_key = f"{exit_day_key}:{pos.entry_session}"
+        realized_day_usd_by_session[sess_day_key] = float(realized_day_usd_by_session.get(sess_day_key, 0.0) + float(pos.realized_usd))
         wk_key = _week_key(ts)
         realized_week_pips[wk_key] = float(realized_week_pips.get(wk_key, 0.0) + pips)
         if float(args.v5_daily_loss_limit_pips) > 0 and float(realized_day_pips[exit_day_key]) <= -float(args.v5_daily_loss_limit_pips):
             daily_stop_days.add(exit_day_key)
-        if float(args.v5_daily_loss_limit_usd) > 0 and float(realized_day_usd[exit_day_key]) <= -float(args.v5_daily_loss_limit_usd):
-            daily_stop_usd_days.add(exit_day_key)
+        if pos.entry_session == "london":
+            sess_loss_limit = float(getattr(args, "v5_london_daily_loss_usd", 600.0))
+        elif pos.entry_session == "tokyo":
+            sess_loss_limit = float(getattr(args, "v5_tokyo_daily_loss_usd", 300.0))
+        else:
+            sess_loss_limit = float(getattr(args, "v5_ny_daily_loss_usd", 600.0))
+        if sess_loss_limit > 0 and float(realized_day_usd_by_session[sess_day_key]) <= -sess_loss_limit:
+            daily_stop_usd_sessions.add(sess_day_key)
         if float(args.v5_weekly_loss_limit_pips) > 0 and float(realized_week_pips[wk_key]) <= -float(args.v5_weekly_loss_limit_pips):
             weekly_stop_keys.add(wk_key)
 
@@ -3320,24 +3347,28 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             tokyo_enabled,
         )
         ts_dt = pd.Timestamp(ts)
-        is_london_open_window = (sess == "london" and int(ts_dt.hour) == 7 and int(ts_dt.minute) < 30)
-        is_new_london_day = (sess == "london" and orb_last_session_date != ts_dt.date())
-        if is_new_london_day and int(ts_dt.hour) == 7 and int(ts_dt.minute) == 0:
-            orb_range_high = float(h)
-            orb_range_low = float(l)
-            orb_range_built = False
-            orb_fired_today = False
-            orb_last_session_date = ts_dt.date()
-        elif is_london_open_window:
+        h_now = ts_hour(ts_dt)
+        orb_range_end_h = float(getattr(args, "v5_london_active_start", 7.5))
+        orb_range_start_h = max(0.0, orb_range_end_h - 0.5)
+        is_london_orb_build_window = (orb_range_start_h <= h_now < orb_range_end_h)
+        if is_london_orb_build_window:
             if orb_last_session_date != ts_dt.date() or orb_range_high is None or orb_range_low is None:
                 orb_range_high = float(h)
                 orb_range_low = float(l)
+                orb_range_built = False
                 orb_fired_today = False
                 orb_last_session_date = ts_dt.date()
             else:
                 orb_range_high = max(float(orb_range_high), float(h))
                 orb_range_low = min(float(orb_range_low), float(l))
-        if sess == "london" and int(ts_dt.hour) == 7 and int(ts_dt.minute) >= 30 and not orb_range_built and orb_range_high is not None and orb_range_low is not None and orb_last_session_date == ts_dt.date():
+        if (
+            sess == "london"
+            and h_now >= orb_range_end_h
+            and not orb_range_built
+            and orb_range_high is not None
+            and orb_range_low is not None
+            and orb_last_session_date == ts_dt.date()
+        ):
             orb_range_built = True
 
         current_session_key = f"{day_key}:{sess}" if sess in {"london", "ny_overlap", "tokyo"} else None
@@ -3398,6 +3429,11 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         if open_positions:
             for pos in list(open_positions):
                 closed_now = False
+                if pos.side == "buy":
+                    cur_mfe = (float(h) - float(pos.entry_price)) / PIP_SIZE
+                else:
+                    cur_mfe = (float(pos.entry_price) - float(l)) / PIP_SIZE
+                pos.peak_mfe_pips = max(float(getattr(pos, "peak_mfe_pips", 0.0)), float(cur_mfe))
                 if bool(args.v5_close_full_risk_at_session_end) and not bool(pos.tp1_filled):
                     end_ts = _session_end_ts(str(pos.entry_day), str(pos.entry_session))
                     if ts >= end_ts:
@@ -3455,6 +3491,16 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                                 _close_leg(pos, exit_px, float(pos.lots_remaining))
                                 _finalize_position(pos, ts, "stale_exit", p5_now=p5)
                                 continue
+                    if bool(getattr(args, "v5_nonmover_exit_enabled", False)):
+                        held_minutes = (pd.Timestamp(ts) - pd.Timestamp(pos.entry_time)).total_seconds() / 60.0
+                        nonmover_minutes = float(getattr(args, "v5_nonmover_minutes", 10.0))
+                        nonmover_mfe_pips = float(getattr(args, "v5_nonmover_mfe_pips", 1.0))
+                        if held_minutes >= nonmover_minutes and float(getattr(pos, "peak_mfe_pips", 0.0)) < nonmover_mfe_pips:
+                            exit_px = float(bid if pos.side == "buy" else ask)
+                            _close_leg(pos, exit_px, float(pos.lots_remaining))
+                            _finalize_position(pos, ts, "nonmover_exit", p5_now=p5)
+                            add_block("v5_nonmover_exit")
+                            continue
                 else:
                     tp2_hit = (h >= float(pos.tp2_price)) if pos.side == "buy" else (l <= float(pos.tp2_price))
                     if tp2_hit:
@@ -3605,6 +3651,17 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                     if adx_val < float(args.v5_adx_min):
                         add_block("v5_adx_too_low")
                         continue
+                if bool(getattr(args, "v5_atr_pct_filter_enabled", False)) and p5 >= 0:
+                    atr_lookback = max(10, int(getattr(args, "v5_atr_pct_lookback", 200)))
+                    atr_pct_cap = float(getattr(args, "v5_atr_pct_cap", 0.67))
+                    if p5 >= atr_lookback:
+                        atr_now = float(m5.iloc[p5].get("atr14_v5_pips", 0.0))
+                        atr_window = m5.iloc[p5 - atr_lookback + 1 : p5 + 1]["atr14_v5_pips"].to_numpy(dtype=float)
+                        if len(atr_window) > 0:
+                            atr_rank = float(np.count_nonzero(atr_window <= atr_now)) / float(len(atr_window))
+                            if atr_rank > atr_pct_cap:
+                                add_block("v5_atr_high_regime")
+                                continue
                 entry_profile_label = str(strength)
             else:
                 strength = "Strong"
@@ -3631,7 +3688,12 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         if float(args.v5_daily_loss_limit_pips) > 0 and day_key in daily_stop_days:
             add_block("v5_daily_loss_stop")
             continue
-        if float(args.v5_daily_loss_limit_usd) > 0 and day_key in daily_stop_usd_days:
+        sess_day_key_now = f"{day_key}:{sess}"
+        if (
+            (sess == "london" and float(getattr(args, "v5_london_daily_loss_usd", 600.0)) > 0)
+            or (sess == "tokyo" and float(getattr(args, "v5_tokyo_daily_loss_usd", 300.0)) > 0)
+            or (sess == "ny_overlap" and float(getattr(args, "v5_ny_daily_loss_usd", 600.0)) > 0)
+        ) and sess_day_key_now in daily_stop_usd_sessions:
             add_block("v5_daily_loss_usd_stop")
             continue
         if float(args.v5_weekly_loss_limit_pips) > 0 and wk_key_now in weekly_stop_keys:
@@ -4010,6 +4072,7 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             entry_signal_mode=str(entry_signal_mode),
             wr_size_scale=float(wr_scale),
             conviction_scale=float(conviction_scale),
+            peak_mfe_pips=0.0,
         )
         open_positions.append(new_pos)
         max_open_positions = max(max_open_positions, len(open_positions))
@@ -4930,6 +4993,9 @@ def main(argv: list[str]) -> int:
                 "max_lot": float(args.v5_max_lot),
                 "daily_loss_limit_pips": float(args.v5_daily_loss_limit_pips),
                 "daily_loss_limit_usd": float(args.v5_daily_loss_limit_usd),
+                "london_daily_loss_usd": float(args.v5_london_daily_loss_usd),
+                "ny_daily_loss_usd": float(args.v5_ny_daily_loss_usd),
+                "tokyo_daily_loss_usd": float(args.v5_tokyo_daily_loss_usd),
                 "weekly_loss_limit_pips": float(args.v5_weekly_loss_limit_pips),
                 "ny_start_delay_minutes": int(args.v5_ny_start_delay_minutes),
                 "strong_tp1": float(args.v5_strong_tp1),
@@ -4968,11 +5034,17 @@ def main(argv: list[str]) -> int:
                 "stale_exit_enabled": bool(args.v5_stale_exit_enabled),
                 "stale_exit_bars": int(args.v5_stale_exit_bars),
                 "stale_exit_underwater_pct": float(args.v5_stale_exit_underwater_pct),
+                "nonmover_exit_enabled": bool(args.v5_nonmover_exit_enabled),
+                "nonmover_minutes": float(args.v5_nonmover_minutes),
+                "nonmover_mfe_pips": float(args.v5_nonmover_mfe_pips),
                 "breakout_entry_enabled": bool(args.v5_breakout_entry_enabled),
                 "breakout_min_body_pips": float(args.v5_breakout_min_body_pips),
                 "breakout_slope_min": float(args.v5_breakout_slope_min),
                 "breakout_sl_lookback": int(args.v5_breakout_sl_lookback),
                 "atr_min_entry_pips": float(args.v5_atr_min_entry_pips),
+                "atr_pct_filter_enabled": bool(args.v5_atr_pct_filter_enabled),
+                "atr_pct_cap": float(args.v5_atr_pct_cap),
+                "atr_pct_lookback": int(args.v5_atr_pct_lookback),
                 "rolling_wr_lookback": int(args.v5_rolling_wr_lookback),
                 "rolling_wr_min": float(args.v5_rolling_wr_min),
                 "rolling_wr_pause_bars": int(args.v5_rolling_wr_pause_bars),

@@ -3734,10 +3734,6 @@ interface EditedSettings {
   // Uncle Parsh H1 Breakout EMA overrides
   up_m5_ema_fast: number | null;
   up_m5_ema_slow: number | null;
-  up_m1_ema_fast: number | null;
-  up_m1_ema_mid: number | null;
-  up_m1_ema_slow: number | null;
-  up_m1_ema_veto: number | null;
   // Uncle Parsh H1 Breakout: H1 Detection
   up_h1_lookback_hours: number | null;
   up_h1_swing_strength: number | null;
@@ -4431,10 +4427,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
         // Uncle Parsh H1 Breakout EMA overrides from temp settings
         up_m5_ema_fast: tempSettings?.up_m5_ema_fast ?? null,
         up_m5_ema_slow: tempSettings?.up_m5_ema_slow ?? null,
-        up_m1_ema_fast: tempSettings?.up_m1_ema_fast ?? null,
-        up_m1_ema_mid: tempSettings?.up_m1_ema_mid ?? null,
-        up_m1_ema_slow: tempSettings?.up_m1_ema_slow ?? null,
-        up_m1_ema_veto: tempSettings?.up_m1_ema_veto ?? null,
         // Uncle Parsh H1 Breakout: H1 Detection
         up_h1_lookback_hours: tempSettings?.up_h1_lookback_hours ?? null,
         up_h1_swing_strength: tempSettings?.up_h1_swing_strength ?? null,
@@ -4823,10 +4815,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
         if (hasUncleParsh) {
           settings.up_m5_ema_fast = editedSettings.up_m5_ema_fast;
           settings.up_m5_ema_slow = editedSettings.up_m5_ema_slow;
-          settings.up_m1_ema_fast = editedSettings.up_m1_ema_fast;
-          settings.up_m1_ema_mid = editedSettings.up_m1_ema_mid;
-          settings.up_m1_ema_slow = editedSettings.up_m1_ema_slow;
-          settings.up_m1_ema_veto = editedSettings.up_m1_ema_veto;
           settings.up_h1_lookback_hours = editedSettings.up_h1_lookback_hours;
           settings.up_h1_swing_strength = editedSettings.up_h1_swing_strength;
           settings.up_h1_cluster_tolerance_pips = editedSettings.up_h1_cluster_tolerance_pips;
@@ -6874,32 +6862,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Velocity (pips)</div>
                         <input type="number" step="0.5" min="1" max="20" value={editedSettings.up_velocity_pips ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.velocity_pips as number ?? 5.0)} onChange={(e) => setEditedSettings({ ...editedSettings, up_velocity_pips: e.target.value ? parseFloat(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                       </div>
-                    </div>
-                  </div>
-
-                  {/* M1 Entry */}
-                  <div style={{ marginTop: 8, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, fontWeight: 600 }}>M1 Entry EMAs</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 8 }}>
-                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>M1 EMA Fast</div>
-                        <input type="number" step="1" min="1" value={editedSettings.up_m1_ema_fast ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.m1_ema_fast as number ?? 5)} onChange={(e) => setEditedSettings({ ...editedSettings, up_m1_ema_fast: e.target.value ? parseInt(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                      </div>
-                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>M1 EMA Mid</div>
-                        <input type="number" step="1" min="1" value={editedSettings.up_m1_ema_mid ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.m1_ema_mid as number ?? 9)} onChange={(e) => setEditedSettings({ ...editedSettings, up_m1_ema_mid: e.target.value ? parseInt(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                      </div>
-                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>M1 EMA Slow</div>
-                        <input type="number" step="1" min="1" value={editedSettings.up_m1_ema_slow ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.m1_ema_slow as number ?? 21)} onChange={(e) => setEditedSettings({ ...editedSettings, up_m1_ema_slow: e.target.value ? parseInt(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                      </div>
-                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>M1 EMA Veto</div>
-                        <input type="number" step="1" min="1" value={editedSettings.up_m1_ema_veto ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.m1_ema_veto as number ?? 35)} onChange={(e) => setEditedSettings({ ...editedSettings, up_m1_ema_veto: e.target.value ? parseInt(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                      </div>
-                    </div>
-                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
-                      Power Break: EMA stack 5{'>'} 9{'>'} 21 + close past 21. Sniper: pullback past 21, close back past 9. Veto: close past 35 EMA voids setup.
                     </div>
                   </div>
 

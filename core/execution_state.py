@@ -55,13 +55,6 @@ class RuntimeState:
     # Uncle Parsh H1 Breakout temp overrides
     temp_up_m5_ema_fast: Optional[int] = None
     temp_up_m5_ema_slow: Optional[int] = None
-    temp_up_m1_ema_fast: Optional[int] = None
-    temp_up_m1_ema_mid: Optional[int] = None
-    temp_up_m1_ema_slow: Optional[int] = None
-    temp_up_m1_ema_veto: Optional[int] = None
-    temp_up_m1_ema_veto_enabled: Optional[bool] = None
-    temp_up_m1_ema_veto_buffer_pips: Optional[float] = None
-    temp_up_m1_entry_stack_mode: Optional[str] = None
 
     # Uncle Parsh H1 Breakout: H1 Detection overrides
     temp_up_h1_lookback_hours: Optional[int] = None
@@ -132,13 +125,6 @@ def load_state(path: str | Path) -> RuntimeState:
         bb_tier_fired={int(k): bool(v) for k, v in data.get("bb_tier_fired", {}).items()},
         temp_up_m5_ema_fast=data.get("temp_up_m5_ema_fast"),
         temp_up_m5_ema_slow=data.get("temp_up_m5_ema_slow"),
-        temp_up_m1_ema_fast=data.get("temp_up_m1_ema_fast"),
-        temp_up_m1_ema_mid=data.get("temp_up_m1_ema_mid"),
-        temp_up_m1_ema_slow=data.get("temp_up_m1_ema_slow"),
-        temp_up_m1_ema_veto=data.get("temp_up_m1_ema_veto"),
-        temp_up_m1_ema_veto_enabled=data.get("temp_up_m1_ema_veto_enabled"),
-        temp_up_m1_ema_veto_buffer_pips=data.get("temp_up_m1_ema_veto_buffer_pips"),
-        temp_up_m1_entry_stack_mode=data.get("temp_up_m1_entry_stack_mode"),
         temp_up_h1_lookback_hours=data.get("temp_up_h1_lookback_hours"),
         temp_up_h1_swing_strength=data.get("temp_up_h1_swing_strength"),
         temp_up_h1_cluster_tolerance_pips=data.get("temp_up_h1_cluster_tolerance_pips"),
@@ -185,13 +171,6 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "bb_tier_fired": state.bb_tier_fired,
                 "temp_up_m5_ema_fast": state.temp_up_m5_ema_fast,
                 "temp_up_m5_ema_slow": state.temp_up_m5_ema_slow,
-                "temp_up_m1_ema_fast": state.temp_up_m1_ema_fast,
-                "temp_up_m1_ema_mid": state.temp_up_m1_ema_mid,
-                "temp_up_m1_ema_slow": state.temp_up_m1_ema_slow,
-                "temp_up_m1_ema_veto": state.temp_up_m1_ema_veto,
-                "temp_up_m1_ema_veto_enabled": state.temp_up_m1_ema_veto_enabled,
-                "temp_up_m1_ema_veto_buffer_pips": state.temp_up_m1_ema_veto_buffer_pips,
-                "temp_up_m1_entry_stack_mode": state.temp_up_m1_entry_stack_mode,
                 "temp_up_h1_lookback_hours": state.temp_up_h1_lookback_hours,
                 "temp_up_h1_swing_strength": state.temp_up_h1_swing_strength,
                 "temp_up_h1_cluster_tolerance_pips": state.temp_up_h1_cluster_tolerance_pips,
