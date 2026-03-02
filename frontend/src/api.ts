@@ -199,6 +199,11 @@ export interface TempEmaSettings {
   up_trail_ema_period: number | null;
   // Uncle Parsh H1 Breakout: Discipline
   up_max_spread_pips: number | null;
+  // Trial #8 trailing exit
+  t8_tp1_pips: number | null;
+  t8_tp1_close_pct: number | null;
+  t8_be_spread_plus_pips: number | null;
+  t8_trail_ema_period: number | null;
 }
 
 export async function getTempSettings(profileName: string): Promise<TempEmaSettings> {

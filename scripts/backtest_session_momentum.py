@@ -310,6 +310,8 @@ DEFAULTS: dict[str, object] = {
     "v5_orb_sl_buffer_pips": 2.0,
     "v5_orb_sl_cap_pips": 999.0,
     "v5_orb_min_body_pips": 1.5,
+    "v5_orb_range_start_hour": 7.0,
+    "v5_orb_range_end_hour": 7.5,
     "v5_dual_mode_enabled": False,
     "v5_range_fade_enabled": True,
     "v5_trend_mode_efficiency_min": 0.40,
@@ -749,6 +751,8 @@ def _full_parser() -> argparse.ArgumentParser:
     p.add_argument("--v5-orb-sl-buffer-pips", type=float)
     p.add_argument("--v5-orb-sl-cap-pips", type=float)
     p.add_argument("--v5-orb-min-body-pips", type=float)
+    p.add_argument("--v5-orb-range-start-hour", type=float)
+    p.add_argument("--v5-orb-range-end-hour", type=float)
     p.add_argument("--v5-dual-mode-enabled", type=parse_bool, nargs="?", const=True)
     p.add_argument("--v5-range-fade-enabled", type=parse_bool, nargs="?", const=True)
     p.add_argument("--v5-trend-mode-efficiency-min", type=float)
@@ -3348,8 +3352,10 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         )
         ts_dt = pd.Timestamp(ts)
         h_now = ts_hour(ts_dt)
-        orb_range_end_h = float(getattr(args, "v5_london_active_start", 7.5))
-        orb_range_start_h = max(0.0, orb_range_end_h - 0.5)
+        orb_range_start_h = float(getattr(args, "v5_orb_range_start_hour", 7.0))
+        orb_range_end_h = float(getattr(args, "v5_orb_range_end_hour", 7.5))
+        if orb_range_end_h <= orb_range_start_h:
+            orb_range_end_h = orb_range_start_h + 0.5
         is_london_orb_build_window = (orb_range_start_h <= h_now < orb_range_end_h)
         if is_london_orb_build_window:
             if orb_last_session_date != ts_dt.date() or orb_range_high is None or orb_range_low is None:
@@ -5074,6 +5080,8 @@ def main(argv: list[str]) -> int:
                 "orb_sl_buffer_pips": float(args.v5_orb_sl_buffer_pips),
                 "orb_sl_cap_pips": float(args.v5_orb_sl_cap_pips),
                 "orb_min_body_pips": float(args.v5_orb_min_body_pips),
+                "orb_range_start_hour": float(args.v5_orb_range_start_hour),
+                "orb_range_end_hour": float(args.v5_orb_range_end_hour),
                 "dual_mode_enabled": bool(args.v5_dual_mode_enabled),
                 "range_fade_enabled": bool(args.v5_range_fade_enabled),
                 "trend_mode_efficiency_min": float(args.v5_trend_mode_efficiency_min),

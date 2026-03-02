@@ -3731,6 +3731,12 @@ interface EditedSettings {
   t8_use_daily_level_filter: boolean;
   t8_daily_level_buffer_pips: number;
   t8_daily_level_breakout_candles_required: number;
+  // Trial #8: Trailing exit
+  t8_trail_after_tp1: boolean;
+  t8_tp1_pips: number;
+  t8_tp1_close_pct: number;
+  t8_be_spread_plus_pips: number;
+  t8_trail_ema_period: number;
   // Uncle Parsh H1 Breakout EMA overrides
   up_m5_ema_fast: number | null;
   up_m5_ema_slow: number | null;
@@ -3934,6 +3940,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t8UseDailyLevelFilter = false;
       let t8DailyLevelBufferPips = 3.0;
       let t8DailyLevelBreakoutCandlesRequired = 2;
+      let t8TrailAfterTp1 = false;
+      let t8Tp1Pips = 4.0;
+      let t8Tp1ClosePct = 50;
+      let t8BeSpreadPlusPips = 2.0;
+      let t8TrailEmaPeriod = 21;
       let maxOpenTradesPerSide = 5;
       let maxZoneEntryOpen = 3;
       let maxTieredPullbackOpen = 8;
@@ -4250,6 +4261,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
             t8UseDailyLevelFilter = (pol.use_daily_level_filter as boolean) ?? false;
             t8DailyLevelBufferPips = (pol.daily_level_buffer_pips as number) ?? 3.0;
             t8DailyLevelBreakoutCandlesRequired = (pol.daily_level_breakout_candles_required as number) ?? 2;
+            t8TrailAfterTp1 = (pol.trail_after_tp1 as boolean) ?? false;
+            t8Tp1Pips = (pol.tp1_pips as number) ?? 4.0;
+            t8Tp1ClosePct = (pol.tp1_close_pct as number) ?? 50;
+            t8BeSpreadPlusPips = (pol.be_spread_plus_pips as number) ?? 2.0;
+            t8TrailEmaPeriod = (pol.trail_ema_period as number) ?? 21;
           }
           if (policyCooldown > 0 || policySlPips !== 20) break;
         }
@@ -4424,6 +4440,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t8_use_daily_level_filter: t8UseDailyLevelFilter,
         t8_daily_level_buffer_pips: t8DailyLevelBufferPips,
         t8_daily_level_breakout_candles_required: t8DailyLevelBreakoutCandlesRequired,
+        t8_trail_after_tp1: t8TrailAfterTp1,
+        t8_tp1_pips: tempSettings?.t8_tp1_pips ?? t8Tp1Pips,
+        t8_tp1_close_pct: tempSettings?.t8_tp1_close_pct ?? t8Tp1ClosePct,
+        t8_be_spread_plus_pips: tempSettings?.t8_be_spread_plus_pips ?? t8BeSpreadPlusPips,
+        t8_trail_ema_period: tempSettings?.t8_trail_ema_period ?? t8TrailEmaPeriod,
         // Uncle Parsh H1 Breakout EMA overrides from temp settings
         up_m5_ema_fast: tempSettings?.up_m5_ema_fast ?? null,
         up_m5_ema_slow: tempSettings?.up_m5_ema_slow ?? null,
@@ -4724,6 +4745,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.use_daily_level_filter = editedSettings.t8_use_daily_level_filter;
           updates.daily_level_buffer_pips = Math.max(0, editedSettings.t8_daily_level_buffer_pips);
           updates.daily_level_breakout_candles_required = Math.max(1, editedSettings.t8_daily_level_breakout_candles_required);
+          updates.trail_after_tp1 = editedSettings.t8_trail_after_tp1;
+          updates.tp1_pips = Math.max(0.5, editedSettings.t8_tp1_pips);
+          updates.tp1_close_pct = Math.max(10, Math.min(100, editedSettings.t8_tp1_close_pct));
+          updates.be_spread_plus_pips = Math.max(0, editedSettings.t8_be_spread_plus_pips);
+          updates.trail_ema_period = Math.max(5, Math.min(50, editedSettings.t8_trail_ema_period));
         }
         // Update Trial #6 settings
         if (pol.type === 'kt_cg_trial_6') {
@@ -4798,7 +4824,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
       const hasKtCgTrial4 = policies.some(p => p.type === 'kt_cg_trial_4');
       const hasKtCgTrial5 = policies.some(p => p.type === 'kt_cg_trial_5');
       const hasUncleParsh = policies.some(p => p.type === 'uncle_parsh_h1_breakout');
-      if (hasKtCgCtp || hasKtCgTrial4 || hasKtCgTrial5 || hasUncleParsh) {
+      const hasTrial8 = policies.some(p => p.type === 'kt_cg_trial_8');
+      if (hasKtCgCtp || hasKtCgTrial4 || hasKtCgTrial5 || hasUncleParsh || hasTrial8) {
         const settings: any = {};
         if (hasKtCgCtp) {
           settings.m5_trend_ema_fast = editedSettings.m5_trend_ema_fast;
@@ -4827,6 +4854,12 @@ function PresetsPage({ profile }: { profile: Profile }) {
           settings.up_be_spread_plus_pips = editedSettings.up_be_spread_plus_pips;
           settings.up_trail_ema_period = editedSettings.up_trail_ema_period;
           settings.up_max_spread_pips = editedSettings.up_max_spread_pips;
+        }
+        if (hasTrial8) {
+          settings.t8_tp1_pips = editedSettings.t8_tp1_pips;
+          settings.t8_tp1_close_pct = editedSettings.t8_tp1_close_pct;
+          settings.t8_be_spread_plus_pips = editedSettings.t8_be_spread_plus_pips;
+          settings.t8_trail_ema_period = editedSettings.t8_trail_ema_period;
         }
         await api.updateTempSettings(profile.name, settings);
       }
@@ -5485,6 +5518,55 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     </div>
                     <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
                       Blocks longs near watched high and shorts near watched low; allows after 2 consecutive closed M5 beyond level. Levels roll to today&apos;s high/low after breakout.
+                    </div>
+                    {/* Trial #8: Trailing Exit */}
+                    <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                        Trailing Exit (TP1 partial + BE + M1 EMA trail for zone_entry / tiered_pullback)
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={editedSettings.t8_trail_after_tp1}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t8_trail_after_tp1: e.target.checked })}
+                            style={{ width: 18, height: 18, cursor: 'pointer' }} />
+                          <span style={{ fontWeight: 600, color: editedSettings.t8_trail_after_tp1 ? 'var(--success)' : 'var(--text-secondary)' }}>
+                            Enable trailing exit
+                          </span>
+                        </label>
+                      </div>
+                      {editedSettings.t8_trail_after_tp1 && (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>TP1 (pips)</div>
+                          <input type="number" step="0.5" min="0.5" value={editedSettings.t8_tp1_pips}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t8_tp1_pips: parseFloat(e.target.value) || 4 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>TP1 close %</div>
+                          <input type="number" step="5" min="10" max="100" value={editedSettings.t8_tp1_close_pct}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t8_tp1_close_pct: parseInt(e.target.value) || 50 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>BE: spread + pips</div>
+                          <input type="number" step="0.5" min="0" value={editedSettings.t8_be_spread_plus_pips}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t8_be_spread_plus_pips: parseFloat(e.target.value) || 2 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Trail EMA period</div>
+                          <input type="number" step="1" min="5" max="50" value={editedSettings.t8_trail_ema_period}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t8_trail_ema_period: parseInt(e.target.value) || 21 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        </div>
+                      </div>
+                      )}
+                      {editedSettings.t8_trail_after_tp1 && (
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
+                        Close % at TP1, move SL to entry + spread + buffer; then trail runner on M1 EMA. Close runner when M1 close crosses to wrong side of EMA.
+                      </div>
+                      )}
                     </div>
                   </div>
                   )}

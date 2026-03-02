@@ -223,9 +223,34 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                 pass
             break
 
+    # Find Trial #8 policy for trailing exit (TP1 + BE + M1 EMA trail)
+    t8_policy = None
+    t8_tm_overrides: dict = {}
+    for pol in profile.execution.policies:
+        if getattr(pol, "type", None) == "kt_cg_trial_8" and getattr(pol, "enabled", True):
+            if getattr(pol, "trail_after_tp1", False):
+                t8_policy = pol
+                try:
+                    _t8_sp = Path("runtime") / profile.profile_name / "runtime_state.json"
+                    if _t8_sp.exists():
+                        _t8_sd = json.loads(_t8_sp.read_text(encoding="utf-8"))
+                        for _fld, _sk in [
+                            ("tp1_pips", "temp_t8_tp1_pips"),
+                            ("tp1_close_pct", "temp_t8_tp1_close_pct"),
+                            ("be_spread_plus_pips", "temp_t8_be_spread_plus_pips"),
+                            ("trail_ema_period", "temp_t8_trail_ema_period"),
+                        ]:
+                            _v = _t8_sd.get(_sk)
+                            if _v is not None:
+                                t8_tm_overrides[_fld] = _v
+                except Exception:
+                    pass
+            break
+
     has_simple_be = breakeven and getattr(breakeven, "enabled", False)
     has_scaled = target and getattr(target, "mode", None) == "scaled" and getattr(target, "tp1_pips", None)
-    if not has_simple_be and not has_scaled and t4_spread_be is None and up_policy is None:
+    has_t8_trail = t8_policy is not None
+    if not has_simple_be and not has_scaled and t4_spread_be is None and up_policy is None and not has_t8_trail:
         return
     try:
         open_positions = adapter.get_open_positions(profile.symbol)
@@ -437,6 +462,92 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                                 print(f"[{profile.profile_name}] UP runner closed (SELL close > EMA21): pos {position_id}")
                 except Exception as e:
                     print(f"[{profile.profile_name}] UP trailing EMA error pos {position_id}: {e}")
+
+        # 2b) Trial #8 trailing exit (TP1 partial + BE + M1 EMA trail) for zone_entry / tiered_pullback
+        elif t8_policy is not None and entry_type in ("zone_entry", "tiered_pullback"):
+            tp1_done = trade_row.get("tp1_partial_done") or 0
+            t8_tp1_pips = t8_tm_overrides.get("tp1_pips", t8_policy.tp1_pips)
+            t8_tp1_pct = t8_tm_overrides.get("tp1_close_pct", t8_policy.tp1_close_pct)
+
+            if not tp1_done:
+                reached_buy = mid >= entry + float(t8_tp1_pips) * pip
+                reached_sell = mid <= entry - float(t8_tp1_pips) * pip
+                if (side == "buy" and reached_buy) or (side == "sell" and reached_sell):
+                    if isinstance(pos, dict):
+                        current_units = pos.get("currentUnits") or 0
+                        current_lots = abs(int(current_units)) / 100_000.0
+                    else:
+                        current_lots = float(getattr(pos, "volume", 0) or 0)
+                    close_lots = current_lots * (float(t8_tp1_pct) / 100.0)
+                    position_type = 1 if side == "sell" else 0
+                    try:
+                        adapter.close_position(
+                            ticket=position_id,
+                            symbol=profile.symbol,
+                            volume=close_lots,
+                            position_type=position_type,
+                        )
+                        _ov_be_pips = t8_tm_overrides.get("be_spread_plus_pips", t8_policy.be_spread_plus_pips)
+                        be_offset = current_spread + _ov_be_pips * pip
+                        if side == "buy":
+                            be_sl = entry + be_offset
+                        else:
+                            be_sl = entry - be_offset
+                        adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
+                        store.update_trade(trade_id, {"tp1_partial_done": 1, "breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
+                        print(f"[{profile.profile_name}] T8 TP1 partial close + BE: pos {position_id} ({t8_tp1_pct}%) SL->{be_sl:.3f}")
+                    except Exception as e:
+                        print(f"[{profile.profile_name}] T8 TP1/BE error pos {position_id}: {e}")
+
+            elif tp1_done:
+                try:
+                    _ov_trail_period = t8_tm_overrides.get("trail_ema_period", t8_policy.trail_ema_period)
+                    m1_df_trail = adapter.get_bars(profile.symbol, "M1", 100)
+                    if m1_df_trail is not None and not m1_df_trail.empty and len(m1_df_trail) > _ov_trail_period:
+                        from core.indicators import ema as ema_fn
+                        m1_close_trail = m1_df_trail["close"].astype(float)
+                        trail_ema = ema_fn(m1_close_trail, _ov_trail_period)
+                        if not trail_ema.empty and pd.notna(trail_ema.iloc[-1]):
+                            ema_val = float(trail_ema.iloc[-1])
+                            prev_be_sl = trade_row.get("breakeven_sl_price")
+                            if prev_be_sl is not None:
+                                prev_be_sl = float(prev_be_sl)
+                            if side == "buy":
+                                new_trail_sl = ema_val - (1.0 * pip)
+                                if prev_be_sl is not None:
+                                    new_trail_sl = max(new_trail_sl, prev_be_sl)
+                            else:
+                                new_trail_sl = ema_val + (1.0 * pip)
+                                if prev_be_sl is not None:
+                                    new_trail_sl = min(new_trail_sl, prev_be_sl)
+                            if prev_be_sl is None or abs(new_trail_sl - prev_be_sl) > pip * 0.1:
+                                should_update = False
+                                if side == "buy" and (prev_be_sl is None or new_trail_sl > prev_be_sl):
+                                    should_update = True
+                                elif side == "sell" and (prev_be_sl is None or new_trail_sl < prev_be_sl):
+                                    should_update = True
+                                if should_update:
+                                    adapter.update_position_stop_loss(position_id, profile.symbol, round(new_trail_sl, 3))
+                                    store.update_trade(trade_id, {"breakeven_sl_price": round(new_trail_sl, 5)})
+                            last_m1_close = float(m1_close_trail.iloc[-1])
+                            if side == "buy" and last_m1_close < ema_val:
+                                position_type = 0
+                                if isinstance(pos, dict):
+                                    vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                else:
+                                    vol = float(getattr(pos, "volume", 0) or 0)
+                                adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                print(f"[{profile.profile_name}] T8 runner closed (BUY close < EMA): pos {position_id}")
+                            elif side == "sell" and last_m1_close > ema_val:
+                                position_type = 1
+                                if isinstance(pos, dict):
+                                    vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                else:
+                                    vol = float(getattr(pos, "volume", 0) or 0)
+                                adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                print(f"[{profile.profile_name}] T8 runner closed (SELL close > EMA): pos {position_id}")
+                except Exception as e:
+                    print(f"[{profile.profile_name}] T8 trailing EMA error pos {position_id}: {e}")
 
         # 2) TP1 partial close (for non-uncle_parsh policies)
         elif target and getattr(target, "mode", None) == "scaled":
@@ -2194,6 +2305,9 @@ def main() -> None:
                             else:
                                 tp_price = entry_price - pol.tp_pips * pip
                                 sl_price = entry_price + sl_pips * pip
+                            # When T8 trailing exit is on, do not set broker TP so loop can partial-close + trail
+                            if pol_type == "kt_cg_trial_8" and getattr(pol, "trail_after_tp1", False):
+                                tp_price = None
                             print(f"[{profile.profile_name}] TRADE PLACED: {pol_type}:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
                                 profile=profile,

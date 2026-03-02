@@ -76,6 +76,12 @@ class RuntimeState:
     # Uncle Parsh H1 Breakout: Discipline overrides
     temp_up_max_spread_pips: Optional[float] = None
 
+    # Trial #8 trailing exit temp overrides
+    temp_t8_tp1_pips: Optional[float] = None
+    temp_t8_tp1_close_pct: Optional[float] = None
+    temp_t8_be_spread_plus_pips: Optional[float] = None
+    temp_t8_trail_ema_period: Optional[int] = None
+
 
 def _load_tier_fired(data: dict) -> dict:
     """Load tier_fired from JSON data with backward compat for old tier_X_fired keys."""
@@ -137,6 +143,10 @@ def load_state(path: str | Path) -> RuntimeState:
         temp_up_be_spread_plus_pips=data.get("temp_up_be_spread_plus_pips"),
         temp_up_trail_ema_period=data.get("temp_up_trail_ema_period"),
         temp_up_max_spread_pips=data.get("temp_up_max_spread_pips"),
+        temp_t8_tp1_pips=data.get("temp_t8_tp1_pips"),
+        temp_t8_tp1_close_pct=data.get("temp_t8_tp1_close_pct"),
+        temp_t8_be_spread_plus_pips=data.get("temp_t8_be_spread_plus_pips"),
+        temp_t8_trail_ema_period=data.get("temp_t8_trail_ema_period"),
     )
 
 
@@ -183,6 +193,10 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "temp_up_be_spread_plus_pips": state.temp_up_be_spread_plus_pips,
                 "temp_up_trail_ema_period": state.temp_up_trail_ema_period,
                 "temp_up_max_spread_pips": state.temp_up_max_spread_pips,
+                "temp_t8_tp1_pips": state.temp_t8_tp1_pips,
+                "temp_t8_tp1_close_pct": state.temp_t8_tp1_close_pct,
+                "temp_t8_be_spread_plus_pips": state.temp_t8_be_spread_plus_pips,
+                "temp_t8_trail_ema_period": state.temp_t8_trail_ema_period,
             },
             indent=2,
             sort_keys=False,

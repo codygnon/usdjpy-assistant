@@ -1,0 +1,261 @@
+{
+  "summary": {
+    "trades": 204,
+    "avg_win_pips": 14.764187126314285,
+    "avg_loss_pips": -7.323450877191718,
+    "realized_rr": 2.01601504180169,
+    "expectancy_usd_per_trade": 160.4461313921704,
+    "profit_factor": 1.5140590529683222,
+    "mfe_capture_ratio_winners_avg": 0.582216792181614,
+    "mae_sl_hit_pct_losers": 95.6140350877193,
+    "mae_worse_than_sl_by_0p5_pct_losers": 94.73684210526315
+  },
+  "r_multiple": {
+    "top10pct_profit_contribution_pct": 28.540533164187863,
+    "histogram": [
+      {
+        "bin": "[-5.0, -3.0)",
+        "count": 0
+      },
+      {
+        "bin": "[-3.0, -2.0)",
+        "count": 0
+      },
+      {
+        "bin": "[-2.0, -1.0)",
+        "count": 0
+      },
+      {
+        "bin": "[-1.0, -0.5)",
+        "count": 111
+      },
+      {
+        "bin": "[-0.5, 0.0)",
+        "count": 3
+      },
+      {
+        "bin": "[0.0, 0.5)",
+        "count": 5
+      },
+      {
+        "bin": "[0.5, 1.0)",
+        "count": 27
+      },
+      {
+        "bin": "[1.0, 2.0)",
+        "count": 8
+      },
+      {
+        "bin": "[2.0, 3.0)",
+        "count": 25
+      },
+      {
+        "bin": "[3.0, 5.0)",
+        "count": 25
+      },
+      {
+        "bin": "[5.0, 10.0)",
+        "count": 0
+      }
+    ]
+  },
+  "entry_quality": {
+    "first_color_pct": {
+      "red": 100.0
+    },
+    "early_mfe_threshold_pips": 3.0,
+    "early_mfe_signal_rate_pct": 27.450980392156865,
+    "win_rate_when_signal_pct": 73.21428571428571,
+    "signal_recall_of_winners_pct": 45.55555555555556,
+    "base_win_rate_pct": 44.11764705882353,
+    "time_to_mfe_all_avg_min": 28.980392156862745,
+    "time_to_mae_all_avg_min": 13.857843137254902,
+    "time_to_mfe_all_median_min": 14.0,
+    "time_to_mae_all_median_min": 6.0
+  },
+  "granular_time": {
+    "hour_of_day": [
+      {
+        "hour_utc": 8,
+        "trades": 20,
+        "win_rate": 50.0,
+        "net_usd": 1442.9145058259314,
+        "net_pips": 53.05550470814353
+      },
+      {
+        "hour_utc": 9,
+        "trades": 85,
+        "win_rate": 40.0,
+        "net_usd": 841.4133369815136,
+        "net_pips": 51.04931397424366
+      },
+      {
+        "hour_utc": 13,
+        "trades": 71,
+        "win_rate": 45.07042253521127,
+        "net_usd": 19310.870141628646,
+        "net_pips": 254.51079831641977
+      },
+      {
+        "hour_utc": 14,
+        "trades": 28,
+        "win_rate": 50.0,
+        "net_usd": 11135.812819566661,
+        "net_pips": 135.28782436962302
+      }
+    ],
+    "day_of_week": [
+      {
+        "day": "Mon",
+        "trades": 48,
+        "win_rate": 47.91666666666667,
+        "net_usd": 4151.14665716461,
+        "net_pips": 157.54601346753276
+      },
+      {
+        "day": "Tue",
+        "trades": 36,
+        "win_rate": 50.0,
+        "net_usd": 11651.724299218742,
+        "net_pips": 112.54758622800409
+      },
+      {
+        "day": "Wed",
+        "trades": 36,
+        "win_rate": 36.11111111111111,
+        "net_usd": 3720.744926677109,
+        "net_pips": 56.32139499999454
+      },
+      {
+        "day": "Thu",
+        "trades": 45,
+        "win_rate": 48.888888888888886,
+        "net_usd": 1347.4406352824146,
+        "net_pips": 91.30476004031578
+      },
+      {
+        "day": "Fri",
+        "trades": 39,
+        "win_rate": 35.8974358974359,
+        "net_usd": 11859.954285659876,
+        "net_pips": 76.1836866325828
+      }
+    ],
+    "atr_regime": [
+      {
+        "regime": "high",
+        "trades": 68,
+        "win_rate": 39.705882352941174,
+        "net_usd": 2530.72117615151,
+        "net_pips": 65.58455896369281
+      },
+      {
+        "regime": "low",
+        "trades": 28,
+        "win_rate": 39.285714285714285,
+        "net_usd": 3132.588457030117,
+        "net_pips": 63.04953942446929
+      },
+      {
+        "regime": "mid",
+        "trades": 108,
+        "win_rate": 48.148148148148145,
+        "net_usd": 27067.70117082113,
+        "net_pips": 365.2693429802679
+      }
+    ],
+    "atr_regime_thresholds_pips": {
+      "q33": 5.04285714285686,
+      "q67": 7.485714285714096
+    }
+  },
+  "streak_drawdown": {
+    "max_consecutive_losses": 12,
+    "max_consecutive_wins": 8,
+    "win_loss_autocorr_lag1": 0.23065580182034587,
+    "max_drawdown_usd": 10669.478092802645,
+    "max_drawdown_pct_from_peak": 0.0,
+    "max_drawdown_duration_trades": 42,
+    "max_drawdown_duration_days": 114.02361111111111
+  },
+  "consistency": {
+    "rolling_50_trade_expectancy": {
+      "mean": 125.98513896050788,
+      "median": 119.18509201573096,
+      "min": -166.97659980307748,
+      "max": 632.532979998608,
+      "last": 611.2513721733711
+    },
+    "profitable_months_pct": 53.333333333333336,
+    "monthly_return_stddev_pct": 6.022922120177715,
+    "equity_curve_r2": 0.6315543564485726,
+    "monthly_distribution": [
+      {
+        "month": "2024-10",
+        "usd": -900.5102081327016
+      },
+      {
+        "month": "2024-11",
+        "usd": -6030.933718673785
+      },
+      {
+        "month": "2025-01",
+        "usd": -3502.1454768002295
+      },
+      {
+        "month": "2025-02",
+        "usd": 3195.076171534357
+      },
+      {
+        "month": "2025-03",
+        "usd": 5551.410691300501
+      },
+      {
+        "month": "2025-04",
+        "usd": 2895.0654946560653
+      },
+      {
+        "month": "2025-05",
+        "usd": -6632.895627733353
+      },
+      {
+        "month": "2025-06",
+        "usd": 9325.117147880968
+      },
+      {
+        "month": "2025-07",
+        "usd": 1084.749794610223
+      },
+      {
+        "month": "2025-08",
+        "usd": -843.050920172843
+      },
+      {
+        "month": "2025-09",
+        "usd": -2794.2082042392417
+      },
+      {
+        "month": "2025-10",
+        "usd": -1015.3690577445161
+      },
+      {
+        "month": "2025-11",
+        "usd": 10782.657310339951
+      },
+      {
+        "month": "2026-01",
+        "usd": 7263.492842932075
+      },
+      {
+        "month": "2026-02",
+        "usd": 14352.55456424528
+      }
+    ]
+  },
+  "time_to_close": {
+    "avg_winner_min": 62.82222222222222,
+    "avg_loser_min": 22.035087719298247,
+    "median_winner_min": 59.5,
+    "median_loser_min": 12.0
+  }
+}

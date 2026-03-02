@@ -881,6 +881,13 @@ class ExecutionPolicyKtCgTrial8(BaseModel):
     daily_level_buffer_pips: float = 3.0
     daily_level_breakout_candles_required: int = 2
 
+    # Trailing exit (TP1 partial + BE + M1 EMA trail)
+    trail_after_tp1: bool = False
+    tp1_pips: float = 4.0
+    tp1_close_pct: float = 50.0
+    be_spread_plus_pips: float = 2.0
+    trail_ema_period: int = 21
+
 
 class ExecutionPolicyKtCgTrial6(BaseModel):
     """KT/CG Trial #6 (BB Slope Trend + EMA Tier Pullback + BB Reversal).
