@@ -270,6 +270,8 @@ DEFAULTS: dict[str, object] = {
     "v5_atr_pct_filter_enabled": False,
     "v5_atr_pct_cap": 0.67,
     "v5_atr_pct_lookback": 200,
+    "v5_normal_mid_atr_allowed": False,
+    "v5_atr_pct_low_normal": 0.33,
     "v5_nonmover_exit_enabled": False,
     "v5_nonmover_minutes": 10.0,
     "v5_nonmover_mfe_pips": 1.0,
@@ -312,6 +314,15 @@ DEFAULTS: dict[str, object] = {
     "v5_orb_min_body_pips": 1.5,
     "v5_orb_range_start_hour": 7.0,
     "v5_orb_range_end_hour": 7.5,
+    "v5_tokyo_orb_enabled": False,
+    "v5_tokyo_orb_range_start_hour": 23.0,
+    "v5_tokyo_orb_range_end_hour": 0.5,
+    "v5_tokyo_orb_tp_pips": 8.0,
+    "v5_tokyo_orb_sl_buffer_pips": 2.0,
+    "v5_tokyo_orb_min_range_pips": 8.0,
+    "v5_tokyo_orb_max_range_pips": 60.0,
+    "v5_tokyo_orb_cutoff_hour": 1.0,
+    "v5_tokyo_orb_hard_close_hour": 2.5,
     "v5_dual_mode_enabled": False,
     "v5_range_fade_enabled": True,
     "v5_trend_mode_efficiency_min": 0.40,
@@ -320,6 +331,7 @@ DEFAULTS: dict[str, object] = {
     "v5_range_fade_sl_pips": 8.0,
     "v5_range_fade_tp_pips": 10.0,
     "v5_skip_months": "",
+    "v5_skip_days": "",
     "v5_thin_month": 0,
     "v5_thin_start_day": 20,
     "v5_thin_scale": 0.25,
@@ -329,6 +341,14 @@ DEFAULTS: dict[str, object] = {
     "v5_hybrid_ny_boost": 1.0,
     "v5_sl_floor_pips": 5.0,
     "v5_sl_cap_pips": 9.0,
+    # V36 green light mechanism defaults
+    "v5_gl_enabled": False,
+    "v5_gl_min_wins": 1,
+    "v5_gl_extra_entries": 2,
+    "v5_gl_allow_normal": True,
+    "v5_gl_normal_atr_cap": 0.67,
+    "v5_gl_slope_relax": 0.0,
+    "v5_gl_max_open": 0,
     # swing defaults
     "swing_mode_enabled": False,
     "swing_weekly_ema": 10,
@@ -711,6 +731,8 @@ def _full_parser() -> argparse.ArgumentParser:
     p.add_argument("--v5-atr-pct-filter-enabled", type=parse_bool, nargs="?", const=True)
     p.add_argument("--v5-atr-pct-cap", type=float)
     p.add_argument("--v5-atr-pct-lookback", type=int)
+    p.add_argument("--v5-normal-mid-atr-allowed", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-atr-pct-low-normal", type=float)
     p.add_argument("--v5-nonmover-exit-enabled", type=parse_bool, nargs="?", const=True)
     p.add_argument("--v5-nonmover-minutes", type=float)
     p.add_argument("--v5-nonmover-mfe-pips", type=float)
@@ -753,6 +775,15 @@ def _full_parser() -> argparse.ArgumentParser:
     p.add_argument("--v5-orb-min-body-pips", type=float)
     p.add_argument("--v5-orb-range-start-hour", type=float)
     p.add_argument("--v5-orb-range-end-hour", type=float)
+    p.add_argument("--v5-tokyo-orb-enabled", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-tokyo-orb-range-start-hour", type=float)
+    p.add_argument("--v5-tokyo-orb-range-end-hour", type=float)
+    p.add_argument("--v5-tokyo-orb-tp-pips", type=float)
+    p.add_argument("--v5-tokyo-orb-sl-buffer-pips", type=float)
+    p.add_argument("--v5-tokyo-orb-min-range-pips", type=float)
+    p.add_argument("--v5-tokyo-orb-max-range-pips", type=float)
+    p.add_argument("--v5-tokyo-orb-cutoff-hour", type=float)
+    p.add_argument("--v5-tokyo-orb-hard-close-hour", type=float)
     p.add_argument("--v5-dual-mode-enabled", type=parse_bool, nargs="?", const=True)
     p.add_argument("--v5-range-fade-enabled", type=parse_bool, nargs="?", const=True)
     p.add_argument("--v5-trend-mode-efficiency-min", type=float)
@@ -761,9 +792,18 @@ def _full_parser() -> argparse.ArgumentParser:
     p.add_argument("--v5-range-fade-sl-pips", type=float)
     p.add_argument("--v5-range-fade-tp-pips", type=float)
     p.add_argument("--v5-skip-months", type=str)
+    p.add_argument("--v5-skip-days", type=str)
     p.add_argument("--v5-thin-month", type=int)
     p.add_argument("--v5-thin-start-day", type=int)
     p.add_argument("--v5-thin-scale", type=float)
+    # V36 green light parameters
+    p.add_argument("--v5-gl-enabled", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-gl-min-wins", type=int)
+    p.add_argument("--v5-gl-extra-entries", type=int)
+    p.add_argument("--v5-gl-allow-normal", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-gl-normal-atr-cap", type=float)
+    p.add_argument("--v5-gl-slope-relax", type=float)
+    p.add_argument("--v5-gl-max-open", type=int)
     # swing parameters
     p.add_argument("--swing-mode-enabled", type=parse_bool, nargs="?", const=True)
     p.add_argument("--swing-weekly-ema", type=int)
@@ -3028,6 +3068,13 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
     orb_range_built = False
     orb_fired_today = False
     orb_last_session_date: Optional[object] = None
+    # Tokyo ORB state
+    t_orb_range_high: Optional[float] = None
+    t_orb_range_low: Optional[float] = None
+    t_orb_range_built: bool = False
+    t_orb_fired_today: bool = False
+    t_orb_both_sides: bool = False
+    t_orb_session_date: Optional[object] = None
 
     regime_distribution = {"Trending": 0, "Flat": 0}
 
@@ -3039,6 +3086,7 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             daily_state[day_key] = {
                 "entries_opened": 0,
                 "win_streak_day": 0,
+                "wins_closed": 0,
                 "sessions": {
                     "london": {"consec_losses": 0, "stopped": False, "win_streak": 0, "entries_opened": 0},
                     "ny_overlap": {"consec_losses": 0, "stopped": False, "win_streak": 0, "entries_opened": 0},
@@ -3287,6 +3335,7 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             weekly_stop_keys.add(wk_key)
 
         if outcome == "win":
+            exit_day_cfg["wins_closed"] = int(exit_day_cfg.get("wins_closed", 0)) + 1
             if str(args.v5_win_streak_scope) == "day":
                 exit_day_cfg["win_streak_day"] = int(exit_day_cfg.get("win_streak_day", 0)) + 1
                 max_consecutive_wins = max(max_consecutive_wins, int(exit_day_cfg["win_streak_day"]))
@@ -3376,6 +3425,138 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             and orb_last_session_date == ts_dt.date()
         ):
             orb_range_built = True
+        # ── Tokyo ORB (fix-flow breakout) ──────────────────────────────────────────
+        _t_orb_enabled = bool(getattr(args, "v5_tokyo_orb_enabled", False))
+        if _t_orb_enabled:
+            _t_start = float(getattr(args, "v5_tokyo_orb_range_start_hour", 23.0))
+            _t_end = float(getattr(args, "v5_tokyo_orb_range_end_hour", 0.5))
+            _t_cutoff = float(getattr(args, "v5_tokyo_orb_cutoff_hour", 1.0))
+            _t_hclose = float(getattr(args, "v5_tokyo_orb_hard_close_hour", 2.5))
+
+            # Session date = date of 00:xx bars; 23:xx bars belong to next session date
+            _t_sess_date = (ts_dt + pd.Timedelta(days=1)).date() if h_now >= 23.0 else ts_dt.date()
+
+            # Reset state on new session
+            if t_orb_session_date != _t_sess_date:
+                t_orb_range_high = None
+                t_orb_range_low = None
+                t_orb_range_built = False
+                t_orb_fired_today = False
+                t_orb_both_sides = False
+                t_orb_session_date = _t_sess_date
+
+            # Phase 1 — build range (23:00–00:30 UTC)
+            _t_in_build = (h_now >= _t_start) or (h_now < _t_end)
+            if _t_in_build and not t_orb_range_built:
+                if t_orb_range_high is None:
+                    t_orb_range_high = float(h)
+                    t_orb_range_low = float(l)
+                else:
+                    t_orb_range_high = max(t_orb_range_high, float(h))
+                    t_orb_range_low = min(t_orb_range_low, float(l))
+
+            # Mark range built when fix window opens
+            if (h_now >= _t_end and h_now < _t_cutoff and not t_orb_range_built and t_orb_range_high is not None):
+                t_orb_range_built = True
+
+            # Hard close at 02:30 UTC — exit any open Tokyo ORB positions at market
+            if h_now >= _t_hclose:
+                for _pos in list(open_positions):
+                    if _pos.entry_regime == "TOKYO_ORB" and _pos in open_positions:
+                        _exit_px = float(c) - spread_pips * PIP_SIZE if _pos.side == "buy" else float(c) + spread_pips * PIP_SIZE
+                        _pos.exit_price_last = _exit_px
+                        if _pos.side == "buy":
+                            _pos.realized_pips = (_exit_px - _pos.entry_price) / PIP_SIZE
+                        else:
+                            _pos.realized_pips = (_pos.entry_price - _exit_px) / PIP_SIZE
+                        _pos.realized_usd = _pos.realized_pips * _pos.lots_initial * 1000.0 / float(c) * float(c)
+                        _finalize_position(_pos, ts, "tokyo_orb_hard_close", p5_now=p5)
+                        if _pos in open_positions:
+                            open_positions.remove(_pos)
+
+            # Phase 2 — fix window entry (00:30–01:00 UTC)
+            _t_in_fix = (_t_end <= h_now < _t_cutoff)
+            if (
+                _t_in_fix
+                and t_orb_range_built
+                and not t_orb_fired_today
+                and not t_orb_both_sides
+                and t_orb_range_high is not None
+                and t_orb_range_low is not None
+            ):
+                _t_min = float(getattr(args, "v5_tokyo_orb_min_range_pips", 8.0))
+                _t_max = float(getattr(args, "v5_tokyo_orb_max_range_pips", 60.0))
+                _t_buf = float(getattr(args, "v5_tokyo_orb_sl_buffer_pips", 2.0))
+                _t_tp = float(getattr(args, "v5_tokyo_orb_tp_pips", 8.0))
+                _t_size = (t_orb_range_high - t_orb_range_low) / PIP_SIZE
+
+                _broke_high = float(c) > t_orb_range_high
+                _broke_low = float(c) < t_orb_range_low
+
+                # Both-sides invalidation
+                if _broke_high and _broke_low:
+                    t_orb_both_sides = True
+                    t_orb_fired_today = True
+                    add_block("t_orb_both_sides")
+                elif _t_size < _t_min:
+                    t_orb_fired_today = True
+                    add_block("t_orb_range_too_small")
+                elif _t_size > _t_max:
+                    t_orb_fired_today = True
+                    add_block("t_orb_range_too_large")
+                elif _broke_high or _broke_low:
+                    _entry_side = "buy" if _broke_high else "sell"
+                    _entry_px = float(c) + spread_pips * PIP_SIZE if _entry_side == "buy" else float(c) - spread_pips * PIP_SIZE
+                    _sl_px = (t_orb_range_low - _t_buf * PIP_SIZE) if _entry_side == "buy" else (t_orb_range_high + _t_buf * PIP_SIZE)
+                    _sl_dist = abs(_entry_px - _sl_px) / PIP_SIZE
+                    if _sl_dist > 0:
+                        # Inverse position sizing: dollar risk fixed, size scales with 1/sl_dist
+                        _risk_usd = float(args.v5_account_size) * float(args.v5_risk_per_trade_pct) / 100.0
+                        _pip_value = (1.0 / float(c)) * 100000.0  # USDJPY pip value per standard lot
+                        _lot_size = round(_risk_usd / (_sl_dist * _pip_value * 10), 2)
+                        _lot_size = max(0.01, _lot_size)
+                        _tp1_px = (_entry_px + _t_tp * PIP_SIZE) if _entry_side == "buy" else (_entry_px - _t_tp * PIP_SIZE)
+
+                        trade_id_seq += 1
+                        new_pos = OpenPosition(
+                            trade_id=int(trade_id_seq),
+                            side=_entry_side,
+                            entry_mode=5,
+                            entry_session="tokyo",
+                            entry_time=pd.Timestamp(ts),
+                            entry_day=str(day_key),
+                            entry_index_in_day=0,
+                            entry_price=float(_entry_px),
+                            lots_initial=float(_lot_size),
+                            lots_remaining=float(_lot_size),
+                            stop_price=float(_sl_px),
+                            tp1_price=float(_tp1_px),
+                            tp2_price=float(_tp1_px),
+                            sl_pips=float(_sl_dist),
+                            tp1_pips=float(_t_tp),
+                            tp2_pips=float(_t_tp),
+                            tp1_filled=False,
+                            realized_pips=0.0,
+                            realized_usd=0.0,
+                            exit_price_last=None,
+                            entry_regime="TOKYO_ORB",
+                            entry_profile="tokyo_orb",
+                            position_type="Single",
+                            trail_buffer_pips=0.0,
+                            trail_ema_period=9,
+                            tp1_close_fraction=1.0,
+                            trail_start_multiple=0.0,
+                            trail_armed=False,
+                            trail_delay_observed=False,
+                            entry_bar_index=int(i),
+                            entry_signal_mode="tokyo_orb_break",
+                            wr_size_scale=1.0,
+                            conviction_scale=1.0,
+                            peak_mfe_pips=0.0,
+                        )
+                        open_positions.append(new_pos)
+                        t_orb_fired_today = True
+                        add_block(f"t_orb_entry_{_entry_side}")
 
         current_session_key = f"{day_key}:{sess}" if sess in {"london", "ny_overlap", "tokyo"} else None
         if current_session_key != session_tracker_key:
@@ -3431,6 +3612,11 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                 regime = "Trending"
         if new_m5_bar and sess in {"london", "ny_overlap", "tokyo"} and _session_allowed(ts, sess):
             regime_distribution[regime] = int(regime_distribution.get(regime, 0)) + 1
+
+        # Compute green light state here so it can be used by max_open cap below.
+        _gl_enabled = bool(getattr(args, "v5_gl_enabled", False))
+        _gl_min_wins = max(1, int(getattr(args, "v5_gl_min_wins", 1)))
+        green_light_active = _gl_enabled and int(day_cfg.get("wins_closed", 0)) >= _gl_min_wins
 
         if open_positions:
             for pos in list(open_positions):
@@ -3531,6 +3717,11 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                 effective_max_open = boost_max_open if current_rolling_wr >= wr_open_boost_min else base_max_open
             else:
                 effective_max_open = base_max_open
+            # Green light max_open override: raise concurrent position cap on profitable days.
+            if green_light_active:
+                gl_max_open = int(getattr(args, "v5_gl_max_open", effective_max_open))
+                if gl_max_open > effective_max_open:
+                    effective_max_open = gl_max_open
             if len(open_positions) >= int(effective_max_open):
                 add_block("v5_max_open_cap")
                 continue
@@ -3548,6 +3739,12 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             if cal_month in skip_months:
                 add_block("calendar_month_skip")
                 continue
+        skip_days_str = str(getattr(args, "v5_skip_days", ""))
+        if skip_days_str.strip():
+            skip_days = [int(d.strip()) for d in skip_days_str.split(",") if d.strip().isdigit()]
+            if ts_dt.weekday() in skip_days:
+                add_block("calendar_day_skip")
+                continue
 
         thin_month = int(getattr(args, "v5_thin_month", 0))
         thin_start_day = int(getattr(args, "v5_thin_start_day", 20))
@@ -3562,6 +3759,11 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         if dual_mode_enabled and active_mode == "neutral":
             add_block("v5_dual_mode_neutral")
             continue
+
+        # Green light: a confirmed winning day unlocks conditioned entry relaxation.
+        # (green_light_active already computed above before open_positions management)
+        if green_light_active:
+            add_block("v5_green_light_active")
 
         entry_side: Optional[str] = trend_side
         strength = "Strong"
@@ -3626,6 +3828,35 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                     add_block("v5_flat_regime")
                     continue
                 strength, slope_abs = _trend_strength_for_p5(p5, sess)
+                # Green light slope relaxation: lower the strong threshold so borderline Normal
+                # signals re-classify as Strong when the day is already confirmed profitable.
+                gl_slope_relax = float(getattr(args, "v5_gl_slope_relax", 0.0))
+                if green_light_active and gl_slope_relax > 0.0 and strength == "Normal":
+                    # Recompute with relaxed thresholds inline.
+                    sb = int(args.v5_slope_bars)
+                    if p5 >= sb:
+                        ema_now_gl = float(m5.iloc[p5]["ema_fast_v5"])
+                        ema_ago_gl = float(m5.iloc[p5 - sb]["ema_fast_v5"])
+                        slope_gl = abs((ema_now_gl - ema_ago_gl) / (float(sb) * PIP_SIZE))
+                        strong_thr_gl = (
+                            float(getattr(args, "v5_tokyo_strong_slope", 0.3)) if sess == "tokyo"
+                            else float(args.v5_london_strong_slope) if sess == "london"
+                            else float(args.v5_strong_slope)
+                        )
+                        relaxed_thr = strong_thr_gl * (1.0 - gl_slope_relax)
+                        if slope_gl >= relaxed_thr:
+                            strength = "Strong"
+                            slope_abs = slope_gl
+                            add_block("v5_gl_slope_reclassified")
+                atr_filter_enabled = bool(getattr(args, "v5_atr_pct_filter_enabled", False))
+                atr_lookback = max(10, int(getattr(args, "v5_atr_pct_lookback", 200)))
+                atr_pct_cap = float(getattr(args, "v5_atr_pct_cap", 0.67))
+                atr_rank: Optional[float] = None
+                if atr_filter_enabled and p5 >= atr_lookback:
+                    atr_now = float(m5.iloc[p5].get("atr14_v5_pips", 0.0))
+                    atr_window = m5.iloc[p5 - atr_lookback + 1 : p5 + 1]["atr14_v5_pips"].to_numpy(dtype=float)
+                    if len(atr_window) > 0:
+                        atr_rank = float(np.count_nonzero(atr_window <= atr_now)) / float(len(atr_window))
                 strength_allowed = _strength_allowed(sess, strength, p5, slope_abs)
                 if not strength_allowed:
                     strength_override = False
@@ -3636,6 +3867,31 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                         and float(h1_ema_sep_pips) >= float(getattr(args, "v5_conviction_h1_sep_pips", 999.0))
                     ):
                         strength_override = True
+                    if (
+                        not strength_override
+                        and strength == "Normal"
+                        and bool(getattr(args, "v5_normal_mid_atr_allowed", False))
+                        and atr_filter_enabled
+                        and atr_rank is not None
+                    ):
+                        atr_low_thresh = float(getattr(args, "v5_atr_pct_low_normal", 0.33))
+                        atr_high_thresh = float(getattr(args, "v5_atr_pct_cap", 0.67))
+                        if atr_low_thresh <= float(atr_rank) < atr_high_thresh:
+                            strength_override = True
+                    # Green light Normal override: allow Normal signals when day is already
+                    # profitable AND ATR is below the green-light normal cap (mid/low ATR only).
+                    if (
+                        not strength_override
+                        and strength == "Normal"
+                        and green_light_active
+                        and bool(getattr(args, "v5_gl_allow_normal", True))
+                        and atr_filter_enabled
+                        and atr_rank is not None
+                    ):
+                        gl_normal_atr_cap = float(getattr(args, "v5_gl_normal_atr_cap", 0.67))
+                        if float(atr_rank) < gl_normal_atr_cap:
+                            strength_override = True
+                            add_block("v5_gl_normal_override")
                     if not strength_override:
                         if strength == "Weak" and bool(args.v5_skip_weak):
                             add_block("v5_skip_weak")
@@ -3657,17 +3913,9 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                     if adx_val < float(args.v5_adx_min):
                         add_block("v5_adx_too_low")
                         continue
-                if bool(getattr(args, "v5_atr_pct_filter_enabled", False)) and p5 >= 0:
-                    atr_lookback = max(10, int(getattr(args, "v5_atr_pct_lookback", 200)))
-                    atr_pct_cap = float(getattr(args, "v5_atr_pct_cap", 0.67))
-                    if p5 >= atr_lookback:
-                        atr_now = float(m5.iloc[p5].get("atr14_v5_pips", 0.0))
-                        atr_window = m5.iloc[p5 - atr_lookback + 1 : p5 + 1]["atr14_v5_pips"].to_numpy(dtype=float)
-                        if len(atr_window) > 0:
-                            atr_rank = float(np.count_nonzero(atr_window <= atr_now)) / float(len(atr_window))
-                            if atr_rank > atr_pct_cap:
-                                add_block("v5_atr_high_regime")
-                                continue
+                if atr_filter_enabled and atr_rank is not None and atr_rank > atr_pct_cap:
+                    add_block("v5_atr_high_regime")
+                    continue
                 entry_profile_label = str(strength)
             else:
                 strength = "Strong"
@@ -3714,7 +3962,9 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         if _in_session_entry_cutoff(ts, sess):
             add_block("v5_session_entry_cutoff")
             continue
-        if int(day_cfg["entries_opened"]) >= int(args.v5_max_entries_day):
+        gl_extra_entries = int(getattr(args, "v5_gl_extra_entries", 2)) if green_light_active else 0
+        effective_day_cap = int(args.v5_max_entries_day) + gl_extra_entries
+        if int(day_cfg["entries_opened"]) >= effective_day_cap:
             add_block("daily_entry_cap")
             continue
         sess_cfg = day_cfg["sessions"][sess]
@@ -5051,6 +5301,8 @@ def main(argv: list[str]) -> int:
                 "atr_pct_filter_enabled": bool(args.v5_atr_pct_filter_enabled),
                 "atr_pct_cap": float(args.v5_atr_pct_cap),
                 "atr_pct_lookback": int(args.v5_atr_pct_lookback),
+                "normal_mid_atr_allowed": bool(args.v5_normal_mid_atr_allowed),
+                "atr_pct_low_normal": float(args.v5_atr_pct_low_normal),
                 "rolling_wr_lookback": int(args.v5_rolling_wr_lookback),
                 "rolling_wr_min": float(args.v5_rolling_wr_min),
                 "rolling_wr_pause_bars": int(args.v5_rolling_wr_pause_bars),
@@ -5082,6 +5334,12 @@ def main(argv: list[str]) -> int:
                 "orb_min_body_pips": float(args.v5_orb_min_body_pips),
                 "orb_range_start_hour": float(args.v5_orb_range_start_hour),
                 "orb_range_end_hour": float(args.v5_orb_range_end_hour),
+                "tokyo_orb_enabled": bool(getattr(args, "v5_tokyo_orb_enabled", False)),
+                "tokyo_orb_tp_pips": float(getattr(args, "v5_tokyo_orb_tp_pips", 8.0)),
+                "tokyo_orb_range_start_hour": float(getattr(args, "v5_tokyo_orb_range_start_hour", 23.0)),
+                "tokyo_orb_range_end_hour": float(getattr(args, "v5_tokyo_orb_range_end_hour", 0.5)),
+                "tokyo_orb_cutoff_hour": float(getattr(args, "v5_tokyo_orb_cutoff_hour", 1.0)),
+                "tokyo_orb_hard_close_hour": float(getattr(args, "v5_tokyo_orb_hard_close_hour", 2.5)),
                 "dual_mode_enabled": bool(args.v5_dual_mode_enabled),
                 "range_fade_enabled": bool(args.v5_range_fade_enabled),
                 "trend_mode_efficiency_min": float(args.v5_trend_mode_efficiency_min),
@@ -5090,6 +5348,7 @@ def main(argv: list[str]) -> int:
                 "range_fade_sl_pips": float(args.v5_range_fade_sl_pips),
                 "range_fade_tp_pips": float(args.v5_range_fade_tp_pips),
                 "skip_months": str(args.v5_skip_months),
+                "skip_days": str(args.v5_skip_days),
                 "thin_month": int(args.v5_thin_month),
                 "thin_start_day": int(args.v5_thin_start_day),
                 "thin_scale": float(args.v5_thin_scale),

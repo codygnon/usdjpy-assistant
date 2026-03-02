@@ -6591,8 +6591,11 @@ def evaluate_h1_breakout_conditions(
     ov_h1_swing_strength = _ov("h1_swing_strength")
     ov_h1_cluster_tolerance_pips = _ov("h1_cluster_tolerance_pips")
     ov_h1_min_touches_for_major = _ov("h1_min_touches_for_major")
-    ov_power_close_body_pct = _ov("power_close_body_pct")
-    ov_velocity_pips = _ov("velocity_pips")
+    # Major-extremes breakout params
+    ov_entry_window_minutes = float(_ov("entry_window_minutes", 15))
+    ov_aggressive_close_distance_pips = float(_ov("aggressive_close_distance_pips", 5.0))
+    ov_m1_entry_ema_fast = int(_ov("m1_entry_ema_fast", getattr(policy, "m1_ema_mid", 9)))
+    ov_m1_entry_ema_slow = int(_ov("m1_entry_ema_slow", getattr(policy, "m1_ema_slow", 21)))
     ov_max_spread_pips = _ov("max_spread_pips")
 
     reasons: list[str] = []
@@ -6614,18 +6617,14 @@ def evaluate_h1_breakout_conditions(
     m5_close = m5_df["close"].astype(float)
     m5_ema_fast = ema_fn(m5_close, ov_m5_trend_ema_fast)
     m5_ema_slow = ema_fn(m5_close, ov_m5_trend_ema_slow)
-    if m5_ema_fast.empty or m5_ema_slow.empty or pd.isna(m5_ema_fast.iloc[-1]) or pd.isna(m5_ema_slow.iloc[-1]):
-        reasons.append("M5 EMA not ready")
-        return no_signal
-
-    fast_val = float(m5_ema_fast.iloc[-1])
-    slow_val = float(m5_ema_slow.iloc[-1])
-    if fast_val > slow_val:
-        m5_trend = "bull"
-    elif fast_val < slow_val:
-        m5_trend = "bear"
-    else:
-        m5_trend = "flat"
+    m5_trend = "flat"
+    if not (m5_ema_fast.empty or m5_ema_slow.empty or pd.isna(m5_ema_fast.iloc[-1]) or pd.isna(m5_ema_slow.iloc[-1])):
+        fast_val = float(m5_ema_fast.iloc[-1])
+        slow_val = float(m5_ema_slow.iloc[-1])
+        if fast_val > slow_val:
+            m5_trend = "bull"
+        elif fast_val < slow_val:
+            m5_trend = "bear"
     no_signal["m5_trend"] = m5_trend
 
     # ----- Detect / reload H1 levels -----
@@ -6637,6 +6636,8 @@ def evaluate_h1_breakout_conditions(
         "h1_min_touches_for_major": ov_h1_min_touches_for_major,
         "h1_min_distance_between_levels_pips": policy.h1_min_distance_between_levels_pips,
         "pip_size": pip_size,
+        # This strategy uses major extremes only (YH/YL, weekly, monthly)
+        "major_extremes_only": True,
     })
 
     # Rebuild levels from persisted state or detect fresh
@@ -6651,9 +6652,21 @@ def evaluate_h1_breakout_conditions(
         no_signal["level_updates"] = []
         return no_signal
 
-    # ----- Process M5 Power Close on new M5 bar -----
+    def _reset_level_for_next_setup(lv: H1Level) -> None:
+        lv.is_broken = False
+        lv.break_direction = ""
+        lv.break_time = None
+        lv.velocity_type = None
+        lv.velocity_checked = False
+        lv.power_close_bar_index = None
+        lv.entry_mode = None
+        lv.state = "watching"
+        lv.voided = False
+
+    # ----- Process M5 Clean Break on new M5 bar -----
     m5_df_sorted = m5_df.copy().sort_values("time")
     m5_last = m5_df_sorted.iloc[-1]
+    m5_prev = m5_df_sorted.iloc[-2] if len(m5_df_sorted) >= 2 else None
     m5_last_time = str(pd.to_datetime(m5_last["time"], utc=True).isoformat())
     m5_bar_count = len(m5_df_sorted)
 
@@ -6662,7 +6675,7 @@ def evaluate_h1_breakout_conditions(
             if lv.voided:
                 continue
 
-            # Check Power Close for watching levels
+            # Check Clean Break for watching levels (body entirely beyond level)
             if lv.state == "watching":
                 candle_dict = {
                     "open": float(m5_last["open"]),
@@ -6670,62 +6683,124 @@ def evaluate_h1_breakout_conditions(
                     "high": float(m5_last["high"]),
                     "low": float(m5_last["low"]),
                 }
-                if detector.check_power_close(lv, candle_dict, pip_size, ov_power_close_body_pct):
+                o = float(m5_last["open"])
+                c = float(m5_last["close"])
+                prev_o = float(m5_prev["open"]) if m5_prev is not None else o
+                prev_c = float(m5_prev["close"]) if m5_prev is not None else c
+                # Require a fresh break: previous candle body not beyond level, current body fully beyond.
+                bull_break = (min(o, c) > lv.price) and (max(prev_o, prev_c) <= lv.price)
+                bear_break = (max(o, c) < lv.price) and (min(prev_o, prev_c) >= lv.price)
+                if (bull_break or bear_break) and detector.check_power_close(lv, candle_dict, pip_size):
                     lv.is_broken = True
                     lv.break_time = m5_last_time
                     lv.power_close_bar_index = m5_bar_count - 1
-                    lv.state = "catalyst"
-                    # Determine break direction from candle
-                    if float(m5_last["close"]) > lv.price:
+                    lv.state = "ready"
+                    if bull_break:
                         lv.break_direction = "bull"
+                        dist_pips = (c - lv.price) / pip_size
                     else:
                         lv.break_direction = "bear"
+                        dist_pips = (lv.price - c) / pip_size
+                    lv.entry_mode = "power_break" if float(dist_pips) > float(ov_aggressive_close_distance_pips) else "sniper"
+                    lv.velocity_checked = True  # legacy field; treated as resolved on break
 
-            # Check velocity for catalyst levels (2nd M5 bar after break)
-            elif lv.state == "catalyst" and not lv.velocity_checked:
-                if lv.break_time:
-                    try:
-                        break_ts = pd.Timestamp(lv.break_time, tz="UTC")
-                        m5_times = pd.to_datetime(m5_df_sorted["time"], utc=True, errors="coerce")
-                        bars_since_break = (m5_times > break_ts).sum()
-                    except Exception:
-                        bars_since_break = 0
-                else:
-                    bars_since_break = 0
-                if bars_since_break >= 2:
-                    vel = detector.check_velocity(
-                        lv, float(m5_last["close"]), pip_size, ov_velocity_pips
-                    )
-                    lv.velocity_type = vel
-                    lv.velocity_checked = True
-                    lv.entry_mode = "power_break" if vel == "power" else "sniper"
-                    lv.state = "ready"
+    # ----- Enforce entry window (15 minutes default) -----
+    m1_df_sorted = m1_df.copy().sort_values("time")
+    last_m1_ts = pd.to_datetime(m1_df_sorted["time"].iloc[-1], utc=True, errors="coerce")
+    if pd.isna(last_m1_ts):
+        reasons.append("M1 timestamp invalid")
+        no_signal["level_updates"] = [lv.to_dict() for lv in levels]
+        return no_signal
+    for lv in levels:
+        if lv.state != "ready" or lv.voided:
+            continue
+        if not lv.break_time:
+            _reset_level_for_next_setup(lv)
+            continue
+        try:
+            break_ts = pd.Timestamp(lv.break_time, tz="UTC")
+            expiry = break_ts + pd.Timedelta(minutes=float(ov_entry_window_minutes))
+            if last_m1_ts > expiry:
+                reasons.append(f"level {lv.price:.3f}: entry window expired ({ov_entry_window_minutes:.0f}m)")
+                _reset_level_for_next_setup(lv)
+        except Exception:
+            # If parsing fails, reset to avoid stuck states
+            _reset_level_for_next_setup(lv)
 
-    # ----- Entry on ready levels (no M1 entry logic: no stack/veto check) -----
+    # ----- M1 Entry (EMA9/EMA21) on new M1 bar close -----
     if not is_new_m1:
         no_signal["level_updates"] = [lv.to_dict() for lv in levels]
         reasons.append("waiting for new M1 bar")
         return no_signal
 
+    m1_close = m1_df_sorted["close"].astype(float)
+    if len(m1_close) < max(ov_m1_entry_ema_fast, ov_m1_entry_ema_slow) + 2:
+        reasons.append("not enough M1 bars for EMAs")
+        no_signal["level_updates"] = [lv.to_dict() for lv in levels]
+        return no_signal
+    ema_fast = ema_fn(m1_close, ov_m1_entry_ema_fast)
+    ema_slow = ema_fn(m1_close, ov_m1_entry_ema_slow)
+    if len(ema_fast) < 2 or len(ema_slow) < 2 or pd.isna(ema_fast.iloc[-1]) or pd.isna(ema_slow.iloc[-1]):
+        reasons.append("M1 EMAs not ready")
+        no_signal["level_updates"] = [lv.to_dict() for lv in levels]
+        return no_signal
+    last_close = float(m1_close.iloc[-1])
+    prev_close = float(m1_close.iloc[-2])
+    last_ema_fast = float(ema_fast.iloc[-1])
+    prev_ema_fast = float(ema_fast.iloc[-2])
+    last_ema_slow = float(ema_slow.iloc[-1])
+    prev_ema_slow = float(ema_slow.iloc[-2])
+
     for lv in levels:
         if lv.state != "ready" or lv.voided:
             continue
 
-        entry_type = lv.entry_mode or "power_break"
-        side = None
-        if lv.break_direction == "bull" and m5_trend == "bull":
-            side = "buy"
-        elif lv.break_direction == "bear" and m5_trend == "bear":
-            side = "sell"
-        else:
-            reasons.append(f"level {lv.price:.3f}: M5 trend ({m5_trend}) vs break dir ({lv.break_direction}) misaligned")
+        entry_type = lv.entry_mode or "sniper"
+        side = "buy" if lv.break_direction == "bull" else "sell" if lv.break_direction == "bear" else None
+        if side is None:
             continue
 
-        # Ready level + M5 trend aligned -> pass (no M1 stack or veto)
+        # EMA alignment
+        if side == "buy" and not (last_ema_fast > last_ema_slow):
+            reasons.append(f"level {lv.price:.3f}: EMA align fail (EMA{ov_m1_entry_ema_fast} <= EMA{ov_m1_entry_ema_slow})")
+            continue
+        if side == "sell" and not (last_ema_fast < last_ema_slow):
+            reasons.append(f"level {lv.price:.3f}: EMA align fail (EMA{ov_m1_entry_ema_fast} >= EMA{ov_m1_entry_ema_slow})")
+            continue
+
+        # Ensure still within window (defensive; also handled above)
+        if lv.break_time:
+            try:
+                break_ts = pd.Timestamp(lv.break_time, tz="UTC")
+                expiry = break_ts + pd.Timedelta(minutes=float(ov_entry_window_minutes))
+                if last_m1_ts > expiry:
+                    continue
+            except Exception:
+                continue
+
+        if entry_type == "power_break":
+            # Power Break: M1 close crosses beyond EMA21 in trend direction
+            if side == "buy":
+                ok = (prev_close <= prev_ema_slow) and (last_close > last_ema_slow)
+            else:
+                ok = (prev_close >= prev_ema_slow) and (last_close < last_ema_slow)
+            if not ok:
+                reasons.append(f"level {lv.price:.3f}: power_break waiting for close cross EMA{ov_m1_entry_ema_slow}")
+                continue
+        else:
+            # Sniper: M1 close crosses back across EMA9 in trend direction
+            if side == "buy":
+                ok = (prev_close <= prev_ema_fast) and (last_close > last_ema_fast)
+            else:
+                ok = (prev_close >= prev_ema_fast) and (last_close < last_ema_fast)
+            if not ok:
+                reasons.append(f"level {lv.price:.3f}: sniper waiting for close cross EMA{ov_m1_entry_ema_fast}")
+                continue
+
         return {
             "passed": True,
             "side": side,
-            "reasons": [f"H1 breakout signal: {entry_type} at level {lv.price:.3f} ({lv.level_type})"],
+            "reasons": [f"major-extremes breakout: {entry_type} at {lv.level_type} {lv.price:.3f}"],
             "entry_type": entry_type,
             "level_price": lv.price,
             "level_updates": [l.to_dict() for l in levels],
@@ -6733,7 +6808,7 @@ def evaluate_h1_breakout_conditions(
         }
 
     if not reasons:
-        reasons.append("no ready levels with M5 trend aligned")
+        reasons.append("no ready levels with valid M1 entry")
     no_signal["level_updates"] = [lv.to_dict() for lv in levels]
     return no_signal
 
@@ -6783,7 +6858,6 @@ def execute_h1_breakout_policy_demo_only(
 
     ov_max_spread_pips = _ov("max_spread_pips")
     ov_initial_sl_spread_plus_pips = _ov("initial_sl_spread_plus_pips")
-    ov_tp1_pips = _ov("tp1_pips")
 
     # Evaluate conditions
     result = evaluate_h1_breakout_conditions(
@@ -6830,21 +6904,19 @@ def execute_h1_breakout_policy_demo_only(
     entry_price = tick.ask if side == "buy" else tick.bid
     current_spread = tick.ask - tick.bid
     sl_distance = current_spread + ov_initial_sl_spread_plus_pips * pip_size
-    tp_distance = ov_tp1_pips * pip_size
+    # Momentum runner exit: do not attach a broker TP; exits are EMA-driven in the loop.
 
     if side == "buy":
         stop = entry_price - sl_distance
-        target = entry_price + tp_distance
     else:
         stop = entry_price + sl_distance
-        target = entry_price - tp_distance
 
     candidate = TradeCandidate(
         symbol=profile.symbol,
         side=side,
         entry_price=entry_price,
         stop_price=stop,
-        target_price=target,
+        target_price=None,
         size_lots=float(get_effective_risk(profile).max_lots),
     )
 

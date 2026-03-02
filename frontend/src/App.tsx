@@ -3737,25 +3737,14 @@ interface EditedSettings {
   t8_tp1_close_pct: number;
   t8_be_spread_plus_pips: number;
   t8_trail_ema_period: number;
-  // Uncle Parsh H1 Breakout EMA overrides
-  up_m5_ema_fast: number | null;
-  up_m5_ema_slow: number | null;
-  // Uncle Parsh H1 Breakout: H1 Detection
-  up_h1_lookback_hours: number | null;
-  up_h1_swing_strength: number | null;
-  up_h1_cluster_tolerance_pips: number | null;
-  up_h1_min_touches_for_major: number | null;
-  // Uncle Parsh H1 Breakout: M5 Catalyst
-  up_power_close_body_pct: number | null;
-  up_velocity_pips: number | null;
-  // Uncle Parsh H1 Breakout: Exit Strategy
-  up_initial_sl_spread_plus_pips: number | null;
-  up_tp1_pips: number | null;
-  up_tp1_close_pct: number | null;
-  up_be_spread_plus_pips: number | null;
-  up_trail_ema_period: number | null;
-  // Uncle Parsh H1 Breakout: Discipline
-  up_max_spread_pips: number | null;
+  // Uncle Parsh H1 Breakout: Major Extremes Momentum Breakout
+  up_entry_window_minutes: number;
+  up_aggressive_close_distance_pips: number;
+  up_m1_entry_ema_fast: number;
+  up_m1_entry_ema_slow: number;
+  up_scale_out_pct: number;
+  up_max_spread_pips: number;
+  up_initial_sl_spread_plus_pips: number;
 }
 
 const TRIAL7_DEFAULT_TIER_EMA_PERIODS: number[] = [9, ...Array.from({ length: 24 }, (_, i) => i + 11)];
@@ -4445,25 +4434,14 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t8_tp1_close_pct: tempSettings?.t8_tp1_close_pct ?? t8Tp1ClosePct,
         t8_be_spread_plus_pips: tempSettings?.t8_be_spread_plus_pips ?? t8BeSpreadPlusPips,
         t8_trail_ema_period: tempSettings?.t8_trail_ema_period ?? t8TrailEmaPeriod,
-        // Uncle Parsh H1 Breakout EMA overrides from temp settings
-        up_m5_ema_fast: tempSettings?.up_m5_ema_fast ?? null,
-        up_m5_ema_slow: tempSettings?.up_m5_ema_slow ?? null,
-        // Uncle Parsh H1 Breakout: H1 Detection
-        up_h1_lookback_hours: tempSettings?.up_h1_lookback_hours ?? null,
-        up_h1_swing_strength: tempSettings?.up_h1_swing_strength ?? null,
-        up_h1_cluster_tolerance_pips: tempSettings?.up_h1_cluster_tolerance_pips ?? null,
-        up_h1_min_touches_for_major: tempSettings?.up_h1_min_touches_for_major ?? null,
-        // Uncle Parsh H1 Breakout: M5 Catalyst
-        up_power_close_body_pct: tempSettings?.up_power_close_body_pct ?? null,
-        up_velocity_pips: tempSettings?.up_velocity_pips ?? null,
-        // Uncle Parsh H1 Breakout: Exit Strategy
-        up_initial_sl_spread_plus_pips: tempSettings?.up_initial_sl_spread_plus_pips ?? null,
-        up_tp1_pips: tempSettings?.up_tp1_pips ?? null,
-        up_tp1_close_pct: tempSettings?.up_tp1_close_pct ?? null,
-        up_be_spread_plus_pips: tempSettings?.up_be_spread_plus_pips ?? null,
-        up_trail_ema_period: tempSettings?.up_trail_ema_period ?? null,
-        // Uncle Parsh H1 Breakout: Discipline
-        up_max_spread_pips: tempSettings?.up_max_spread_pips ?? null,
+        // Uncle Parsh H1 Breakout (major-extremes momentum breakout)
+        up_entry_window_minutes: ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.entry_window_minutes as number ?? 15),
+        up_aggressive_close_distance_pips: ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.aggressive_close_distance_pips as number ?? 5.0),
+        up_m1_entry_ema_fast: ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.m1_entry_ema_fast as number ?? 9),
+        up_m1_entry_ema_slow: ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.m1_entry_ema_slow as number ?? 21),
+        up_scale_out_pct: ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.scale_out_pct as number ?? 50),
+        up_max_spread_pips: ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.max_spread_pips as number ?? 3.0),
+        up_initial_sl_spread_plus_pips: ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.initial_sl_spread_plus_pips as number ?? 5.0),
       });
     }
   }, [showActiveSettings, currentProfile, tempSettings]);
@@ -4751,6 +4729,16 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.be_spread_plus_pips = Math.max(0, editedSettings.t8_be_spread_plus_pips);
           updates.trail_ema_period = Math.max(5, Math.min(50, editedSettings.t8_trail_ema_period));
         }
+        // Update Uncle Parsh H1 Breakout settings (Major Extremes Momentum Breakout)
+        if (pol.type === 'uncle_parsh_h1_breakout') {
+          updates.entry_window_minutes = Math.max(1, Math.min(60, editedSettings.up_entry_window_minutes));
+          updates.aggressive_close_distance_pips = Math.max(0.5, editedSettings.up_aggressive_close_distance_pips);
+          updates.m1_entry_ema_fast = Math.max(2, Math.min(50, editedSettings.up_m1_entry_ema_fast));
+          updates.m1_entry_ema_slow = Math.max(3, Math.min(100, editedSettings.up_m1_entry_ema_slow));
+          updates.scale_out_pct = Math.max(10, Math.min(90, editedSettings.up_scale_out_pct));
+          updates.max_spread_pips = Math.max(0, editedSettings.up_max_spread_pips);
+          updates.initial_sl_spread_plus_pips = Math.max(0, editedSettings.up_initial_sl_spread_plus_pips);
+        }
         // Update Trial #6 settings
         if (pol.type === 'kt_cg_trial_6') {
           // M3 Slope Trend
@@ -4823,9 +4811,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
       const hasKtCgCtp = policies.some(p => p.type === 'kt_cg_counter_trend_pullback');
       const hasKtCgTrial4 = policies.some(p => p.type === 'kt_cg_trial_4');
       const hasKtCgTrial5 = policies.some(p => p.type === 'kt_cg_trial_5');
-      const hasUncleParsh = policies.some(p => p.type === 'uncle_parsh_h1_breakout');
       const hasTrial8 = policies.some(p => p.type === 'kt_cg_trial_8');
-      if (hasKtCgCtp || hasKtCgTrial4 || hasKtCgTrial5 || hasUncleParsh || hasTrial8) {
+      if (hasKtCgCtp || hasKtCgTrial4 || hasKtCgTrial5 || hasTrial8) {
         const settings: any = {};
         if (hasKtCgCtp) {
           settings.m5_trend_ema_fast = editedSettings.m5_trend_ema_fast;
@@ -4838,22 +4825,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
           settings.m3_trend_ema_slow = editedSettings.m3_trend_ema_slow;
           settings.m1_t4_zone_entry_ema_fast = editedSettings.m1_t4_zone_entry_ema_fast;
           settings.m1_t4_zone_entry_ema_slow = editedSettings.m1_t4_zone_entry_ema_slow;
-        }
-        if (hasUncleParsh) {
-          settings.up_m5_ema_fast = editedSettings.up_m5_ema_fast;
-          settings.up_m5_ema_slow = editedSettings.up_m5_ema_slow;
-          settings.up_h1_lookback_hours = editedSettings.up_h1_lookback_hours;
-          settings.up_h1_swing_strength = editedSettings.up_h1_swing_strength;
-          settings.up_h1_cluster_tolerance_pips = editedSettings.up_h1_cluster_tolerance_pips;
-          settings.up_h1_min_touches_for_major = editedSettings.up_h1_min_touches_for_major;
-          settings.up_power_close_body_pct = editedSettings.up_power_close_body_pct;
-          settings.up_velocity_pips = editedSettings.up_velocity_pips;
-          settings.up_initial_sl_spread_plus_pips = editedSettings.up_initial_sl_spread_plus_pips;
-          settings.up_tp1_pips = editedSettings.up_tp1_pips;
-          settings.up_tp1_close_pct = editedSettings.up_tp1_close_pct;
-          settings.up_be_spread_plus_pips = editedSettings.up_be_spread_plus_pips;
-          settings.up_trail_ema_period = editedSettings.up_trail_ema_period;
-          settings.up_max_spread_pips = editedSettings.up_max_spread_pips;
         }
         if (hasTrial8) {
           settings.t8_tp1_pips = editedSettings.t8_tp1_pips;
@@ -6903,87 +6874,67 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     View Settings (Uncle Parsh H1 Breakout)
                   </div>
 
-                  {/* H1 Level Detection */}
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, fontWeight: 600 }}>H1 Level Detection</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
+                  {/* Major Extremes Momentum Breakout */}
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, fontWeight: 600 }}>
+                    Major Extremes Momentum Breakout
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12, marginBottom: 12 }}>
                     <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Lookback (hours)</div>
-                      <input type="number" step="1" min="12" max="168" value={editedSettings.up_h1_lookback_hours ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_lookback_hours as number ?? 48)} onChange={(e) => setEditedSettings({ ...editedSettings, up_h1_lookback_hours: e.target.value ? parseInt(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Entry Window (minutes)</div>
+                      <input type="number" step="1" min="1" max="60" value={editedSettings.up_entry_window_minutes}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, up_entry_window_minutes: parseInt(e.target.value) || 15 })}
+                        style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                     </div>
                     <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Swing Strength</div>
-                      <input type="number" step="1" min="1" max="10" value={editedSettings.up_h1_swing_strength ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_swing_strength as number ?? 3)} onChange={(e) => setEditedSettings({ ...editedSettings, up_h1_swing_strength: e.target.value ? parseInt(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                    </div>
-                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Cluster Tolerance (pips)</div>
-                      <input type="number" step="0.5" min="1" max="20" value={editedSettings.up_h1_cluster_tolerance_pips ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_cluster_tolerance_pips as number ?? 5.0)} onChange={(e) => setEditedSettings({ ...editedSettings, up_h1_cluster_tolerance_pips: e.target.value ? parseFloat(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                    </div>
-                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Min Touches</div>
-                      <input type="number" step="1" min="1" max="10" value={editedSettings.up_h1_min_touches_for_major ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_min_touches_for_major as number ?? 2)} onChange={(e) => setEditedSettings({ ...editedSettings, up_h1_min_touches_for_major: e.target.value ? parseInt(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Aggressive Threshold (pips)</div>
+                      <input type="number" step="0.5" min="0.5" max="20" value={editedSettings.up_aggressive_close_distance_pips}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, up_aggressive_close_distance_pips: parseFloat(e.target.value) || 5 })}
+                        style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>M5 break close distance past level</div>
                     </div>
                   </div>
 
-                  {/* M5 Catalyst */}
                   <div style={{ marginTop: 8, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, fontWeight: 600 }}>M5 Momentum Catalyst</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 8 }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, fontWeight: 600 }}>M1 EMA (Entry + Exit)</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>M5 EMA Fast</div>
-                        <input type="number" step="1" min="1" value={editedSettings.up_m5_ema_fast ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.m5_trend_ema_fast as number ?? 9)} onChange={(e) => setEditedSettings({ ...editedSettings, up_m5_ema_fast: e.target.value ? parseInt(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>EMA Fast (default 9)</div>
+                        <input type="number" step="1" min="2" max="50" value={editedSettings.up_m1_entry_ema_fast}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, up_m1_entry_ema_fast: parseInt(e.target.value) || 9 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                       </div>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>M5 EMA Slow</div>
-                        <input type="number" step="1" min="1" value={editedSettings.up_m5_ema_slow ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.m5_trend_ema_slow as number ?? 21)} onChange={(e) => setEditedSettings({ ...editedSettings, up_m5_ema_slow: e.target.value ? parseInt(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>EMA Slow (default 21)</div>
+                        <input type="number" step="1" min="3" max="100" value={editedSettings.up_m1_entry_ema_slow}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, up_m1_entry_ema_slow: parseInt(e.target.value) || 21 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                       </div>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Power Close Body %</div>
-                        <input type="number" step="0.05" min="0.1" max="1.0" value={editedSettings.up_power_close_body_pct ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.power_close_body_pct as number ?? 0.25)} onChange={(e) => setEditedSettings({ ...editedSettings, up_power_close_body_pct: e.target.value ? parseFloat(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Scale-out % (EMA fast wrong side)</div>
+                        <input type="number" step="5" min="10" max="90" value={editedSettings.up_scale_out_pct}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, up_scale_out_pct: parseInt(e.target.value) || 50 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                       </div>
-                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Velocity (pips)</div>
-                        <input type="number" step="0.5" min="1" max="20" value={editedSettings.up_velocity_pips ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.velocity_pips as number ?? 5.0)} onChange={(e) => setEditedSettings({ ...editedSettings, up_velocity_pips: e.target.value ? parseFloat(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                      </div>
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
+                      Scale-out on EMA fast wrong-side close. Runner closes on EMA slow wrong-side close. No break-even moves and no broker TP.
                     </div>
                   </div>
 
-                  {/* Exit Strategy */}
                   <div style={{ marginTop: 8, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, fontWeight: 600 }}>Exit Strategy</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 8 }}>
-                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>SL: Spread + pips</div>
-                        <input type="number" step="0.5" value={editedSettings.up_initial_sl_spread_plus_pips ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.initial_sl_spread_plus_pips as number ?? 2.0)} onChange={(e) => setEditedSettings({ ...editedSettings, up_initial_sl_spread_plus_pips: e.target.value ? parseFloat(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                      </div>
-                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>TP1 (pips)</div>
-                        <input type="number" step="0.5" value={editedSettings.up_tp1_pips ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.tp1_pips as number ?? 6.0)} onChange={(e) => setEditedSettings({ ...editedSettings, up_tp1_pips: e.target.value ? parseFloat(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                      </div>
-                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>TP1 Close %</div>
-                        <input type="number" step="5" value={editedSettings.up_tp1_close_pct ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.tp1_close_pct as number ?? 50)} onChange={(e) => setEditedSettings({ ...editedSettings, up_tp1_close_pct: e.target.value ? parseFloat(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                      </div>
-                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>BE: Spread + pips</div>
-                        <input type="number" step="0.5" value={editedSettings.up_be_spread_plus_pips ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.be_spread_plus_pips as number ?? 2.0)} onChange={(e) => setEditedSettings({ ...editedSettings, up_be_spread_plus_pips: e.target.value ? parseFloat(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                      </div>
-                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Trail EMA Period</div>
-                        <input type="number" step="1" value={editedSettings.up_trail_ema_period ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.trail_ema_period as number ?? 21)} onChange={(e) => setEditedSettings({ ...editedSettings, up_trail_ema_period: e.target.value ? parseInt(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
-                      </div>
-                    </div>
-                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
-                      TP1: Close 50% at +6p. BE: Move SL to entry + spread + 2p. Runner trails M1 21 EMA, closes on bar close wrong side.
-                    </div>
-                  </div>
-
-                  {/* Discipline */}
-                  <div style={{ marginTop: 8, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, fontWeight: 600 }}>Discipline</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, fontWeight: 600 }}>Risk / Discipline</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max Spread (pips)</div>
-                        <input type="number" step="0.5" value={editedSettings.up_max_spread_pips ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.max_spread_pips as number ?? 3.0)} onChange={(e) => setEditedSettings({ ...editedSettings, up_max_spread_pips: e.target.value ? parseFloat(e.target.value) : null })} style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        <input type="number" step="0.5" min="0" max="10" value={editedSettings.up_max_spread_pips}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, up_max_spread_pips: parseFloat(e.target.value) || 3 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Initial SL: spread + pips</div>
+                        <input type="number" step="0.5" min="0" max="20" value={editedSettings.up_initial_sl_spread_plus_pips}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, up_initial_sl_spread_plus_pips: parseFloat(e.target.value) || 5 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                       </div>
                     </div>
                   </div>

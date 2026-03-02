@@ -980,6 +980,10 @@ class ExecutionPolicyUncleParshH1Breakout(BaseModel):
     power_close_body_pct: float = 0.25   # 25% body past level
     velocity_pips: float = 5.0           # >5 pips at 2nd M5 close = Power Break
 
+    # --- Major Extremes Momentum Breakout ---
+    entry_window_minutes: int = 15
+    aggressive_close_distance_pips: float = 5.0
+
     # --- M1 Entry ---
     m1_ema_fast: int = 5
     m1_ema_mid: int = 9
@@ -989,8 +993,13 @@ class ExecutionPolicyUncleParshH1Breakout(BaseModel):
     m1_ema_veto_buffer_pips: float = 2.0  # pips past 35 EMA on wrong side to void
     m1_entry_stack_mode: Literal["full", "nine_vs_21"] = "full"  # full = 5>9>21; nine_vs_21 = 9 vs 21 only
 
+    # EMA pair used by the new M1 entry + exits
+    m1_entry_ema_fast: int = 9
+    m1_entry_ema_slow: int = 21
+    scale_out_pct: float = 50.0
+
     # --- Exit Strategy ---
-    initial_sl_spread_plus_pips: float = 2.0   # SL = spread + 2 pips
+    initial_sl_spread_plus_pips: float = 5.0   # SL = spread + 5 pips
     tp1_pips: float = 6.0
     tp1_close_pct: float = 50.0
     be_spread_plus_pips: float = 2.0     # BE = entry + spread + 2

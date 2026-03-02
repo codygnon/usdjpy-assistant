@@ -15,7 +15,7 @@ import pandas as pd
 @dataclass
 class H1Level:
     price: float              # Level price (wick-based)
-    level_type: str           # "yesterday_high", "yesterday_low", "swing_high", "swing_low", "cluster_resistance", "cluster_support"
+    level_type: str           # e.g. "yesterday_high/low", "weekly_high/low", "monthly_high/low", "swing_high/low", "cluster_resistance/support"
     touch_count: int = 0      # Number of bounce touches
     is_broken: bool = False   # Power Close occurred
     break_direction: str = ""  # "bull" or "bear"
@@ -63,6 +63,10 @@ class H1Level:
 
 # Priority for deduplication: higher is stronger
 _LEVEL_PRIORITY = {
+    "monthly_high": 4,
+    "monthly_low": 4,
+    "weekly_high": 4,
+    "weekly_low": 4,
     "yesterday_high": 3,
     "yesterday_low": 3,
     "cluster_resistance": 2,
@@ -80,13 +84,16 @@ class H1LevelDetector:
         self.min_touches_for_major: int = config.get("h1_min_touches_for_major", 2)
         self.min_distance_between_levels_pips: float = config.get("h1_min_distance_between_levels_pips", 10.0)
         self.pip_size: float = config.get("pip_size", 0.01)
+        self.major_extremes_only: bool = bool(config.get("major_extremes_only", False))
 
     def detect_levels(self, h1_df: pd.DataFrame, current_date: str) -> list[H1Level]:
         """Detect all tradeable H1 levels from H1 data.
 
         1. Yesterday's High/Low
-        2. H1 swing highs/lows (wick > N adjacent bars' wicks on each side)
-        3. Touch frequency clustering
+        2. Weekly High/Low (UTC week bucket)
+        3. Monthly High/Low (UTC month bucket)
+        4. H1 swing highs/lows (wick > N adjacent bars' wicks on each side)
+        5. Touch frequency clustering
         Dedup levels within cluster_tolerance_pips of each other.
         """
         if h1_df is None or h1_df.empty or len(h1_df) < 3:
@@ -111,13 +118,28 @@ class H1LevelDetector:
         if yl is not None:
             levels.append(H1Level(price=yl, level_type="yesterday_low"))
 
-        # 2. Swing highs/lows
-        swing_levels = self._detect_swing_levels(df)
-        levels.extend(swing_levels)
+        # 2. Weekly High/Low (UTC)
+        wh, wl = self._detect_weekly_hl(df)
+        if wh is not None:
+            levels.append(H1Level(price=wh, level_type="weekly_high"))
+        if wl is not None:
+            levels.append(H1Level(price=wl, level_type="weekly_low"))
 
-        # 3. Touch frequency clustering
-        cluster_levels = self._detect_cluster_levels(df)
-        levels.extend(cluster_levels)
+        # 3. Monthly High/Low (UTC)
+        mh, ml = self._detect_monthly_hl(df)
+        if mh is not None:
+            levels.append(H1Level(price=mh, level_type="monthly_high"))
+        if ml is not None:
+            levels.append(H1Level(price=ml, level_type="monthly_low"))
+
+        if not self.major_extremes_only:
+            # 4. Swing highs/lows
+            swing_levels = self._detect_swing_levels(df)
+            levels.extend(swing_levels)
+
+            # 5. Touch frequency clustering
+            cluster_levels = self._detect_cluster_levels(df)
+            levels.extend(cluster_levels)
 
         # Dedup: merge levels within tolerance, keeping stronger ones
         levels = self._dedup_levels(levels, tol)
@@ -144,6 +166,41 @@ class H1LevelDetector:
         yh = float(day_bars["high"].max())
         yl = float(day_bars["low"].min())
         return yh, yl
+
+    def _detect_weekly_hl(self, df: pd.DataFrame) -> tuple[Optional[float], Optional[float]]:
+        """Find current UTC week high/low from H1 bars.
+
+        Uses the most recent bar timestamp to determine the active week bucket (Monday 00:00 UTC start).
+        """
+        if df is None or df.empty or "time" not in df.columns:
+            return None, None
+        try:
+            last_ts = pd.to_datetime(df["time"].iloc[-1], utc=True)
+            if pd.isna(last_ts):
+                return None, None
+            week_start = last_ts.normalize() - pd.Timedelta(days=int(last_ts.weekday()))
+            week_bars = df[df["time"] >= week_start]
+            if week_bars.empty:
+                return None, None
+            return float(week_bars["high"].max()), float(week_bars["low"].min())
+        except Exception:
+            return None, None
+
+    def _detect_monthly_hl(self, df: pd.DataFrame) -> tuple[Optional[float], Optional[float]]:
+        """Find current UTC month high/low from H1 bars using the most recent bar timestamp."""
+        if df is None or df.empty or "time" not in df.columns:
+            return None, None
+        try:
+            last_ts = pd.to_datetime(df["time"].iloc[-1], utc=True)
+            if pd.isna(last_ts):
+                return None, None
+            month_start = last_ts.normalize().replace(day=1)
+            month_bars = df[df["time"] >= month_start]
+            if month_bars.empty:
+                return None, None
+            return float(month_bars["high"].max()), float(month_bars["low"].min())
+        except Exception:
+            return None, None
 
     def _detect_swing_levels(self, df: pd.DataFrame) -> list[H1Level]:
         """Detect swing highs and lows based on wick extremes."""
@@ -264,31 +321,26 @@ class H1LevelDetector:
         return result
 
     def check_power_close(self, level: H1Level, m5_candle: dict, pip_size: float, body_pct: float = 0.25) -> bool:
-        """Check if M5 candle has body_pct+ body past the level.
+        """Clean-break rule: return True if the M5 candle body is fully beyond the level.
 
-        Candle must CROSS the level (open on one side, close on the other); wick-through is ignored.
-        Body = abs(close - open). For bull break: open < level and close > level; body_past/body >= threshold.
-        For bear break: open > level and close < level; body_past/body >= threshold.
+        This treats the candle "box" (open/close range) as the intent signal:
+        - Bull break: min(open, close) > level.price
+        - Bear break: max(open, close) < level.price
+
+        `body_pct` is kept for backward compatibility but is not used.
         """
-        o = float(m5_candle.get("open", 0))
-        c = float(m5_candle.get("close", 0))
-        body = abs(c - o)
-        if body < pip_size * 0.1:
-            return False  # Doji — skip
-
-        is_bull_candle = c > o
-
-        if is_bull_candle and o < level.price and c > level.price:
-            # Bull breakout above level: candle crossed from below to above
-            body_past = c - level.price
-            if body_past > 0 and (body_past / body) >= body_pct:
-                return True
-        elif not is_bull_candle and o > level.price and c < level.price:
-            # Bear breakout below level: candle crossed from above to below
-            body_past = level.price - c
-            if body_past > 0 and (body_past / body) >= body_pct:
-                return True
-
+        try:
+            o = float(m5_candle.get("open", 0))
+            c = float(m5_candle.get("close", 0))
+        except Exception:
+            return False
+        # Doji guard (kept to reduce noise); threshold is very small
+        if abs(c - o) < pip_size * 0.1:
+            return False
+        if min(o, c) > level.price:
+            return True
+        if max(o, c) < level.price:
+            return True
         return False
 
     def check_velocity(self, level: H1Level, second_m5_close: float, pip_size: float, velocity_pips: float) -> str:

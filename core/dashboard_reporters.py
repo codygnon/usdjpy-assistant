@@ -1091,26 +1091,43 @@ def collect_uncle_parsh_context(
             items.append(ContextItem(f"M5 EMA{fast_p}", f"{fast_v:.3f}", "trend"))
             items.append(ContextItem(f"M5 EMA{slow_p}", f"{slow_v:.3f}", "trend"))
 
-    # M1 Entry EMAs (5/9/21/35)
+    # M1 Entry/Exit EMAs (9/21 by default)
     m1_df = data_by_tf.get("M1")
     if m1_df is not None and not m1_df.empty:
         from core.indicators import ema as ema_fn
         m1_close = m1_df["close"]
-        for attr, label in [
-            ("m1_ema_fast", "M1 EMA5"),
-            ("m1_ema_mid", "M1 EMA9"),
-            ("m1_ema_slow", "M1 EMA21"),
-            ("m1_ema_veto", "M1 EMA35"),
-        ]:
-            period = getattr(policy, attr, 9 if "mid" in attr else 21)
+        ema_fast_p = int(getattr(policy, "m1_entry_ema_fast", 9))
+        ema_slow_p = int(getattr(policy, "m1_entry_ema_slow", 21))
+        for period, label in [(ema_fast_p, f"M1 EMA{ema_fast_p}"), (ema_slow_p, f"M1 EMA{ema_slow_p}")]:
             if len(m1_df) > period:
                 val = float(ema_fn(m1_close, period).iloc[-1])
                 items.append(ContextItem(label, f"{val:.3f}", "entry"))
 
-    # H1 levels summary from eval result
+    # H1 levels summary + entry window from eval result
     if eval_result and isinstance(eval_result.get("level_updates"), list):
         level_count = len(eval_result["level_updates"])
         items.append(ContextItem("H1 Levels", str(level_count), "levels"))
+        # Show remaining entry window if any level is ready
+        try:
+            entry_window_m = float(getattr(policy, "entry_window_minutes", 15))
+            now_utc = None
+            if m1_df is not None and not m1_df.empty and "time" in m1_df.columns:
+                now_utc = pd.to_datetime(m1_df["time"].iloc[-1], utc=True, errors="coerce")
+            if now_utc is None or pd.isna(now_utc):
+                now_utc = pd.Timestamp.now(tz="UTC")
+            remaining_min = None
+            for lv in eval_result["level_updates"]:
+                if isinstance(lv, dict) and lv.get("state") == "ready" and lv.get("break_time"):
+                    bt = pd.to_datetime(lv.get("break_time"), utc=True, errors="coerce")
+                    if bt is None or pd.isna(bt):
+                        continue
+                    expiry = bt + pd.Timedelta(minutes=entry_window_m)
+                    rem = (expiry - now_utc).total_seconds() / 60.0
+                    remaining_min = rem if remaining_min is None else max(remaining_min, rem)
+            if remaining_min is not None:
+                items.append(ContextItem("Entry Window", f"{max(0.0, remaining_min):.1f}m", "levels"))
+        except Exception:
+            pass
 
     # Price / spread
     items.append(ContextItem("Bid", f"{tick.bid:.3f}", "price"))

@@ -367,101 +367,64 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                         adapter.update_position_stop_loss(position_id, profile.symbol, entry)
                         store.update_trade(trade_id, {"breakeven_applied": 1})
                         print(f"[{profile.profile_name}] breakeven applied position {position_id}")
-        # 2) Uncle Parsh H1 Breakout trade management (TP1 + BE + trailing EMA)
+        # 2) Uncle Parsh H1 Breakout trade management (EMA exits; no BE moves)
         if up_policy is not None and entry_type in ("power_break", "sniper"):
-            tp1_done = trade_row.get("tp1_partial_done") or 0
-            up_tp1_pips = up_tm_overrides.get("tp1_pips", up_policy.tp1_pips)
-            up_tp1_pct = up_tm_overrides.get("tp1_close_pct", up_policy.tp1_close_pct)
+            try:
+                from core.indicators import ema as ema_fn
 
-            # TP1 partial close
-            if not tp1_done:
-                reached_buy = mid >= entry + float(up_tp1_pips) * pip
-                reached_sell = mid <= entry - float(up_tp1_pips) * pip
-                if (side == "buy" and reached_buy) or (side == "sell" and reached_sell):
-                    if isinstance(pos, dict):
-                        current_units = pos.get("currentUnits") or 0
-                        current_lots = abs(int(current_units)) / 100_000.0
-                    else:
-                        current_lots = float(getattr(pos, "volume", 0) or 0)
-                    close_lots = current_lots * (float(up_tp1_pct) / 100.0)
-                    position_type = 1 if side == "sell" else 0
-                    try:
+                ema_fast_p = int(getattr(up_policy, "m1_entry_ema_fast", 9))
+                ema_slow_p = int(getattr(up_policy, "m1_entry_ema_slow", 21))
+                scale_pct = float(getattr(up_policy, "scale_out_pct", 50.0))
+
+                m1_df_exit = adapter.get_bars(profile.symbol, "M1", 200)
+                if m1_df_exit is None or m1_df_exit.empty or len(m1_df_exit) < max(ema_fast_p, ema_slow_p) + 2:
+                    continue
+                m1_close_exit = m1_df_exit["close"].astype(float)
+                ema_fast = ema_fn(m1_close_exit, ema_fast_p)
+                ema_slow = ema_fn(m1_close_exit, ema_slow_p)
+                if ema_fast.empty or ema_slow.empty or pd.isna(ema_fast.iloc[-1]) or pd.isna(ema_slow.iloc[-1]):
+                    continue
+                last_close = float(m1_close_exit.iloc[-1])
+                last_ema_fast = float(ema_fast.iloc[-1])
+                last_ema_slow = float(ema_slow.iloc[-1])
+
+                tp1_done = trade_row.get("tp1_partial_done") or 0
+
+                if isinstance(pos, dict):
+                    current_units = pos.get("currentUnits") or 0
+                    current_lots = abs(int(current_units)) / 100_000.0
+                else:
+                    current_lots = float(getattr(pos, "volume", 0) or 0)
+                position_type = 1 if side == "sell" else 0
+
+                # Scale-out (50%) when M1 close goes wrong side of EMA9
+                if not tp1_done:
+                    wrong_side_ema9 = (side == "buy" and last_close < last_ema_fast) or (side == "sell" and last_close > last_ema_fast)
+                    if wrong_side_ema9:
+                        close_lots = current_lots * (scale_pct / 100.0)
+                        if close_lots > 0:
+                            adapter.close_position(
+                                ticket=position_id,
+                                symbol=profile.symbol,
+                                volume=close_lots,
+                                position_type=position_type,
+                            )
+                            store.update_trade(trade_id, {"tp1_partial_done": 1})
+                            print(f"[{profile.profile_name}] UP scale-out: pos {position_id} ({scale_pct:.0f}%) close wrong side EMA{ema_fast_p}")
+
+                # Runner exit when M1 close goes wrong side of EMA21
+                else:
+                    wrong_side_ema21 = (side == "buy" and last_close < last_ema_slow) or (side == "sell" and last_close > last_ema_slow)
+                    if wrong_side_ema21 and current_lots > 0:
                         adapter.close_position(
                             ticket=position_id,
                             symbol=profile.symbol,
-                            volume=close_lots,
+                            volume=current_lots,
                             position_type=position_type,
                         )
-                        # Move SL to BE (entry + spread + be_spread_plus_pips)
-                        _ov_be_pips = up_tm_overrides.get("be_spread_plus_pips", up_policy.be_spread_plus_pips)
-                        be_offset = current_spread + _ov_be_pips * pip
-                        if side == "buy":
-                            be_sl = entry + be_offset
-                        else:
-                            be_sl = entry - be_offset
-                        adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
-                        store.update_trade(trade_id, {"tp1_partial_done": 1, "breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
-                        print(f"[{profile.profile_name}] UP TP1 partial close + BE: pos {position_id} ({up_tp1_pct}%) SL->{be_sl:.3f}")
-                    except Exception as e:
-                        print(f"[{profile.profile_name}] UP TP1/BE error pos {position_id}: {e}")
-
-            # Trailing M1 EMA stop for runner (after TP1 done)
-            elif tp1_done:
-                try:
-                    # Get M1 data for EMA calculation
-                    _ov_trail_period = up_tm_overrides.get("trail_ema_period", up_policy.trail_ema_period)
-                    m1_df_trail = adapter.get_bars(profile.symbol, "M1", 100)
-                    if m1_df_trail is not None and not m1_df_trail.empty and len(m1_df_trail) > _ov_trail_period:
-                        from core.indicators import ema as ema_fn
-                        m1_close_trail = m1_df_trail["close"].astype(float)
-                        trail_ema = ema_fn(m1_close_trail, _ov_trail_period)
-                        if not trail_ema.empty and pd.notna(trail_ema.iloc[-1]):
-                            ema_val = float(trail_ema.iloc[-1])
-                            prev_be_sl = trade_row.get("breakeven_sl_price")
-                            if prev_be_sl is not None:
-                                prev_be_sl = float(prev_be_sl)
-
-                            # Ratchet trailing SL favorably
-                            if side == "buy":
-                                new_trail_sl = ema_val - (1.0 * pip)  # 1 pip buffer below EMA
-                                if prev_be_sl is not None:
-                                    new_trail_sl = max(new_trail_sl, prev_be_sl)
-                            else:
-                                new_trail_sl = ema_val + (1.0 * pip)  # 1 pip buffer above EMA
-                                if prev_be_sl is not None:
-                                    new_trail_sl = min(new_trail_sl, prev_be_sl)
-
-                            # Update SL if moved favorably
-                            if prev_be_sl is None or abs(new_trail_sl - prev_be_sl) > pip * 0.1:
-                                should_update = False
-                                if side == "buy" and (prev_be_sl is None or new_trail_sl > prev_be_sl):
-                                    should_update = True
-                                elif side == "sell" and (prev_be_sl is None or new_trail_sl < prev_be_sl):
-                                    should_update = True
-                                if should_update:
-                                    adapter.update_position_stop_loss(position_id, profile.symbol, round(new_trail_sl, 3))
-                                    store.update_trade(trade_id, {"breakeven_sl_price": round(new_trail_sl, 5)})
-
-                            # Check if M1 bar close is on wrong side of 21 EMA -> close runner
-                            last_m1_close = float(m1_close_trail.iloc[-1])
-                            if side == "buy" and last_m1_close < ema_val:
-                                position_type = 0  # BUY position
-                                if isinstance(pos, dict):
-                                    vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
-                                else:
-                                    vol = float(getattr(pos, "volume", 0) or 0)
-                                adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
-                                print(f"[{profile.profile_name}] UP runner closed (BUY close < EMA21): pos {position_id}")
-                            elif side == "sell" and last_m1_close > ema_val:
-                                position_type = 1  # SELL position
-                                if isinstance(pos, dict):
-                                    vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
-                                else:
-                                    vol = float(getattr(pos, "volume", 0) or 0)
-                                adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
-                                print(f"[{profile.profile_name}] UP runner closed (SELL close > EMA21): pos {position_id}")
-                except Exception as e:
-                    print(f"[{profile.profile_name}] UP trailing EMA error pos {position_id}: {e}")
+                        print(f"[{profile.profile_name}] UP runner closed: pos {position_id} close wrong side EMA{ema_slow_p}")
+            except Exception as e:
+                print(f"[{profile.profile_name}] UP EMA exit error pos {position_id}: {e}")
 
         # 2b) Trial #8 trailing exit (TP1 partial + BE + M1 EMA trail) for zone_entry / tiered_pullback
         elif t8_policy is not None and entry_type in ("zone_entry", "tiered_pullback"):
@@ -2571,15 +2534,12 @@ def main() -> None:
                             pip = float(profile.pip_size)
                             current_spread = tick.ask - tick.bid
                             _ov_sl_pips = up_temp_overrides.get("initial_sl_spread_plus_pips", pol.initial_sl_spread_plus_pips)
-                            _ov_tp1_pips = up_temp_overrides.get("tp1_pips", pol.tp1_pips)
                             sl_distance = current_spread + _ov_sl_pips * pip
-                            tp_distance = _ov_tp1_pips * pip
                             if side == "buy":
-                                tp_price = entry_price + tp_distance
                                 sl_price = entry_price - sl_distance
                             else:
-                                tp_price = entry_price - tp_distance
                                 sl_price = entry_price + sl_distance
+                            tp_price = None  # dynamic EMA exits; no broker TP
                             print(f"[{profile.profile_name}] TRADE PLACED: uncle_parsh:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
                                 profile=profile,
