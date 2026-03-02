@@ -439,7 +439,7 @@ def build_dashboard_filters(
         filters.append(report_h1_levels(policy, data_by_tf, level_state))
         filters.append(report_m5_trend_alignment(policy, data_by_tf))
         filters.append(report_m5_power_close_status(policy, data_by_tf, level_state))
-        filters.append(report_m1_entry_status(policy, data_by_tf, tick))
+        filters.append(report_m1_entry_status(policy, data_by_tf, tick, pip_size))
         filters.append(report_up_spread_veto(policy, tick, pip_size))
 
     return filters

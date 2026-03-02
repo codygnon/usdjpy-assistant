@@ -1319,8 +1319,8 @@ def report_m5_power_close_status(policy, data_by_tf, level_state) -> FilterRepor
     )
 
 
-def report_m1_entry_status(policy, data_by_tf, tick) -> FilterReport:
-    """M1 EMA stack (5/9/21) status, 35 EMA veto status."""
+def report_m1_entry_status(policy, data_by_tf, tick, pip_size: float = 0.01) -> FilterReport:
+    """M1 EMA stack (5/9/21 or 9 vs 21) status, 35 EMA veto status (if enabled)."""
     from core.indicators import ema as ema_fn
 
     m1_df = data_by_tf.get("M1")
@@ -1348,30 +1348,45 @@ def report_m1_entry_status(policy, data_by_tf, tick) -> FilterReport:
     e21 = float(ema21.iloc[-1])
     e35 = float(ema35.iloc[-1])
     last_close = float(m1_close.iloc[-1])
-    bull_stack = e5 > e9 > e21
-    bear_stack = e5 < e9 < e21
-    stack_str = "BULL" if bull_stack else ("BEAR" if bear_stack else "MIXED")
+    stack_mode = getattr(policy, "m1_entry_stack_mode", "full")
+    veto_enabled = getattr(policy, "m1_ema_veto_enabled", True)
+    veto_buffer_pips = float(getattr(policy, "m1_ema_veto_buffer_pips", 2.0))
+    veto_buffer = veto_buffer_pips * pip_size
+    if stack_mode == "nine_vs_21":
+        bull_stack = e9 > e21
+        bear_stack = e9 < e21
+        stack_str = "BULL (9>21)" if bull_stack else ("BEAR (9<21)" if bear_stack else "MIXED")
+    else:
+        bull_stack = e5 > e9 > e21
+        bear_stack = e5 < e9 < e21
+        stack_str = "BULL" if bull_stack else ("BEAR" if bear_stack else "MIXED")
     veto_str = ""
-    veto_buy = last_close < e35 - 0.02
-    veto_sell = last_close > e35 + 0.02
-    if veto_buy:
-        veto_str = " | 35EMA VETO(buy)"
-    elif veto_sell:
-        veto_str = " | 35EMA VETO(sell)"
+    veto_buy = last_close < e35 - veto_buffer
+    veto_sell = last_close > e35 + veto_buffer
+    if veto_enabled:
+        if veto_buy:
+            veto_str = " | 35EMA VETO(buy)"
+        elif veto_sell:
+            veto_str = " | 35EMA VETO(sell)"
+    veto_active = veto_enabled and (veto_buy or veto_sell)
     stack_ok = bull_stack or bear_stack
-    veto_active = veto_buy or veto_sell
     entry_ok = stack_ok and not veto_active
     if not stack_ok:
-        expl = "M1 EMAs not stacked for entry (need 5>9>21 for buy or 5<9<21 for sell)."
+        expl = "M1 EMAs not stacked for entry (need 5>9>21 for buy or 5<9<21 for sell)." if stack_mode == "full" else "M1 9 vs 21 not aligned for entry (need 9>21 for buy or 9<21 for sell)."
     elif veto_active:
         expl = "Price past 35 EMA on wrong side — setup voided."
     else:
         expl = "M1 stack aligned; entry allowed if other filters pass."
+    thresh = f"EMA {policy.m1_ema_fast}/{policy.m1_ema_mid}/{policy.m1_ema_slow}, veto={policy.m1_ema_veto}"
+    if not veto_enabled:
+        thresh += " (veto off)"
+    if stack_mode == "nine_vs_21":
+        thresh += ", stack: 9vs21"
     return FilterReport(
         filter_id="m1_entry", display_name="M1 Entry Status",
         enabled=True, is_clear=entry_ok,
         current_value=f"Stack: {stack_str} (5={e5:.3f} 9={e9:.3f} 21={e21:.3f}){veto_str}",
-        threshold=f"EMA {policy.m1_ema_fast}/{policy.m1_ema_mid}/{policy.m1_ema_slow}, veto={policy.m1_ema_veto}",
+        threshold=thresh,
         explanation=expl,
     )
 

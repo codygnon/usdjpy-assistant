@@ -6598,6 +6598,9 @@ def evaluate_h1_breakout_conditions(
     ov_power_close_body_pct = _ov("power_close_body_pct")
     ov_velocity_pips = _ov("velocity_pips")
     ov_max_spread_pips = _ov("max_spread_pips")
+    ov_m1_ema_veto_enabled = _ov("m1_ema_veto_enabled", True)
+    ov_m1_ema_veto_buffer_pips = _ov("m1_ema_veto_buffer_pips", 2.0)
+    ov_m1_entry_stack_mode = _ov("m1_entry_stack_mode", "full")
 
     reasons: list[str] = []
     no_signal = {
@@ -6745,33 +6748,36 @@ def evaluate_h1_breakout_conditions(
             reasons.append(f"level {lv.price:.3f}: M5 trend ({m5_trend}) vs break dir ({lv.break_direction}) misaligned")
             continue
 
-        # 35 EMA veto: if M1 close past the veto EMA on wrong side, void setup
-        if side == "buy" and last_m1_close < ema_veto_val:
-            # Price too deep below 35 EMA for a buy
-            pass  # veto only triggers if close is far past on WRONG side
-        if side == "buy" and last_m1_close > ema_veto_val + (ov_velocity_pips * pip_size):
-            pass  # Not a veto — price is extended bullish, which is fine
-
-        # Veto check: close on wrong side of 35 EMA
-        if side == "buy" and last_m1_close < ema_veto_val - (2 * pip_size):
-            lv.voided = True
-            lv.state = "voided"
-            reasons.append(f"level {lv.price:.3f}: voided by 35 EMA veto (close={last_m1_close:.3f} < ema35={ema_veto_val:.3f})")
-            continue
-        if side == "sell" and last_m1_close > ema_veto_val + (2 * pip_size):
-            lv.voided = True
-            lv.state = "voided"
-            reasons.append(f"level {lv.price:.3f}: voided by 35 EMA veto (close={last_m1_close:.3f} > ema35={ema_veto_val:.3f})")
-            continue
+        # 35 EMA veto: if enabled, close past veto EMA on wrong side voids setup
+        veto_buffer = float(ov_m1_ema_veto_buffer_pips) * pip_size
+        if ov_m1_ema_veto_enabled:
+            if side == "buy" and last_m1_close < ema_veto_val - veto_buffer:
+                lv.voided = True
+                lv.state = "voided"
+                reasons.append(f"level {lv.price:.3f}: voided by 35 EMA veto (close={last_m1_close:.3f} < ema35={ema_veto_val:.3f})")
+                continue
+            if side == "sell" and last_m1_close > ema_veto_val + veto_buffer:
+                lv.voided = True
+                lv.state = "voided"
+                reasons.append(f"level {lv.price:.3f}: voided by 35 EMA veto (close={last_m1_close:.3f} > ema35={ema_veto_val:.3f})")
+                continue
 
         # M1 entry conditions based on entry mode
         if entry_type == "power_break":
-            # Power Break: EMA stack 5>9>21 (buy) or 5<9<21 (sell) + close past 21 EMA
+            # Power Break: stack (full 5>9>21 or relaxed 9 vs 21) + close past 21 EMA
+            if str(ov_m1_entry_stack_mode) == "nine_vs_21":
+                if side == "buy":
+                    stack_ok = ema_mid_val > ema_slow_val  # 9 > 21
+                else:
+                    stack_ok = ema_mid_val < ema_slow_val  # 9 < 21
+            else:
+                if side == "buy":
+                    stack_ok = ema_fast_val > ema_mid_val > ema_slow_val
+                else:
+                    stack_ok = ema_fast_val < ema_mid_val < ema_slow_val
             if side == "buy":
-                stack_ok = ema_fast_val > ema_mid_val > ema_slow_val
                 close_ok = last_m1_close > ema_slow_val
             else:
-                stack_ok = ema_fast_val < ema_mid_val < ema_slow_val
                 close_ok = last_m1_close < ema_slow_val
             if not stack_ok:
                 reasons.append(f"level {lv.price:.3f}: power_break M1 EMA stack not aligned (5={ema_fast_val:.3f} 9={ema_mid_val:.3f} 21={ema_slow_val:.3f})")

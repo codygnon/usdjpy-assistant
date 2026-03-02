@@ -400,6 +400,9 @@ class TempEmaSettingsUpdate(BaseModel):
     up_m1_ema_mid: Optional[int] = None
     up_m1_ema_slow: Optional[int] = None
     up_m1_ema_veto: Optional[int] = None
+    up_m1_ema_veto_enabled: Optional[bool] = None
+    up_m1_ema_veto_buffer_pips: Optional[float] = None
+    up_m1_entry_stack_mode: Optional[str] = None
     # Uncle Parsh H1 Breakout: H1 Detection
     up_h1_lookback_hours: Optional[int] = None
     up_h1_swing_strength: Optional[int] = None
@@ -713,6 +716,9 @@ def update_runtime_state(profile_name: str, req: RuntimeStateUpdate) -> dict[str
         temp_up_m1_ema_mid=old.temp_up_m1_ema_mid,
         temp_up_m1_ema_slow=old.temp_up_m1_ema_slow,
         temp_up_m1_ema_veto=old.temp_up_m1_ema_veto,
+        temp_up_m1_ema_veto_enabled=old.temp_up_m1_ema_veto_enabled,
+        temp_up_m1_ema_veto_buffer_pips=old.temp_up_m1_ema_veto_buffer_pips,
+        temp_up_m1_entry_stack_mode=old.temp_up_m1_entry_stack_mode,
     )
     save_state(state_path, new_state)
     return {"status": "saved"}
@@ -738,6 +744,9 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
         "up_m1_ema_mid": state.temp_up_m1_ema_mid,
         "up_m1_ema_slow": state.temp_up_m1_ema_slow,
         "up_m1_ema_veto": state.temp_up_m1_ema_veto,
+        "up_m1_ema_veto_enabled": state.temp_up_m1_ema_veto_enabled,
+        "up_m1_ema_veto_buffer_pips": state.temp_up_m1_ema_veto_buffer_pips,
+        "up_m1_entry_stack_mode": state.temp_up_m1_entry_stack_mode,
         "up_h1_lookback_hours": state.temp_up_h1_lookback_hours,
         "up_h1_swing_strength": state.temp_up_h1_swing_strength,
         "up_h1_cluster_tolerance_pips": state.temp_up_h1_cluster_tolerance_pips,
@@ -794,6 +803,9 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
         temp_up_m1_ema_mid=req.up_m1_ema_mid,
         temp_up_m1_ema_slow=req.up_m1_ema_slow,
         temp_up_m1_ema_veto=req.up_m1_ema_veto,
+        temp_up_m1_ema_veto_enabled=req.up_m1_ema_veto_enabled,
+        temp_up_m1_ema_veto_buffer_pips=req.up_m1_ema_veto_buffer_pips,
+        temp_up_m1_entry_stack_mode=req.up_m1_entry_stack_mode,
         temp_up_h1_lookback_hours=req.up_h1_lookback_hours,
         temp_up_h1_swing_strength=req.up_h1_swing_strength,
         temp_up_h1_cluster_tolerance_pips=req.up_h1_cluster_tolerance_pips,

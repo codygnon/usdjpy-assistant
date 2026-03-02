@@ -978,6 +978,9 @@ class ExecutionPolicyUncleParshH1Breakout(BaseModel):
     m1_ema_mid: int = 9
     m1_ema_slow: int = 21
     m1_ema_veto: int = 35                # close past this -> setup voided
+    m1_ema_veto_enabled: bool = True     # if False, 35 EMA does not void setup
+    m1_ema_veto_buffer_pips: float = 2.0  # pips past 35 EMA on wrong side to void
+    m1_entry_stack_mode: Literal["full", "nine_vs_21"] = "full"  # full = 5>9>21; nine_vs_21 = 9 vs 21 only
 
     # --- Exit Strategy ---
     initial_sl_spread_plus_pips: float = 2.0   # SL = spread + 2 pips
