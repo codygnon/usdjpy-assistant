@@ -184,10 +184,12 @@ export interface TempEmaSettings {
   up_m5_ema_fast: number | null;
   up_m5_ema_slow: number | null;
   // Uncle Parsh H1 Breakout: H1 Detection
+  up_major_extremes_only: boolean | null;
   up_h1_lookback_hours: number | null;
   up_h1_swing_strength: number | null;
   up_h1_cluster_tolerance_pips: number | null;
   up_h1_min_touches_for_major: number | null;
+  up_h1_min_distance_between_levels_pips: number | null;
   // Uncle Parsh H1 Breakout: M5 Catalyst
   up_power_close_body_pct: number | null;
   up_velocity_pips: number | null;

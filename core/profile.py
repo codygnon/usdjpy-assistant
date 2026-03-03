@@ -968,6 +968,7 @@ class ExecutionPolicyUncleParshH1Breakout(BaseModel):
     enabled: bool = True
 
     # --- H1 Level Detection ---
+    major_extremes_only: bool = False     # if True: only YH/YL + weekly/monthly; if False: also swing + cluster
     h1_lookback_hours: int = 48
     h1_swing_strength: int = 3           # bars each side for swing detection
     h1_cluster_tolerance_pips: float = 5.0

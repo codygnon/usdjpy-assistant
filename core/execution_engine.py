@@ -6591,6 +6591,7 @@ def evaluate_h1_breakout_conditions(
     ov_h1_swing_strength = _ov("h1_swing_strength")
     ov_h1_cluster_tolerance_pips = _ov("h1_cluster_tolerance_pips")
     ov_h1_min_touches_for_major = _ov("h1_min_touches_for_major")
+    ov_major_extremes_only = _ov("major_extremes_only", False)
     # Major-extremes breakout params
     ov_entry_window_minutes = float(_ov("entry_window_minutes", 15))
     ov_aggressive_close_distance_pips = float(_ov("aggressive_close_distance_pips", 5.0))
@@ -6636,8 +6637,7 @@ def evaluate_h1_breakout_conditions(
         "h1_min_touches_for_major": ov_h1_min_touches_for_major,
         "h1_min_distance_between_levels_pips": policy.h1_min_distance_between_levels_pips,
         "pip_size": pip_size,
-        # This strategy uses major extremes only (YH/YL, weekly, monthly)
-        "major_extremes_only": True,
+        "major_extremes_only": bool(ov_major_extremes_only),
     })
 
     # Rebuild levels from persisted state or detect fresh

@@ -57,6 +57,7 @@ class RuntimeState:
     temp_up_m5_ema_slow: Optional[int] = None
 
     # Uncle Parsh H1 Breakout: H1 Detection overrides
+    temp_up_major_extremes_only: Optional[bool] = None
     temp_up_h1_lookback_hours: Optional[int] = None
     temp_up_h1_swing_strength: Optional[int] = None
     temp_up_h1_cluster_tolerance_pips: Optional[float] = None
@@ -131,6 +132,7 @@ def load_state(path: str | Path) -> RuntimeState:
         bb_tier_fired={int(k): bool(v) for k, v in data.get("bb_tier_fired", {}).items()},
         temp_up_m5_ema_fast=data.get("temp_up_m5_ema_fast"),
         temp_up_m5_ema_slow=data.get("temp_up_m5_ema_slow"),
+        temp_up_major_extremes_only=data.get("temp_up_major_extremes_only"),
         temp_up_h1_lookback_hours=data.get("temp_up_h1_lookback_hours"),
         temp_up_h1_swing_strength=data.get("temp_up_h1_swing_strength"),
         temp_up_h1_cluster_tolerance_pips=data.get("temp_up_h1_cluster_tolerance_pips"),
@@ -181,6 +183,7 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "bb_tier_fired": state.bb_tier_fired,
                 "temp_up_m5_ema_fast": state.temp_up_m5_ema_fast,
                 "temp_up_m5_ema_slow": state.temp_up_m5_ema_slow,
+                "temp_up_major_extremes_only": state.temp_up_major_extremes_only,
                 "temp_up_h1_lookback_hours": state.temp_up_h1_lookback_hours,
                 "temp_up_h1_swing_strength": state.temp_up_h1_swing_strength,
                 "temp_up_h1_cluster_tolerance_pips": state.temp_up_h1_cluster_tolerance_pips,

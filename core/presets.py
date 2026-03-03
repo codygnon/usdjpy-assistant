@@ -1875,6 +1875,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "type": "uncle_parsh_h1_breakout",
                     "id": "uncle_parsh_h1_breakout",
                     "enabled": True,
+                    "major_extremes_only": False,
                     "h1_lookback_hours": 48,
                     "h1_swing_strength": 3,
                     "h1_cluster_tolerance_pips": 5.0,

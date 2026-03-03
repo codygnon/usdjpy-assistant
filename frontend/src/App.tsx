@@ -3738,6 +3738,12 @@ interface EditedSettings {
   t8_be_spread_plus_pips: number;
   t8_trail_ema_period: number;
   // Uncle Parsh H1 Breakout: Major Extremes Momentum Breakout
+  up_major_extremes_only: boolean;
+  up_h1_lookback_hours: number;
+  up_h1_swing_strength: number;
+  up_h1_cluster_tolerance_pips: number;
+  up_h1_min_touches_for_major: number;
+  up_h1_min_distance_between_levels_pips: number;
   up_entry_window_minutes: number;
   up_aggressive_close_distance_pips: number;
   up_m1_entry_ema_fast: number;
@@ -4435,6 +4441,12 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t8_be_spread_plus_pips: tempSettings?.t8_be_spread_plus_pips ?? t8BeSpreadPlusPips,
         t8_trail_ema_period: tempSettings?.t8_trail_ema_period ?? t8TrailEmaPeriod,
         // Uncle Parsh H1 Breakout (major-extremes momentum breakout)
+        up_major_extremes_only: tempSettings?.up_major_extremes_only ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.major_extremes_only as boolean ?? false),
+        up_h1_lookback_hours: tempSettings?.up_h1_lookback_hours ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_lookback_hours as number ?? 48),
+        up_h1_swing_strength: tempSettings?.up_h1_swing_strength ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_swing_strength as number ?? 3),
+        up_h1_cluster_tolerance_pips: tempSettings?.up_h1_cluster_tolerance_pips ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_cluster_tolerance_pips as number ?? 5.0),
+        up_h1_min_touches_for_major: tempSettings?.up_h1_min_touches_for_major ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_min_touches_for_major as number ?? 2),
+        up_h1_min_distance_between_levels_pips: (execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_min_distance_between_levels_pips as number ?? 10.0,
         up_entry_window_minutes: ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.entry_window_minutes as number ?? 15),
         up_aggressive_close_distance_pips: ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.aggressive_close_distance_pips as number ?? 5.0),
         up_m1_entry_ema_fast: ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.m1_entry_ema_fast as number ?? 9),
@@ -4731,6 +4743,12 @@ function PresetsPage({ profile }: { profile: Profile }) {
         }
         // Update Uncle Parsh H1 Breakout settings (Major Extremes Momentum Breakout)
         if (pol.type === 'uncle_parsh_h1_breakout') {
+          updates.major_extremes_only = editedSettings.up_major_extremes_only;
+          updates.h1_lookback_hours = Math.max(12, Math.min(168, editedSettings.up_h1_lookback_hours));
+          updates.h1_swing_strength = Math.max(2, Math.min(10, editedSettings.up_h1_swing_strength));
+          updates.h1_cluster_tolerance_pips = Math.max(1, Math.min(20, editedSettings.up_h1_cluster_tolerance_pips));
+          updates.h1_min_touches_for_major = Math.max(1, Math.min(10, editedSettings.up_h1_min_touches_for_major));
+          updates.h1_min_distance_between_levels_pips = Math.max(1, Math.min(50, editedSettings.up_h1_min_distance_between_levels_pips));
           updates.entry_window_minutes = Math.max(1, Math.min(60, editedSettings.up_entry_window_minutes));
           updates.aggressive_close_distance_pips = Math.max(0.5, editedSettings.up_aggressive_close_distance_pips);
           updates.m1_entry_ema_fast = Math.max(2, Math.min(50, editedSettings.up_m1_entry_ema_fast));
@@ -6872,6 +6890,53 @@ function PresetsPage({ profile }: { profile: Profile }) {
                 <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
                     View Settings (Uncle Parsh H1 Breakout)
+                  </div>
+
+                  {/* H1 Level Detection: major extremes only vs swing + cluster */}
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, fontWeight: 600 }}>
+                    H1 Level Detection
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12, marginBottom: 12 }}>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input type="checkbox" checked={editedSettings.up_major_extremes_only}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, up_major_extremes_only: e.target.checked })}
+                        style={{ width: 18, height: 18, cursor: 'pointer' }}
+                      />
+                      <div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Major extremes only</div>
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Off = also use swing + cluster levels</div>
+                      </div>
+                    </div>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Lookback (hours)</div>
+                      <input type="number" step="1" min="12" max="168" value={editedSettings.up_h1_lookback_hours}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, up_h1_lookback_hours: parseInt(e.target.value) || 48 })}
+                        style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                    </div>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Swing strength (bars each side)</div>
+                      <input type="number" step="1" min="2" max="10" value={editedSettings.up_h1_swing_strength}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, up_h1_swing_strength: parseInt(e.target.value) || 3 })}
+                        style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                    </div>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Cluster tolerance (pips)</div>
+                      <input type="number" step="0.5" min="1" max="20" value={editedSettings.up_h1_cluster_tolerance_pips}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, up_h1_cluster_tolerance_pips: parseFloat(e.target.value) || 5 })}
+                        style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                    </div>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Min touches for major</div>
+                      <input type="number" step="1" min="1" max="10" value={editedSettings.up_h1_min_touches_for_major}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, up_h1_min_touches_for_major: parseInt(e.target.value) || 2 })}
+                        style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                    </div>
+                    <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Min distance between levels (pips)</div>
+                      <input type="number" step="1" min="1" max="50" value={editedSettings.up_h1_min_distance_between_levels_pips}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, up_h1_min_distance_between_levels_pips: parseFloat(e.target.value) || 10 })}
+                        style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                    </div>
                   </div>
 
                   {/* Major Extremes Momentum Breakout */}

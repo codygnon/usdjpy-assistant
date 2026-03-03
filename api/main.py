@@ -397,6 +397,7 @@ class TempEmaSettingsUpdate(BaseModel):
     up_m5_ema_fast: Optional[int] = None
     up_m5_ema_slow: Optional[int] = None
     # Uncle Parsh H1 Breakout: H1 Detection
+    up_major_extremes_only: Optional[bool] = None
     up_h1_lookback_hours: Optional[int] = None
     up_h1_swing_strength: Optional[int] = None
     up_h1_cluster_tolerance_pips: Optional[float] = None
@@ -732,10 +733,12 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
         "m1_t4_zone_entry_ema_slow": state.temp_m1_t4_zone_entry_ema_slow,
         "up_m5_ema_fast": state.temp_up_m5_ema_fast,
         "up_m5_ema_slow": state.temp_up_m5_ema_slow,
+        "up_major_extremes_only": state.temp_up_major_extremes_only,
         "up_h1_lookback_hours": state.temp_up_h1_lookback_hours,
         "up_h1_swing_strength": state.temp_up_h1_swing_strength,
         "up_h1_cluster_tolerance_pips": state.temp_up_h1_cluster_tolerance_pips,
         "up_h1_min_touches_for_major": state.temp_up_h1_min_touches_for_major,
+        "up_h1_min_distance_between_levels_pips": getattr(state, "temp_up_h1_min_distance_between_levels_pips", None),
         "up_power_close_body_pct": state.temp_up_power_close_body_pct,
         "up_velocity_pips": state.temp_up_velocity_pips,
         "up_initial_sl_spread_plus_pips": state.temp_up_initial_sl_spread_plus_pips,
@@ -788,6 +791,7 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
         # Uncle Parsh H1 Breakout temp overrides
         temp_up_m5_ema_fast=req.up_m5_ema_fast,
         temp_up_m5_ema_slow=req.up_m5_ema_slow,
+        temp_up_major_extremes_only=req.up_major_extremes_only,
         temp_up_h1_lookback_hours=req.up_h1_lookback_hours,
         temp_up_h1_swing_strength=req.up_h1_swing_strength,
         temp_up_h1_cluster_tolerance_pips=req.up_h1_cluster_tolerance_pips,

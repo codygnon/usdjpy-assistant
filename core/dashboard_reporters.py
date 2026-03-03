@@ -1103,6 +1103,11 @@ def collect_uncle_parsh_context(
                 val = float(ema_fn(m1_close, period).iloc[-1])
                 items.append(ContextItem(label, f"{val:.3f}", "entry"))
 
+    # H1 level mode (major only vs major + swing + cluster)
+    major_only = getattr(policy, "major_extremes_only", False)
+    level_mode = "Major only" if major_only else "Major + Swing + Cluster"
+    items.append(ContextItem("H1 Level Mode", level_mode, "levels"))
+
     # H1 levels summary + entry window from eval result
     if eval_result and isinstance(eval_result.get("level_updates"), list):
         level_count = len(eval_result["level_updates"])
@@ -1184,12 +1189,14 @@ def report_h1_levels(policy, data_by_tf, level_state) -> FilterReport:
     """Show detected H1 levels, their status (watching/broken/active), touch counts.
     Sub_filters list one row per level with type and broken status for dropdown.
     """
+    major_only = getattr(policy, "major_extremes_only", False)
+    level_mode = "Major only (YH/YL, weekly, monthly)" if major_only else "Major + Swing + Cluster"
     if not level_state:
         return FilterReport(
             filter_id="h1_levels", display_name="H1 S/R Levels",
             enabled=True, is_clear=True,
             current_value="No levels detected",
-            explanation="No H1 levels in range. Check lookback and symbol.",
+            explanation=f"Level mode: {level_mode}. No H1 levels in range. Check lookback and symbol.",
         )
     watching = sum(1 for lv in level_state if lv.get("state") == "watching")
     catalyst = sum(1 for lv in level_state if lv.get("state") == "catalyst")
@@ -1236,12 +1243,20 @@ def report_h1_levels(policy, data_by_tf, level_state) -> FilterReport:
         main_expl = "Levels voided (e.g. by 35 EMA)."
     else:
         main_expl = "No level broken yet. Need an M5 candle to close past a level."
+    main_expl = f"Level mode: {level_mode}. {main_expl}"
+
+    # Count by level type for summary
+    type_counts: dict[str, int] = {}
+    for lv in level_state:
+        lt = lv.get("level_type", "?")
+        type_counts[lt] = type_counts.get(lt, 0) + 1
+    type_summary = ", ".join(f"{k}: {v}" for k, v in sorted(type_counts.items()))
 
     return FilterReport(
         filter_id="h1_levels", display_name="H1 S/R Levels",
         enabled=True, is_clear=has_broken,
         current_value=f"{total} levels: {watching}W {catalyst}C {ready}R {voided}V",
-        threshold="; ".join(level_details[:5]) if level_details else "none",
+        threshold=type_summary or "; ".join(level_details[:5]) if level_details else "none",
         sub_filters=sub_filters_list,
         explanation=main_expl,
     )
