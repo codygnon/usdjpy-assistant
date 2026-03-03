@@ -4128,6 +4128,35 @@ def evaluate_kt_cg_trial_7_conditions(
     m1_zone_slow_val = float(m1_ema_zone_slow.iloc[-1])
     m1_ema5_val = float(m1_ema5_live.iloc[-1])
 
+    # When zone_entry_mode is price_vs_ema5 (Trial #8), check zone entry FIRST so it can fire
+    # when price is above/below EMA5 instead of being preempted by tiered pullback.
+    zone_entry_enabled = getattr(policy, "zone_entry_enabled", True)
+    if zone_entry_mode == "price_vs_ema5" and zone_entry_enabled:
+        zone_entry_triggered = False
+        zone_side: Optional[str] = None
+        if is_bull and current_price > m1_ema5_val:
+            zone_entry_triggered = True
+            zone_side = "buy"
+            reasons.append(
+                f"ZONE ENTRY [price_vs_ema5]: BULL + current_price ({current_price:.3f}) > M1 EMA5 ({m1_ema5_val:.3f}) -> BUY"
+            )
+        elif (not is_bull) and current_price < m1_ema5_val:
+            zone_entry_triggered = True
+            zone_side = "sell"
+            reasons.append(
+                f"ZONE ENTRY [price_vs_ema5]: BEAR + current_price ({current_price:.3f}) < M1 EMA5 ({m1_ema5_val:.3f}) -> SELL"
+            )
+        if zone_entry_triggered and zone_side:
+            return {
+                "passed": True,
+                "side": zone_side,
+                "reasons": reasons,
+                "trigger_type": "zone_entry",
+                "tiered_pullback_tier": None,
+                "tier_updates": tier_updates,
+                "m5_trend": trend,
+            }
+
     tiered_pullback_enabled = getattr(policy, "tiered_pullback_enabled", True)
     tiered_pullback_triggered = False
     tiered_pullback_tier: Optional[int] = None
