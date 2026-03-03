@@ -318,11 +318,23 @@ DEFAULTS: dict[str, object] = {
     "v5_tokyo_orb_range_start_hour": 23.0,
     "v5_tokyo_orb_range_end_hour": 0.5,
     "v5_tokyo_orb_tp_pips": 8.0,
+    "v5_tokyo_orb_fixed_sl_pips": 0.0,
+    "v5_tokyo_orb_tp1_close_pct": 1.0,
+    "v5_tokyo_orb_trail_buffer": 2.0,
     "v5_tokyo_orb_sl_buffer_pips": 2.0,
     "v5_tokyo_orb_min_range_pips": 8.0,
     "v5_tokyo_orb_max_range_pips": 60.0,
     "v5_tokyo_orb_cutoff_hour": 1.0,
     "v5_tokyo_orb_hard_close_hour": 2.5,
+    # Tokyo Fade (mean-reversion) defaults
+    "v5_tokyo_fade_enabled": False,
+    "v5_tokyo_fade_min_break_pips": 1.5,
+    "v5_tokyo_fade_max_break_pips": 20.0,
+    "v5_tokyo_fade_sl_pips": 5.0,
+    "v5_tokyo_fade_tp_pips": 10.0,
+    "v5_tokyo_fade_cutoff_hour": 2.0,
+    "v5_tokyo_fade_hard_close_hour": 3.0,
+    "v5_tokyo_fade_tp1_close_pct": 1.0,
     "v5_dual_mode_enabled": False,
     "v5_range_fade_enabled": True,
     "v5_trend_mode_efficiency_min": 0.40,
@@ -366,6 +378,24 @@ DEFAULTS: dict[str, object] = {
     "swing_max_duration_days": 5,
     "swing_risk_pct": 0.75,
     "swing_account_size": 100000.0,
+    # ── BB Reversion system defaults ───────────────────────────────────────
+    "bb_rev_enabled": False,
+    "bb_rev_period": 20,
+    "bb_rev_std": 2.0,
+    "bb_rev_trend_ema": 50,
+    "bb_rev_session_start": 6.0,
+    "bb_rev_session_end": 17.0,
+    "bb_rev_sl_pips": 8.0,
+    "bb_rev_tp_pips": 15.0,
+    "bb_rev_tp1_close_pct": 1.0,
+    "bb_rev_max_daily": 3,
+    "bb_rev_min_width_pips": 8.0,
+    "bb_rev_risk_pct": 0.75,
+    "bb_rev_account_size": 100000.0,
+    "bb_rev_max_lot": 20.0,
+    "bb_rev_require_trend": True,
+    "bb_rev_tp_midline": False,
+    "bb_rev_confirm": False,
 }
 
 
@@ -779,11 +809,22 @@ def _full_parser() -> argparse.ArgumentParser:
     p.add_argument("--v5-tokyo-orb-range-start-hour", type=float)
     p.add_argument("--v5-tokyo-orb-range-end-hour", type=float)
     p.add_argument("--v5-tokyo-orb-tp-pips", type=float)
+    p.add_argument("--v5-tokyo-orb-fixed-sl-pips", type=float)
+    p.add_argument("--v5-tokyo-orb-tp1-close-pct", type=float)
+    p.add_argument("--v5-tokyo-orb-trail-buffer", type=float)
     p.add_argument("--v5-tokyo-orb-sl-buffer-pips", type=float)
     p.add_argument("--v5-tokyo-orb-min-range-pips", type=float)
     p.add_argument("--v5-tokyo-orb-max-range-pips", type=float)
     p.add_argument("--v5-tokyo-orb-cutoff-hour", type=float)
     p.add_argument("--v5-tokyo-orb-hard-close-hour", type=float)
+    p.add_argument("--v5-tokyo-fade-enabled", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-tokyo-fade-min-break-pips", type=float)
+    p.add_argument("--v5-tokyo-fade-max-break-pips", type=float)
+    p.add_argument("--v5-tokyo-fade-sl-pips", type=float)
+    p.add_argument("--v5-tokyo-fade-tp-pips", type=float)
+    p.add_argument("--v5-tokyo-fade-cutoff-hour", type=float)
+    p.add_argument("--v5-tokyo-fade-hard-close-hour", type=float)
+    p.add_argument("--v5-tokyo-fade-tp1-close-pct", type=float)
     p.add_argument("--v5-dual-mode-enabled", type=parse_bool, nargs="?", const=True)
     p.add_argument("--v5-range-fade-enabled", type=parse_bool, nargs="?", const=True)
     p.add_argument("--v5-trend-mode-efficiency-min", type=float)
@@ -821,6 +862,24 @@ def _full_parser() -> argparse.ArgumentParser:
     p.add_argument("--swing-max-duration-days", type=int)
     p.add_argument("--swing-risk-pct", type=float)
     p.add_argument("--swing-account-size", type=float)
+    # BB Reversion system
+    p.add_argument("--bb-rev-enabled", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--bb-rev-period", type=int)
+    p.add_argument("--bb-rev-std", type=float)
+    p.add_argument("--bb-rev-trend-ema", type=int)
+    p.add_argument("--bb-rev-session-start", type=float)
+    p.add_argument("--bb-rev-session-end", type=float)
+    p.add_argument("--bb-rev-sl-pips", type=float)
+    p.add_argument("--bb-rev-tp-pips", type=float)
+    p.add_argument("--bb-rev-tp1-close-pct", type=float)
+    p.add_argument("--bb-rev-max-daily", type=int)
+    p.add_argument("--bb-rev-min-width-pips", type=float)
+    p.add_argument("--bb-rev-risk-pct", type=float)
+    p.add_argument("--bb-rev-account-size", type=float)
+    p.add_argument("--bb-rev-max-lot", type=float)
+    p.add_argument("--bb-rev-require-trend", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--bb-rev-tp-midline", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--bb-rev-confirm", type=parse_bool, nargs="?", const=True)
     return p
 
 
@@ -3010,6 +3069,20 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         return adx, plus_di.fillna(0.0), minus_di.fillna(0.0)
 
     m5["adx14_v5"], m5["plus_di14_v5"], m5["minus_di14_v5"] = compute_adx(m5, 14)
+
+    # ── BB Reversion indicators on M5 ──────────────────────────────────────
+    _bb_period = int(getattr(args, "bb_rev_period", 20))
+    _bb_std    = float(getattr(args, "bb_rev_std",   2.0))
+    _bb_trend  = int(getattr(args, "bb_rev_trend_ema", 50))
+    _bb_sma    = m5["close"].rolling(_bb_period, min_periods=_bb_period).mean()
+    _bb_sd     = m5["close"].rolling(_bb_period, min_periods=_bb_period).std()
+    m5["bb_upper_v5"]   = _bb_sma + _bb_std * _bb_sd
+    m5["bb_lower_v5"]   = _bb_sma - _bb_std * _bb_sd
+    m5["bb_mid_v5"]     = _bb_sma
+    m5["bb_width_v5"]   = (m5["bb_upper_v5"] - m5["bb_lower_v5"]) / PIP_SIZE
+    m5["bb_trend_ema_v5"] = m5["close"].ewm(span=_bb_trend, adjust=False).mean()
+    # ───────────────────────────────────────────────────────────────────────
+
     h4["ema_fast_h4"] = h4["close"].ewm(span=20, adjust=False).mean()
     h4["ema_slow_h4"] = h4["close"].ewm(span=50, adjust=False).mean()
     h4_adx, h4_plus_di, h4_minus_di = compute_adx(h4, 14)
@@ -3032,6 +3105,13 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
     blocked_reasons: dict[str, int] = {}
     daily_state: dict[str, dict] = {}
     trade_id_seq = 0
+    # BB Reversion daily counter
+    bb_rev_day_key: str = ""
+    bb_rev_day_count: int = 0
+    # BB Reversion confirmation state (wait for close back inside band)
+    bb_rev_pending_side: Optional[str] = None
+    bb_rev_pending_sig: Optional[str] = None
+    bb_rev_pending_p5: int = -1
     cooldown_until_p5: Optional[int] = None
     wr_pause_until_p5: Optional[int] = None
     max_open_positions = 0
@@ -3075,6 +3155,9 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
     t_orb_fired_today: bool = False
     t_orb_both_sides: bool = False
     t_orb_session_date: Optional[object] = None
+    # Tokyo Fade state
+    t_fade_fired_today: bool = False
+    t_fade_session_date: Optional[object] = None
 
     regime_distribution = {"Trending": 0, "Flat": 0}
 
@@ -3293,7 +3376,12 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         if bool(pos.tp1_filled) and bool(pos.trail_delay_observed):
             trail_delayed_count += 1
         entry_day_cfg = day_bucket(str(pos.entry_day))
-        sess_cfg = entry_day_cfg["sessions"][str(pos.entry_session)]
+        _pos_sess = str(pos.entry_session)
+        if _pos_sess in entry_day_cfg["sessions"]:
+            sess_cfg = entry_day_cfg["sessions"][_pos_sess]
+        else:
+            # BB Reversion or other non-session trades — use a dummy config
+            sess_cfg = {"entries_opened": 0, "stopped": False, "wins_closed": 0, "losses_closed": 0, "pips_total": 0.0, "usd_total": 0.0, "consec_losses": 0, "win_streak": 0}
         exit_day_key = str(pd.Timestamp(ts).date())
         exit_day_cfg = day_bucket(exit_day_key)
 
@@ -3303,61 +3391,66 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             outcome = "win"
         else:
             outcome = "loss"
-        recent_trades_outcomes.append(1 if outcome == "win" else 0)
-        _wr_deque_for_session(str(pos.entry_session)).append(1 if outcome == "win" else 0)
+        # BB Reversion trades: skip V39-specific side effects (cooldowns, WR deques, loss limits)
+        _is_bb_trade = getattr(pos, "entry_regime", "") == "BB_REVERSION"
+        if not _is_bb_trade:
+            recent_trades_outcomes.append(1 if outcome == "win" else 0)
+            _wr_deque_for_session(str(pos.entry_session)).append(1 if outcome == "win" else 0)
 
-        if abs(pips) < float(args.v5_scratch_threshold):
-            cdb = int(args.v5_cooldown_scratch)
-        elif pips > 0:
-            cdb = int(args.v5_cooldown_win)
-        else:
-            cdb = int(args.v5_cooldown_loss)
-        until = int(p5_now + cdb)
-        cooldown_until_p5 = until if cooldown_until_p5 is None else max(int(cooldown_until_p5), until)
-
-        # Realized pips for day/week loss breakers.
-        realized_day_pips[exit_day_key] = float(realized_day_pips.get(exit_day_key, 0.0) + pips)
-        sess_day_key = f"{exit_day_key}:{pos.entry_session}"
-        realized_day_usd_by_session[sess_day_key] = float(realized_day_usd_by_session.get(sess_day_key, 0.0) + float(pos.realized_usd))
-        wk_key = _week_key(ts)
-        realized_week_pips[wk_key] = float(realized_week_pips.get(wk_key, 0.0) + pips)
-        if float(args.v5_daily_loss_limit_pips) > 0 and float(realized_day_pips[exit_day_key]) <= -float(args.v5_daily_loss_limit_pips):
-            daily_stop_days.add(exit_day_key)
-        if pos.entry_session == "london":
-            sess_loss_limit = float(getattr(args, "v5_london_daily_loss_usd", 600.0))
-        elif pos.entry_session == "tokyo":
-            sess_loss_limit = float(getattr(args, "v5_tokyo_daily_loss_usd", 300.0))
-        else:
-            sess_loss_limit = float(getattr(args, "v5_ny_daily_loss_usd", 600.0))
-        if sess_loss_limit > 0 and float(realized_day_usd_by_session[sess_day_key]) <= -sess_loss_limit:
-            daily_stop_usd_sessions.add(sess_day_key)
-        if float(args.v5_weekly_loss_limit_pips) > 0 and float(realized_week_pips[wk_key]) <= -float(args.v5_weekly_loss_limit_pips):
-            weekly_stop_keys.add(wk_key)
-
-        if outcome == "win":
-            exit_day_cfg["wins_closed"] = int(exit_day_cfg.get("wins_closed", 0)) + 1
-            if str(args.v5_win_streak_scope) == "day":
-                exit_day_cfg["win_streak_day"] = int(exit_day_cfg.get("win_streak_day", 0)) + 1
-                max_consecutive_wins = max(max_consecutive_wins, int(exit_day_cfg["win_streak_day"]))
+        if not _is_bb_trade:
+            if abs(pips) < float(args.v5_scratch_threshold):
+                cdb = int(args.v5_cooldown_scratch)
+            elif pips > 0:
+                cdb = int(args.v5_cooldown_win)
             else:
-                sess_cfg["win_streak"] = int(sess_cfg.get("win_streak", 0)) + 1
-                max_consecutive_wins = max(max_consecutive_wins, int(sess_cfg["win_streak"]))
-            sess_cfg["consec_losses"] = 0
-        elif outcome == "loss":
-            if str(args.v5_win_streak_scope) == "day":
-                exit_day_cfg["win_streak_day"] = 0
+                cdb = int(args.v5_cooldown_loss)
+            until = int(p5_now + cdb)
+            cooldown_until_p5 = until if cooldown_until_p5 is None else max(int(cooldown_until_p5), until)
+
+            # Realized pips for day/week loss breakers.
+            realized_day_pips[exit_day_key] = float(realized_day_pips.get(exit_day_key, 0.0) + pips)
+            sess_day_key = f"{exit_day_key}:{pos.entry_session}"
+            realized_day_usd_by_session[sess_day_key] = float(realized_day_usd_by_session.get(sess_day_key, 0.0) + float(pos.realized_usd))
+            wk_key = _week_key(ts)
+            realized_week_pips[wk_key] = float(realized_week_pips.get(wk_key, 0.0) + pips)
+            if float(args.v5_daily_loss_limit_pips) > 0 and float(realized_day_pips[exit_day_key]) <= -float(args.v5_daily_loss_limit_pips):
+                daily_stop_days.add(exit_day_key)
+            if pos.entry_session == "london":
+                sess_loss_limit = float(getattr(args, "v5_london_daily_loss_usd", 600.0))
+            elif pos.entry_session == "tokyo":
+                sess_loss_limit = float(getattr(args, "v5_tokyo_daily_loss_usd", 300.0))
             else:
-                sess_cfg["win_streak"] = 0
-            sess_cfg["consec_losses"] = int(sess_cfg["consec_losses"]) + 1
-            if int(sess_cfg["consec_losses"]) >= int(args.v5_session_stop_losses):
-                if not bool(sess_cfg["stopped"]):
-                    sess_cfg["stopped"] = True
-                    skey = f"{pos.entry_day}:{pos.entry_session}"
-                    if skey not in session_stop_marked:
-                        session_stop_marked.add(skey)
-                        sessions_stopped_early += 1
-        else:
-            sess_cfg["consec_losses"] = 0
+                sess_loss_limit = float(getattr(args, "v5_ny_daily_loss_usd", 600.0))
+            if sess_loss_limit > 0 and float(realized_day_usd_by_session[sess_day_key]) <= -sess_loss_limit:
+                daily_stop_usd_sessions.add(sess_day_key)
+            if float(args.v5_weekly_loss_limit_pips) > 0 and float(realized_week_pips[wk_key]) <= -float(args.v5_weekly_loss_limit_pips):
+                weekly_stop_keys.add(wk_key)
+
+        if not _is_bb_trade:
+            if outcome == "win":
+                exit_day_cfg["wins_closed"] = int(exit_day_cfg.get("wins_closed", 0)) + 1
+                if str(args.v5_win_streak_scope) == "day":
+                    exit_day_cfg["win_streak_day"] = int(exit_day_cfg.get("win_streak_day", 0)) + 1
+                    max_consecutive_wins = max(max_consecutive_wins, int(exit_day_cfg["win_streak_day"]))
+                else:
+                    sess_cfg["win_streak"] = int(sess_cfg.get("win_streak", 0)) + 1
+                    max_consecutive_wins = max(max_consecutive_wins, int(sess_cfg["win_streak"]))
+                sess_cfg["consec_losses"] = 0
+            elif outcome == "loss":
+                if str(args.v5_win_streak_scope) == "day":
+                    exit_day_cfg["win_streak_day"] = 0
+                else:
+                    sess_cfg["win_streak"] = 0
+                sess_cfg["consec_losses"] = int(sess_cfg["consec_losses"]) + 1
+                if int(sess_cfg["consec_losses"]) >= int(args.v5_session_stop_losses):
+                    if not bool(sess_cfg["stopped"]):
+                        sess_cfg["stopped"] = True
+                        skey = f"{pos.entry_day}:{pos.entry_session}"
+                        if skey not in session_stop_marked:
+                            session_stop_marked.add(skey)
+                            sessions_stopped_early += 1
+            else:
+                sess_cfg["consec_losses"] = 0
 
         open_positions = [p for p in open_positions if int(p.trade_id) != int(pos.trade_id)]
 
@@ -3425,13 +3518,13 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             and orb_last_session_date == ts_dt.date()
         ):
             orb_range_built = True
-        # ── Tokyo ORB (fix-flow breakout) ──────────────────────────────────────────
-        _t_orb_enabled = bool(getattr(args, "v5_tokyo_orb_enabled", False))
-        if _t_orb_enabled:
+        # ── Tokyo overnight range build (shared by ORB and Fade) ──────────────────
+        _t_orb_enabled  = bool(getattr(args, "v5_tokyo_orb_enabled",  False))
+        _t_fade_need_range = bool(getattr(args, "v5_tokyo_fade_enabled", False))
+        if _t_orb_enabled or _t_fade_need_range:
             _t_start = float(getattr(args, "v5_tokyo_orb_range_start_hour", 23.0))
-            _t_end = float(getattr(args, "v5_tokyo_orb_range_end_hour", 0.5))
+            _t_end   = float(getattr(args, "v5_tokyo_orb_range_end_hour", 0.5))
             _t_cutoff = float(getattr(args, "v5_tokyo_orb_cutoff_hour", 1.0))
-            _t_hclose = float(getattr(args, "v5_tokyo_orb_hard_close_hour", 2.5))
 
             # Session date = date of 00:xx bars; 23:xx bars belong to next session date
             _t_sess_date = (ts_dt + pd.Timedelta(days=1)).date() if h_now >= 23.0 else ts_dt.date()
@@ -3459,6 +3552,10 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             if (h_now >= _t_end and h_now < _t_cutoff and not t_orb_range_built and t_orb_range_high is not None):
                 t_orb_range_built = True
 
+        # ── Tokyo ORB (fix-flow breakout) ──────────────────────────────────────────
+        if _t_orb_enabled:
+            _t_hclose = float(getattr(args, "v5_tokyo_orb_hard_close_hour", 2.5))
+
             # Hard close at 02:30 UTC — exit any open Tokyo ORB positions at market
             if h_now >= _t_hclose:
                 for _pos in list(open_positions):
@@ -3469,7 +3566,7 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                             _pos.realized_pips = (_exit_px - _pos.entry_price) / PIP_SIZE
                         else:
                             _pos.realized_pips = (_pos.entry_price - _exit_px) / PIP_SIZE
-                        _pos.realized_usd = _pos.realized_pips * _pos.lots_initial * 1000.0 / float(c) * float(c)
+                        _pos.realized_usd = _pos.realized_pips * _pos.lots_initial * (PIP_SIZE / float(c)) * 100000.0
                         _finalize_position(_pos, ts, "tokyo_orb_hard_close", p5_now=p5)
                         if _pos in open_positions:
                             open_positions.remove(_pos)
@@ -3509,12 +3606,18 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                     _entry_px = float(c) + spread_pips * PIP_SIZE if _entry_side == "buy" else float(c) - spread_pips * PIP_SIZE
                     _sl_px = (t_orb_range_low - _t_buf * PIP_SIZE) if _entry_side == "buy" else (t_orb_range_high + _t_buf * PIP_SIZE)
                     _sl_dist = abs(_entry_px - _sl_px) / PIP_SIZE
+                    _fixed_sl = float(getattr(args, "v5_tokyo_orb_fixed_sl_pips", 0.0))
+                    if _fixed_sl > 0:
+                        _sl_dist = float(_fixed_sl)
+                        _sl_px = (_entry_px - _sl_dist * PIP_SIZE) if _entry_side == "buy" else (_entry_px + _sl_dist * PIP_SIZE)
                     if _sl_dist > 0:
                         # Inverse position sizing: dollar risk fixed, size scales with 1/sl_dist
                         _risk_usd = float(args.v5_account_size) * float(args.v5_risk_per_trade_pct) / 100.0
-                        _pip_value = (1.0 / float(c)) * 100000.0  # USDJPY pip value per standard lot
-                        _lot_size = round(_risk_usd / (_sl_dist * _pip_value * 10), 2)
-                        _lot_size = max(0.01, _lot_size)
+                        # USDJPY: 1 pip = 0.01 JPY, 1 standard lot = 100,000 units
+                        # pip value per lot in USD = (0.01 / current_price) * 100000
+                        _pip_val_per_lot = (PIP_SIZE / float(c)) * 100000.0
+                        _lot_size = round(_risk_usd / (_sl_dist * _pip_val_per_lot), 2)
+                        _lot_size = max(0.01, min(_lot_size, float(getattr(args, "v5_rp_max_lot", 20.0))))
                         _tp1_px = (_entry_px + _t_tp * PIP_SIZE) if _entry_side == "buy" else (_entry_px - _t_tp * PIP_SIZE)
 
                         trade_id_seq += 1
@@ -3531,10 +3634,10 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                             lots_remaining=float(_lot_size),
                             stop_price=float(_sl_px),
                             tp1_price=float(_tp1_px),
-                            tp2_price=float(_tp1_px),
+                            tp2_price=float(_tp1_px) + (999.0 * PIP_SIZE) if _entry_side == "buy" else float(_tp1_px) - (999.0 * PIP_SIZE),
                             sl_pips=float(_sl_dist),
                             tp1_pips=float(_t_tp),
-                            tp2_pips=float(_t_tp),
+                            tp2_pips=999.0,
                             tp1_filled=False,
                             realized_pips=0.0,
                             realized_usd=0.0,
@@ -3542,11 +3645,11 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                             entry_regime="TOKYO_ORB",
                             entry_profile="tokyo_orb",
                             position_type="Single",
-                            trail_buffer_pips=0.0,
+                            tp1_close_fraction=float(getattr(args, "v5_tokyo_orb_tp1_close_pct", 1.0)),
+                            trail_buffer_pips=float(getattr(args, "v5_tokyo_orb_trail_buffer", 2.0)),
                             trail_ema_period=9,
-                            tp1_close_fraction=1.0,
+                            trail_armed=True,
                             trail_start_multiple=0.0,
-                            trail_armed=False,
                             trail_delay_observed=False,
                             entry_bar_index=int(i),
                             entry_signal_mode="tokyo_orb_break",
@@ -3557,6 +3660,117 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                         open_positions.append(new_pos)
                         t_orb_fired_today = True
                         add_block(f"t_orb_entry_{_entry_side}")
+
+        # ── Tokyo Fade (mean-reversion on fix-window breakout) ─────────────────
+        _t_fade_enabled = bool(getattr(args, "v5_tokyo_fade_enabled", False))
+        if _t_fade_enabled:
+            _tf_start  = float(getattr(args, "v5_tokyo_orb_range_start_hour", 23.0))
+            _tf_end    = float(getattr(args, "v5_tokyo_orb_range_end_hour", 0.5))
+            _tf_cutoff = float(getattr(args, "v5_tokyo_fade_cutoff_hour", 2.0))
+            _tf_hclose = float(getattr(args, "v5_tokyo_fade_hard_close_hour", 3.0))
+
+            _tf_sess_date = (ts_dt + pd.Timedelta(days=1)).date() if h_now >= 23.0 else ts_dt.date()
+
+            # Reset fade state on new session
+            if t_fade_session_date != _tf_sess_date:
+                t_fade_fired_today = False
+                t_fade_session_date = _tf_sess_date
+
+            # Hard close all fade positions at hard_close_hour
+            if h_now >= _tf_hclose:
+                for _pos in list(open_positions):
+                    if _pos.entry_regime == "TOKYO_FADE" and _pos in open_positions:
+                        _exit_px = float(bid) if _pos.side == "buy" else float(ask)
+                        _close_leg(_pos, float(_exit_px), float(_pos.lots_remaining))
+                        _finalize_position(_pos, ts, "tokyo_fade_hard_close", p5_now=p5)
+                        if _pos in open_positions:
+                            open_positions.remove(_pos)
+
+            # Entry: fade breakouts during entry window (range_end_hour to fade_cutoff_hour)
+            _tf_in_window = (_tf_end <= h_now < _tf_cutoff)
+            if (
+                _tf_in_window
+                and t_orb_range_built          # reuse ORB range (same range build phase)
+                and not t_fade_fired_today
+                and t_orb_range_high is not None
+                and t_orb_range_low is not None
+            ):
+                _tf_min_break = float(getattr(args, "v5_tokyo_fade_min_break_pips", 1.5))
+                _tf_max_break = float(getattr(args, "v5_tokyo_fade_max_break_pips", 20.0))
+                _tf_sl_pips   = float(getattr(args, "v5_tokyo_fade_sl_pips", 5.0))
+                _tf_tp_pips   = float(getattr(args, "v5_tokyo_fade_tp_pips", 10.0))
+
+                # Measure how far the current close has broken the range
+                _break_above = (float(c) - t_orb_range_high) / PIP_SIZE   # positive if above range_high
+                _break_below = (t_orb_range_low - float(c)) / PIP_SIZE     # positive if below range_low
+
+                _fade_side   = None
+                _break_size  = 0.0
+                if _break_above >= _tf_min_break and _break_above <= _tf_max_break:
+                    _fade_side  = "sell"   # price broke high -> fade back down
+                    _break_size = _break_above
+                elif _break_below >= _tf_min_break and _break_below <= _tf_max_break:
+                    _fade_side  = "buy"    # price broke low -> fade back up
+                    _break_size = _break_below
+
+                if _fade_side is not None:
+                    # Entry at current close (market order with spread)
+                    _tf_entry_px = float(c) - spread_pips * PIP_SIZE if _fade_side == "sell" else float(c) + spread_pips * PIP_SIZE
+                    # SL above/below entry close by fixed sl_pips
+                    _tf_sl_px    = _tf_entry_px + _tf_sl_pips * PIP_SIZE if _fade_side == "sell" else _tf_entry_px - _tf_sl_pips * PIP_SIZE
+                    _tf_sl_dist  = _tf_sl_pips
+                    # TP: reversion target (fixed pips in fade direction)
+                    _tf_tp1_px   = _tf_entry_px - _tf_tp_pips * PIP_SIZE if _fade_side == "sell" else _tf_entry_px + _tf_tp_pips * PIP_SIZE
+
+                    if _tf_sl_dist > 0:
+                        _tf_risk_usd      = float(args.v5_account_size) * float(args.v5_risk_per_trade_pct) / 100.0
+                        _tf_pip_val_per_lot = (PIP_SIZE / float(c)) * 100000.0
+                        _tf_lot_size       = round(_tf_risk_usd / (_tf_sl_dist * _tf_pip_val_per_lot), 2)
+                        _tf_lot_size       = max(0.01, min(_tf_lot_size, float(getattr(args, "v5_rp_max_lot", 20.0))))
+
+                        trade_id_seq += 1
+                        new_pos = OpenPosition(
+                            trade_id=int(trade_id_seq),
+                            side=_fade_side,
+                            entry_mode=5,
+                            entry_session="tokyo",
+                            entry_time=pd.Timestamp(ts),
+                            entry_day=str(day_key),
+                            entry_index_in_day=0,
+                            entry_price=float(_tf_entry_px),
+                            lots_initial=float(_tf_lot_size),
+                            lots_remaining=float(_tf_lot_size),
+                            stop_price=float(_tf_sl_px),
+                            tp1_price=float(_tf_tp1_px),
+                            tp2_price=float(_tf_tp1_px) - (999.0 * PIP_SIZE) if _fade_side == "sell" else float(_tf_tp1_px) + (999.0 * PIP_SIZE),
+                            sl_pips=float(_tf_sl_dist),
+                            tp1_pips=float(_tf_tp_pips),
+                            tp2_pips=999.0,
+                            tp1_filled=False,
+                            realized_pips=0.0,
+                            realized_usd=0.0,
+                            exit_price_last=None,
+                            entry_regime="TOKYO_FADE",
+                            entry_profile="tokyo_fade",
+                            position_type="Single",
+                            tp1_close_fraction=float(getattr(args, "v5_tokyo_fade_tp1_close_pct", 1.0)),
+                            trail_buffer_pips=999.0,
+                            trail_ema_period=9,
+                            trail_armed=False,
+                            trail_start_multiple=999.0,
+                            trail_delay_observed=False,
+                            entry_bar_index=int(i),
+                            entry_signal_mode="tokyo_fade_break",
+                            wr_size_scale=1.0,
+                            conviction_scale=1.0,
+                            peak_mfe_pips=0.0,
+                        )
+                        open_positions.append(new_pos)
+                        t_fade_fired_today = True
+                        add_block(f"t_fade_entry_{_fade_side}")
+                else:
+                    # No valid fade trigger this bar (break too small, too large, or no break)
+                    pass
 
         current_session_key = f"{day_key}:{sess}" if sess in {"london", "ny_overlap", "tokyo"} else None
         if current_session_key != session_tracker_key:
@@ -3617,6 +3831,7 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         _gl_enabled = bool(getattr(args, "v5_gl_enabled", False))
         _gl_min_wins = max(1, int(getattr(args, "v5_gl_min_wins", 1)))
         green_light_active = _gl_enabled and int(day_cfg.get("wins_closed", 0)) >= _gl_min_wins
+        _v39_max_open_hit = False
 
         if open_positions:
             for pos in list(open_positions):
@@ -3626,7 +3841,8 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                 else:
                     cur_mfe = (float(pos.entry_price) - float(l)) / PIP_SIZE
                 pos.peak_mfe_pips = max(float(getattr(pos, "peak_mfe_pips", 0.0)), float(cur_mfe))
-                if bool(args.v5_close_full_risk_at_session_end) and not bool(pos.tp1_filled):
+                if bool(args.v5_close_full_risk_at_session_end) and not bool(pos.tp1_filled) \
+                        and getattr(pos, "entry_regime", "") != "BB_REVERSION":
                     end_ts = _session_end_ts(str(pos.entry_day), str(pos.entry_session))
                     if ts >= end_ts:
                         exit_px = bid if pos.side == "buy" else ask
@@ -3722,10 +3938,186 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                 gl_max_open = int(getattr(args, "v5_gl_max_open", effective_max_open))
                 if gl_max_open > effective_max_open:
                     effective_max_open = gl_max_open
-            if len(open_positions) >= int(effective_max_open):
+            _v39_open_count = sum(1 for _p in open_positions if getattr(_p, "entry_regime", "") != "BB_REVERSION")
+            _v39_max_open_hit = _v39_open_count >= int(effective_max_open)
+            if _v39_max_open_hit:
                 add_block("v5_max_open_cap")
-                continue
 
+        # ── BB Reversion System (independent of V39 filters) ──────────────────────
+        if bool(getattr(args, "bb_rev_enabled", False)) and new_m5_bar and p5 >= int(getattr(args, "bb_rev_period", 20)):
+            _bbr_sess_start = float(getattr(args, "bb_rev_session_start", 6.0))
+            _bbr_sess_end   = float(getattr(args, "bb_rev_session_end",  17.0))
+            _bbr_in_window  = (_bbr_sess_start <= h_now < _bbr_sess_end)
+            _bbr_confirm    = bool(getattr(args, "bb_rev_confirm", False))
+
+            if _bbr_in_window:
+                _bbr_max_daily = int(getattr(args, "bb_rev_max_daily", 3))
+                if bb_rev_day_key != str(day_key):
+                    bb_rev_day_key   = str(day_key)
+                    bb_rev_day_count = 0
+                _bbr_today_count = bb_rev_day_count
+
+                if _bbr_today_count < _bbr_max_daily:
+                    _m5_row      = m5.iloc[p5]
+                    _bb_upper    = float(_m5_row["bb_upper_v5"]) if pd.notna(_m5_row["bb_upper_v5"]) else None
+                    _bb_lower    = float(_m5_row["bb_lower_v5"]) if pd.notna(_m5_row["bb_lower_v5"]) else None
+                    _bb_mid      = float(_m5_row["bb_mid_v5"])   if pd.notna(_m5_row["bb_mid_v5"])   else None
+                    _bb_width    = float(_m5_row["bb_width_v5"]) if pd.notna(_m5_row["bb_width_v5"]) else 0.0
+                    _bb_trend_px = float(_m5_row["bb_trend_ema_v5"]) if pd.notna(_m5_row["bb_trend_ema_v5"]) else None
+                    _bbr_min_w   = float(getattr(args, "bb_rev_min_width_pips", 8.0))
+                    _bbr_require_trend = bool(getattr(args, "bb_rev_require_trend", True))
+
+                    if _bb_upper is not None and _bb_lower is not None and _bb_mid is not None \
+                            and _bb_width >= _bbr_min_w and _bb_trend_px is not None:
+
+                        _bbr_sl_pips   = float(getattr(args, "bb_rev_sl_pips", 8.0))
+                        _bbr_tp_pips   = float(getattr(args, "bb_rev_tp_pips", 15.0))
+                        _bbr_close_pct = float(getattr(args, "bb_rev_tp1_close_pct", 1.0))
+                        _bbr_risk_pct  = float(getattr(args, "bb_rev_risk_pct", 0.75))
+                        _bbr_acct      = float(getattr(args, "bb_rev_account_size", 100000.0))
+                        _bbr_max_lot   = float(getattr(args, "bb_rev_max_lot", 20.0))
+
+                        _bbr_side  = None
+                        _bbr_sig   = None
+
+                        # ── Confirmation mode: check pending signal from previous bar ──
+                        if _bbr_confirm and bb_rev_pending_side is not None:
+                            # Only valid if this is the very next M5 bar after the touch
+                            if p5 == bb_rev_pending_p5 + 1:
+                                _m5_close = float(_m5_row["close"])
+                                _confirmed = False
+                                if bb_rev_pending_side == "buy" and _bb_lower is not None and _m5_close > _bb_lower:
+                                    _confirmed = True
+                                elif bb_rev_pending_side == "sell" and _bb_upper is not None and _m5_close < _bb_upper:
+                                    _confirmed = True
+                                if _confirmed:
+                                    _bbr_side = bb_rev_pending_side
+                                    _bbr_sig  = bb_rev_pending_sig
+                                else:
+                                    add_block("bb_rev_confirm_fail")
+                            else:
+                                add_block("bb_rev_confirm_expired")
+                            # Clear pending regardless
+                            bb_rev_pending_side = None
+                            bb_rev_pending_sig  = None
+                            bb_rev_pending_p5   = -1
+
+                        # ── Detect new band touches ────────────────────────────────
+                        _price_touched_lower = float(l) <= _bb_lower
+                        _price_touched_upper = float(h) >= _bb_upper
+                        _above_trend = float(c) > _bb_trend_px
+                        _below_trend = float(c) < _bb_trend_px
+
+                        _bbr_new_touch_side = None
+                        _bbr_new_touch_sig  = None
+                        if _price_touched_lower and (not _bbr_require_trend or _above_trend):
+                            _bbr_new_touch_side = "buy"
+                            _bbr_new_touch_sig  = "bb_rev_lower"
+                        elif _price_touched_upper and (not _bbr_require_trend or _below_trend):
+                            _bbr_new_touch_side = "sell"
+                            _bbr_new_touch_sig  = "bb_rev_upper"
+
+                        if _bbr_new_touch_side is not None:
+                            if _bbr_confirm:
+                                # Store as pending — entry fires next M5 bar if confirmed
+                                bb_rev_pending_side = _bbr_new_touch_side
+                                bb_rev_pending_sig  = _bbr_new_touch_sig
+                                bb_rev_pending_p5   = p5
+                                add_block("bb_rev_touch_pending")
+                            elif _bbr_side is None:
+                                # Instant entry (no confirmation mode)
+                                _bbr_side = _bbr_new_touch_side
+                                _bbr_sig  = _bbr_new_touch_sig
+
+                        # ── Entry execution (shared by both modes) ─────────────────
+                        if _bbr_side is not None:
+                            _already = any(
+                                getattr(_p, "entry_regime", None) == "BB_REVERSION"
+                                and getattr(_p, "side", None) == _bbr_side
+                                for _p in open_positions
+                            )
+                            if _already:
+                                _bbr_side = None
+                                add_block("bb_rev_already_open")
+
+                        if _bbr_side is not None:
+                            if float(spread_pips) > float(args.max_entry_spread_pips):
+                                add_block("bb_rev_spread_too_high")
+                            else:
+                                _bbr_entry = float(ask) if _bbr_side == "buy" else float(bid)
+                                _bbr_sl_px = _bbr_entry - _bbr_sl_pips * PIP_SIZE if _bbr_side == "buy" \
+                                             else _bbr_entry + _bbr_sl_pips * PIP_SIZE
+                                _bbr_use_midline = bool(getattr(args, "bb_rev_tp_midline", False))
+                                if _bbr_use_midline and _bb_mid is not None:
+                                    _bbr_tp1_px = float(_bb_mid)
+                                    _bbr_tp_pips_actual = abs(_bbr_tp1_px - _bbr_entry) / PIP_SIZE
+                                    if _bbr_tp_pips_actual < 2.0:
+                                        _bbr_side = None
+                                        add_block("bb_rev_midline_too_close")
+                                else:
+                                    _bbr_tp1_px = _bbr_entry + _bbr_tp_pips * PIP_SIZE if _bbr_side == "buy" \
+                                                  else _bbr_entry - _bbr_tp_pips * PIP_SIZE
+                                    _bbr_tp_pips_actual = _bbr_tp_pips
+
+                                if _bbr_side is not None:
+                                    _bbr_tp2_px = _bbr_tp1_px + 999.0 * PIP_SIZE if _bbr_side == "buy" \
+                                                  else _bbr_tp1_px - 999.0 * PIP_SIZE
+                                    _bbr_pip_val = (PIP_SIZE / float(c)) * 100000.0
+                                    _bbr_risk    = _bbr_acct * _bbr_risk_pct / 100.0
+                                    _bbr_lots    = round(_bbr_risk / (_bbr_sl_pips * _bbr_pip_val), 2)
+                                    _bbr_lots    = max(0.01, min(_bbr_lots, _bbr_max_lot))
+
+                                    trade_id_seq += 1
+                                    _bbr_pos = OpenPosition(
+                                        trade_id=int(trade_id_seq),
+                                        side=_bbr_side,
+                                        entry_mode=6,
+                                        entry_session=str(sess) if sess in {"london", "ny_overlap", "tokyo"} else "off_session",
+                                        entry_time=pd.Timestamp(ts),
+                                        entry_day=str(day_key),
+                                        entry_index_in_day=0,
+                                        entry_price=float(_bbr_entry),
+                                        lots_initial=float(_bbr_lots),
+                                        lots_remaining=float(_bbr_lots),
+                                        stop_price=float(_bbr_sl_px),
+                                        tp1_price=float(_bbr_tp1_px),
+                                        tp2_price=float(_bbr_tp2_px),
+                                        sl_pips=float(_bbr_sl_pips),
+                                        tp1_pips=float(_bbr_tp_pips_actual),
+                                        tp2_pips=999.0,
+                                        tp1_filled=False,
+                                        realized_pips=0.0,
+                                        realized_usd=0.0,
+                                        exit_price_last=None,
+                                        entry_regime="BB_REVERSION",
+                                        entry_profile="bb_reversion",
+                                        position_type="Single",
+                                        tp1_close_fraction=float(_bbr_close_pct),
+                                        trail_buffer_pips=999.0,
+                                        trail_ema_period=9,
+                                        trail_armed=False,
+                                        trail_start_multiple=999.0,
+                                        trail_delay_observed=False,
+                                        entry_bar_index=int(i),
+                                        entry_signal_mode=str(_bbr_sig),
+                                        wr_size_scale=1.0,
+                                        conviction_scale=1.0,
+                                        peak_mfe_pips=0.0,
+                                    )
+                                    open_positions.append(_bbr_pos)
+                                    bb_rev_day_count += 1
+                                    add_block(f"bb_rev_entry_{_bbr_side}")
+            else:
+                # Outside session window — clear any pending confirmation
+                if bb_rev_pending_side is not None:
+                    bb_rev_pending_side = None
+                    bb_rev_pending_sig  = None
+                    bb_rev_pending_p5   = -1
+        # ── End BB Reversion System ────────────────────────────────────────────────
+
+        # V39 entry filtering starts here — skip if max open already hit
+        if _v39_max_open_hit:
+            continue
         if not _session_allowed(ts, sess):
             continue
         ts_dt = pd.Timestamp(ts)
@@ -5340,6 +5732,14 @@ def main(argv: list[str]) -> int:
                 "tokyo_orb_range_end_hour": float(getattr(args, "v5_tokyo_orb_range_end_hour", 0.5)),
                 "tokyo_orb_cutoff_hour": float(getattr(args, "v5_tokyo_orb_cutoff_hour", 1.0)),
                 "tokyo_orb_hard_close_hour": float(getattr(args, "v5_tokyo_orb_hard_close_hour", 2.5)),
+                "tokyo_fade_enabled": bool(getattr(args, "v5_tokyo_fade_enabled", False)),
+                "tokyo_fade_min_break_pips": float(getattr(args, "v5_tokyo_fade_min_break_pips", 1.5)),
+                "tokyo_fade_max_break_pips": float(getattr(args, "v5_tokyo_fade_max_break_pips", 20.0)),
+                "tokyo_fade_sl_pips": float(getattr(args, "v5_tokyo_fade_sl_pips", 5.0)),
+                "tokyo_fade_tp_pips": float(getattr(args, "v5_tokyo_fade_tp_pips", 10.0)),
+                "tokyo_fade_cutoff_hour": float(getattr(args, "v5_tokyo_fade_cutoff_hour", 2.0)),
+                "tokyo_fade_hard_close_hour": float(getattr(args, "v5_tokyo_fade_hard_close_hour", 3.0)),
+                "tokyo_fade_tp1_close_pct": float(getattr(args, "v5_tokyo_fade_tp1_close_pct", 1.0)),
                 "dual_mode_enabled": bool(args.v5_dual_mode_enabled),
                 "range_fade_enabled": bool(args.v5_range_fade_enabled),
                 "trend_mode_efficiency_min": float(args.v5_trend_mode_efficiency_min),
@@ -5370,6 +5770,25 @@ def main(argv: list[str]) -> int:
                 "max_duration_days": int(args.swing_max_duration_days),
                 "risk_pct": float(args.swing_risk_pct),
                 "account_size": float(args.swing_account_size),
+            },
+            "bb_reversion": {
+                "enabled": bool(getattr(args, "bb_rev_enabled", False)),
+                "period": int(getattr(args, "bb_rev_period", 20)),
+                "std": float(getattr(args, "bb_rev_std", 2.0)),
+                "trend_ema": int(getattr(args, "bb_rev_trend_ema", 50)),
+                "session_start": float(getattr(args, "bb_rev_session_start", 6.0)),
+                "session_end": float(getattr(args, "bb_rev_session_end", 17.0)),
+                "sl_pips": float(getattr(args, "bb_rev_sl_pips", 8.0)),
+                "tp_pips": float(getattr(args, "bb_rev_tp_pips", 15.0)),
+                "tp1_close_pct": float(getattr(args, "bb_rev_tp1_close_pct", 1.0)),
+                "max_daily": int(getattr(args, "bb_rev_max_daily", 3)),
+                "min_width_pips": float(getattr(args, "bb_rev_min_width_pips", 8.0)),
+                "risk_pct": float(getattr(args, "bb_rev_risk_pct", 0.75)),
+                "account_size": float(getattr(args, "bb_rev_account_size", 100000.0)),
+                "max_lot": float(getattr(args, "bb_rev_max_lot", 20.0)),
+                "require_trend": bool(getattr(args, "bb_rev_require_trend", True)),
+                "tp_midline": bool(getattr(args, "bb_rev_tp_midline", False)),
+                "confirm": bool(getattr(args, "bb_rev_confirm", False)),
             },
         },
         "results": results,
