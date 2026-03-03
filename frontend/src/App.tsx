@@ -3688,11 +3688,16 @@ interface EditedSettings {
   max_open_trades_per_side: number;
   max_zone_entry_open: number;
   max_tiered_pullback_open: number;
-  // Trial #7: M5 trend EMAs
+  // Trial #7: M5 trend EMAs + exit
   t7_m5_trend_ema_fast: number;
   t7_m5_trend_ema_slow: number;
   t7_m5_min_ema_distance_pips: number;
   t7_zone_entry_mode: 'ema_cross' | 'price_vs_ema5';
+  t7_exit_strategy: 'tp_sl_be' | 'ema_scale_runner';
+  t7_m1_exit_ema_fast: number;
+  t7_m1_exit_ema_slow: number;
+  t7_scale_out_pct: number;
+  t7_initial_sl_spread_plus_pips: number;
   // Trial #6: M3 Slope Trend Engine
   t6_m3_slope_lookback: number;
   t6_m3_bb_period: number;
@@ -3938,6 +3943,12 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t7RrWeightAdr = 20;
       let t7RrWeightHtf = 15;
       let t7RrWeightEmaSpread = 10;
+      // Trial #7 exit (tp/sl/be vs ema_scale_runner)
+      let t7ExitStrategy: 'tp_sl_be' | 'ema_scale_runner' = 'tp_sl_be';
+      let t7M1ExitEmaFast = 9;
+      let t7M1ExitEmaSlow = 21;
+      let t7ScaleOutPct = 50;
+      let t7InitialSlSpreadPlusPips = 5.0;
       let t8UseDailyLevelFilter = false;
       let t8DailyLevelBufferPips = 3.0;
       let t8DailyLevelBreakoutCandlesRequired = 2;
@@ -4164,6 +4175,12 @@ function PresetsPage({ profile }: { profile: Profile }) {
             }
             tierEmaPeriods = sanitizeTrial7TierPeriods(pol.tier_ema_periods as number[] | undefined);
             policySlPips = (pol.sl_pips as number) ?? 20;
+            const es7 = (pol.exit_strategy as string) ?? 'tp_sl_be';
+            t7ExitStrategy = (es7 === 'ema_scale_runner' ? 'ema_scale_runner' : 'tp_sl_be');
+            t7M1ExitEmaFast = (pol.m1_exit_ema_fast as number) ?? 9;
+            t7M1ExitEmaSlow = (pol.m1_exit_ema_slow as number) ?? 21;
+            t7ScaleOutPct = (pol.scale_out_pct as number) ?? 50;
+            t7InitialSlSpreadPlusPips = (pol.initial_sl_spread_plus_pips as number) ?? 5.0;
             t7TrendExhaustionEnabled = (pol.trend_exhaustion_enabled as boolean) ?? false;
             t7TrendExhaustionMode = (pol.trend_exhaustion_mode as 'global' | 'session' | 'session_and_side') ?? 'session_and_side';
             t7TrendExhaustionUseCurrentPrice = (pol.trend_exhaustion_use_current_price as boolean) ?? true;
@@ -4372,6 +4389,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t7_m5_trend_ema_slow: t7M5TrendEmaSlow,
         t7_m5_min_ema_distance_pips: t7M5MinEmaDistancePips,
         t7_zone_entry_mode: t7ZoneEntryMode,
+        t7_exit_strategy: t7ExitStrategy,
+        t7_m1_exit_ema_fast: t7M1ExitEmaFast,
+        t7_m1_exit_ema_slow: t7M1ExitEmaSlow,
+        t7_scale_out_pct: t7ScaleOutPct,
+        t7_initial_sl_spread_plus_pips: t7InitialSlSpreadPlusPips,
         // Trial #4: Tiered ATR Filter
         tiered_atr_filter_enabled: tieredAtrFilterEnabled,
         tiered_atr_block_below_pips: tieredAtrBlockBelowPips,
@@ -4632,6 +4654,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.m5_min_ema_distance_pips = Math.max(0, editedSettings.t7_m5_min_ema_distance_pips);
           updates.zone_entry_mode = editedSettings.t7_zone_entry_mode;
           updates.zone_entry_enabled = editedSettings.zone_entry_enabled;
+          updates.exit_strategy = editedSettings.t7_exit_strategy;
+          updates.m1_exit_ema_fast = Math.max(2, Math.min(50, editedSettings.t7_m1_exit_ema_fast));
+          updates.m1_exit_ema_slow = Math.max(3, Math.min(100, editedSettings.t7_m1_exit_ema_slow));
+          updates.scale_out_pct = Math.max(10, Math.min(90, editedSettings.t7_scale_out_pct));
+          updates.initial_sl_spread_plus_pips = Math.max(0, editedSettings.t7_initial_sl_spread_plus_pips);
           updates.tier_ema_periods = sanitizeTrial7TierPeriods(editedSettings.tier_ema_periods);
           updates.ema_zone_filter_enabled = editedSettings.ema_zone_filter_enabled;
           updates.ema_zone_filter_lookback_bars = Math.max(1, editedSettings.ema_zone_filter_lookback_bars);
@@ -6795,6 +6822,75 @@ function PresetsPage({ profile }: { profile: Profile }) {
                           onChange={(e) => setEditedSettings({ ...editedSettings, t7_m5_trend_ema_slow: parseInt(e.target.value) || 21 })}
                           style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
                         />
+                      </div>
+                    </div>
+                    )}
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                    <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6, marginTop: 12 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                        Trial #7 Exit Strategy
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+                        <div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Mode</div>
+                          <select
+                            value={editedSettings.t7_exit_strategy}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t7_exit_strategy: (e.target.value as 'tp_sl_be' | 'ema_scale_runner') })}
+                            style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          >
+                            <option value="tp_sl_be">TP/SL + (optional) BE</option>
+                            <option value="ema_scale_runner">EMA scale-out + runner (H1 breakout style)</option>
+                          </select>
+                        </div>
+                        {editedSettings.t7_exit_strategy === 'ema_scale_runner' && (
+                          <>
+                            <div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>M1 Exit EMAs (fast/slow)</div>
+                              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                <input
+                                  type="number"
+                                  step="1"
+                                  min="2"
+                                  value={editedSettings.t7_m1_exit_ema_fast}
+                                  onChange={(e) => setEditedSettings({ ...editedSettings, t7_m1_exit_ema_fast: parseInt(e.target.value) || 9 })}
+                                  style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                                />
+                                <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>/</span>
+                                <input
+                                  type="number"
+                                  step="1"
+                                  min="3"
+                                  value={editedSettings.t7_m1_exit_ema_slow}
+                                  onChange={(e) => setEditedSettings({ ...editedSettings, t7_m1_exit_ema_slow: parseInt(e.target.value) || 21 })}
+                                  style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Scale-out %</div>
+                              <input
+                                type="number"
+                                step="5"
+                                min="10"
+                                max="90"
+                                value={editedSettings.t7_scale_out_pct}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_scale_out_pct: parseFloat(e.target.value) || 50 })}
+                                style={{ width: '100%', padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                              />
+                            </div>
+                            <div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Initial SL: spread + N pips</div>
+                              <input
+                                type="number"
+                                step="0.5"
+                                min="0"
+                                value={editedSettings.t7_initial_sl_spread_plus_pips}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t7_initial_sl_spread_plus_pips: parseFloat(e.target.value) || 5 })}
+                                style={{ width: '100%', padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                              />
+                            </div>
+                          </>
+                        )}
                       </div>
                     </div>
                     )}

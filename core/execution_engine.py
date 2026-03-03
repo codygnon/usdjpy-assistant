@@ -5275,8 +5275,15 @@ def execute_kt_cg_trial_7_policy_demo_only(
         )
 
     entry_price = tick.ask if side == "buy" else tick.bid
-    # Trial #8 ema_scale_runner: no broker TP, SL = spread + initial_sl_spread_plus_pips (H1 breakout style)
-    if policy_type == "kt_cg_trial_8" and getattr(policy, "exit_strategy", None) == "ema_scale_runner":
+    # Trial #7 / Trial #8 ema_scale_runner: no broker TP, SL = spread + initial_sl_spread_plus_pips (H1 breakout style)
+    # For Trial #7, default exit_strategy is tp_sl_be; for Trial #8, default is tp1_be_trail.
+    if policy_type in ("kt_cg_trial_7", "kt_cg_trial_8"):
+        default_exit = "tp1_be_trail" if policy_type == "kt_cg_trial_8" else "tp_sl_be"
+        exit_strategy = str(getattr(policy, "exit_strategy", default_exit) or default_exit)
+    else:
+        exit_strategy = ""
+
+    if policy_type in ("kt_cg_trial_7", "kt_cg_trial_8") and exit_strategy == "ema_scale_runner":
         pip = float(profile.pip_size)
         current_spread = tick.ask - tick.bid
         initial_sl_pips = float(getattr(policy, "initial_sl_spread_plus_pips", 5.0))
@@ -5381,7 +5388,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
 
     if placed:
         tier_info = f" tier_{tiered_pullback_tier}" if tiered_pullback_tier else ""
-        if policy_type == "kt_cg_trial_8" and getattr(policy, "exit_strategy", None) == "ema_scale_runner":
+        # When using ema_scale_runner (Trial #7 or #8), log SL style instead of TP.
+        if policy_type in ("kt_cg_trial_7", "kt_cg_trial_8") and str(getattr(policy, "exit_strategy", "")) == "ema_scale_runner":
             print(
                 f"[{profile.profile_name}] TRADE PLACED: {policy_type}:{trigger_type}{tier_info} "
                 f"| SL=spread+pips (ema_scale_runner), no TP | {'; '.join(eval_reasons)}"
@@ -5394,7 +5402,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
             )
 
     extra = {}
-    if not (policy_type == "kt_cg_trial_8" and getattr(policy, "exit_strategy", None) == "ema_scale_runner"):
+    # Only attach TP metadata when we are actually using TP-based exits (i.e. not ema_scale_runner).
+    if not (policy_type in ("kt_cg_trial_7", "kt_cg_trial_8") and str(getattr(policy, "exit_strategy", "")) == "ema_scale_runner"):
         extra = {"tp_pips_effective": float(effective_tp_pips), "tp_pips_base": float(original_tp_pips)}
     return _result_payload(
         ExecutionDecision(

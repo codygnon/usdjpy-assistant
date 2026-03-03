@@ -1560,6 +1560,12 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "tp_pips": 4.0,
                     "sl_pips": 20.0,
                     "confirm_bars": 1,
+                    # Exit strategy: default to classic TP/SL/BE; ema_scale_runner can be enabled from View Settings.
+                    "exit_strategy": "tp_sl_be",
+                    "m1_exit_ema_fast": 9,
+                    "m1_exit_ema_slow": 21,
+                    "scale_out_pct": 50.0,
+                    "initial_sl_spread_plus_pips": 5.0,
                     # Spread-Aware Breakeven (kept for compatibility)
                     "spread_aware_be_enabled": False,
                     "spread_aware_be_trigger_mode": "fixed_pips",

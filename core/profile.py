@@ -663,6 +663,19 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
     sl_pips: Optional[float] = 20.0
     confirm_bars: int = 1
 
+    # Exit strategy:
+    # - tp_sl_be: fixed TP/SL using tp_pips/sl_pips (+ optional spread-aware BE)
+    # - ema_scale_runner: H1 breakout style (scale-out on EMA fast, runner on EMA slow; no TP, no BE moves)
+    exit_strategy: Literal["tp_sl_be", "ema_scale_runner"] = "tp_sl_be"
+
+    # For ema_scale_runner only (Trial #7 + #8 share the same semantics):
+    # - Initial SL at entry = current spread + initial_sl_spread_plus_pips
+    # - Scale-out/runner exits driven by M1 EMAs in trade management
+    m1_exit_ema_fast: int = 9
+    m1_exit_ema_slow: int = 21
+    scale_out_pct: float = 50.0
+    initial_sl_spread_plus_pips: float = 5.0
+
     # Spread-Aware Breakeven Stop Loss
     spread_aware_be_enabled: bool = False
     spread_aware_be_trigger_mode: Literal["fixed_pips", "spread_relative"] = "fixed_pips"

@@ -253,10 +253,20 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                     pass
             break
 
+    # Find Trial #7 policy (if any) that uses ema_scale_runner exit (H1 breakout style).
+    t7_ema_policy = None
+    for pol in profile.execution.policies:
+        if getattr(pol, "type", None) == "kt_cg_trial_7" and getattr(pol, "enabled", True):
+            es7 = str(getattr(pol, "exit_strategy", "tp_sl_be") or "tp_sl_be")
+            if es7 == "ema_scale_runner":
+                t7_ema_policy = pol
+                break
+
     has_simple_be = breakeven and getattr(breakeven, "enabled", False)
     has_scaled = target and getattr(target, "mode", None) == "scaled" and getattr(target, "tp1_pips", None)
     has_t8_trail = t8_policy is not None
-    if not has_simple_be and not has_scaled and t4_spread_be is None and up_policy is None and not has_t8_trail:
+    has_t7_ema = t7_ema_policy is not None
+    if not has_simple_be and not has_scaled and t4_spread_be is None and up_policy is None and not has_t7_ema and not has_t8_trail:
         return
     try:
         open_positions = adapter.get_open_positions(profile.symbol)
@@ -373,7 +383,64 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                         adapter.update_position_stop_loss(position_id, profile.symbol, entry)
                         store.update_trade(trade_id, {"breakeven_applied": 1})
                         print(f"[{profile.profile_name}] breakeven applied position {position_id}")
-        # 2) Uncle Parsh H1 Breakout trade management (EMA exits; no BE moves)
+
+        # 2) Trial #7 ema_scale_runner (H1 breakout style; no TP/BE moves). Run before other exits.
+        if (
+            t7_ema_policy is not None
+            and entry_type in ("zone_entry", "tiered_pullback")
+        ):
+            trade_policy_type = trade_id.split(":", 1)[0] if ":" in trade_id else ""
+            if trade_policy_type == "kt_cg_trial_7" and str(getattr(t7_ema_policy, "exit_strategy", "tp_sl_be")) == "ema_scale_runner":
+                try:
+                    from core.indicators import ema as ema_fn
+                    ema_fast_p = int(getattr(t7_ema_policy, "m1_exit_ema_fast", 9))
+                    ema_slow_p = int(getattr(t7_ema_policy, "m1_exit_ema_slow", 21))
+                    scale_pct = float(getattr(t7_ema_policy, "scale_out_pct", 50.0))
+                    m1_df_t7 = adapter.get_bars(profile.symbol, "M1", 200)
+                    if m1_df_t7 is not None and not m1_df_t7.empty and len(m1_df_t7) >= max(ema_fast_p, ema_slow_p) + 2:
+                        m1_close_t7 = m1_df_t7["close"].astype(float)
+                        ema_fast = ema_fn(m1_close_t7, ema_fast_p)
+                        ema_slow = ema_fn(m1_close_t7, ema_slow_p)
+                        if not ema_fast.empty and not ema_slow.empty and pd.notna(ema_fast.iloc[-1]) and pd.notna(ema_slow.iloc[-1]):
+                            last_close = float(m1_close_t7.iloc[-1])
+                            last_ema_fast = float(ema_fast.iloc[-1])
+                            last_ema_slow = float(ema_slow.iloc[-1])
+                            tp1_done = trade_row.get("tp1_partial_done") or 0
+                            if isinstance(pos, dict):
+                                current_units = pos.get("currentUnits") or 0
+                                current_lots = abs(int(current_units)) / 100_000.0
+                            else:
+                                current_lots = float(getattr(pos, "volume", 0) or 0)
+                            position_type = 1 if side == "sell" else 0
+                            if not tp1_done:
+                                wrong_side_fast = (side == "buy" and last_close < last_ema_fast) or (side == "sell" and last_close > last_ema_fast)
+                                if wrong_side_fast and current_lots > 0:
+                                    close_lots = current_lots * (scale_pct / 100.0)
+                                    if close_lots > 0:
+                                        adapter.close_position(
+                                            ticket=position_id,
+                                            symbol=profile.symbol,
+                                            volume=close_lots,
+                                            position_type=position_type,
+                                        )
+                                        store.update_trade(trade_id, {"tp1_partial_done": 1})
+                                        print(f"[{profile.profile_name}] T7 ema_scale_runner scale-out: pos {position_id} ({scale_pct:.0f}%) wrong side EMA{ema_fast_p}")
+                            else:
+                                wrong_side_slow = (side == "buy" and last_close < last_ema_slow) or (side == "sell" and last_close > last_ema_slow)
+                                if wrong_side_slow and current_lots > 0:
+                                    adapter.close_position(
+                                        ticket=position_id,
+                                        symbol=profile.symbol,
+                                        volume=current_lots,
+                                        position_type=position_type,
+                                    )
+                                    print(f"[{profile.profile_name}] T7 ema_scale_runner runner closed: pos {position_id} wrong side EMA{ema_slow_p}")
+                except Exception as e:
+                    print(f"[{profile.profile_name}] T7 ema_scale_runner exit error pos {position_id}: {e}")
+                continue
+
+        # 3) Uncle Parsh H1 Breakout trade management (EMA exits; no BE moves)
+        if up_policy is not None and entry_type in ("power_break", "sniper"):
         if up_policy is not None and entry_type in ("power_break", "sniper"):
             try:
                 from core.indicators import ema as ema_fn
