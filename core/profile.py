@@ -881,7 +881,15 @@ class ExecutionPolicyKtCgTrial8(BaseModel):
     daily_level_buffer_pips: float = 3.0
     daily_level_breakout_candles_required: int = 2
 
-    # Trailing exit (TP1 partial + BE + M1 EMA trail)
+    # Exit strategy: tp1_be_trail (TP1 pips + BE + M1 EMA trail) or ema_scale_runner (H1 breakout style: scale-out on EMA9 wrong side, runner on EMA21 wrong side; no TP, no BE)
+    exit_strategy: Literal["tp1_be_trail", "ema_scale_runner"] = "tp1_be_trail"
+    # For ema_scale_runner only:
+    m1_exit_ema_fast: int = 9
+    m1_exit_ema_slow: int = 21
+    scale_out_pct: float = 50.0
+    initial_sl_spread_plus_pips: float = 5.0  # SL at entry = spread + this (no broker TP)
+
+    # Trailing exit (TP1 partial + BE + M1 EMA trail) — used when exit_strategy == "tp1_be_trail"
     trail_after_tp1: bool = False
     tp1_pips: float = 4.0
     tp1_close_pct: float = 50.0

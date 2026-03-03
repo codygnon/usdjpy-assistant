@@ -3731,7 +3731,13 @@ interface EditedSettings {
   t8_use_daily_level_filter: boolean;
   t8_daily_level_buffer_pips: number;
   t8_daily_level_breakout_candles_required: number;
-  // Trial #8: Trailing exit
+  // Trial #8: Exit strategy (tp1_be_trail = TP1 + BE + M1 EMA trail; ema_scale_runner = H1 breakout style)
+  t8_exit_strategy: 'tp1_be_trail' | 'ema_scale_runner';
+  t8_m1_exit_ema_fast: number;
+  t8_m1_exit_ema_slow: number;
+  t8_scale_out_pct: number;
+  t8_initial_sl_spread_plus_pips: number;
+  // Trial #8: Trailing exit (when exit_strategy === 'tp1_be_trail')
   t8_trail_after_tp1: boolean;
   t8_tp1_pips: number;
   t8_tp1_close_pct: number;
@@ -3935,6 +3941,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t8UseDailyLevelFilter = false;
       let t8DailyLevelBufferPips = 3.0;
       let t8DailyLevelBreakoutCandlesRequired = 2;
+      let t8ExitStrategy: 'tp1_be_trail' | 'ema_scale_runner' = 'tp1_be_trail';
+      let t8M1ExitEmaFast = 9;
+      let t8M1ExitEmaSlow = 21;
+      let t8ScaleOutPct = 50;
+      let t8InitialSlSpreadPlusPips = 5.0;
       let t8TrailAfterTp1 = false;
       let t8Tp1Pips = 4.0;
       let t8Tp1ClosePct = 50;
@@ -4256,6 +4267,12 @@ function PresetsPage({ profile }: { profile: Profile }) {
             t8UseDailyLevelFilter = (pol.use_daily_level_filter as boolean) ?? false;
             t8DailyLevelBufferPips = (pol.daily_level_buffer_pips as number) ?? 3.0;
             t8DailyLevelBreakoutCandlesRequired = (pol.daily_level_breakout_candles_required as number) ?? 2;
+            const es = (pol.exit_strategy as string) ?? 'tp1_be_trail';
+            t8ExitStrategy = (es === 'ema_scale_runner' ? 'ema_scale_runner' : 'tp1_be_trail');
+            t8M1ExitEmaFast = (pol.m1_exit_ema_fast as number) ?? 9;
+            t8M1ExitEmaSlow = (pol.m1_exit_ema_slow as number) ?? 21;
+            t8ScaleOutPct = (pol.scale_out_pct as number) ?? 50;
+            t8InitialSlSpreadPlusPips = (pol.initial_sl_spread_plus_pips as number) ?? 5.0;
             t8TrailAfterTp1 = (pol.trail_after_tp1 as boolean) ?? false;
             t8Tp1Pips = (pol.tp1_pips as number) ?? 4.0;
             t8Tp1ClosePct = (pol.tp1_close_pct as number) ?? 50;
@@ -4435,6 +4452,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t8_use_daily_level_filter: t8UseDailyLevelFilter,
         t8_daily_level_buffer_pips: t8DailyLevelBufferPips,
         t8_daily_level_breakout_candles_required: t8DailyLevelBreakoutCandlesRequired,
+        t8_exit_strategy: ((tempSettings?.t8_exit_strategy ?? t8ExitStrategy) === 'ema_scale_runner' ? 'ema_scale_runner' : 'tp1_be_trail'),
+        t8_m1_exit_ema_fast: tempSettings?.t8_m1_exit_ema_fast ?? t8M1ExitEmaFast,
+        t8_m1_exit_ema_slow: tempSettings?.t8_m1_exit_ema_slow ?? t8M1ExitEmaSlow,
+        t8_scale_out_pct: tempSettings?.t8_scale_out_pct ?? t8ScaleOutPct,
+        t8_initial_sl_spread_plus_pips: tempSettings?.t8_initial_sl_spread_plus_pips ?? t8InitialSlSpreadPlusPips,
         t8_trail_after_tp1: t8TrailAfterTp1,
         t8_tp1_pips: tempSettings?.t8_tp1_pips ?? t8Tp1Pips,
         t8_tp1_close_pct: tempSettings?.t8_tp1_close_pct ?? t8Tp1ClosePct,
@@ -4735,6 +4757,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.use_daily_level_filter = editedSettings.t8_use_daily_level_filter;
           updates.daily_level_buffer_pips = Math.max(0, editedSettings.t8_daily_level_buffer_pips);
           updates.daily_level_breakout_candles_required = Math.max(1, editedSettings.t8_daily_level_breakout_candles_required);
+          updates.exit_strategy = editedSettings.t8_exit_strategy;
+          updates.m1_exit_ema_fast = Math.max(2, Math.min(50, editedSettings.t8_m1_exit_ema_fast));
+          updates.m1_exit_ema_slow = Math.max(3, Math.min(100, editedSettings.t8_m1_exit_ema_slow));
+          updates.scale_out_pct = Math.max(10, Math.min(90, editedSettings.t8_scale_out_pct));
+          updates.initial_sl_spread_plus_pips = Math.max(0, editedSettings.t8_initial_sl_spread_plus_pips);
           updates.trail_after_tp1 = editedSettings.t8_trail_after_tp1;
           updates.tp1_pips = Math.max(0.5, editedSettings.t8_tp1_pips);
           updates.tp1_close_pct = Math.max(10, Math.min(100, editedSettings.t8_tp1_close_pct));
@@ -4845,6 +4872,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
           settings.m1_t4_zone_entry_ema_slow = editedSettings.m1_t4_zone_entry_ema_slow;
         }
         if (hasTrial8) {
+          settings.t8_exit_strategy = editedSettings.t8_exit_strategy;
+          settings.t8_m1_exit_ema_fast = editedSettings.t8_m1_exit_ema_fast;
+          settings.t8_m1_exit_ema_slow = editedSettings.t8_m1_exit_ema_slow;
+          settings.t8_scale_out_pct = editedSettings.t8_scale_out_pct;
+          settings.t8_initial_sl_spread_plus_pips = editedSettings.t8_initial_sl_spread_plus_pips;
           settings.t8_tp1_pips = editedSettings.t8_tp1_pips;
           settings.t8_tp1_close_pct = editedSettings.t8_tp1_close_pct;
           settings.t8_be_spread_plus_pips = editedSettings.t8_be_spread_plus_pips;
@@ -5508,11 +5540,56 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
                       Blocks longs near watched high and shorts near watched low; allows after 2 consecutive closed M5 beyond level. Levels roll to today&apos;s high/low after breakout.
                     </div>
-                    {/* Trial #8: Trailing Exit */}
+                    {/* Trial #8: Exit Strategy */}
                     <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                       <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                        Trailing Exit (TP1 partial + BE + M1 EMA trail for zone_entry / tiered_pullback)
+                        Exit Strategy
                       </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12, marginBottom: 12 }}>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Mode</div>
+                          <select
+                            value={editedSettings.t8_exit_strategy}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t8_exit_strategy: (e.target.value as 'tp1_be_trail' | 'ema_scale_runner') })}
+                            style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          >
+                            <option value="tp1_be_trail">TP1 + BE + M1 EMA trail</option>
+                            <option value="ema_scale_runner">EMA scale-out + runner (H1 breakout style)</option>
+                          </select>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Scale-out on wrong side EMA fast, full close on wrong side EMA slow</div>
+                        </div>
+                      </div>
+                      {editedSettings.t8_exit_strategy === 'ema_scale_runner' && (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 12 }}>
+                          <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>EMA fast (scale-out)</div>
+                            <input type="number" step="1" min="2" max="50" value={editedSettings.t8_m1_exit_ema_fast}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, t8_m1_exit_ema_fast: parseInt(e.target.value) || 9 })}
+                              style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                          </div>
+                          <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>EMA slow (runner)</div>
+                            <input type="number" step="1" min="3" max="100" value={editedSettings.t8_m1_exit_ema_slow}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, t8_m1_exit_ema_slow: parseInt(e.target.value) || 21 })}
+                              style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                          </div>
+                          <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Scale-out %</div>
+                            <input type="number" step="5" min="10" max="90" value={editedSettings.t8_scale_out_pct}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, t8_scale_out_pct: parseInt(e.target.value) || 50 })}
+                              style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                          </div>
+                          <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Initial SL: spread + pips</div>
+                            <input type="number" step="0.5" min="0" max="20" value={editedSettings.t8_initial_sl_spread_plus_pips}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, t8_initial_sl_spread_plus_pips: parseFloat(e.target.value) || 5 })}
+                              style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                          </div>
+                        </div>
+                      )}
+                      {editedSettings.t8_exit_strategy === 'tp1_be_trail' && (
+                      <>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>Trailing Exit (TP1 partial + BE + M1 EMA trail)</div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                         <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                           <input type="checkbox" checked={editedSettings.t8_trail_after_tp1}
@@ -5555,6 +5632,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
                         Close % at TP1, move SL to entry + spread + buffer; then trail runner on M1 EMA. Close runner when M1 close crosses to wrong side of EMA.
                       </div>
+                      )}
+                      </>
                       )}
                     </div>
                   </div>

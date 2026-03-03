@@ -223,22 +223,28 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                 pass
             break
 
-    # Find Trial #8 policy for trailing exit (TP1 + BE + M1 EMA trail)
+    # Find Trial #8 policy for trailing exit (TP1 + BE + M1 EMA trail) or ema_scale_runner (H1 breakout style)
     t8_policy = None
     t8_tm_overrides: dict = {}
     for pol in profile.execution.policies:
         if getattr(pol, "type", None) == "kt_cg_trial_8" and getattr(pol, "enabled", True):
-            if getattr(pol, "trail_after_tp1", False):
+            t8_exit_strategy = getattr(pol, "exit_strategy", "tp1_be_trail")
+            if getattr(pol, "trail_after_tp1", False) or t8_exit_strategy == "ema_scale_runner":
                 t8_policy = pol
                 try:
                     _t8_sp = Path("runtime") / profile.profile_name / "runtime_state.json"
                     if _t8_sp.exists():
                         _t8_sd = json.loads(_t8_sp.read_text(encoding="utf-8"))
                         for _fld, _sk in [
+                            ("exit_strategy", "temp_t8_exit_strategy"),
                             ("tp1_pips", "temp_t8_tp1_pips"),
                             ("tp1_close_pct", "temp_t8_tp1_close_pct"),
                             ("be_spread_plus_pips", "temp_t8_be_spread_plus_pips"),
                             ("trail_ema_period", "temp_t8_trail_ema_period"),
+                            ("m1_exit_ema_fast", "temp_t8_m1_exit_ema_fast"),
+                            ("m1_exit_ema_slow", "temp_t8_m1_exit_ema_slow"),
+                            ("scale_out_pct", "temp_t8_scale_out_pct"),
+                            ("initial_sl_spread_plus_pips", "temp_t8_initial_sl_spread_plus_pips"),
                         ]:
                             _v = _t8_sd.get(_sk)
                             if _v is not None:
@@ -426,8 +432,60 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
             except Exception as e:
                 print(f"[{profile.profile_name}] UP EMA exit error pos {position_id}: {e}")
 
-        # 2b) Trial #8 trailing exit (TP1 partial + BE + M1 EMA trail) for zone_entry / tiered_pullback
+        # 2b) Trial #8: ema_scale_runner (H1 breakout style) or tp1_be_trail (TP1 + BE + M1 EMA trail)
         elif t8_policy is not None and entry_type in ("zone_entry", "tiered_pullback"):
+            t8_exit_strategy = t8_tm_overrides.get("exit_strategy", getattr(t8_policy, "exit_strategy", "tp1_be_trail"))
+
+            if t8_exit_strategy == "ema_scale_runner":
+                # H1 breakout style: scale-out on M1 close wrong side of EMA fast, runner on wrong side of EMA slow; no TP, no BE
+                try:
+                    from core.indicators import ema as ema_fn
+                    ema_fast_p = int(t8_tm_overrides.get("m1_exit_ema_fast", getattr(t8_policy, "m1_exit_ema_fast", 9)))
+                    ema_slow_p = int(t8_tm_overrides.get("m1_exit_ema_slow", getattr(t8_policy, "m1_exit_ema_slow", 21)))
+                    scale_pct = float(t8_tm_overrides.get("scale_out_pct", getattr(t8_policy, "scale_out_pct", 50.0)))
+                    m1_df_t8 = adapter.get_bars(profile.symbol, "M1", 200)
+                    if m1_df_t8 is not None and not m1_df_t8.empty and len(m1_df_t8) >= max(ema_fast_p, ema_slow_p) + 2:
+                        m1_close_t8 = m1_df_t8["close"].astype(float)
+                        ema_fast = ema_fn(m1_close_t8, ema_fast_p)
+                        ema_slow = ema_fn(m1_close_t8, ema_slow_p)
+                        if not ema_fast.empty and not ema_slow.empty and pd.notna(ema_fast.iloc[-1]) and pd.notna(ema_slow.iloc[-1]):
+                            last_close = float(m1_close_t8.iloc[-1])
+                            last_ema_fast = float(ema_fast.iloc[-1])
+                            last_ema_slow = float(ema_slow.iloc[-1])
+                            tp1_done = trade_row.get("tp1_partial_done") or 0
+                            if isinstance(pos, dict):
+                                current_units = pos.get("currentUnits") or 0
+                                current_lots = abs(int(current_units)) / 100_000.0
+                            else:
+                                current_lots = float(getattr(pos, "volume", 0) or 0)
+                            position_type = 1 if side == "sell" else 0
+                            if not tp1_done:
+                                wrong_side_ema9 = (side == "buy" and last_close < last_ema_fast) or (side == "sell" and last_close > last_ema_fast)
+                                if wrong_side_ema9 and current_lots > 0:
+                                    close_lots = current_lots * (scale_pct / 100.0)
+                                    if close_lots > 0:
+                                        adapter.close_position(
+                                            ticket=position_id,
+                                            symbol=profile.symbol,
+                                            volume=close_lots,
+                                            position_type=position_type,
+                                        )
+                                        store.update_trade(trade_id, {"tp1_partial_done": 1})
+                                        print(f"[{profile.profile_name}] T8 ema_scale_runner scale-out: pos {position_id} ({scale_pct:.0f}%) wrong side EMA{ema_fast_p}")
+                            else:
+                                wrong_side_ema21 = (side == "buy" and last_close < last_ema_slow) or (side == "sell" and last_close > last_ema_slow)
+                                if wrong_side_ema21 and current_lots > 0:
+                                    adapter.close_position(
+                                        ticket=position_id,
+                                        symbol=profile.symbol,
+                                        volume=current_lots,
+                                        position_type=position_type,
+                                    )
+                                    print(f"[{profile.profile_name}] T8 ema_scale_runner runner closed: pos {position_id} wrong side EMA{ema_slow_p}")
+                except Exception as e:
+                    print(f"[{profile.profile_name}] T8 ema_scale_runner exit error pos {position_id}: {e}")
+                continue
+
             tp1_done = trade_row.get("tp1_partial_done") or 0
             t8_tp1_pips = t8_tm_overrides.get("tp1_pips", t8_policy.tp1_pips)
             t8_tp1_pct = t8_tm_overrides.get("tp1_close_pct", t8_policy.tp1_close_pct)

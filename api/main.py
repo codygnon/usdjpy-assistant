@@ -414,11 +414,16 @@ class TempEmaSettingsUpdate(BaseModel):
     # Uncle Parsh H1 Breakout: Discipline
     up_max_spread_pips: Optional[float] = None
 
-    # Trial #8 trailing exit
+    # Trial #8 exit strategy
+    t8_exit_strategy: Optional[str] = None
     t8_tp1_pips: Optional[float] = None
     t8_tp1_close_pct: Optional[float] = None
     t8_be_spread_plus_pips: Optional[float] = None
     t8_trail_ema_period: Optional[int] = None
+    t8_m1_exit_ema_fast: Optional[int] = None
+    t8_m1_exit_ema_slow: Optional[int] = None
+    t8_scale_out_pct: Optional[float] = None
+    t8_initial_sl_spread_plus_pips: Optional[float] = None
 
 
 class ApplyPresetRequest(BaseModel):
@@ -747,10 +752,15 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
         "up_be_spread_plus_pips": state.temp_up_be_spread_plus_pips,
         "up_trail_ema_period": state.temp_up_trail_ema_period,
         "up_max_spread_pips": state.temp_up_max_spread_pips,
+        "t8_exit_strategy": state.temp_t8_exit_strategy,
         "t8_tp1_pips": state.temp_t8_tp1_pips,
         "t8_tp1_close_pct": state.temp_t8_tp1_close_pct,
         "t8_be_spread_plus_pips": state.temp_t8_be_spread_plus_pips,
         "t8_trail_ema_period": state.temp_t8_trail_ema_period,
+        "t8_m1_exit_ema_fast": state.temp_t8_m1_exit_ema_fast,
+        "t8_m1_exit_ema_slow": state.temp_t8_m1_exit_ema_slow,
+        "t8_scale_out_pct": state.temp_t8_scale_out_pct,
+        "t8_initial_sl_spread_plus_pips": state.temp_t8_initial_sl_spread_plus_pips,
     }
 
 
@@ -804,10 +814,15 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
         temp_up_be_spread_plus_pips=req.up_be_spread_plus_pips,
         temp_up_trail_ema_period=req.up_trail_ema_period,
         temp_up_max_spread_pips=req.up_max_spread_pips,
+        temp_t8_exit_strategy=req.t8_exit_strategy,
         temp_t8_tp1_pips=req.t8_tp1_pips,
         temp_t8_tp1_close_pct=req.t8_tp1_close_pct,
         temp_t8_be_spread_plus_pips=req.t8_be_spread_plus_pips,
         temp_t8_trail_ema_period=req.t8_trail_ema_period,
+        temp_t8_m1_exit_ema_fast=req.t8_m1_exit_ema_fast,
+        temp_t8_m1_exit_ema_slow=req.t8_m1_exit_ema_slow,
+        temp_t8_scale_out_pct=req.t8_scale_out_pct,
+        temp_t8_initial_sl_spread_plus_pips=req.t8_initial_sl_spread_plus_pips,
     )
     save_state(state_path, new_state)
     return {"status": "saved"}

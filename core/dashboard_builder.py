@@ -32,6 +32,7 @@ from core.dashboard_reporters import (
     report_trial7_adaptive_tp,
     report_trial7_reversal_risk,
     report_open_trade_cap_by_entry_type,
+    report_t8_exit_strategy,
     report_daily_level_filter,
     report_h1_levels,
     report_m5_trend_alignment,
@@ -371,6 +372,7 @@ def build_dashboard_filters(
                 pass
 
     elif policy_type == "kt_cg_trial_8" and policy is not None:
+        filters.append(report_t8_exit_strategy(policy))
         m5_df = data_by_tf.get("M5")
         filters.append(report_trial7_m5_ema_distance_gate(policy, m5_df, pip_size))
         # No EMA zone slope filter for Trial #8 (disabled by design)

@@ -77,11 +77,16 @@ class RuntimeState:
     # Uncle Parsh H1 Breakout: Discipline overrides
     temp_up_max_spread_pips: Optional[float] = None
 
-    # Trial #8 trailing exit temp overrides
+    # Trial #8 exit strategy temp overrides
+    temp_t8_exit_strategy: Optional[str] = None
     temp_t8_tp1_pips: Optional[float] = None
     temp_t8_tp1_close_pct: Optional[float] = None
     temp_t8_be_spread_plus_pips: Optional[float] = None
     temp_t8_trail_ema_period: Optional[int] = None
+    temp_t8_m1_exit_ema_fast: Optional[int] = None
+    temp_t8_m1_exit_ema_slow: Optional[int] = None
+    temp_t8_scale_out_pct: Optional[float] = None
+    temp_t8_initial_sl_spread_plus_pips: Optional[float] = None
 
 
 def _load_tier_fired(data: dict) -> dict:
@@ -145,10 +150,15 @@ def load_state(path: str | Path) -> RuntimeState:
         temp_up_be_spread_plus_pips=data.get("temp_up_be_spread_plus_pips"),
         temp_up_trail_ema_period=data.get("temp_up_trail_ema_period"),
         temp_up_max_spread_pips=data.get("temp_up_max_spread_pips"),
+        temp_t8_exit_strategy=data.get("temp_t8_exit_strategy"),
         temp_t8_tp1_pips=data.get("temp_t8_tp1_pips"),
         temp_t8_tp1_close_pct=data.get("temp_t8_tp1_close_pct"),
         temp_t8_be_spread_plus_pips=data.get("temp_t8_be_spread_plus_pips"),
         temp_t8_trail_ema_period=data.get("temp_t8_trail_ema_period"),
+        temp_t8_m1_exit_ema_fast=data.get("temp_t8_m1_exit_ema_fast"),
+        temp_t8_m1_exit_ema_slow=data.get("temp_t8_m1_exit_ema_slow"),
+        temp_t8_scale_out_pct=data.get("temp_t8_scale_out_pct"),
+        temp_t8_initial_sl_spread_plus_pips=data.get("temp_t8_initial_sl_spread_plus_pips"),
     )
 
 
@@ -196,10 +206,15 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "temp_up_be_spread_plus_pips": state.temp_up_be_spread_plus_pips,
                 "temp_up_trail_ema_period": state.temp_up_trail_ema_period,
                 "temp_up_max_spread_pips": state.temp_up_max_spread_pips,
+                "temp_t8_exit_strategy": state.temp_t8_exit_strategy,
                 "temp_t8_tp1_pips": state.temp_t8_tp1_pips,
                 "temp_t8_tp1_close_pct": state.temp_t8_tp1_close_pct,
                 "temp_t8_be_spread_plus_pips": state.temp_t8_be_spread_plus_pips,
                 "temp_t8_trail_ema_period": state.temp_t8_trail_ema_period,
+                "temp_t8_m1_exit_ema_fast": state.temp_t8_m1_exit_ema_fast,
+                "temp_t8_m1_exit_ema_slow": state.temp_t8_m1_exit_ema_slow,
+                "temp_t8_scale_out_pct": state.temp_t8_scale_out_pct,
+                "temp_t8_initial_sl_spread_plus_pips": state.temp_t8_initial_sl_spread_plus_pips,
             },
             indent=2,
             sort_keys=False,

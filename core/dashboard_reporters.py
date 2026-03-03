@@ -713,6 +713,25 @@ def report_t6_bb_reversal_cap(policy, store, profile_name: str) -> FilterReport:
     )
 
 
+def report_t8_exit_strategy(policy) -> FilterReport:
+    """Report Trial #8 exit strategy: tp1_be_trail or ema_scale_runner (H1 breakout style)."""
+    exit_strategy = getattr(policy, "exit_strategy", "tp1_be_trail")
+    if exit_strategy == "ema_scale_runner":
+        ema_fast = getattr(policy, "m1_exit_ema_fast", 9)
+        ema_slow = getattr(policy, "m1_exit_ema_slow", 21)
+        scale_pct = getattr(policy, "scale_out_pct", 50.0)
+        label = f"EMA scale-out + runner (EMA{ema_fast}/{ema_slow}, {scale_pct:.0f}%)"
+    else:
+        label = "TP1 + BE + M1 EMA trail"
+    return FilterReport(
+        filter_id="t8_exit_strategy",
+        display_name="Exit",
+        enabled=True,
+        is_clear=True,
+        current_value=label,
+    )
+
+
 def report_daily_level_filter(policy, tick, side: str, pip_size: float, snapshot: Optional[dict] = None) -> FilterReport:
     """Report Trial #8 Daily Level Filter status using a snapshot from DailyLevelFilter.get_state_snapshot()."""
     enabled = getattr(policy, "use_daily_level_filter", False)

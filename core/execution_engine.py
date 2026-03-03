@@ -5246,12 +5246,31 @@ def execute_kt_cg_trial_7_policy_demo_only(
         )
 
     entry_price = tick.ask if side == "buy" else tick.bid
-    original_tp_pips = float(getattr(policy, "tp_pips", 4.0))
-    try:
-        object.__setattr__(policy, "tp_pips", float(effective_tp_pips))
-        candidate = _kt_cg_trial_4_candidate(profile, policy, entry_price, side)
-    finally:
-        object.__setattr__(policy, "tp_pips", original_tp_pips)
+    # Trial #8 ema_scale_runner: no broker TP, SL = spread + initial_sl_spread_plus_pips (H1 breakout style)
+    if policy_type == "kt_cg_trial_8" and getattr(policy, "exit_strategy", None) == "ema_scale_runner":
+        pip = float(profile.pip_size)
+        current_spread = tick.ask - tick.bid
+        initial_sl_pips = float(getattr(policy, "initial_sl_spread_plus_pips", 5.0))
+        sl_distance = current_spread + initial_sl_pips * pip
+        if side == "buy":
+            stop = entry_price - sl_distance
+        else:
+            stop = entry_price + sl_distance
+        candidate = TradeCandidate(
+            symbol=profile.symbol,
+            side=side,
+            entry_price=entry_price,
+            stop_price=stop,
+            target_price=None,
+            size_lots=float(get_effective_risk(profile).max_lots),
+        )
+    else:
+        original_tp_pips = float(getattr(policy, "tp_pips", 4.0))
+        try:
+            object.__setattr__(policy, "tp_pips", float(effective_tp_pips))
+            candidate = _kt_cg_trial_4_candidate(profile, policy, entry_price, side)
+        finally:
+            object.__setattr__(policy, "tp_pips", original_tp_pips)
     decision = evaluate_trade(profile=profile, candidate=candidate, context=context, trades_df=trades_df)
     if not decision.allow:
         sig_id = f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}"
@@ -5333,12 +5352,21 @@ def execute_kt_cg_trial_7_policy_demo_only(
 
     if placed:
         tier_info = f" tier_{tiered_pullback_tier}" if tiered_pullback_tier else ""
-        print(
-            f"[{profile.profile_name}] TRADE PLACED: {policy_type}:{trigger_type}{tier_info} "
-            f"| TP={effective_tp_pips:.2f}p (base={original_tp_pips:.2f}p zone={tp_zone})"
-            f" | {'; '.join(eval_reasons)}"
-        )
+        if policy_type == "kt_cg_trial_8" and getattr(policy, "exit_strategy", None) == "ema_scale_runner":
+            print(
+                f"[{profile.profile_name}] TRADE PLACED: {policy_type}:{trigger_type}{tier_info} "
+                f"| SL=spread+pips (ema_scale_runner), no TP | {'; '.join(eval_reasons)}"
+            )
+        else:
+            print(
+                f"[{profile.profile_name}] TRADE PLACED: {policy_type}:{trigger_type}{tier_info} "
+                f"| TP={effective_tp_pips:.2f}p (base={original_tp_pips:.2f}p zone={tp_zone})"
+                f" | {'; '.join(eval_reasons)}"
+            )
 
+    extra = {}
+    if not (policy_type == "kt_cg_trial_8" and getattr(policy, "exit_strategy", None) == "ema_scale_runner"):
+        extra = {"tp_pips_effective": float(effective_tp_pips), "tp_pips_base": float(original_tp_pips)}
     return _result_payload(
         ExecutionDecision(
             attempted=True,
@@ -5350,10 +5378,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
             fill_price=getattr(res, "fill_price", None),
             side=side,
         ),
-        extra={
-            "tp_pips_effective": float(effective_tp_pips),
-            "tp_pips_base": float(original_tp_pips),
-        },
+        extra=extra,
     )
 
 
