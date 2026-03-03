@@ -441,7 +441,6 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
 
         # 3) Uncle Parsh H1 Breakout trade management (EMA exits; no BE moves)
         if up_policy is not None and entry_type in ("power_break", "sniper"):
-        if up_policy is not None and entry_type in ("power_break", "sniper"):
             try:
                 from core.indicators import ema as ema_fn
 
