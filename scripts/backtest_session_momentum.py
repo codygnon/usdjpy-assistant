@@ -29,6 +29,22 @@ DEFAULTS: dict[str, object] = {
     "spread_min_pips": 1.0,
     "spread_max_pips": 3.0,
     "max_entry_spread_pips": 10.0,
+    # V5 realism spread extensions (applied in v5 loop after base spread model)
+    "v5_spread_rollover_enabled": True,
+    "v5_spread_rollover_start_hour": 21.95,
+    "v5_spread_rollover_end_hour": 22.15,
+    "v5_spread_rollover_mult": 2.5,
+    "v5_spread_rollover_min_pips": 3.0,
+    "v5_spread_rollover_max_pips": 12.0,
+    # Semicolon-separated windows: "HH:MM-HH:MM|mult|min|max;..."
+    "v5_spread_event_spikes": "",
+    "v5_spread_tod_profile_enabled": True,
+    # Semicolon-separated windows: "HH:MM-HH:MM|mult|min|max;..."
+    "v5_spread_tod_profile": "00:00-01:30|1.12|1.4|4.0;11:00-12:00|1.08|1.3|3.5;20:00-23:00|1.22|1.8|6.0",
+    # Intrabar conflict policy when both stop and target are touched in same bar.
+    # Options: sl_first, tp_first, nearest_to_open, randomized
+    "v5_intrabar_conflict_policy": "nearest_to_open",
+    "v5_intrabar_random_seed": 1337,
     "h1_ema_fast": 20,
     "h1_ema_slow": 50,
     "h1_allow_slope_direction": False,
@@ -263,6 +279,9 @@ DEFAULTS: dict[str, object] = {
     "v5_rp_max_lot_mult": 2.0,
     "v5_rp_min_lot": 1.0,
     "v5_rp_max_lot": 20.0,
+    "v5_margin_model_enabled": True,
+    "v5_margin_leverage": 50.0,
+    "v5_margin_buffer_pct": 0.0,
     "v5_daily_loss_limit_usd": 1500.0,
     "v5_london_daily_loss_usd": 600.0,
     "v5_ny_daily_loss_usd": 600.0,
@@ -396,6 +415,21 @@ DEFAULTS: dict[str, object] = {
     "bb_rev_require_trend": True,
     "bb_rev_tp_midline": False,
     "bb_rev_confirm": False,
+    # ── EMA Cross system defaults ──────────────────────────────────────────
+    "ema_cross_enabled": False,
+    "ema_cross_fast": 9,
+    "ema_cross_slow": 21,
+    "ema_cross_tf": 15,
+    "ema_cross_session_start": 6.0,
+    "ema_cross_session_end": 21.0,
+    "ema_cross_sl_pips": 12.0,
+    "ema_cross_tp_pips": 15.0,
+    "ema_cross_tp1_close_pct": 1.0,
+    "ema_cross_max_daily": 3,
+    "ema_cross_risk_pct": 0.75,
+    "ema_cross_account_size": 100000.0,
+    "ema_cross_max_lot": 20.0,
+    "ema_cross_min_adx": 0.0,
 }
 
 
@@ -496,6 +530,21 @@ def _full_parser() -> argparse.ArgumentParser:
     p.add_argument("--spread-min-pips", type=float)
     p.add_argument("--spread-max-pips", type=float)
     p.add_argument("--max-entry-spread-pips", type=float)
+    p.add_argument("--v5-spread-rollover-enabled", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-spread-rollover-start-hour", type=float)
+    p.add_argument("--v5-spread-rollover-end-hour", type=float)
+    p.add_argument("--v5-spread-rollover-mult", type=float)
+    p.add_argument("--v5-spread-rollover-min-pips", type=float)
+    p.add_argument("--v5-spread-rollover-max-pips", type=float)
+    p.add_argument("--v5-spread-event-spikes", type=str)
+    p.add_argument("--v5-spread-tod-profile-enabled", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-spread-tod-profile", type=str)
+    p.add_argument(
+        "--v5-intrabar-conflict-policy",
+        choices=["sl_first", "tp_first", "nearest_to_open", "randomized"],
+        type=str,
+    )
+    p.add_argument("--v5-intrabar-random-seed", type=int)
 
     p.add_argument("--h1-ema-fast", type=int)
     p.add_argument("--h1-ema-slow", type=int)
@@ -750,6 +799,9 @@ def _full_parser() -> argparse.ArgumentParser:
     p.add_argument("--v5-rp-max-lot-mult", type=float)
     p.add_argument("--v5-rp-min-lot", type=float)
     p.add_argument("--v5-rp-max-lot", type=float)
+    p.add_argument("--v5-margin-model-enabled", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-margin-leverage", type=float)
+    p.add_argument("--v5-margin-buffer-pct", type=float)
     p.add_argument("--v5-hybrid-strong-boost", type=float)
     p.add_argument("--v5-hybrid-normal-boost", type=float)
     p.add_argument("--v5-hybrid-london-boost", type=float)
@@ -880,6 +932,21 @@ def _full_parser() -> argparse.ArgumentParser:
     p.add_argument("--bb-rev-require-trend", type=parse_bool, nargs="?", const=True)
     p.add_argument("--bb-rev-tp-midline", type=parse_bool, nargs="?", const=True)
     p.add_argument("--bb-rev-confirm", type=parse_bool, nargs="?", const=True)
+    # EMA Cross system
+    p.add_argument("--ema-cross-enabled", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--ema-cross-fast", type=int)
+    p.add_argument("--ema-cross-slow", type=int)
+    p.add_argument("--ema-cross-tf", type=int)
+    p.add_argument("--ema-cross-session-start", type=float)
+    p.add_argument("--ema-cross-session-end", type=float)
+    p.add_argument("--ema-cross-sl-pips", type=float)
+    p.add_argument("--ema-cross-tp-pips", type=float)
+    p.add_argument("--ema-cross-tp1-close-pct", type=float)
+    p.add_argument("--ema-cross-max-daily", type=int)
+    p.add_argument("--ema-cross-risk-pct", type=float)
+    p.add_argument("--ema-cross-account-size", type=float)
+    p.add_argument("--ema-cross-max-lot", type=float)
+    p.add_argument("--ema-cross-min-adx", type=float)
     return p
 
 
@@ -3019,6 +3086,8 @@ def run_backtest_v4(args: argparse.Namespace) -> dict:
 def run_backtest_v5(args: argparse.Namespace) -> dict:
     m1 = load_m1(args.inputs)
     m5 = resample_ohlc(m1, "5min")
+    _ecx_tf = int(getattr(args, "ema_cross_tf", 15))
+    m15 = resample_ohlc(m1, f"{_ecx_tf}min")
     h4 = resample_ohlc(m1, "4h")
     h1 = resample_ohlc(m1, "1h")
 
@@ -3083,6 +3152,24 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
     m5["bb_trend_ema_v5"] = m5["close"].ewm(span=_bb_trend, adjust=False).mean()
     # ───────────────────────────────────────────────────────────────────────
 
+    # ── EMA Cross indicators on M15 ───────────────────────────────────────
+    _ecx_fast_p = int(getattr(args, "ema_cross_fast", 9))
+    _ecx_slow_p = int(getattr(args, "ema_cross_slow", 21))
+    m15["ema_fast_ecx"] = m15["close"].ewm(span=_ecx_fast_p, adjust=False).mean()
+    m15["ema_slow_ecx"] = m15["close"].ewm(span=_ecx_slow_p, adjust=False).mean()
+    # Cross detection: 1 = bullish cross (fast crosses above slow), -1 = bearish
+    _fast = m15["ema_fast_ecx"]
+    _slow = m15["ema_slow_ecx"]
+    _above_now = _fast > _slow
+    _above_prev = _fast.shift(1) > _slow.shift(1)
+    m15["ema_cross_signal"] = 0
+    m15.loc[_above_now & ~_above_prev, "ema_cross_signal"] = 1   # bullish cross
+    m15.loc[~_above_now & _above_prev, "ema_cross_signal"] = -1  # bearish cross
+    # ADX on M15 for optional trend strength filter
+    _m15_adx, _, _ = compute_adx(m15, 14)
+    m15["adx14_m15"] = _m15_adx
+    # ───────────────────────────────────────────────────────────────────────
+
     h4["ema_fast_h4"] = h4["close"].ewm(span=20, adjust=False).mean()
     h4["ema_slow_h4"] = h4["close"].ewm(span=50, adjust=False).mean()
     h4_adx, h4_plus_di, h4_minus_di = compute_adx(h4, 14)
@@ -3096,9 +3183,10 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
     h1["ema_slow"] = h1["close"].ewm(span=int(args.h1_ema_slow), adjust=False).mean()
 
     m5_times = m5["time"].tolist()
+    m15_times = m15["time"].tolist()
     h4_times = h4["time"].tolist()
     h1_times = h1["time"].tolist()
-    p5 = p4 = p1 = -1
+    p5 = p4 = p1 = p15 = -1
 
     open_positions: list[OpenPosition] = []
     closed: list[ClosedTrade] = []
@@ -3112,6 +3200,9 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
     bb_rev_pending_side: Optional[str] = None
     bb_rev_pending_sig: Optional[str] = None
     bb_rev_pending_p5: int = -1
+    # EMA Cross daily counter
+    ecx_day_key: str = ""
+    ecx_day_count: int = 0
     cooldown_until_p5: Optional[int] = None
     wr_pause_until_p5: Optional[int] = None
     max_open_positions = 0
@@ -3124,6 +3215,7 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
     realized_day_pips: dict[str, float] = {}
     realized_day_usd_by_session: dict[str, float] = {}
     realized_week_pips: dict[str, float] = {}
+    realized_usd_total: float = 0.0
     max_consecutive_wins = 0
     trail_delayed_count = 0
     sl_cap_skipped_count = 0
@@ -3160,6 +3252,39 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
     t_fade_session_date: Optional[object] = None
 
     regime_distribution = {"Trending": 0, "Flat": 0}
+    def _parse_hour_token(tok: str) -> float:
+        t = str(tok).strip()
+        if ":" in t:
+            hh, mm = t.split(":", 1)
+            return float(int(hh) % 24) + float(int(mm)) / 60.0
+        return float(t) % 24.0
+
+    def _parse_spread_windows(spec: str) -> list[tuple[float, float, float, float, float]]:
+        out: list[tuple[float, float, float, float, float]] = []
+        raw = str(spec).strip()
+        if not raw:
+            return out
+        for chunk in raw.split(";"):
+            c = str(chunk).strip()
+            if not c:
+                continue
+            try:
+                window, mult_s, min_s, max_s = [x.strip() for x in c.split("|")]
+                start_s, end_s = [x.strip() for x in window.split("-", 1)]
+                start_h = _parse_hour_token(start_s)
+                end_h = _parse_hour_token(end_s)
+                mult = max(1.0, float(mult_s))
+                min_p = max(0.1, float(min_s))
+                max_p = max(min_p, float(max_s))
+                out.append((start_h, end_h, mult, min_p, max_p))
+            except Exception:
+                continue
+        return out
+
+    spread_event_windows = _parse_spread_windows(str(getattr(args, "v5_spread_event_spikes", "")))
+    spread_tod_windows: list[tuple[float, float, float, float, float]] = []
+    if bool(getattr(args, "v5_spread_tod_profile_enabled", True)):
+        spread_tod_windows = _parse_spread_windows(str(getattr(args, "v5_spread_tod_profile", "")))
 
     def add_block(reason: str) -> None:
         blocked_reasons[reason] = blocked_reasons.get(reason, 0) + 1
@@ -3262,6 +3387,76 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         pos.realized_usd += usd_leg
         pos.exit_price_last = float(exit_price)
 
+    def _used_margin_usd() -> float:
+        if not bool(getattr(args, "v5_margin_model_enabled", True)):
+            return 0.0
+        leverage = max(1.0, float(getattr(args, "v5_margin_leverage", 50.0)))
+        return float(
+            sum(max(0.0, float(getattr(p, "lots_remaining", 0.0))) * 100000.0 / leverage for p in open_positions)
+        )
+
+    def _unrealized_pnl_usd() -> float:
+        total = 0.0
+        for p in open_positions:
+            lots_live = max(0.0, float(getattr(p, "lots_remaining", 0.0)))
+            if lots_live <= 0:
+                continue
+            mark_px = float(bid) if p.side == "buy" else float(ask)
+            pips_live = ((mark_px - float(p.entry_price)) / PIP_SIZE) if p.side == "buy" else ((float(p.entry_price) - mark_px) / PIP_SIZE)
+            total += pips_live * pip_value_usd_per_lot(mark_px) * lots_live
+        return float(total)
+
+    def _margin_gate_allows(new_lots: float) -> bool:
+        if not bool(getattr(args, "v5_margin_model_enabled", True)):
+            return True
+        leverage = max(1.0, float(getattr(args, "v5_margin_leverage", 50.0)))
+        required_margin = max(0.0, float(new_lots)) * 100000.0 / leverage
+        equity = max(0.0, float(args.v5_account_size) + float(realized_usd_total) + _unrealized_pnl_usd())
+        buffer_pct = max(0.0, float(getattr(args, "v5_margin_buffer_pct", 0.0)))
+        buffer_usd = equity * (buffer_pct / 100.0)
+        free_margin = equity - _used_margin_usd() - buffer_usd
+        return free_margin >= required_margin
+
+    def _apply_v5_spread_spikes(base_spread_pips: float, h_now: float) -> float:
+        spread_adj = max(0.1, float(base_spread_pips))
+        for s_h, e_h, mult, min_p, max_p in spread_tod_windows:
+            if hour_in_window(float(h_now), float(s_h), float(e_h)):
+                spread_adj = max(spread_adj, min(float(max_p), max(float(min_p), spread_adj * float(mult))))
+        if bool(getattr(args, "v5_spread_rollover_enabled", True)):
+            r_start = float(getattr(args, "v5_spread_rollover_start_hour", 21.95))
+            r_end = float(getattr(args, "v5_spread_rollover_end_hour", 22.15))
+            if hour_in_window(float(h_now), r_start, r_end):
+                r_mult = max(1.0, float(getattr(args, "v5_spread_rollover_mult", 2.5)))
+                r_min = max(0.1, float(getattr(args, "v5_spread_rollover_min_pips", 3.0)))
+                r_max = max(r_min, float(getattr(args, "v5_spread_rollover_max_pips", 12.0)))
+                spread_adj = max(spread_adj, min(r_max, max(r_min, spread_adj * r_mult)))
+        for s_h, e_h, mult, min_p, max_p in spread_event_windows:
+            if hour_in_window(float(h_now), float(s_h), float(e_h)):
+                spread_adj = max(spread_adj, min(float(max_p), max(float(min_p), spread_adj * float(mult))))
+        return float(spread_adj)
+
+    def _resolve_intrabar_conflict(ref_price: float, stop_price: float, tp_price: float, trade_id: int, ts_now: pd.Timestamp) -> str:
+        policy = str(getattr(args, "v5_intrabar_conflict_policy", "nearest_to_open")).strip().lower()
+        if policy == "sl_first":
+            return "stop"
+        if policy == "tp_first":
+            return "tp"
+        d_stop = abs(float(ref_price) - float(stop_price))
+        d_tp = abs(float(ref_price) - float(tp_price))
+        if policy == "nearest_to_open":
+            if d_stop < d_tp:
+                return "stop"
+            if d_tp < d_stop:
+                return "tp"
+            return "stop"
+        if policy == "randomized":
+            seed0 = int(getattr(args, "v5_intrabar_random_seed", 1337))
+            rr = random.Random(f"{seed0}|{int(trade_id)}|{int(pd.Timestamp(ts_now).value)}")
+            den = d_stop + d_tp
+            p_stop = 0.5 if den <= 1e-12 else (d_tp / den)
+            return "stop" if rr.random() < p_stop else "tp"
+        return "stop"
+
     def _trend_strength_for_p5(p5_now: int, sess: str) -> tuple[str, float]:
         sb = int(args.v5_slope_bars)
         if p5_now < sb:
@@ -3344,7 +3539,7 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         return allow == "all"
 
     def _finalize_position(pos: OpenPosition, ts: pd.Timestamp, reason: str, p5_now: int) -> None:
-        nonlocal open_positions, cooldown_until_p5, sessions_stopped_early, max_consecutive_wins, trail_delayed_count, recent_trades_outcomes
+        nonlocal open_positions, cooldown_until_p5, sessions_stopped_early, max_consecutive_wins, trail_delayed_count, recent_trades_outcomes, realized_usd_total
         closed.append(
             ClosedTrade(
                 trade_id=int(pos.trade_id),
@@ -3373,6 +3568,7 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         )
 
         pips = float(pos.realized_pips)
+        realized_usd_total += float(pos.realized_usd)
         if bool(pos.tp1_filled) and bool(pos.trail_delay_observed):
             trail_delayed_count += 1
         entry_day_cfg = day_bucket(str(pos.entry_day))
@@ -3392,12 +3588,12 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         else:
             outcome = "loss"
         # BB Reversion trades: skip V39-specific side effects (cooldowns, WR deques, loss limits)
-        _is_bb_trade = getattr(pos, "entry_regime", "") == "BB_REVERSION"
-        if not _is_bb_trade:
+        _is_independent_trade = getattr(pos, "entry_regime", "") in ("BB_REVERSION", "EMA_CROSS")
+        if not _is_independent_trade:
             recent_trades_outcomes.append(1 if outcome == "win" else 0)
             _wr_deque_for_session(str(pos.entry_session)).append(1 if outcome == "win" else 0)
 
-        if not _is_bb_trade:
+        if not _is_independent_trade:
             if abs(pips) < float(args.v5_scratch_threshold):
                 cdb = int(args.v5_cooldown_scratch)
             elif pips > 0:
@@ -3426,7 +3622,7 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             if float(args.v5_weekly_loss_limit_pips) > 0 and float(realized_week_pips[wk_key]) <= -float(args.v5_weekly_loss_limit_pips):
                 weekly_stop_keys.add(wk_key)
 
-        if not _is_bb_trade:
+        if not _is_independent_trade:
             if outcome == "win":
                 exit_day_cfg["wins_closed"] = int(exit_day_cfg.get("wins_closed", 0)) + 1
                 if str(args.v5_win_streak_scope) == "day":
@@ -3464,15 +3660,28 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         l = float(row["low"])
         c = float(row["close"])
 
+        ts_dt = pd.Timestamp(ts)
+        h_now = ts_hour(ts_dt)
         spread_pips = compute_spread_pips(i, ts, str(args.spread_mode), float(args.spread_pips), float(args.spread_min_pips), float(args.spread_max_pips))
+        spread_pips = _apply_v5_spread_spikes(float(spread_pips), float(h_now))
         half_spread = spread_pips * PIP_SIZE / 2.0
         bid = c - half_spread
         ask = c + half_spread
+        open_bid = o - half_spread
+        open_ask = o + half_spread
+        bid_high = h - half_spread
+        bid_low = l - half_spread
+        ask_high = h + half_spread
+        ask_low = l + half_spread
 
         old5 = p5
         while p5 + 1 < len(m5_times) and m5_times[p5 + 1] <= ts:
             p5 += 1
         new_m5_bar = p5 != old5
+        old15 = p15
+        while p15 + 1 < len(m15_times) and m15_times[p15 + 1] <= ts:
+            p15 += 1
+        new_m15_bar = p15 != old15
         while p4 + 1 < len(h4_times) and h4_times[p4 + 1] <= ts:
             p4 += 1
         while p1 + 1 < len(h1_times) and h1_times[p1 + 1] <= ts:
@@ -3492,8 +3701,6 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             tokyo_end,
             tokyo_enabled,
         )
-        ts_dt = pd.Timestamp(ts)
-        h_now = ts_hour(ts_dt)
         orb_range_start_h = float(getattr(args, "v5_orb_range_start_hour", 7.0))
         orb_range_end_h = float(getattr(args, "v5_orb_range_end_hour", 7.5))
         if orb_range_end_h <= orb_range_start_h:
@@ -3620,46 +3827,49 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                         _lot_size = max(0.01, min(_lot_size, float(getattr(args, "v5_rp_max_lot", 20.0))))
                         _tp1_px = (_entry_px + _t_tp * PIP_SIZE) if _entry_side == "buy" else (_entry_px - _t_tp * PIP_SIZE)
 
-                        trade_id_seq += 1
-                        new_pos = OpenPosition(
-                            trade_id=int(trade_id_seq),
-                            side=_entry_side,
-                            entry_mode=5,
-                            entry_session="tokyo",
-                            entry_time=pd.Timestamp(ts),
-                            entry_day=str(day_key),
-                            entry_index_in_day=0,
-                            entry_price=float(_entry_px),
-                            lots_initial=float(_lot_size),
-                            lots_remaining=float(_lot_size),
-                            stop_price=float(_sl_px),
-                            tp1_price=float(_tp1_px),
-                            tp2_price=float(_tp1_px) + (999.0 * PIP_SIZE) if _entry_side == "buy" else float(_tp1_px) - (999.0 * PIP_SIZE),
-                            sl_pips=float(_sl_dist),
-                            tp1_pips=float(_t_tp),
-                            tp2_pips=999.0,
-                            tp1_filled=False,
-                            realized_pips=0.0,
-                            realized_usd=0.0,
-                            exit_price_last=None,
-                            entry_regime="TOKYO_ORB",
-                            entry_profile="tokyo_orb",
-                            position_type="Single",
-                            tp1_close_fraction=float(getattr(args, "v5_tokyo_orb_tp1_close_pct", 1.0)),
-                            trail_buffer_pips=float(getattr(args, "v5_tokyo_orb_trail_buffer", 2.0)),
-                            trail_ema_period=9,
-                            trail_armed=True,
-                            trail_start_multiple=0.0,
-                            trail_delay_observed=False,
-                            entry_bar_index=int(i),
-                            entry_signal_mode="tokyo_orb_break",
-                            wr_size_scale=1.0,
-                            conviction_scale=1.0,
-                            peak_mfe_pips=0.0,
-                        )
-                        open_positions.append(new_pos)
-                        t_orb_fired_today = True
-                        add_block(f"t_orb_entry_{_entry_side}")
+                        if not _margin_gate_allows(float(_lot_size)):
+                            add_block("v5_margin_cap")
+                        else:
+                            trade_id_seq += 1
+                            new_pos = OpenPosition(
+                                trade_id=int(trade_id_seq),
+                                side=_entry_side,
+                                entry_mode=5,
+                                entry_session="tokyo",
+                                entry_time=pd.Timestamp(ts),
+                                entry_day=str(day_key),
+                                entry_index_in_day=0,
+                                entry_price=float(_entry_px),
+                                lots_initial=float(_lot_size),
+                                lots_remaining=float(_lot_size),
+                                stop_price=float(_sl_px),
+                                tp1_price=float(_tp1_px),
+                                tp2_price=float(_tp1_px) + (999.0 * PIP_SIZE) if _entry_side == "buy" else float(_tp1_px) - (999.0 * PIP_SIZE),
+                                sl_pips=float(_sl_dist),
+                                tp1_pips=float(_t_tp),
+                                tp2_pips=999.0,
+                                tp1_filled=False,
+                                realized_pips=0.0,
+                                realized_usd=0.0,
+                                exit_price_last=None,
+                                entry_regime="TOKYO_ORB",
+                                entry_profile="tokyo_orb",
+                                position_type="Single",
+                                tp1_close_fraction=float(getattr(args, "v5_tokyo_orb_tp1_close_pct", 1.0)),
+                                trail_buffer_pips=float(getattr(args, "v5_tokyo_orb_trail_buffer", 2.0)),
+                                trail_ema_period=9,
+                                trail_armed=True,
+                                trail_start_multiple=0.0,
+                                trail_delay_observed=False,
+                                entry_bar_index=int(i),
+                                entry_signal_mode="tokyo_orb_break",
+                                wr_size_scale=1.0,
+                                conviction_scale=1.0,
+                                peak_mfe_pips=0.0,
+                            )
+                            open_positions.append(new_pos)
+                            t_orb_fired_today = True
+                            add_block(f"t_orb_entry_{_entry_side}")
 
         # ── Tokyo Fade (mean-reversion on fix-window breakout) ─────────────────
         _t_fade_enabled = bool(getattr(args, "v5_tokyo_fade_enabled", False))
@@ -3728,46 +3938,49 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                         _tf_lot_size       = round(_tf_risk_usd / (_tf_sl_dist * _tf_pip_val_per_lot), 2)
                         _tf_lot_size       = max(0.01, min(_tf_lot_size, float(getattr(args, "v5_rp_max_lot", 20.0))))
 
-                        trade_id_seq += 1
-                        new_pos = OpenPosition(
-                            trade_id=int(trade_id_seq),
-                            side=_fade_side,
-                            entry_mode=5,
-                            entry_session="tokyo",
-                            entry_time=pd.Timestamp(ts),
-                            entry_day=str(day_key),
-                            entry_index_in_day=0,
-                            entry_price=float(_tf_entry_px),
-                            lots_initial=float(_tf_lot_size),
-                            lots_remaining=float(_tf_lot_size),
-                            stop_price=float(_tf_sl_px),
-                            tp1_price=float(_tf_tp1_px),
-                            tp2_price=float(_tf_tp1_px) - (999.0 * PIP_SIZE) if _fade_side == "sell" else float(_tf_tp1_px) + (999.0 * PIP_SIZE),
-                            sl_pips=float(_tf_sl_dist),
-                            tp1_pips=float(_tf_tp_pips),
-                            tp2_pips=999.0,
-                            tp1_filled=False,
-                            realized_pips=0.0,
-                            realized_usd=0.0,
-                            exit_price_last=None,
-                            entry_regime="TOKYO_FADE",
-                            entry_profile="tokyo_fade",
-                            position_type="Single",
-                            tp1_close_fraction=float(getattr(args, "v5_tokyo_fade_tp1_close_pct", 1.0)),
-                            trail_buffer_pips=999.0,
-                            trail_ema_period=9,
-                            trail_armed=False,
-                            trail_start_multiple=999.0,
-                            trail_delay_observed=False,
-                            entry_bar_index=int(i),
-                            entry_signal_mode="tokyo_fade_break",
-                            wr_size_scale=1.0,
-                            conviction_scale=1.0,
-                            peak_mfe_pips=0.0,
-                        )
-                        open_positions.append(new_pos)
-                        t_fade_fired_today = True
-                        add_block(f"t_fade_entry_{_fade_side}")
+                        if not _margin_gate_allows(float(_tf_lot_size)):
+                            add_block("v5_margin_cap")
+                        else:
+                            trade_id_seq += 1
+                            new_pos = OpenPosition(
+                                trade_id=int(trade_id_seq),
+                                side=_fade_side,
+                                entry_mode=5,
+                                entry_session="tokyo",
+                                entry_time=pd.Timestamp(ts),
+                                entry_day=str(day_key),
+                                entry_index_in_day=0,
+                                entry_price=float(_tf_entry_px),
+                                lots_initial=float(_tf_lot_size),
+                                lots_remaining=float(_tf_lot_size),
+                                stop_price=float(_tf_sl_px),
+                                tp1_price=float(_tf_tp1_px),
+                                tp2_price=float(_tf_tp1_px) - (999.0 * PIP_SIZE) if _fade_side == "sell" else float(_tf_tp1_px) + (999.0 * PIP_SIZE),
+                                sl_pips=float(_tf_sl_dist),
+                                tp1_pips=float(_tf_tp_pips),
+                                tp2_pips=999.0,
+                                tp1_filled=False,
+                                realized_pips=0.0,
+                                realized_usd=0.0,
+                                exit_price_last=None,
+                                entry_regime="TOKYO_FADE",
+                                entry_profile="tokyo_fade",
+                                position_type="Single",
+                                tp1_close_fraction=float(getattr(args, "v5_tokyo_fade_tp1_close_pct", 1.0)),
+                                trail_buffer_pips=999.0,
+                                trail_ema_period=9,
+                                trail_armed=False,
+                                trail_start_multiple=999.0,
+                                trail_delay_observed=False,
+                                entry_bar_index=int(i),
+                                entry_signal_mode="tokyo_fade_break",
+                                wr_size_scale=1.0,
+                                conviction_scale=1.0,
+                                peak_mfe_pips=0.0,
+                            )
+                            open_positions.append(new_pos)
+                            t_fade_fired_today = True
+                            add_block(f"t_fade_entry_{_fade_side}")
                 else:
                     # No valid fade trigger this bar (break too small, too large, or no break)
                     pass
@@ -3837,12 +4050,12 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             for pos in list(open_positions):
                 closed_now = False
                 if pos.side == "buy":
-                    cur_mfe = (float(h) - float(pos.entry_price)) / PIP_SIZE
+                    cur_mfe = (float(bid_high) - float(pos.entry_price)) / PIP_SIZE
                 else:
-                    cur_mfe = (float(pos.entry_price) - float(l)) / PIP_SIZE
+                    cur_mfe = (float(pos.entry_price) - float(ask_low)) / PIP_SIZE
                 pos.peak_mfe_pips = max(float(getattr(pos, "peak_mfe_pips", 0.0)), float(cur_mfe))
                 if bool(args.v5_close_full_risk_at_session_end) and not bool(pos.tp1_filled) \
-                        and getattr(pos, "entry_regime", "") != "BB_REVERSION":
+                        and getattr(pos, "entry_regime", "") not in ("BB_REVERSION", "EMA_CROSS"):
                     end_ts = _session_end_ts(str(pos.entry_day), str(pos.entry_session))
                     if ts >= end_ts:
                         exit_px = bid if pos.side == "buy" else ask
@@ -3857,7 +4070,7 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                     can_trail = True
                     if not bool(pos.trail_armed):
                         activation_px = float(pos.entry_price) + float(pos.trail_start_multiple) * float(pos.sl_pips) * PIP_SIZE if pos.side == "buy" else float(pos.entry_price) - float(pos.trail_start_multiple) * float(pos.sl_pips) * PIP_SIZE
-                        threshold_reached = (h >= activation_px) if pos.side == "buy" else (l <= activation_px)
+                        threshold_reached = (bid_high >= activation_px) if pos.side == "buy" else (ask_low <= activation_px)
                         if threshold_reached:
                             pos.trail_armed = True
                         else:
@@ -3876,12 +4089,28 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                                 pos.stop_price = float(new_stop)
 
                 if not bool(pos.tp1_filled):
-                    sl_hit = (l <= float(pos.stop_price)) if pos.side == "buy" else (h >= float(pos.stop_price))
+                    sl_hit = (bid_low <= float(pos.stop_price)) if pos.side == "buy" else (ask_high >= float(pos.stop_price))
+                    tp1_hit = (bid_high >= float(pos.tp1_price)) if pos.side == "buy" else (ask_low <= float(pos.tp1_price))
+                    if sl_hit and tp1_hit:
+                        add_block("v5_intrabar_conflict_tp1_stop")
+                        ref_px = float(open_bid) if pos.side == "buy" else float(open_ask)
+                        decision = _resolve_intrabar_conflict(ref_px, float(pos.stop_price), float(pos.tp1_price), int(pos.trade_id), ts)
+                        if decision == "stop":
+                            add_block("v5_intrabar_conflict_stop_chosen")
+                            _close_leg(pos, float(pos.stop_price), float(pos.lots_remaining))
+                            _finalize_position(pos, ts, "sl", p5_now=p5)
+                        else:
+                            add_block("v5_intrabar_conflict_tp_chosen")
+                            leg = float(pos.lots_initial) * float(pos.tp1_close_fraction)
+                            _close_leg(pos, float(pos.tp1_price), leg)
+                            pos.lots_remaining = max(0.0, float(pos.lots_initial) - leg)
+                            pos.tp1_filled = True
+                            pos.stop_price = float(pos.entry_price) + (float(args.v5_be_offset) * PIP_SIZE if pos.side == "buy" else -float(args.v5_be_offset) * PIP_SIZE)
+                        continue
                     if sl_hit:
                         _close_leg(pos, float(pos.stop_price), float(pos.lots_remaining))
                         _finalize_position(pos, ts, "sl", p5_now=p5)
                         continue
-                    tp1_hit = (h >= float(pos.tp1_price)) if pos.side == "buy" else (l <= float(pos.tp1_price))
                     if tp1_hit:
                         leg = float(pos.lots_initial) * float(pos.tp1_close_fraction)
                         _close_leg(pos, float(pos.tp1_price), leg)
@@ -3910,12 +4139,25 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                             add_block("v5_nonmover_exit")
                             continue
                 else:
-                    tp2_hit = (h >= float(pos.tp2_price)) if pos.side == "buy" else (l <= float(pos.tp2_price))
+                    tp2_hit = (bid_high >= float(pos.tp2_price)) if pos.side == "buy" else (ask_low <= float(pos.tp2_price))
+                    stop_hit = (bid_low <= float(pos.stop_price)) if pos.side == "buy" else (ask_high >= float(pos.stop_price))
+                    if tp2_hit and stop_hit:
+                        add_block("v5_intrabar_conflict_tp2_stop")
+                        ref_px = float(open_bid) if pos.side == "buy" else float(open_ask)
+                        decision = _resolve_intrabar_conflict(ref_px, float(pos.stop_price), float(pos.tp2_price), int(pos.trade_id), ts)
+                        if decision == "tp":
+                            add_block("v5_intrabar_conflict_tp_chosen")
+                            _close_leg(pos, float(pos.tp2_price), float(pos.lots_remaining))
+                            _finalize_position(pos, ts, "tp1_then_tp2", p5_now=p5)
+                        else:
+                            add_block("v5_intrabar_conflict_stop_chosen")
+                            _close_leg(pos, float(pos.stop_price), float(pos.lots_remaining))
+                            _finalize_position(pos, ts, "tp1_then_trail", p5_now=p5)
+                        continue
                     if tp2_hit:
                         _close_leg(pos, float(pos.tp2_price), float(pos.lots_remaining))
                         _finalize_position(pos, ts, "tp1_then_tp2", p5_now=p5)
                         continue
-                    stop_hit = (l <= float(pos.stop_price)) if pos.side == "buy" else (h >= float(pos.stop_price))
                     if stop_hit:
                         _close_leg(pos, float(pos.stop_price), float(pos.lots_remaining))
                         _finalize_position(pos, ts, "tp1_then_trail", p5_now=p5)
@@ -3938,7 +4180,7 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                 gl_max_open = int(getattr(args, "v5_gl_max_open", effective_max_open))
                 if gl_max_open > effective_max_open:
                     effective_max_open = gl_max_open
-            _v39_open_count = sum(1 for _p in open_positions if getattr(_p, "entry_regime", "") != "BB_REVERSION")
+            _v39_open_count = sum(1 for _p in open_positions if getattr(_p, "entry_regime", "") not in ("BB_REVERSION", "EMA_CROSS"))
             _v39_max_open_hit = _v39_open_count >= int(effective_max_open)
             if _v39_max_open_hit:
                 add_block("v5_max_open_cap")
@@ -4067,46 +4309,49 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                                     _bbr_lots    = round(_bbr_risk / (_bbr_sl_pips * _bbr_pip_val), 2)
                                     _bbr_lots    = max(0.01, min(_bbr_lots, _bbr_max_lot))
 
-                                    trade_id_seq += 1
-                                    _bbr_pos = OpenPosition(
-                                        trade_id=int(trade_id_seq),
-                                        side=_bbr_side,
-                                        entry_mode=6,
-                                        entry_session=str(sess) if sess in {"london", "ny_overlap", "tokyo"} else "off_session",
-                                        entry_time=pd.Timestamp(ts),
-                                        entry_day=str(day_key),
-                                        entry_index_in_day=0,
-                                        entry_price=float(_bbr_entry),
-                                        lots_initial=float(_bbr_lots),
-                                        lots_remaining=float(_bbr_lots),
-                                        stop_price=float(_bbr_sl_px),
-                                        tp1_price=float(_bbr_tp1_px),
-                                        tp2_price=float(_bbr_tp2_px),
-                                        sl_pips=float(_bbr_sl_pips),
-                                        tp1_pips=float(_bbr_tp_pips_actual),
-                                        tp2_pips=999.0,
-                                        tp1_filled=False,
-                                        realized_pips=0.0,
-                                        realized_usd=0.0,
-                                        exit_price_last=None,
-                                        entry_regime="BB_REVERSION",
-                                        entry_profile="bb_reversion",
-                                        position_type="Single",
-                                        tp1_close_fraction=float(_bbr_close_pct),
-                                        trail_buffer_pips=999.0,
-                                        trail_ema_period=9,
-                                        trail_armed=False,
-                                        trail_start_multiple=999.0,
-                                        trail_delay_observed=False,
-                                        entry_bar_index=int(i),
-                                        entry_signal_mode=str(_bbr_sig),
-                                        wr_size_scale=1.0,
-                                        conviction_scale=1.0,
-                                        peak_mfe_pips=0.0,
-                                    )
-                                    open_positions.append(_bbr_pos)
-                                    bb_rev_day_count += 1
-                                    add_block(f"bb_rev_entry_{_bbr_side}")
+                                    if not _margin_gate_allows(float(_bbr_lots)):
+                                        add_block("v5_margin_cap")
+                                    else:
+                                        trade_id_seq += 1
+                                        _bbr_pos = OpenPosition(
+                                            trade_id=int(trade_id_seq),
+                                            side=_bbr_side,
+                                            entry_mode=6,
+                                            entry_session=str(sess) if sess in {"london", "ny_overlap", "tokyo"} else "off_session",
+                                            entry_time=pd.Timestamp(ts),
+                                            entry_day=str(day_key),
+                                            entry_index_in_day=0,
+                                            entry_price=float(_bbr_entry),
+                                            lots_initial=float(_bbr_lots),
+                                            lots_remaining=float(_bbr_lots),
+                                            stop_price=float(_bbr_sl_px),
+                                            tp1_price=float(_bbr_tp1_px),
+                                            tp2_price=float(_bbr_tp2_px),
+                                            sl_pips=float(_bbr_sl_pips),
+                                            tp1_pips=float(_bbr_tp_pips_actual),
+                                            tp2_pips=999.0,
+                                            tp1_filled=False,
+                                            realized_pips=0.0,
+                                            realized_usd=0.0,
+                                            exit_price_last=None,
+                                            entry_regime="BB_REVERSION",
+                                            entry_profile="bb_reversion",
+                                            position_type="Single",
+                                            tp1_close_fraction=float(_bbr_close_pct),
+                                            trail_buffer_pips=999.0,
+                                            trail_ema_period=9,
+                                            trail_armed=False,
+                                            trail_start_multiple=999.0,
+                                            trail_delay_observed=False,
+                                            entry_bar_index=int(i),
+                                            entry_signal_mode=str(_bbr_sig),
+                                            wr_size_scale=1.0,
+                                            conviction_scale=1.0,
+                                            peak_mfe_pips=0.0,
+                                        )
+                                        open_positions.append(_bbr_pos)
+                                        bb_rev_day_count += 1
+                                        add_block(f"bb_rev_entry_{_bbr_side}")
             else:
                 # Outside session window — clear any pending confirmation
                 if bb_rev_pending_side is not None:
@@ -4114,6 +4359,113 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                     bb_rev_pending_sig  = None
                     bb_rev_pending_p5   = -1
         # ── End BB Reversion System ────────────────────────────────────────────────
+
+        # ── EMA Cross System (independent of V39 filters) ─────────────────────────
+        if bool(getattr(args, "ema_cross_enabled", False)) and new_m15_bar and p15 >= int(getattr(args, "ema_cross_slow", 21)):
+            _ecx_sess_start = float(getattr(args, "ema_cross_session_start", 6.0))
+            _ecx_sess_end   = float(getattr(args, "ema_cross_session_end",  21.0))
+            _ecx_in_window  = (_ecx_sess_start <= h_now < _ecx_sess_end)
+
+            if _ecx_in_window:
+                _ecx_max_daily = int(getattr(args, "ema_cross_max_daily", 3))
+                if ecx_day_key != str(day_key):
+                    ecx_day_key   = str(day_key)
+                    ecx_day_count = 0
+
+                if ecx_day_count < _ecx_max_daily:
+                    _m15_row = m15.iloc[p15]
+                    _ecx_signal = int(_m15_row["ema_cross_signal"]) if pd.notna(_m15_row["ema_cross_signal"]) else 0
+                    _ecx_adx    = float(_m15_row["adx14_m15"]) if pd.notna(_m15_row["adx14_m15"]) else 0.0
+                    _ecx_min_adx = float(getattr(args, "ema_cross_min_adx", 0.0))
+
+                    _ecx_side = None
+                    _ecx_sig  = None
+
+                    if _ecx_signal == 1 and _ecx_adx >= _ecx_min_adx:
+                        _ecx_side = "buy"
+                        _ecx_sig  = "ema_cross_bull"
+                    elif _ecx_signal == -1 and _ecx_adx >= _ecx_min_adx:
+                        _ecx_side = "sell"
+                        _ecx_sig  = "ema_cross_bear"
+
+                    if _ecx_side is not None:
+                        _already = any(
+                            getattr(_p, "entry_regime", None) == "EMA_CROSS"
+                            and getattr(_p, "side", None) == _ecx_side
+                            for _p in open_positions
+                        )
+                        if _already:
+                            _ecx_side = None
+                            add_block("ema_cross_already_open")
+
+                    if _ecx_side is not None:
+                        if float(spread_pips) > float(args.max_entry_spread_pips):
+                            add_block("ema_cross_spread_too_high")
+                        else:
+                            _ecx_sl_pips   = float(getattr(args, "ema_cross_sl_pips", 12.0))
+                            _ecx_tp_pips   = float(getattr(args, "ema_cross_tp_pips", 15.0))
+                            _ecx_close_pct = float(getattr(args, "ema_cross_tp1_close_pct", 1.0))
+                            _ecx_risk_pct  = float(getattr(args, "ema_cross_risk_pct", 0.75))
+                            _ecx_acct      = float(getattr(args, "ema_cross_account_size", 100000.0))
+                            _ecx_max_lot   = float(getattr(args, "ema_cross_max_lot", 20.0))
+
+                            _ecx_entry = float(ask) if _ecx_side == "buy" else float(bid)
+                            _ecx_sl_px = _ecx_entry - _ecx_sl_pips * PIP_SIZE if _ecx_side == "buy" \
+                                         else _ecx_entry + _ecx_sl_pips * PIP_SIZE
+                            _ecx_tp1_px = _ecx_entry + _ecx_tp_pips * PIP_SIZE if _ecx_side == "buy" \
+                                          else _ecx_entry - _ecx_tp_pips * PIP_SIZE
+                            _ecx_tp2_px = _ecx_tp1_px + 999.0 * PIP_SIZE if _ecx_side == "buy" \
+                                          else _ecx_tp1_px - 999.0 * PIP_SIZE
+
+                            _ecx_pip_val = (PIP_SIZE / float(c)) * 100000.0
+                            _ecx_risk    = _ecx_acct * _ecx_risk_pct / 100.0
+                            _ecx_lots    = round(_ecx_risk / (_ecx_sl_pips * _ecx_pip_val), 2)
+                            _ecx_lots    = max(0.01, min(_ecx_lots, _ecx_max_lot))
+
+                            if not _margin_gate_allows(float(_ecx_lots)):
+                                add_block("v5_margin_cap")
+                            else:
+                                trade_id_seq += 1
+                                _ecx_pos = OpenPosition(
+                                    trade_id=int(trade_id_seq),
+                                    side=_ecx_side,
+                                    entry_mode=7,
+                                    entry_session=str(sess) if sess in {"london", "ny_overlap", "tokyo"} else "off_session",
+                                    entry_time=pd.Timestamp(ts),
+                                    entry_day=str(day_key),
+                                    entry_index_in_day=0,
+                                    entry_price=float(_ecx_entry),
+                                    lots_initial=float(_ecx_lots),
+                                    lots_remaining=float(_ecx_lots),
+                                    stop_price=float(_ecx_sl_px),
+                                    tp1_price=float(_ecx_tp1_px),
+                                    tp2_price=float(_ecx_tp2_px),
+                                    sl_pips=float(_ecx_sl_pips),
+                                    tp1_pips=float(_ecx_tp_pips),
+                                    tp2_pips=999.0,
+                                    tp1_filled=False,
+                                    realized_pips=0.0,
+                                    realized_usd=0.0,
+                                    exit_price_last=None,
+                                    entry_regime="EMA_CROSS",
+                                    entry_profile="ema_cross",
+                                    position_type="Single",
+                                    tp1_close_fraction=float(_ecx_close_pct),
+                                    trail_buffer_pips=999.0,
+                                    trail_ema_period=9,
+                                    trail_armed=False,
+                                    trail_start_multiple=999.0,
+                                    trail_delay_observed=False,
+                                    entry_bar_index=int(i),
+                                    entry_signal_mode=str(_ecx_sig),
+                                    wr_size_scale=1.0,
+                                    conviction_scale=1.0,
+                                    peak_mfe_pips=0.0,
+                                )
+                                open_positions.append(_ecx_pos)
+                                ecx_day_count += 1
+                                add_block(f"ema_cross_entry_{_ecx_side}")
+        # ── End EMA Cross System ──────────────────────────────────────────────────
 
         # V39 entry filtering starts here — skip if max open already hit
         if _v39_max_open_hit:
@@ -4682,6 +5034,10 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             tp2_pips = tp2_mult * float(sl_dist)
         tp1_price = entry_price + tp1_pips * PIP_SIZE if entry_side == "buy" else entry_price - tp1_pips * PIP_SIZE
         tp2_price = entry_price + tp2_pips * PIP_SIZE if entry_side == "buy" else entry_price - tp2_pips * PIP_SIZE
+
+        if not _margin_gate_allows(float(final_lot)):
+            add_block("v5_margin_cap")
+            continue
 
         trade_id_seq += 1
         day_cfg["entries_opened"] = int(day_cfg["entries_opened"]) + 1
@@ -5610,6 +5966,17 @@ def main(argv: list[str]) -> int:
                 "session_range_cap_pips": float(args.v5_session_range_cap_pips),
                 "trail_start_after_tp1_mult": float(args.v5_trail_start_after_tp1_mult),
                 "max_entry_spread_pips": float(args.max_entry_spread_pips),
+                "spread_rollover_enabled": bool(args.v5_spread_rollover_enabled),
+                "spread_rollover_start_hour": float(args.v5_spread_rollover_start_hour),
+                "spread_rollover_end_hour": float(args.v5_spread_rollover_end_hour),
+                "spread_rollover_mult": float(args.v5_spread_rollover_mult),
+                "spread_rollover_min_pips": float(args.v5_spread_rollover_min_pips),
+                "spread_rollover_max_pips": float(args.v5_spread_rollover_max_pips),
+                "spread_event_spikes": str(args.v5_spread_event_spikes),
+                "spread_tod_profile_enabled": bool(args.v5_spread_tod_profile_enabled),
+                "spread_tod_profile": str(args.v5_spread_tod_profile),
+                "intrabar_conflict_policy": str(args.v5_intrabar_conflict_policy),
+                "intrabar_random_seed": int(args.v5_intrabar_random_seed),
                 "london_start_hour": float(args.v5_london_start_hour) if getattr(args, "v5_london_start_hour", None) is not None else float(args.london_start),
                 "london_active_start": float(args.v5_london_active_start),
                 "london_active_end": float(args.v5_london_active_end),
@@ -5625,6 +5992,9 @@ def main(argv: list[str]) -> int:
                 "rp_max_lot_mult": float(args.v5_rp_max_lot_mult),
                 "rp_min_lot": float(args.v5_rp_min_lot),
                 "rp_max_lot": float(args.v5_rp_max_lot),
+                "margin_model_enabled": bool(args.v5_margin_model_enabled),
+                "margin_leverage": float(args.v5_margin_leverage),
+                "margin_buffer_pct": float(args.v5_margin_buffer_pct),
                 "hybrid_strong_boost": float(args.v5_hybrid_strong_boost),
                 "hybrid_normal_boost": float(args.v5_hybrid_normal_boost),
                 "hybrid_london_boost": float(args.v5_hybrid_london_boost),
@@ -5789,6 +6159,22 @@ def main(argv: list[str]) -> int:
                 "require_trend": bool(getattr(args, "bb_rev_require_trend", True)),
                 "tp_midline": bool(getattr(args, "bb_rev_tp_midline", False)),
                 "confirm": bool(getattr(args, "bb_rev_confirm", False)),
+            },
+            "ema_cross": {
+                "enabled": bool(getattr(args, "ema_cross_enabled", False)),
+                "fast": int(getattr(args, "ema_cross_fast", 9)),
+                "slow": int(getattr(args, "ema_cross_slow", 21)),
+                "tf_minutes": int(getattr(args, "ema_cross_tf", 15)),
+                "session_start": float(getattr(args, "ema_cross_session_start", 6.0)),
+                "session_end": float(getattr(args, "ema_cross_session_end", 21.0)),
+                "sl_pips": float(getattr(args, "ema_cross_sl_pips", 12.0)),
+                "tp_pips": float(getattr(args, "ema_cross_tp_pips", 15.0)),
+                "tp1_close_pct": float(getattr(args, "ema_cross_tp1_close_pct", 1.0)),
+                "max_daily": int(getattr(args, "ema_cross_max_daily", 3)),
+                "risk_pct": float(getattr(args, "ema_cross_risk_pct", 0.75)),
+                "account_size": float(getattr(args, "ema_cross_account_size", 100000.0)),
+                "max_lot": float(getattr(args, "ema_cross_max_lot", 20.0)),
+                "min_adx": float(getattr(args, "ema_cross_min_adx", 0.0)),
             },
         },
         "results": results,

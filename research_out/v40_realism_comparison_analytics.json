@@ -1,0 +1,818 @@
+{
+  "pre_realism_v39_mo2": {
+    "summary": {
+      "trades": 224,
+      "wr": 46.875,
+      "net_usd": 23612.538,
+      "net_pips": 571.896,
+      "pf": 1.6437,
+      "max_dd_usd": 8839.311,
+      "trades_per_day": 1.9649122807017543
+    },
+    "pnl_structure": {
+      "avg_win_pips": 13.907487493102492,
+      "avg_loss_pips": -7.465461344536656,
+      "avg_win_usd": 827.4106485858863,
+      "avg_loss_usd": -531.6435344424704,
+      "realized_rr_usd": 1.5563259872116835,
+      "expectancy_usd_per_trade": 105.4131138520718,
+      "profit_factor_calc": 1.373228812245603,
+      "top10_profit_share_pct": 55.869649110450716
+    },
+    "session_split": {
+      "ny_overlap": {
+        "trades": 99,
+        "wr": 45.45454545454545,
+        "net_usd": 10179.949698517312,
+        "net_pips": 334.9526981554803,
+        "avg_usd_per_trade": 102.8277747324981
+      },
+      "london": {
+        "trades": 125,
+        "wr": 48.0,
+        "net_usd": 13432.58780434677,
+        "net_pips": 236.94358862041923,
+        "avg_usd_per_trade": 107.46070243477415
+      }
+    },
+    "exit_reasons": {
+      "sl": 116,
+      "tp1_then_trail": 78,
+      "tp1_then_tp2": 24,
+      "session_end_full_risk": 6
+    },
+    "r_multiple": {
+      "count": 224,
+      "mean": 0.3179893681664583,
+      "median": -0.9999999999999025
+    },
+    "streaks": {
+      "max_wins": 8,
+      "max_losses": 10,
+      "lag1_autocorr": 0.18062076848676692
+    },
+    "drawdown_consistency": {
+      "max_dd_pct": 9.726086525478445,
+      "max_dd_duration_trades": 117,
+      "equity_r2": 0.5230796777209581,
+      "rolling50_expectancy_min": -108.87242009004291,
+      "rolling50_expectancy_max": 532.4673036134019,
+      "rolling50_expectancy_last": 506.3573605529852,
+      "profitable_months_pct": 53.333333333333336,
+      "monthly_usd_stddev": 4957.155502335463
+    },
+    "time_to_outcome_minutes": {
+      "avg_all": 50.205357142857146,
+      "avg_winners": 87.3047619047619,
+      "avg_losers": 17.470588235294116
+    },
+    "hourly_usd": {
+      "8": {
+        "n": 25,
+        "w": 16,
+        "usd": 4165.722452214774
+      },
+      "9": {
+        "n": 100,
+        "w": 44,
+        "usd": 9266.865352131996
+      },
+      "13": {
+        "n": 74,
+        "w": 35,
+        "usd": 8310.653446874678
+      },
+      "14": {
+        "n": 25,
+        "w": 10,
+        "usd": 1869.2962516426335
+      }
+    },
+    "dow_usd": {
+      "0": {
+        "n": 54,
+        "w": 26,
+        "usd": 8503.604034535612
+      },
+      "1": {
+        "n": 38,
+        "w": 19,
+        "usd": 10403.653931448112
+      },
+      "2": {
+        "n": 46,
+        "w": 22,
+        "usd": 1912.3226875179305
+      },
+      "3": {
+        "n": 46,
+        "w": 20,
+        "usd": -1153.5687665599785
+      },
+      "4": {
+        "n": 40,
+        "w": 18,
+        "usd": 3946.5256159224064
+      }
+    },
+    "blocked_reasons_top20": [
+      [
+        "v5_flat_regime",
+        33080
+      ],
+      [
+        "v5_dual_mode_neutral",
+        21147
+      ],
+      [
+        "v5_atr_high_regime",
+        19114
+      ],
+      [
+        "calendar_month_skip",
+        13975
+      ],
+      [
+        "v5_session_entry_cutoff",
+        7647
+      ],
+      [
+        "v5_green_light_active",
+        5141
+      ],
+      [
+        "range_fade_disabled",
+        4960
+      ],
+      [
+        "v5_max_open_cap",
+        3739
+      ],
+      [
+        "v5_skip_weak",
+        3680
+      ],
+      [
+        "v5_daily_loss_usd_stop",
+        1674
+      ],
+      [
+        "h1_no_trend",
+        740
+      ],
+      [
+        "v5_sl_cap_skip",
+        427
+      ],
+      [
+        "v5_cooldown",
+        326
+      ],
+      [
+        "v5_london_confirm_fail",
+        318
+      ],
+      [
+        "v5_entry_body_too_small",
+        193
+      ],
+      [
+        "v5_wr_scale_reduced",
+        47
+      ],
+      [
+        "v5_wr_scale_survival",
+        47
+      ],
+      [
+        "v5_margin_cap",
+        42
+      ],
+      [
+        "v5_london_entry_cap",
+        18
+      ],
+      [
+        "session_stopped",
+        6
+      ]
+    ],
+    "unavailable_metrics": [
+      "mfe_capture_ratio",
+      "mae_at_exit",
+      "entry_red_first_vs_green_first",
+      "early_mfe_predictor",
+      "time_to_mfe_vs_time_to_mae"
+    ]
+  },
+  "pre_realism_v39_mo3": {
+    "summary": {
+      "trades": 238,
+      "wr": 47.059,
+      "net_usd": 26814.262,
+      "net_pips": 551.823,
+      "pf": 1.5877,
+      "max_dd_usd": 8976.958,
+      "trades_per_day": 2.087719298245614
+    },
+    "pnl_structure": {
+      "avg_win_pips": 13.310412045774468,
+      "avg_loss_pips": -7.451932936506734,
+      "avg_win_usd": 849.0818836119885,
+      "avg_loss_usd": -541.9278463929654,
+      "realized_rr_usd": 1.566780318198113,
+      "expectancy_usd_per_trade": 112.66496772701288,
+      "profit_factor_calc": 1.3926936161761005,
+      "top10_profit_share_pct": 58.13761715152571
+    },
+    "session_split": {
+      "ny_overlap": {
+        "trades": 102,
+        "wr": 46.07843137254902,
+        "net_usd": 14224.002099915273,
+        "net_pips": 312.0215767608113,
+        "avg_usd_per_trade": 139.4510009795615
+      },
+      "london": {
+        "trades": 136,
+        "wr": 47.794117647058826,
+        "net_usd": 12590.260219113788,
+        "net_pips": 239.80102236608076,
+        "avg_usd_per_trade": 92.57544278760139
+      }
+    },
+    "exit_reasons": {
+      "sl": 123,
+      "tp1_then_trail": 86,
+      "tp1_then_tp2": 23,
+      "session_end_full_risk": 6
+    },
+    "r_multiple": {
+      "count": 238,
+      "mean": 0.2826973655757179,
+      "median": -0.9999999999999025
+    },
+    "streaks": {
+      "max_wins": 10,
+      "max_losses": 11,
+      "lag1_autocorr": 0.1954992967651196
+    },
+    "drawdown_consistency": {
+      "max_dd_pct": 9.877468249617712,
+      "max_dd_duration_trades": 75,
+      "equity_r2": 0.5586510414845054,
+      "rolling50_expectancy_min": -139.32282324182563,
+      "rolling50_expectancy_max": 597.0408081529873,
+      "rolling50_expectancy_last": 572.403002568451,
+      "profitable_months_pct": 46.666666666666664,
+      "monthly_usd_stddev": 5049.843875066371
+    },
+    "time_to_outcome_minutes": {
+      "avg_all": 50.78151260504202,
+      "avg_winners": 87.42857142857143,
+      "avg_losers": 18.206349206349206
+    },
+    "hourly_usd": {
+      "8": {
+        "n": 27,
+        "w": 18,
+        "usd": 4566.023996857222
+      },
+      "9": {
+        "n": 109,
+        "w": 47,
+        "usd": 8024.236222256564
+      },
+      "13": {
+        "n": 77,
+        "w": 37,
+        "usd": 14208.315705484016
+      },
+      "14": {
+        "n": 25,
+        "w": 10,
+        "usd": 15.686394431256986
+      }
+    },
+    "dow_usd": {
+      "0": {
+        "n": 60,
+        "w": 29,
+        "usd": 10434.675449330374
+      },
+      "1": {
+        "n": 40,
+        "w": 20,
+        "usd": 10718.007511284088
+      },
+      "2": {
+        "n": 45,
+        "w": 21,
+        "usd": 3341.807263385816
+      },
+      "3": {
+        "n": 52,
+        "w": 24,
+        "usd": -625.2300625959431
+      },
+      "4": {
+        "n": 41,
+        "w": 18,
+        "usd": 2945.00215762473
+      }
+    },
+    "blocked_reasons_top20": [
+      [
+        "v5_flat_regime",
+        33080
+      ],
+      [
+        "v5_dual_mode_neutral",
+        21250
+      ],
+      [
+        "v5_atr_high_regime",
+        19315
+      ],
+      [
+        "calendar_month_skip",
+        13975
+      ],
+      [
+        "v5_session_entry_cutoff",
+        7844
+      ],
+      [
+        "v5_green_light_active",
+        5083
+      ],
+      [
+        "range_fade_disabled",
+        4960
+      ],
+      [
+        "v5_skip_weak",
+        3824
+      ],
+      [
+        "v5_max_open_cap",
+        2131
+      ],
+      [
+        "v5_daily_loss_usd_stop",
+        1668
+      ],
+      [
+        "h1_no_trend",
+        740
+      ],
+      [
+        "v5_sl_cap_skip",
+        499
+      ],
+      [
+        "v5_london_confirm_fail",
+        370
+      ],
+      [
+        "v5_cooldown",
+        333
+      ],
+      [
+        "v5_entry_body_too_small",
+        266
+      ],
+      [
+        "v5_margin_cap",
+        96
+      ],
+      [
+        "v5_wr_scale_reduced",
+        45
+      ],
+      [
+        "v5_wr_scale_survival",
+        45
+      ],
+      [
+        "v5_london_entry_cap",
+        40
+      ],
+      [
+        "session_stopped",
+        10
+      ]
+    ],
+    "unavailable_metrics": [
+      "mfe_capture_ratio",
+      "mae_at_exit",
+      "entry_red_first_vs_green_first",
+      "early_mfe_predictor",
+      "time_to_mfe_vs_time_to_mae"
+    ]
+  },
+  "realism_v40_mo2": {
+    "summary": {
+      "trades": 219,
+      "wr": 42.466,
+      "net_usd": 13109.352,
+      "net_pips": 346.385,
+      "pf": 1.3704,
+      "max_dd_usd": 13662.454,
+      "trades_per_day": 1.9210526315789473
+    },
+    "pnl_structure": {
+      "avg_win_pips": 13.779436881403033,
+      "avg_loss_pips": -7.421453174602164,
+      "avg_win_usd": 780.449633890556,
+      "avg_loss_usd": -472.0036853195491,
+      "realized_rr_usd": 1.653482076865962,
+      "expectancy_usd_per_trade": 59.860052975153074,
+      "profit_factor_calc": 1.220427247210591,
+      "top10_profit_share_pct": 62.690039977192846
+    },
+    "session_split": {
+      "ny_overlap": {
+        "trades": 92,
+        "wr": 43.47826086956522,
+        "net_usd": 7094.410380186901,
+        "net_pips": 226.09999090250142,
+        "avg_usd_per_trade": 77.11315630637937
+      },
+      "london": {
+        "trades": 127,
+        "wr": 41.732283464566926,
+        "net_usd": 6014.941221371617,
+        "net_pips": 120.28453906810796,
+        "avg_usd_per_trade": 47.36174190056391
+      }
+    },
+    "exit_reasons": {
+      "sl": 124,
+      "tp1_then_trail": 67,
+      "tp1_then_tp2": 21,
+      "session_end_full_risk": 7
+    },
+    "r_multiple": {
+      "count": 219,
+      "mean": 0.18955185868044278,
+      "median": -0.9999999999999025
+    },
+    "streaks": {
+      "max_wins": 6,
+      "max_losses": 13,
+      "lag1_autocorr": 0.14552769909384292
+    },
+    "drawdown_consistency": {
+      "max_dd_pct": 14.562964082300912,
+      "max_dd_duration_trades": 194,
+      "equity_r2": 0.08606924773928992,
+      "rolling50_expectancy_min": -152.62371713371135,
+      "rolling50_expectancy_max": 536.4153736459957,
+      "rolling50_expectancy_last": 520.2998328523352,
+      "profitable_months_pct": 46.666666666666664,
+      "monthly_usd_stddev": 4856.523527730822
+    },
+    "time_to_outcome_minutes": {
+      "avg_all": 44.6986301369863,
+      "avg_winners": 83.65591397849462,
+      "avg_losers": 15.944444444444445
+    },
+    "hourly_usd": {
+      "8": {
+        "n": 27,
+        "w": 15,
+        "usd": -1273.9675805413335
+      },
+      "9": {
+        "n": 100,
+        "w": 38,
+        "usd": 7288.908801912952
+      },
+      "13": {
+        "n": 69,
+        "w": 30,
+        "usd": 4939.2768733937055
+      },
+      "14": {
+        "n": 23,
+        "w": 10,
+        "usd": 2155.1335067932
+      }
+    },
+    "dow_usd": {
+      "0": {
+        "n": 53,
+        "w": 21,
+        "usd": 199.0969356088674
+      },
+      "1": {
+        "n": 37,
+        "w": 18,
+        "usd": 9196.215941167633
+      },
+      "2": {
+        "n": 44,
+        "w": 19,
+        "usd": 2248.676308207626
+      },
+      "3": {
+        "n": 46,
+        "w": 20,
+        "usd": -2133.0288372033633
+      },
+      "4": {
+        "n": 39,
+        "w": 15,
+        "usd": 3598.391253777755
+      }
+    },
+    "blocked_reasons_top20": [
+      [
+        "v5_flat_regime",
+        33080
+      ],
+      [
+        "v5_dual_mode_neutral",
+        21148
+      ],
+      [
+        "v5_atr_high_regime",
+        19209
+      ],
+      [
+        "calendar_month_skip",
+        13975
+      ],
+      [
+        "v5_session_entry_cutoff",
+        7588
+      ],
+      [
+        "range_fade_disabled",
+        4960
+      ],
+      [
+        "v5_green_light_active",
+        3898
+      ],
+      [
+        "v5_skip_weak",
+        3864
+      ],
+      [
+        "v5_max_open_cap",
+        3070
+      ],
+      [
+        "v5_daily_loss_usd_stop",
+        1787
+      ],
+      [
+        "h1_no_trend",
+        740
+      ],
+      [
+        "v5_sl_cap_skip",
+        445
+      ],
+      [
+        "v5_cooldown",
+        353
+      ],
+      [
+        "v5_london_confirm_fail",
+        341
+      ],
+      [
+        "v5_entry_body_too_small",
+        212
+      ],
+      [
+        "v5_wr_scale_reduced",
+        73
+      ],
+      [
+        "v5_wr_scale_survival",
+        73
+      ],
+      [
+        "v5_margin_cap",
+        67
+      ]
+    ],
+    "unavailable_metrics": [
+      "mfe_capture_ratio",
+      "mae_at_exit",
+      "entry_red_first_vs_green_first",
+      "early_mfe_predictor",
+      "time_to_mfe_vs_time_to_mae"
+    ]
+  },
+  "realism_v40_mo3": {
+    "summary": {
+      "trades": 236,
+      "wr": 42.797,
+      "net_usd": 18016.357,
+      "net_pips": 463.814,
+      "pf": 1.4627,
+      "max_dd_usd": 14901.496,
+      "trades_per_day": 2.0701754385964914
+    },
+    "pnl_structure": {
+      "avg_win_pips": 14.518062025922479,
+      "avg_loss_pips": -7.42600296296191,
+      "avg_win_usd": 812.5294330384307,
+      "avg_loss_usd": -474.43789307075514,
+      "realized_rr_usd": 1.7126149595248592,
+      "expectancy_usd_per_trade": 76.34049649292186,
+      "profit_factor_calc": 1.281289710459339,
+      "top10_profit_share_pct": 62.259108041310796
+    },
+    "session_split": {
+      "ny_overlap": {
+        "trades": 96,
+        "wr": 43.75,
+        "net_usd": 8185.145634363741,
+        "net_pips": 262.15969596622955,
+        "avg_usd_per_trade": 85.26193369128897
+      },
+      "london": {
+        "trades": 140,
+        "wr": 42.142857142857146,
+        "net_usd": 9831.211537965812,
+        "net_pips": 201.654168652083,
+        "avg_usd_per_trade": 70.22293955689865
+      }
+    },
+    "exit_reasons": {
+      "sl": 133,
+      "tp1_then_trail": 73,
+      "tp1_then_tp2": 22,
+      "session_end_full_risk": 8
+    },
+    "r_multiple": {
+      "count": 236,
+      "mean": 0.2373536931633486,
+      "median": -0.9999999999999025
+    },
+    "streaks": {
+      "max_wins": 6,
+      "max_losses": 14,
+      "lag1_autocorr": 0.15679017547144786
+    },
+    "drawdown_consistency": {
+      "max_dd_pct": 15.802006562947513,
+      "max_dd_duration_trades": 204,
+      "equity_r2": 0.10835991218515995,
+      "rolling50_expectancy_min": -161.64661156158147,
+      "rolling50_expectancy_max": 655.7025133547245,
+      "rolling50_expectancy_last": 635.1667461783466,
+      "profitable_months_pct": 40.0,
+      "monthly_usd_stddev": 5791.032546316177
+    },
+    "time_to_outcome_minutes": {
+      "avg_all": 46.94915254237288,
+      "avg_winners": 87.61386138613861,
+      "avg_losers": 16.525925925925925
+    },
+    "hourly_usd": {
+      "8": {
+        "n": 28,
+        "w": 16,
+        "usd": -1102.2435343248587
+      },
+      "9": {
+        "n": 112,
+        "w": 43,
+        "usd": 10933.455072290673
+      },
+      "13": {
+        "n": 73,
+        "w": 32,
+        "usd": 6461.81254003425
+      },
+      "14": {
+        "n": 23,
+        "w": 10,
+        "usd": 1723.3330943294955
+      }
+    },
+    "dow_usd": {
+      "0": {
+        "n": 60,
+        "w": 25,
+        "usd": 1147.7906315678968
+      },
+      "1": {
+        "n": 39,
+        "w": 19,
+        "usd": 14762.799196672526
+      },
+      "2": {
+        "n": 46,
+        "w": 20,
+        "usd": 2382.4411990721783
+      },
+      "3": {
+        "n": 50,
+        "w": 22,
+        "usd": -2325.6044053332653
+      },
+      "4": {
+        "n": 41,
+        "w": 15,
+        "usd": 2048.9305503502196
+      }
+    },
+    "blocked_reasons_top20": [
+      [
+        "v5_flat_regime",
+        33080
+      ],
+      [
+        "v5_dual_mode_neutral",
+        21148
+      ],
+      [
+        "v5_atr_high_regime",
+        19394
+      ],
+      [
+        "calendar_month_skip",
+        13975
+      ],
+      [
+        "v5_session_entry_cutoff",
+        7986
+      ],
+      [
+        "range_fade_disabled",
+        4960
+      ],
+      [
+        "v5_green_light_active",
+        3901
+      ],
+      [
+        "v5_skip_weak",
+        3899
+      ],
+      [
+        "v5_max_open_cap",
+        1835
+      ],
+      [
+        "v5_daily_loss_usd_stop",
+        1777
+      ],
+      [
+        "h1_no_trend",
+        740
+      ],
+      [
+        "v5_sl_cap_skip",
+        507
+      ],
+      [
+        "v5_london_confirm_fail",
+        420
+      ],
+      [
+        "v5_cooldown",
+        367
+      ],
+      [
+        "v5_entry_body_too_small",
+        255
+      ],
+      [
+        "v5_margin_cap",
+        101
+      ],
+      [
+        "v5_wr_scale_reduced",
+        72
+      ],
+      [
+        "v5_wr_scale_survival",
+        72
+      ],
+      [
+        "v5_london_entry_cap",
+        49
+      ],
+      [
+        "session_stopped",
+        10
+      ]
+    ],
+    "unavailable_metrics": [
+      "mfe_capture_ratio",
+      "mae_at_exit",
+      "entry_red_first_vs_green_first",
+      "early_mfe_predictor",
+      "time_to_mfe_vs_time_to_mae"
+    ]
+  }
+}

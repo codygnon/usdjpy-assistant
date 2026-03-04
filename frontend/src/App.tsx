@@ -3613,6 +3613,7 @@ interface EditedSettings {
   // Trial #3 EMA overrides
   m5_trend_ema_fast: number | null;
   m5_trend_ema_slow: number | null;
+  m1_zone_entry_ema_fast: number | null;
   m1_zone_entry_ema_slow: number | null;
   m1_pullback_cross_ema_slow: number | null;
   // Trial #4 EMA overrides (Zone Entry only - Tiered Pullback uses fixed tiers)
@@ -3748,6 +3749,7 @@ interface EditedSettings {
   t8_tp1_close_pct: number;
   t8_be_spread_plus_pips: number;
   t8_trail_ema_period: number;
+  t8_m1_zone_entry_price_ema_period: number;
   // Uncle Parsh H1 Breakout: Major Extremes Momentum Breakout
   up_major_extremes_only: boolean;
   up_h1_lookback_hours: number;
@@ -3962,6 +3964,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t8Tp1ClosePct = 50;
       let t8BeSpreadPlusPips = 2.0;
       let t8TrailEmaPeriod = 21;
+      let t8M1ZoneEntryPriceEmaPeriod = 5;
+      let t7M1ZoneEntryEmaFast: number | null = null;
+      let t7M1ZoneEntryEmaSlow: number | null = null;
       let maxOpenTradesPerSide = 5;
       let maxZoneEntryOpen = 3;
       let maxTieredPullbackOpen = 8;
@@ -4173,6 +4178,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
             if (t7ZoneEntryMode !== 'ema_cross' && t7ZoneEntryMode !== 'price_vs_ema5') {
               t7ZoneEntryMode = 'ema_cross';
             }
+            t7M1ZoneEntryEmaFast = (pol.m1_zone_entry_ema_fast as number) ?? 5;
+            t7M1ZoneEntryEmaSlow = (pol.m1_zone_entry_ema_slow as number) ?? 9;
             tierEmaPeriods = sanitizeTrial7TierPeriods(pol.tier_ema_periods as number[] | undefined);
             policySlPips = (pol.sl_pips as number) ?? 20;
             const es7 = (pol.exit_strategy as string) ?? 'tp_sl_be';
@@ -4243,7 +4250,13 @@ function PresetsPage({ profile }: { profile: Profile }) {
             t7M5TrendEmaFast = (pol.m5_trend_ema_fast as number) ?? 9;
             t7M5TrendEmaSlow = (pol.m5_trend_ema_slow as number) ?? 21;
             t7M5MinEmaDistancePips = (pol.m5_min_ema_distance_pips as number) ?? 1.0;
-            t7ZoneEntryMode = 'price_vs_ema5';
+            t7ZoneEntryMode = (pol.zone_entry_mode as 'ema_cross' | 'price_vs_ema5') ?? 'price_vs_ema5';
+            if (t7ZoneEntryMode !== 'ema_cross' && t7ZoneEntryMode !== 'price_vs_ema5') {
+              t7ZoneEntryMode = 'price_vs_ema5';
+            }
+            t7M1ZoneEntryEmaFast = (pol.m1_zone_entry_ema_fast as number) ?? 5;
+            t7M1ZoneEntryEmaSlow = (pol.m1_zone_entry_ema_slow as number) ?? 9;
+            t8M1ZoneEntryPriceEmaPeriod = (pol.m1_zone_entry_price_ema_period as number) ?? 5;
             tierEmaPeriods = sanitizeTrial7TierPeriods(pol.tier_ema_periods as number[] | undefined);
             policySlPips = (pol.sl_pips as number) ?? 20;
             t7TrendExhaustionEnabled = (pol.trend_exhaustion_enabled as boolean) ?? false;
@@ -4423,7 +4436,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
         // Trial #3 EMA overrides from temp settings
         m5_trend_ema_fast: tempSettings?.m5_trend_ema_fast ?? null,
         m5_trend_ema_slow: tempSettings?.m5_trend_ema_slow ?? null,
-        m1_zone_entry_ema_slow: tempSettings?.m1_zone_entry_ema_slow ?? null,
+        m1_zone_entry_ema_fast: t7M1ZoneEntryEmaFast ?? null,
+        m1_zone_entry_ema_slow: t7M1ZoneEntryEmaSlow ?? tempSettings?.m1_zone_entry_ema_slow ?? null,
         m1_pullback_cross_ema_slow: tempSettings?.m1_pullback_cross_ema_slow ?? null,
         // Trial #4 EMA overrides from temp settings (Zone Entry only)
         m3_trend_ema_fast: tempSettings?.m3_trend_ema_fast ?? null,
@@ -4484,6 +4498,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t8_tp1_close_pct: tempSettings?.t8_tp1_close_pct ?? t8Tp1ClosePct,
         t8_be_spread_plus_pips: tempSettings?.t8_be_spread_plus_pips ?? t8BeSpreadPlusPips,
         t8_trail_ema_period: tempSettings?.t8_trail_ema_period ?? t8TrailEmaPeriod,
+        t8_m1_zone_entry_price_ema_period: t8M1ZoneEntryPriceEmaPeriod,
         // Uncle Parsh H1 Breakout (major-extremes momentum breakout)
         up_major_extremes_only: tempSettings?.up_major_extremes_only ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.major_extremes_only as boolean ?? false),
         up_h1_lookback_hours: tempSettings?.up_h1_lookback_hours ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_lookback_hours as number ?? 48),
@@ -4654,6 +4669,12 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.m5_min_ema_distance_pips = Math.max(0, editedSettings.t7_m5_min_ema_distance_pips);
           updates.zone_entry_mode = editedSettings.t7_zone_entry_mode;
           updates.zone_entry_enabled = editedSettings.zone_entry_enabled;
+          if (editedSettings.m1_zone_entry_ema_fast != null) {
+            updates.m1_zone_entry_ema_fast = Math.max(1, Math.min(100, editedSettings.m1_zone_entry_ema_fast));
+          }
+          if (editedSettings.m1_zone_entry_ema_slow != null) {
+            updates.m1_zone_entry_ema_slow = Math.max(1, Math.min(100, editedSettings.m1_zone_entry_ema_slow));
+          }
           updates.exit_strategy = editedSettings.t7_exit_strategy;
           updates.m1_exit_ema_fast = Math.max(2, Math.min(50, editedSettings.t7_m1_exit_ema_fast));
           updates.m1_exit_ema_slow = Math.max(3, Math.min(100, editedSettings.t7_m1_exit_ema_slow));
@@ -4732,8 +4753,15 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.m5_trend_ema_fast = Math.max(1, editedSettings.t7_m5_trend_ema_fast);
           updates.m5_trend_ema_slow = Math.max(1, editedSettings.t7_m5_trend_ema_slow);
           updates.m5_min_ema_distance_pips = Math.max(0, editedSettings.t7_m5_min_ema_distance_pips);
-          updates.zone_entry_mode = 'price_vs_ema5';
+          updates.zone_entry_mode = editedSettings.t7_zone_entry_mode;
           updates.zone_entry_enabled = editedSettings.zone_entry_enabled;
+          if (editedSettings.m1_zone_entry_ema_fast != null) {
+            updates.m1_zone_entry_ema_fast = Math.max(1, Math.min(100, editedSettings.m1_zone_entry_ema_fast));
+          }
+          if (editedSettings.m1_zone_entry_ema_slow != null) {
+            updates.m1_zone_entry_ema_slow = Math.max(1, Math.min(100, editedSettings.m1_zone_entry_ema_slow));
+          }
+          updates.m1_zone_entry_price_ema_period = Math.max(2, Math.min(50, editedSettings.t8_m1_zone_entry_price_ema_period));
           updates.tier_ema_periods = sanitizeTrial7TierPeriods(editedSettings.tier_ema_periods);
           updates.spread_aware_be_enabled = editedSettings.spread_aware_be_enabled;
           updates.spread_aware_be_trigger_mode = 'spread_relative';
@@ -6585,6 +6613,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       ...editedSettings,
                       m5_trend_ema_fast: null,
                       m5_trend_ema_slow: null,
+                      m1_zone_entry_ema_fast: null,
                       m1_zone_entry_ema_slow: null,
                       m1_pullback_cross_ema_slow: null,
                     })}
@@ -6678,7 +6707,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
                         When OFF, only tiered pullback entries are active (zone entry trades are blocked).
                       </div>
-                      {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') && (
+                      {((execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') || (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8')) && (
                         <div style={{ marginTop: 10 }}>
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 6 }}>
                             Zone Entry Type
@@ -6689,13 +6718,58 @@ function PresetsPage({ profile }: { profile: Profile }) {
                             style={{ width: '100%', padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
                           >
                             <option value="ema_cross">EMA Cross (M1 EMA fast vs slow)</option>
-                            <option value="price_vs_ema5">Price vs M1 EMA5</option>
+                            <option value="price_vs_ema5">Price vs M1 EMA</option>
                           </select>
                           <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 6 }}>
                             {editedSettings.t7_zone_entry_mode === 'ema_cross'
                               ? 'EMA Cross: Uses M1 EMA fast/slow relationship in M5 trend direction.'
-                              : 'Price vs EMA5: Uses live poll price relative to M1 EMA5 in M5 trend direction.'}
+                              : 'Price vs EMA: Uses live poll price relative to configurable M1 EMA in M5 trend direction.'}
                           </div>
+                          {editedSettings.t7_zone_entry_mode === 'price_vs_ema5' && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8') && (
+                            <div style={{ marginTop: 8 }}>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>M1 EMA period (price goes against)</div>
+                              <input
+                                type="number"
+                                step="1"
+                                min="2"
+                                max="50"
+                                value={editedSettings.t8_m1_zone_entry_price_ema_period}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t8_m1_zone_entry_price_ema_period: Math.max(2, Math.min(50, parseInt(e.target.value) || 5)) })}
+                                style={{ width: '100%', padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                              />
+                            </div>
+                          )}
+                          {editedSettings.t7_zone_entry_mode === 'ema_cross' && ((execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') || (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8')) && (
+                            <div style={{ marginTop: 8 }}>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>M1 Zone Entry – fast / slow EMAs</div>
+                              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                <input
+                                  type="number"
+                                  step="1"
+                                  min="1"
+                                  max="100"
+                                  placeholder="5"
+                                  value={editedSettings.m1_zone_entry_ema_fast ?? ''}
+                                  onChange={(e) => setEditedSettings({ ...editedSettings, m1_zone_entry_ema_fast: e.target.value ? parseInt(e.target.value) : null })}
+                                  style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                                />
+                                <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>/</span>
+                                <input
+                                  type="number"
+                                  step="1"
+                                  min="1"
+                                  max="100"
+                                  placeholder="9"
+                                  value={editedSettings.m1_zone_entry_ema_slow ?? ''}
+                                  onChange={(e) => setEditedSettings({ ...editedSettings, m1_zone_entry_ema_slow: e.target.value ? parseInt(e.target.value) : null })}
+                                  style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                                />
+                              </div>
+                              <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                                Zone Entry: fast {'>'} slow = BUY
+                              </div>
+                            </div>
+                          )}
                           {!editedSettings.zone_entry_enabled && (
                             <div style={{ fontSize: '0.65rem', color: 'var(--warning)', marginTop: 4 }}>
                               Inactive while Zone Entry Enabled is OFF.

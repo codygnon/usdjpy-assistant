@@ -920,14 +920,16 @@ def collect_trial_7_context(
             items.append(ContextItem(f"M1 EMA{ze_fast}", f"{zf:.3f}", "zone_entry"))
             items.append(ContextItem(f"M1 EMA{ze_slow}", f"{zs:.3f}", "zone_entry"))
             if zone_mode == "price_vs_ema5":
-                ema5 = float(ema_fn(m1_close, 5).iloc[-1])
-                items.append(
-                    ContextItem(
-                        "Zone Condition Snapshot",
-                        f"bid/ask {tick.bid:.3f}/{tick.ask:.3f} vs EMA5 {ema5:.3f}",
-                        "zone_entry",
+                ze_price = int(getattr(policy, "m1_zone_entry_price_ema_period", 5))
+                if len(m1_df) > ze_price:
+                    ema_price = float(ema_fn(m1_close, ze_price).iloc[-1])
+                    items.append(
+                        ContextItem(
+                            "Zone Condition Snapshot",
+                            f"bid/ask {tick.bid:.3f}/{tick.ask:.3f} vs EMA{ze_price} {ema_price:.3f}",
+                            "zone_entry",
+                        )
                     )
-                )
             else:
                 items.append(
                     ContextItem(

@@ -1687,6 +1687,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "zone_entry_mode": "price_vs_ema5",
                     "m1_zone_entry_ema_fast": 5,
                     "m1_zone_entry_ema_slow": 9,
+                    "m1_zone_entry_price_ema_period": 5,
                     "tiered_pullback_enabled": True,
                     "tier_ema_periods": [9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34],
                     "tier_reset_buffer_pips": 1.0,

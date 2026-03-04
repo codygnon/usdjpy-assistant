@@ -3295,10 +3295,19 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
                 "min_gap_pips": getattr(policy, "m5_min_ema_distance_pips", 1.0),
             }
         elif is_trial_8:
+            zone_entry_mode = getattr(policy, "zone_entry_mode", "price_vs_ema5")
+            if zone_entry_mode not in ("ema_cross", "price_vs_ema5"):
+                zone_entry_mode = "price_vs_ema5"
+            price_ema_period = int(getattr(policy, "m1_zone_entry_price_ema_period", 5))
+            mode_description = (
+                "M5 trend + M1 EMA fast/slow cross"
+                if zone_entry_mode == "ema_cross"
+                else f"M5 trend + live price vs M1 EMA{price_ema_period}"
+            )
             filters["zone_entry"] = {
                 "enabled": getattr(policy, "zone_entry_enabled", True),
-                "mode": "price_vs_ema5",
-                "mode_description": "M5 trend + live price vs M1 EMA5",
+                "mode": zone_entry_mode,
+                "mode_description": mode_description,
             }
             filters["m5_ema_distance_gate"] = {
                 "enabled": True,

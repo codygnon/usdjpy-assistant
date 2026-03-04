@@ -808,7 +808,7 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
 
 
 class ExecutionPolicyKtCgTrial8(BaseModel):
-    """KT/CG Trial #8: T7 minus EMA zone filter and reversal risk; breakeven spread+buffer only; zone entry price vs M1 EMA5 only; Daily Level Filter."""
+    """KT/CG Trial #8: T7 minus EMA zone filter and reversal risk; breakeven spread+buffer only; configurable zone entry (EMA Cross or Price vs M1 EMA); Daily Level Filter."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -821,11 +821,12 @@ class ExecutionPolicyKtCgTrial8(BaseModel):
     m5_trend_ema_slow: int = 21
     m5_min_ema_distance_pips: float = 1.0
 
-    # M1 Zone Entry - price vs M1 EMA5 only (no ema_cross)
+    # M1 Zone Entry: ema_cross (fast vs slow) or price_vs_ema (price vs configurable EMA period)
     zone_entry_enabled: bool = True
-    zone_entry_mode: Literal["price_vs_ema5"] = "price_vs_ema5"
+    zone_entry_mode: Literal["ema_cross", "price_vs_ema5"] = "price_vs_ema5"
     m1_zone_entry_ema_fast: int = 5
     m1_zone_entry_ema_slow: int = 9
+    m1_zone_entry_price_ema_period: int = 5  # M1 EMA period for "price vs EMA" mode
 
     # Tiered Pullback Configuration
     tiered_pullback_enabled: bool = True
@@ -1225,6 +1226,11 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
                             if k.startswith("rr_") or k == "use_reversal_risk_score":
                                 pol.pop(k, None)
                         pol.pop("spread_aware_be_fixed_trigger_pips", None)
+                        # Ensure zone_entry_mode and m1_zone_entry_price_ema_period
+                        if pol.get("zone_entry_mode") not in ("ema_cross", "price_vs_ema5"):
+                            pol["zone_entry_mode"] = "price_vs_ema5"
+                        if "m1_zone_entry_price_ema_period" not in pol:
+                            pol["m1_zone_entry_price_ema_period"] = 5
                     if isinstance(pol, dict) and pol.get("type") == "kt_cg_trial_7":
                         # Remove filters not used by Trial #7
                         pol.pop("tiered_atr_filter_enabled", None)
