@@ -289,6 +289,11 @@ DEFAULTS: dict[str, object] = {
     "v5_atr_pct_filter_enabled": False,
     "v5_atr_pct_cap": 0.67,
     "v5_atr_pct_lookback": 200,
+    "v5_news_filter_enabled": False,
+    "v5_news_window_minutes_before": 60,
+    "v5_news_window_minutes_after": 30,
+    "v5_news_impact_min": "high",
+    "v5_news_calendar_path": "research_out/v5_scheduled_events_utc.csv",
     "v5_normal_mid_atr_allowed": False,
     "v5_atr_pct_low_normal": 0.33,
     "v5_nonmover_exit_enabled": False,
@@ -513,6 +518,29 @@ def parse_bool(v: object) -> bool:
     if s in {"0", "false", "f", "no", "n", "off"}:
         return False
     raise argparse.ArgumentTypeError(f"invalid boolean value: {v}")
+
+
+def parse_utc_time_token_to_minutes(v: object) -> Optional[int]:
+    s = str(v).strip()
+    if not s:
+        return None
+    try:
+        if ":" in s:
+            hh, mm = s.split(":", 1)
+            h = int(hh) % 24
+            m = int(mm) % 60
+        else:
+            hf = float(s) % 24.0
+            h = int(hf)
+            m = int(round((hf - h) * 60.0))
+        return (h * 60 + m) % (24 * 60)
+    except Exception:
+        return None
+
+
+def impact_rank(v: object) -> int:
+    key = str(v).strip().lower()
+    return {"low": 1, "medium": 2, "high": 3}.get(key, 0)
 
 
 def _full_parser() -> argparse.ArgumentParser:
@@ -813,6 +841,11 @@ def _full_parser() -> argparse.ArgumentParser:
     p.add_argument("--v5-atr-pct-filter-enabled", type=parse_bool, nargs="?", const=True)
     p.add_argument("--v5-atr-pct-cap", type=float)
     p.add_argument("--v5-atr-pct-lookback", type=int)
+    p.add_argument("--v5-news-filter-enabled", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-news-window-minutes-before", type=int)
+    p.add_argument("--v5-news-window-minutes-after", type=int)
+    p.add_argument("--v5-news-impact-min", choices=["low", "medium", "high"], type=str)
+    p.add_argument("--v5-news-calendar-path", type=str)
     p.add_argument("--v5-normal-mid-atr-allowed", type=parse_bool, nargs="?", const=True)
     p.add_argument("--v5-atr-pct-low-normal", type=float)
     p.add_argument("--v5-nonmover-exit-enabled", type=parse_bool, nargs="?", const=True)
@@ -3286,6 +3319,48 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
     if bool(getattr(args, "v5_spread_tod_profile_enabled", True)):
         spread_tod_windows = _parse_spread_windows(str(getattr(args, "v5_spread_tod_profile", "")))
 
+    news_filter_enabled = bool(getattr(args, "v5_news_filter_enabled", False))
+    news_window_before_min = max(0, int(getattr(args, "v5_news_window_minutes_before", 60)))
+    news_window_after_min = max(0, int(getattr(args, "v5_news_window_minutes_after", 30)))
+    news_impact_floor = impact_rank(str(getattr(args, "v5_news_impact_min", "high")))
+    news_calendar_path = str(getattr(args, "v5_news_calendar_path", "research_out/v5_scheduled_events_utc.csv"))
+    news_events_utc: list[tuple[pd.Timestamp, int]] = []
+    news_calendar_loaded = False
+    if news_filter_enabled:
+        try:
+            news_df = pd.read_csv(news_calendar_path)
+            if {"date", "time_utc"}.issubset(news_df.columns):
+                for _, row in news_df.iterrows():
+                    d = str(row.get("date", "")).strip()
+                    mins = parse_utc_time_token_to_minutes(row.get("time_utc", ""))
+                    if not d or mins is None:
+                        continue
+                    imp = impact_rank(row.get("impact", "high"))
+                    if imp < news_impact_floor:
+                        continue
+                    ts_event = pd.Timestamp(d, tz="UTC") + pd.Timedelta(minutes=int(mins))
+                    news_events_utc.append((ts_event, imp))
+                news_events_utc.sort(key=lambda x: x[0])
+                news_calendar_loaded = len(news_events_utc) > 0
+        except Exception as exc:
+            print(f"WARNING: failed to load news calendar '{news_calendar_path}': {exc}", file=sys.stderr)
+            news_events_utc = []
+            news_calendar_loaded = False
+
+    def is_in_news_window(ts_now: pd.Timestamp) -> bool:
+        if not news_filter_enabled or not news_events_utc:
+            return False
+        now_utc = pd.Timestamp(ts_now).tz_convert("UTC")
+        window_start = now_utc - pd.Timedelta(minutes=news_window_before_min)
+        window_end = now_utc + pd.Timedelta(minutes=news_window_after_min)
+        for ev_ts, _ in news_events_utc:
+            if ev_ts < window_start:
+                continue
+            if ev_ts > window_end:
+                break
+            return True
+        return False
+
     def add_block(reason: str) -> None:
         blocked_reasons[reason] = blocked_reasons.get(reason, 0) + 1
 
@@ -4706,6 +4781,9 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         if _in_session_entry_cutoff(ts, sess):
             add_block("v5_session_entry_cutoff")
             continue
+        if sess in {"london", "ny_overlap"} and is_in_news_window(ts):
+            add_block("v5_news_window")
+            continue
         gl_extra_entries = int(getattr(args, "v5_gl_extra_entries", 2)) if green_light_active else 0
         effective_day_cap = int(args.v5_max_entries_day) + gl_extra_entries
         if int(day_cfg["entries_opened"]) >= effective_day_cap:
@@ -6063,6 +6141,11 @@ def main(argv: list[str]) -> int:
                 "atr_pct_filter_enabled": bool(args.v5_atr_pct_filter_enabled),
                 "atr_pct_cap": float(args.v5_atr_pct_cap),
                 "atr_pct_lookback": int(args.v5_atr_pct_lookback),
+                "news_filter_enabled": bool(args.v5_news_filter_enabled),
+                "news_window_minutes_before": int(args.v5_news_window_minutes_before),
+                "news_window_minutes_after": int(args.v5_news_window_minutes_after),
+                "news_impact_min": str(args.v5_news_impact_min),
+                "news_calendar_path": str(args.v5_news_calendar_path),
                 "normal_mid_atr_allowed": bool(args.v5_normal_mid_atr_allowed),
                 "atr_pct_low_normal": float(args.v5_atr_pct_low_normal),
                 "rolling_wr_lookback": int(args.v5_rolling_wr_lookback),

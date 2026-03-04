@@ -202,7 +202,7 @@ export interface TempEmaSettings {
   // Uncle Parsh H1 Breakout: Discipline
   up_max_spread_pips: number | null;
   // Trial #8 exit strategy
-  t8_exit_strategy: string | null;
+  t8_exit_strategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | null;
   t8_tp1_pips: number | null;
   t8_tp1_close_pct: number | null;
   t8_be_spread_plus_pips: number | null;

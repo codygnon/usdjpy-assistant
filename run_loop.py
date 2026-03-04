@@ -223,13 +223,16 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                 pass
             break
 
-    # Find Trial #8 policy for trailing exit (TP1 + BE + M1 EMA trail) or ema_scale_runner (H1 breakout style)
+    # Find Trial #8 policy for managed exits:
+    # - tp1_be_trail: TP1 + BE + optional M1 EMA trail
+    # - ema_scale_runner: H1 breakout style
+    # - none: broker TP/SL only (no managed exits)
     t8_policy = None
     t8_tm_overrides: dict = {}
     for pol in profile.execution.policies:
         if getattr(pol, "type", None) == "kt_cg_trial_8" and getattr(pol, "enabled", True):
-            t8_exit_strategy = getattr(pol, "exit_strategy", "tp1_be_trail")
-            if getattr(pol, "trail_after_tp1", False) or t8_exit_strategy == "ema_scale_runner":
+            t8_exit_strategy = str(getattr(pol, "exit_strategy", "tp1_be_trail") or "tp1_be_trail")
+            if t8_exit_strategy != "none" and (getattr(pol, "trail_after_tp1", False) or t8_exit_strategy == "ema_scale_runner"):
                 t8_policy = pol
                 try:
                     _t8_sp = Path("runtime") / profile.profile_name / "runtime_state.json"

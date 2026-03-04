@@ -714,13 +714,15 @@ def report_t6_bb_reversal_cap(policy, store, profile_name: str) -> FilterReport:
 
 
 def report_t8_exit_strategy(policy) -> FilterReport:
-    """Report Trial #8 exit strategy: tp1_be_trail or ema_scale_runner (H1 breakout style)."""
-    exit_strategy = getattr(policy, "exit_strategy", "tp1_be_trail")
+    """Report Trial #8 exit strategy: none, tp1_be_trail, or ema_scale_runner (H1 breakout style)."""
+    exit_strategy = str(getattr(policy, "exit_strategy", "tp1_be_trail") or "tp1_be_trail")
     if exit_strategy == "ema_scale_runner":
         ema_fast = getattr(policy, "m1_exit_ema_fast", 9)
         ema_slow = getattr(policy, "m1_exit_ema_slow", 21)
         scale_pct = getattr(policy, "scale_out_pct", 50.0)
         label = f"EMA scale-out + runner (EMA{ema_fast}/{ema_slow}, {scale_pct:.0f}%)"
+    elif exit_strategy == "none":
+        label = "None (broker TP/SL only)"
     else:
         label = "TP1 + BE + M1 EMA trail"
     return FilterReport(

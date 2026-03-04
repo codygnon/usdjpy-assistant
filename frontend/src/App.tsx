@@ -3737,8 +3737,8 @@ interface EditedSettings {
   t8_use_daily_level_filter: boolean;
   t8_daily_level_buffer_pips: number;
   t8_daily_level_breakout_candles_required: number;
-  // Trial #8: Exit strategy (tp1_be_trail = TP1 + BE + M1 EMA trail; ema_scale_runner = H1 breakout style)
-  t8_exit_strategy: 'tp1_be_trail' | 'ema_scale_runner';
+  // Trial #8: Exit strategy (none = broker TP/SL only; tp1_be_trail = TP1 + BE + M1 EMA trail; ema_scale_runner = H1 breakout style)
+  t8_exit_strategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner';
   t8_m1_exit_ema_fast: number;
   t8_m1_exit_ema_slow: number;
   t8_scale_out_pct: number;
@@ -3954,7 +3954,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t8UseDailyLevelFilter = false;
       let t8DailyLevelBufferPips = 3.0;
       let t8DailyLevelBreakoutCandlesRequired = 2;
-      let t8ExitStrategy: 'tp1_be_trail' | 'ema_scale_runner' = 'tp1_be_trail';
+      let t8ExitStrategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' = 'tp1_be_trail';
       let t8M1ExitEmaFast = 9;
       let t8M1ExitEmaSlow = 21;
       let t8ScaleOutPct = 50;
@@ -4298,7 +4298,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
             t8DailyLevelBufferPips = (pol.daily_level_buffer_pips as number) ?? 3.0;
             t8DailyLevelBreakoutCandlesRequired = (pol.daily_level_breakout_candles_required as number) ?? 2;
             const es = (pol.exit_strategy as string) ?? 'tp1_be_trail';
-            t8ExitStrategy = (es === 'ema_scale_runner' ? 'ema_scale_runner' : 'tp1_be_trail');
+            t8ExitStrategy = (es === 'ema_scale_runner' || es === 'none') ? (es as 'ema_scale_runner' | 'none') : 'tp1_be_trail';
             t8M1ExitEmaFast = (pol.m1_exit_ema_fast as number) ?? 9;
             t8M1ExitEmaSlow = (pol.m1_exit_ema_slow as number) ?? 21;
             t8ScaleOutPct = (pol.scale_out_pct as number) ?? 50;
@@ -4488,7 +4488,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t8_use_daily_level_filter: t8UseDailyLevelFilter,
         t8_daily_level_buffer_pips: t8DailyLevelBufferPips,
         t8_daily_level_breakout_candles_required: t8DailyLevelBreakoutCandlesRequired,
-        t8_exit_strategy: ((tempSettings?.t8_exit_strategy ?? t8ExitStrategy) === 'ema_scale_runner' ? 'ema_scale_runner' : 'tp1_be_trail'),
+        t8_exit_strategy: (() => {
+          const raw = (tempSettings?.t8_exit_strategy ?? t8ExitStrategy) as string;
+          return (raw === 'ema_scale_runner' || raw === 'none') ? (raw as 'ema_scale_runner' | 'none') : 'tp1_be_trail';
+        })(),
         t8_m1_exit_ema_fast: tempSettings?.t8_m1_exit_ema_fast ?? t8M1ExitEmaFast,
         t8_m1_exit_ema_slow: tempSettings?.t8_m1_exit_ema_slow ?? t8M1ExitEmaSlow,
         t8_scale_out_pct: tempSettings?.t8_scale_out_pct ?? t8ScaleOutPct,
@@ -5605,9 +5608,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Mode</div>
                           <select
                             value={editedSettings.t8_exit_strategy}
-                            onChange={(e) => setEditedSettings({ ...editedSettings, t8_exit_strategy: (e.target.value as 'tp1_be_trail' | 'ema_scale_runner') })}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t8_exit_strategy: (e.target.value as 'none' | 'tp1_be_trail' | 'ema_scale_runner') })}
                             style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
                           >
+                            <option value="none">None (broker TP/SL only)</option>
                             <option value="tp1_be_trail">TP1 + BE + M1 EMA trail</option>
                             <option value="ema_scale_runner">EMA scale-out + runner (H1 breakout style)</option>
                           </select>
