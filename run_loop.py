@@ -679,6 +679,27 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
             store.update_trade(trade_id, mae_mfe_updates)
 
 
+def _record_loop_error(profile, store, message: str) -> None:
+    """Record a loop error into the executions table so it appears in the dashboard execution log."""
+    try:
+        ts = pd.Timestamp.now(tz="UTC").isoformat()
+        store.insert_execution({
+            "timestamp_utc": ts,
+            "profile": profile.profile_name,
+            "symbol": profile.symbol,
+            "signal_id": f"loop_error_{ts.replace(':', '-')}",
+            "mode": "",
+            "attempted": 1,
+            "placed": 0,
+            "reason": f"loop_error: {str(message)[:500]}",
+            "mt5_retcode": None,
+            "mt5_order_id": None,
+            "mt5_deal_id": None,
+        })
+    except Exception:
+        pass
+
+
 def _build_and_write_dashboard(
     *,
     profile,
@@ -948,6 +969,10 @@ def _build_and_write_dashboard(
         write_dashboard_state(log_dir, state)
     except Exception as e:
         print(f"[{profile.profile_name}] Dashboard write error: {e}")
+        try:
+            _record_loop_error(profile, store, f"Dashboard write error: {e}")
+        except Exception:
+            pass
 
 
 def _append_trade_open_event(
@@ -1164,6 +1189,10 @@ def main() -> None:
                         print(f"[{profile.profile_name}] imported {imported} trade(s) from broker history")
                 except Exception as e:
                     print(f"[{profile.profile_name}] sync error: {e}")
+                    try:
+                        _record_loop_error(profile, store, f"sync error: {e}")
+                    except Exception:
+                        pass
                 last_sync_loop = loop_count
 
             state = load_state(state_path)
@@ -1204,6 +1233,10 @@ def main() -> None:
                         time.sleep(_delay)
                     else:
                         print(f"[{profile.profile_name}] broker temporarily unavailable after {_MAX_FETCH_RETRIES} attempts, sleeping 60s then continuing: {_fetch_err}")
+                        try:
+                            _record_loop_error(profile, store, f"broker temporarily unavailable: {_fetch_err}")
+                        except Exception:
+                            pass
                         time.sleep(60)
             if data_by_tf is None or tick is None:
                 continue

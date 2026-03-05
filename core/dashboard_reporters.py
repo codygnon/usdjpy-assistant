@@ -925,13 +925,32 @@ def collect_trial_7_context(
                 ze_price = int(getattr(policy, "m1_zone_entry_price_ema_period", 5))
                 if len(m1_df) > ze_price:
                     ema_price = float(ema_fn(m1_close, ze_price).iloc[-1])
-                    items.append(
-                        ContextItem(
-                            "Zone Condition Snapshot",
-                            f"bid/ask {tick.bid:.3f}/{tick.ask:.3f} vs EMA{ze_price} {ema_price:.3f}",
-                            "zone_entry",
+                    # Use same price as execution: ask for BULL (buy), bid for BEAR (sell)
+                    if m5_df is not None and not m5_df.empty and len(m5_df) >= max(getattr(policy, "m5_trend_ema_fast", 9), getattr(policy, "m5_trend_ema_slow", 21)):
+                        fast_p = getattr(policy, "m5_trend_ema_fast", 9)
+                        slow_p = getattr(policy, "m5_trend_ema_slow", 21)
+                        m5_close = m5_df["close"]
+                        fast_v = float(ema_fn(m5_close, fast_p).iloc[-1])
+                        slow_v = float(ema_fn(m5_close, slow_p).iloc[-1])
+                        is_bull = fast_v > slow_v
+                    else:
+                        is_bull = True  # default
+                    if is_bull:
+                        items.append(
+                            ContextItem(
+                                "Zone Condition Snapshot",
+                                f"ask {tick.ask:.3f} vs EMA{ze_price} {ema_price:.3f}",
+                                "zone_entry",
+                            )
                         )
-                    )
+                    else:
+                        items.append(
+                            ContextItem(
+                                "Zone Condition Snapshot",
+                                f"bid {tick.bid:.3f} vs EMA{ze_price} {ema_price:.3f}",
+                                "zone_entry",
+                            )
+                        )
             else:
                 items.append(
                     ContextItem(

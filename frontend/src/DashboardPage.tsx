@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  getDashboard, getTradeEvents, startLoop, stopLoop, getRuntimeState, updateRuntimeState,
+  getDashboard, getTradeEvents, getExecutions, startLoop, stopLoop, getRuntimeState, updateRuntimeState,
   type DashboardState, type TradeEvent, type FilterReport, type ContextItem,
   type DailySummary, type PositionInfo, type RuntimeState,
 } from './api';
@@ -528,6 +528,75 @@ function TradeLog({ title, events }: { title: string; events: TradeEvent[] }) {
 }
 
 // ---------------------------------------------------------------------------
+// Execution Log (reasons candidate trades were not placed + loop errors)
+// ---------------------------------------------------------------------------
+
+export type ExecutionRecord = {
+  timestamp_utc?: string;
+  mode?: string;
+  attempted?: number;
+  placed?: number;
+  reason?: string;
+  rule_id?: string;
+  signal_id?: string;
+};
+
+function ExecutionLog({ executions }: { executions: ExecutionRecord[] }) {
+  const recent = executions.slice(0, 80);
+  return (
+    <div style={{
+      backgroundColor: colors.panel,
+      borderRadius: 6,
+      padding: 12,
+      border: `1px solid ${colors.border}`,
+    }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: colors.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
+        Execution Log ({recent.length})
+      </div>
+      <div style={{ fontSize: 10, color: colors.textSecondary, marginBottom: 6 }}>
+        Reasons candidate trades were not placed; loop errors show here when recorded.
+      </div>
+      <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+        {recent.length === 0 ? (
+          <div style={{ color: colors.textSecondary, fontSize: 12, padding: 8 }}>No execution attempts yet. Start the loop to see reasons.</div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, ...mono }}>
+            <thead>
+              <tr style={{ color: colors.textSecondary, borderBottom: `1px solid ${colors.border}` }}>
+                <th style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 600 }}>Time</th>
+                <th style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 600 }}>Mode</th>
+                <th style={{ textAlign: 'center', padding: '4px 6px', fontWeight: 600 }}>Placed</th>
+                <th style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 600 }}>Rule</th>
+                <th style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 600 }}>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...recent].reverse().map((e, i) => (
+                <tr key={i} style={{ borderBottom: `1px solid ${colors.border}22` }}>
+                  <td style={{ padding: '3px 6px', color: colors.textSecondary, whiteSpace: 'nowrap' }}>
+                    {String(e.timestamp_utc ?? '').slice(11, 19)}
+                  </td>
+                  <td style={{ padding: '3px 6px', color: colors.textSecondary }}>{String(e.mode ?? '')}</td>
+                  <td style={{ padding: '3px 6px', textAlign: 'center' }}>
+                    <span style={{ color: e.placed ? colors.green : colors.amber }}>{e.placed ? 'Yes' : 'No'}</span>
+                  </td>
+                  <td style={{ padding: '3px 6px', color: colors.textSecondary, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis' }} title={String(e.rule_id ?? '')}>
+                    {String(e.rule_id ?? '').slice(-40)}
+                  </td>
+                  <td style={{ padding: '3px 6px', color: e.placed ? colors.green : colors.textPrimary, maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis' }} title={String(e.reason ?? '')}>
+                    {String(e.reason ?? '')}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Daily Summary Bar
 // ---------------------------------------------------------------------------
 
@@ -571,6 +640,7 @@ interface DashboardPageProps {
 export default function DashboardPage({ profileName, profilePath }: DashboardPageProps) {
   const isPageVisible = useDocumentVisible();
   const [events, setEvents] = useState<TradeEvent[]>([]);
+  const [executions, setExecutions] = useState<ExecutionRecord[]>([]);
   const [dashState, setDashState] = useState<DashboardState | null>(null);
   const [runtime, setRuntime] = useState<RuntimeState | null>(null);
   const [trail, setTrail] = useState<Array<{ time: string; spread: number; blocked: number; trend: string }>>([]);
@@ -594,6 +664,20 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     const id = setInterval(poll, 10000);
     return () => { mounted = false; clearInterval(id); };
   }, [profileName, profilePath, isPageVisible]);
+
+  // Poll execution log (reasons trades not placed, loop errors) — 10s
+  useEffect(() => {
+    if (!isPageVisible) return;
+    let mounted = true;
+    const poll = () => {
+      getExecutions(profileName, 80)
+        .then(e => { if (mounted) setExecutions((e as ExecutionRecord[]) || []); })
+        .catch(() => {});
+    };
+    poll();
+    const id = setInterval(poll, 10000);
+    return () => { mounted = false; clearInterval(id); };
+  }, [profileName, isPageVisible]);
 
   // Poll dashboard state — 10s
   useEffect(() => {
@@ -718,6 +802,9 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
 
         {/* Closed Trades */}
         <TradeLog title="Closed Trades (Last 30)" events={recentClosedEvents} />
+
+        {/* Execution Log: reasons candidate trades were not placed + loop errors */}
+        <ExecutionLog executions={executions} />
 
         {/* Local dashboard history trail (last 60 polls) */}
         <div style={{
