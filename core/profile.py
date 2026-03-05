@@ -647,6 +647,9 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
     zone_entry_mode: Literal["ema_cross", "price_vs_ema5"] = "ema_cross"
     m1_zone_entry_ema_fast: int = 5
     m1_zone_entry_ema_slow: int = 9
+    # Optional price-vs-EMA buffer so small cross-account pricing differences (ask/bid)
+    # still allow zone entries when price is within this many pips of EMA.
+    zone_entry_price_buffer_pips: float = 0.5
 
     # Tiered Pullback Configuration (9-34 subset, configurable)
     tiered_pullback_enabled: bool = True
@@ -827,6 +830,9 @@ class ExecutionPolicyKtCgTrial8(BaseModel):
     m1_zone_entry_ema_fast: int = 5
     m1_zone_entry_ema_slow: int = 9
     m1_zone_entry_price_ema_period: int = 5  # M1 EMA period for "price vs EMA" mode
+    # Optional price-vs-EMA buffer so small cross-account pricing differences (ask/bid)
+    # still allow zone entries when price is within this many pips of EMA.
+    zone_entry_price_buffer_pips: float = 0.5
 
     # Tiered Pullback Configuration
     tiered_pullback_enabled: bool = True

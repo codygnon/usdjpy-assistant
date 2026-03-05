@@ -4117,28 +4117,36 @@ def evaluate_kt_cg_trial_7_conditions(
     m1_ema_zone_fast = ema_fn(m1_close, m1_zone_ema_fast)
     m1_ema_zone_slow = ema_fn(m1_close, m1_zone_ema_slow)
     current_price = (float(current_bid) + float(current_ask)) / 2.0
+    pip_size = float(profile.pip_size)
     # Price-vs-EMA mode: use EMA from candle closes only (no last-bar substitution) so zone
     # entry matches dashboard and fires when price is above/below the lagging EMA.
     m1_ema_price_val = float(ema_fn(m1_close, m1_price_ema_period).iloc[-1])
     m1_zone_fast_val = float(m1_ema_zone_fast.iloc[-1])
     m1_zone_slow_val = float(m1_ema_zone_slow.iloc[-1])
 
-    # When zone_entry_mode is price_vs_ema5, use ask for buys and bid for sells (fill price vs EMA).
+    # When zone_entry_mode is price_vs_ema5, use ask for buys and bid for sells (fill price vs EMA),
+    # and allow an optional buffer in pips so small cross-account pricing differences still permit entries.
     zone_entry_enabled = getattr(policy, "zone_entry_enabled", True)
     if zone_entry_mode == "price_vs_ema5" and zone_entry_enabled:
         zone_entry_triggered = False
         zone_side: Optional[str] = None
-        if is_bull and current_ask > m1_ema_price_val:
+        buffer_pips = float(getattr(policy, "zone_entry_price_buffer_pips", 0.0))
+        buffer_px = buffer_pips * pip_size
+        ema_threshold_buy = m1_ema_price_val - buffer_px
+        ema_threshold_sell = m1_ema_price_val + buffer_px
+        if is_bull and current_ask > ema_threshold_buy:
             zone_entry_triggered = True
             zone_side = "buy"
             reasons.append(
-                f"ZONE ENTRY [price_vs_ema5]: BULL + ask ({current_ask:.3f}) > M1 EMA{m1_price_ema_period} ({m1_ema_price_val:.3f}) -> BUY"
+                f"ZONE ENTRY [price_vs_ema5]: BULL + ask ({current_ask:.3f}) > EMA{m1_price_ema_period} "
+                f"({m1_ema_price_val:.3f} - buffer {buffer_pips:.2f}p) -> BUY"
             )
-        elif (not is_bull) and current_bid < m1_ema_price_val:
+        elif (not is_bull) and current_bid < ema_threshold_sell:
             zone_entry_triggered = True
             zone_side = "sell"
             reasons.append(
-                f"ZONE ENTRY [price_vs_ema5]: BEAR + bid ({current_bid:.3f}) < M1 EMA{m1_price_ema_period} ({m1_ema_price_val:.3f}) -> SELL"
+                f"ZONE ENTRY [price_vs_ema5]: BEAR + bid ({current_bid:.3f}) < EMA{m1_price_ema_period} "
+                f"({m1_ema_price_val:.3f} + buffer {buffer_pips:.2f}p) -> SELL"
             )
         if zone_entry_triggered and zone_side:
             return {
@@ -4208,17 +4216,23 @@ def evaluate_kt_cg_trial_7_conditions(
     zone_entry_enabled = getattr(policy, "zone_entry_enabled", True)
     if zone_entry_enabled:
         if zone_entry_mode == "price_vs_ema5":
-            if is_bull and current_ask > m1_ema_price_val:
+            buffer_pips = float(getattr(policy, "zone_entry_price_buffer_pips", 0.0))
+            buffer_px = buffer_pips * float(profile.pip_size)
+            ema_threshold_buy = m1_ema_price_val - buffer_px
+            ema_threshold_sell = m1_ema_price_val + buffer_px
+            if is_bull and current_ask > ema_threshold_buy:
                 zone_entry_triggered = True
                 zone_side = "buy"
                 reasons.append(
-                    f"ZONE ENTRY [price_vs_ema5]: BULL + ask ({current_ask:.3f}) > M1 EMA{m1_price_ema_period} ({m1_ema_price_val:.3f}) -> BUY"
+                    f"ZONE ENTRY [price_vs_ema5]: BULL + ask ({current_ask:.3f}) > EMA{m1_price_ema_period} "
+                    f"({m1_ema_price_val:.3f} - buffer {buffer_pips:.2f}p) -> BUY"
                 )
-            elif (not is_bull) and current_bid < m1_ema_price_val:
+            elif (not is_bull) and current_bid < ema_threshold_sell:
                 zone_entry_triggered = True
                 zone_side = "sell"
                 reasons.append(
-                    f"ZONE ENTRY [price_vs_ema5]: BEAR + bid ({current_bid:.3f}) < M1 EMA{m1_price_ema_period} ({m1_ema_price_val:.3f}) -> SELL"
+                    f"ZONE ENTRY [price_vs_ema5]: BEAR + bid ({current_bid:.3f}) < EMA{m1_price_ema_period} "
+                    f"({m1_ema_price_val:.3f} + buffer {buffer_pips:.2f}p) -> SELL"
                 )
         else:
             if is_bull and m1_zone_fast_val > m1_zone_slow_val:
