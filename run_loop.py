@@ -1114,10 +1114,10 @@ def main() -> None:
         _MAX_FETCH_RETRIES = 3  # Retry broker fetch this many times before sleeping and continuing
 
         # Candle cache: {tf: (timestamp_fetched, DataFrame)}
-        # TTLs in seconds: M1=55, M3=175, M5=295, M15=895, H4=14395, D=300
+        # TTLs in seconds: M1=28 so new bar is seen soon after minute close (fast poll); M3=175, M5=295, ...
         _candle_cache: dict[str, tuple[float, pd.DataFrame]] = {}
         _CANDLE_TTL: dict[str, float] = {
-            "M1": 55.0, "M3": 175.0, "M5": 295.0, "M15": 895.0,
+            "M1": 28.0, "M3": 175.0, "M5": 295.0, "M15": 895.0,
             "H1": 3595.0, "H4": 14395.0, "D": 300.0,
         }
 
