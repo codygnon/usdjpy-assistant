@@ -1250,6 +1250,21 @@ def main() -> None:
                 last_seen_m1_time = m1_last_time
 
             is_new = m1_last_time != last_seen_m1_time
+            used_clock_fallback = False
+            # Clock-based fallback: if broker hasn't delivered the new bar yet (e.g. API delay),
+            # treat current UTC minute as new once we're a few seconds in, so Trial 7/8 still runs.
+            if not is_new and (has_kt_cg_trial_7 or has_kt_cg_trial_8):
+                try:
+                    now_utc = pd.Timestamp.now(tz="UTC")
+                    current_minute_iso = now_utc.floor("min").isoformat()
+                    last_bar_dt = pd.to_datetime(m1_last_time, utc=True)
+                    last_bar_minute_iso = last_bar_dt.floor("min").isoformat()
+                    if now_utc.second >= 5 and current_minute_iso > last_bar_minute_iso and last_seen_m1_time != current_minute_iso:
+                        is_new = True
+                        used_clock_fallback = True
+                        last_seen_m1_time = current_minute_iso
+                except Exception:
+                    pass
 
             # Update shared daily H/L state for Trial #7 / Trial #8 when we have a new M1 bar
             if (has_kt_cg_trial_7 or has_kt_cg_trial_8) and is_new:
@@ -1522,7 +1537,8 @@ def main() -> None:
                     if exec_dec.attempted:
                         print(f"[{profile.profile_name}] {setup_name} {sig.side} {sig.confirm_time} mode={mode} -> {exec_dec.reason}")
 
-                last_seen_m1_time = m1_last_time
+                if not used_clock_fallback:
+                    last_seen_m1_time = m1_last_time
 
             if has_price_level and mkt is None:
                 mkt = _compute_mkt(profile, tick, data_by_tf)
@@ -2483,6 +2499,9 @@ def main() -> None:
                         exhaustion_result=exec_result.get("exhaustion_result"),
                         daily_level_filter=daily_level_filter if pol_type == "kt_cg_trial_8" else None,
                     )
+                # After Trial 7/8 block: mark this bar as seen so we don't re-run every poll for same bar
+                if not used_clock_fallback:
+                    last_seen_m1_time = m1_last_time
 
             # Trial #6 execution — BB Slope Trend + EMA Tier Pullback + BB Reversal
             if has_kt_cg_trial_6:
