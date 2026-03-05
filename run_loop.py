@@ -1290,6 +1290,27 @@ def main() -> None:
                 except Exception:
                     pass
 
+            # Log when we skip Trial 7/8 due to no new M1 bar (so execution log shows why no evaluation)
+            if (has_kt_cg_trial_7 or has_kt_cg_trial_8) and not is_new and not args.once:
+                try:
+                    store.insert_execution(
+                        {
+                            "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                            "profile": profile.profile_name,
+                            "symbol": profile.symbol,
+                            "signal_id": f"loop:skip:{m1_last_time}",
+                            "mode": mode,
+                            "attempted": 0,
+                            "placed": 0,
+                            "reason": f"loop: is_new=False, skip Trial 7/8 (no new M1 bar; last bar={m1_last_time})",
+                            "mt5_retcode": None,
+                            "mt5_order_id": None,
+                            "mt5_deal_id": None,
+                        }
+                    )
+                except Exception:
+                    pass
+
             mkt = None
             if is_new or args.once:
                 spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)

@@ -5026,8 +5026,29 @@ def execute_kt_cg_trial_7_policy_demo_only(
         return True, fallback_prefix
 
     if not passed or side is None:
+        reason_str = "; ".join(eval_reasons) if eval_reasons else "no trigger"
+        # Log every evaluation (including no-trigger) so execution log shows why zone entry / pullback didn't fire
+        try:
+            store.insert_execution(
+                {
+                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "profile": profile.profile_name,
+                    "symbol": profile.symbol,
+                    "signal_id": f"eval:{policy_type}:{policy.id}:{bar_time_utc}",
+                    "rule_id": rule_id,
+                    "mode": mode,
+                    "attempted": 0,
+                    "placed": 0,
+                    "reason": reason_str,
+                    "mt5_retcode": None,
+                    "mt5_order_id": None,
+                    "mt5_deal_id": None,
+                }
+            )
+        except Exception:
+            pass
         return _result_payload(
-            ExecutionDecision(attempted=False, placed=False, reason="; ".join(eval_reasons)),
+            ExecutionDecision(attempted=False, placed=False, reason=reason_str),
         )
 
     zone_precheck_reason = _run_zone_prechecks()
