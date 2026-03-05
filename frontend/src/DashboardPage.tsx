@@ -1,19 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  getDashboard,
-  getTradeEvents,
-  getExecutions,
-  startLoop,
-  stopLoop,
-  getRuntimeState,
-  updateRuntimeState,
-  type DashboardState,
-  type TradeEvent,
-  type FilterReport,
-  type ContextItem,
-  type DailySummary,
-  type PositionInfo,
-  type RuntimeState,
+  getDashboard, getTradeEvents, startLoop, stopLoop, getRuntimeState, updateRuntimeState,
+  type DashboardState, type TradeEvent, type FilterReport, type ContextItem,
+  type DailySummary, type PositionInfo, type RuntimeState,
 } from './api';
 
 // ---------------------------------------------------------------------------
@@ -586,9 +575,6 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
   const [runtime, setRuntime] = useState<RuntimeState | null>(null);
   const [trail, setTrail] = useState<Array<{ time: string; spread: number; blocked: number; trend: string }>>([]);
   const [trailExpanded, setTrailExpanded] = useState(false);
-  const [execLog, setExecLog] = useState<Array<{ timestamp_utc?: string; rule_id?: string; placed?: number | boolean; reason?: string }>>([]);
-  const [execLoading, setExecLoading] = useState(false);
-  const [execLoadedOnce, setExecLoadedOnce] = useState(false);
 
   const loopRunning = dashState?.loop_running ?? false;
   const tick = (dashState && Number.isFinite(dashState.bid) && Number.isFinite(dashState.ask))
@@ -679,31 +665,6 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     if (age == null) return 'Stale data';
     return `Stale ${Math.round(age)}s`;
   })();
-
-  const handleLoadExecLog = useCallback(async () => {
-    try {
-      setExecLoading(true);
-      const rows = await getExecutions(profileName, 50);
-      // Only keep attempts that did NOT place and have a reason (blocked/errors).
-      const blockedOnly = rows
-        .filter((r) => {
-          const placed = (r.placed ?? 0) as number | boolean;
-          const attempted = (r.attempted ?? 0) as number | boolean;
-          const reason = (r.reason ?? '') as string;
-          if (!attempted) return false;
-          if (placed === 1 || placed === true) return false;
-          return !!reason && !String(reason).includes('order_sent');
-        })
-        .slice(-30); // keep most recent 30 blocked/error executions
-      setExecLog(blockedOnly as typeof execLog);
-      setExecLoadedOnce(true);
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error('Execution log load error:', e);
-    } finally {
-      setExecLoading(false);
-    }
-  }, [profileName, execLog]);
 
   return (
     <div style={{ backgroundColor: colors.bg, color: colors.textPrimary, minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -810,86 +771,6 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
                       <td style={{ padding: '3px 4px', textAlign: 'right', ...mono }}>{r.spread.toFixed(1)}p</td>
                       <td style={{ padding: '3px 4px', textAlign: 'right', ...mono, color: r.blocked > 0 ? colors.red : colors.green }}>{r.blocked}</td>
                       <td style={{ padding: '3px 4px' }}>{r.trend}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-
-        {/* Execution Log (blocked / errors only) */}
-        <div
-          style={{
-            backgroundColor: colors.panel,
-            borderRadius: 6,
-            padding: 12,
-            border: `1px solid ${colors.border}`,
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 10,
-              marginBottom: 8,
-            }}
-          >
-            <div
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                color: colors.textSecondary,
-                textTransform: 'uppercase',
-                letterSpacing: 1,
-              }}
-            >
-              Execution Log (Blocked / Errors)
-            </div>
-            <button
-              type="button"
-              onClick={handleLoadExecLog}
-              style={{
-                border: `1px solid ${colors.border}`,
-                background: 'transparent',
-                color: colors.blue,
-                borderRadius: 4,
-                fontSize: 11,
-                padding: '2px 8px',
-                cursor: 'pointer',
-              }}
-              disabled={execLoading}
-            >
-              {execLoading ? 'Loading…' : execLoadedOnce ? 'Refresh' : 'Load'}
-            </button>
-          </div>
-          {execLog.length === 0 ? (
-            <div style={{ color: colors.textSecondary, fontSize: 12 }}>
-              {execLoadedOnce ? 'No recent blocked executions.' : 'Click Load to view recent blocked executions and errors.'}
-            </div>
-          ) : (
-            <div style={{ maxHeight: 180, overflowY: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                <thead>
-                  <tr style={{ color: colors.textSecondary, borderBottom: `1px solid ${colors.border}` }}>
-                    <th style={{ textAlign: 'left', padding: '3px 4px', fontWeight: 500 }}>Time</th>
-                    <th style={{ textAlign: 'left', padding: '3px 4px', fontWeight: 500 }}>Rule</th>
-                    <th style={{ textAlign: 'left', padding: '3px 4px', fontWeight: 500 }}>Reason</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...execLog].reverse().map((r, i) => (
-                    <tr key={`${r.timestamp_utc ?? ''}-${i}`} style={{ borderBottom: `1px solid ${colors.border}22` }}>
-                      <td style={{ padding: '3px 4px', color: colors.textSecondary, ...mono }}>
-                        {String(r.timestamp_utc || '').slice(11, 19)}
-                      </td>
-                      <td style={{ padding: '3px 4px', color: colors.textSecondary }}>
-                        {String(r.rule_id || '').split(':')[0] || '—'}
-                      </td>
-                      <td style={{ padding: '3px 4px', color: colors.textPrimary }}>
-                        {String(r.reason || '')}
-                      </td>
                     </tr>
                   ))}
                 </tbody>

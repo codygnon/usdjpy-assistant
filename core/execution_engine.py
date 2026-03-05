@@ -4117,16 +4117,11 @@ def evaluate_kt_cg_trial_7_conditions(
     m1_ema_zone_fast = ema_fn(m1_close, m1_zone_ema_fast)
     m1_ema_zone_slow = ema_fn(m1_close, m1_zone_ema_slow)
     current_price = (float(current_bid) + float(current_ask)) / 2.0
-    # Price-vs-EMA mode: reflect current poll price for live EMA snapshot.
-    m1_close_live = m1_close.copy()
-    try:
-        m1_close_live.iloc[-1] = current_price
-    except Exception:
-        pass
-    m1_ema_price_live = ema_fn(m1_close_live, m1_price_ema_period)
+    # Price-vs-EMA mode: use EMA from candle closes only (no last-bar substitution) so zone
+    # entry matches dashboard and fires when price is above/below the lagging EMA.
+    m1_ema_price_val = float(ema_fn(m1_close, m1_price_ema_period).iloc[-1])
     m1_zone_fast_val = float(m1_ema_zone_fast.iloc[-1])
     m1_zone_slow_val = float(m1_ema_zone_slow.iloc[-1])
-    m1_ema_price_val = float(m1_ema_price_live.iloc[-1])
 
     # When zone_entry_mode is price_vs_ema5, check zone entry FIRST so it can fire when price is above/below the configurable EMA.
     zone_entry_enabled = getattr(policy, "zone_entry_enabled", True)

@@ -214,6 +214,8 @@ DEFAULTS: dict[str, object] = {
     "v5_tokyo_trail_buffer": 2.0,
     "v5_tokyo_confirm_bars": 1,
     "v5_tokyo_require_h4_trend": False,
+    "v5_tokyo_filter_enabled": False,
+    "v5_tokyo_filter_range_max_pips": 50.0,
     "v5_allow_normal_plus": False,
     "v5_normalplus_atr_min_pips": 6.0,
     "v5_normalplus_slope_min": 0.45,
@@ -294,6 +296,24 @@ DEFAULTS: dict[str, object] = {
     "v5_news_window_minutes_after": 30,
     "v5_news_impact_min": "high",
     "v5_news_calendar_path": "research_out/v5_scheduled_events_utc.csv",
+    "v5_news_yield_enabled": False,
+    "v5_news_yield_range_minutes": 10,
+    "v5_news_yield_window_minutes": 60,
+    "v5_news_yield_min_range_pips": 6.0,
+    "v5_news_yield_max_range_pips": 40.0,
+    "v5_news_yield_sl_pips": 8.0,
+    "v5_news_yield_tp_pips": 10.0,
+    "v5_news_yield_risk_pct": 0.25,
+    "v5_news_yield_max_per_event": 1,
+    "v5_news_trend_enabled": False,
+    "v5_news_trend_delay_minutes": 45,
+    "v5_news_trend_window_minutes": 90,
+    "v5_news_trend_confirm_bars": 3,
+    "v5_news_trend_min_body_pips": 1.5,
+    "v5_news_trend_require_ema_align": True,
+    "v5_news_trend_risk_pct": 0.5,
+    "v5_news_trend_tp_rr": 1.5,
+    "v5_news_trend_sl_pips": 8.0,
     "v5_normal_mid_atr_allowed": False,
     "v5_atr_pct_low_normal": 0.33,
     "v5_nonmover_exit_enabled": False,
@@ -306,6 +326,21 @@ DEFAULTS: dict[str, object] = {
     "v5_breakout_min_body_pips": 2.0,
     "v5_breakout_slope_min": 0.3,
     "v5_breakout_sl_lookback": 1,
+    "v5_pullback_enabled": False,
+    "v5_pullback_ema_col": "ema_fast_v5",
+    "v5_pullback_lookback_bars": 6,
+    "v5_pullback_min_touch_bars": 1,
+    "v5_pullback_bounce_body_pips": 1.5,
+    "v5_pullback_require_trend": True,
+    "v5_pullback_sl_mode": "swing",
+    "v5_pullback_sl_fixed_pips": 7.0,
+    "v5_pullback_sl_swing_lookback": 4,
+    "v5_pullback_sl_buffer_pips": 1.5,
+    "v5_pullback_tp_mode": "v39",
+    "v5_pullback_tp_rr": 1.5,
+    "v5_pullback_risk_pct": 0.5,
+    "v5_pullback_max_per_session": 2,
+    "v5_pullback_cooldown_bars": 3,
     "v5_atr_min_entry_pips": 0.0,
     "v5_rolling_wr_lookback": 10,
     "v5_rolling_wr_min": 0.0,
@@ -759,6 +794,8 @@ def _full_parser() -> argparse.ArgumentParser:
     p.add_argument("--v5-tokyo-trail-buffer", type=float)
     p.add_argument("--v5-tokyo-confirm-bars", type=int)
     p.add_argument("--v5-tokyo-require-h4-trend", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-tokyo-filter-enabled", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-tokyo-filter-range-max-pips", type=float)
     p.add_argument("--v5-allow-normal-plus", type=parse_bool, nargs="?", const=True)
     p.add_argument("--v5-normalplus-atr-min-pips", type=float)
     p.add_argument("--v5-normalplus-slope-min", type=float)
@@ -846,6 +883,24 @@ def _full_parser() -> argparse.ArgumentParser:
     p.add_argument("--v5-news-window-minutes-after", type=int)
     p.add_argument("--v5-news-impact-min", choices=["low", "medium", "high"], type=str)
     p.add_argument("--v5-news-calendar-path", type=str)
+    p.add_argument("--v5-news-yield-enabled", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-news-yield-range-minutes", type=int)
+    p.add_argument("--v5-news-yield-window-minutes", type=int)
+    p.add_argument("--v5-news-yield-min-range-pips", type=float)
+    p.add_argument("--v5-news-yield-max-range-pips", type=float)
+    p.add_argument("--v5-news-yield-sl-pips", type=float)
+    p.add_argument("--v5-news-yield-tp-pips", type=float)
+    p.add_argument("--v5-news-yield-risk-pct", type=float)
+    p.add_argument("--v5-news-yield-max-per-event", type=int)
+    p.add_argument("--v5-news-trend-enabled", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-news-trend-delay-minutes", type=int)
+    p.add_argument("--v5-news-trend-window-minutes", type=int)
+    p.add_argument("--v5-news-trend-confirm-bars", type=int)
+    p.add_argument("--v5-news-trend-min-body-pips", type=float)
+    p.add_argument("--v5-news-trend-require-ema-align", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-news-trend-risk-pct", type=float)
+    p.add_argument("--v5-news-trend-tp-rr", type=float)
+    p.add_argument("--v5-news-trend-sl-pips", type=float)
     p.add_argument("--v5-normal-mid-atr-allowed", type=parse_bool, nargs="?", const=True)
     p.add_argument("--v5-atr-pct-low-normal", type=float)
     p.add_argument("--v5-nonmover-exit-enabled", type=parse_bool, nargs="?", const=True)
@@ -858,6 +913,21 @@ def _full_parser() -> argparse.ArgumentParser:
     p.add_argument("--v5-breakout-min-body-pips", type=float)
     p.add_argument("--v5-breakout-slope-min", type=float)
     p.add_argument("--v5-breakout-sl-lookback", type=int)
+    p.add_argument("--v5-pullback-enabled", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-pullback-ema-col", type=str)
+    p.add_argument("--v5-pullback-lookback-bars", type=int)
+    p.add_argument("--v5-pullback-min-touch-bars", type=int)
+    p.add_argument("--v5-pullback-bounce-body-pips", type=float)
+    p.add_argument("--v5-pullback-require-trend", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-pullback-sl-mode", choices=["swing", "fixed"], type=str)
+    p.add_argument("--v5-pullback-sl-fixed-pips", type=float)
+    p.add_argument("--v5-pullback-sl-swing-lookback", type=int)
+    p.add_argument("--v5-pullback-sl-buffer-pips", type=float)
+    p.add_argument("--v5-pullback-tp-mode", choices=["v39", "fixed_rr"], type=str)
+    p.add_argument("--v5-pullback-tp-rr", type=float)
+    p.add_argument("--v5-pullback-risk-pct", type=float)
+    p.add_argument("--v5-pullback-max-per-session", type=int)
+    p.add_argument("--v5-pullback-cooldown-bars", type=int)
     p.add_argument("--v5-atr-min-entry-pips", type=float)
     p.add_argument("--v5-rolling-wr-lookback", type=int)
     p.add_argument("--v5-rolling-wr-min", type=float)
@@ -1236,6 +1306,7 @@ def _v3_metrics_from_closed(closed: list[ClosedTrade], max_open_positions: int, 
             "by_mode": [],
             "by_entry_signal_mode": [],
             "by_session": [],
+            "by_regime": [],
             "by_exit_reason": [],
             "exit_reason_counts": {},
             "closed_trades": [],
@@ -1289,6 +1360,32 @@ def _v3_metrics_from_closed(closed: list[ClosedTrade], max_open_positions: int, 
     )
     by_exit["win_rate"] = by_exit["win_rate"] * 100.0
 
+    by_regime_records = []
+    if "entry_regime" in tdf.columns:
+        by_regime = (
+            tdf.groupby("entry_regime", dropna=False)
+            .agg(
+                trades=("trade_id", "size"),
+                wins=("is_win", "sum"),
+                losses=("is_win", lambda s: int((~s).sum())),
+                win_rate=("is_win", "mean"),
+                net_pips=("pips", "sum"),
+                net_usd=("usd", "sum"),
+                avg_win_pips=("pips", lambda s: float(s[s > 0].mean()) if (s > 0).any() else np.nan),
+                avg_loss_pips=("pips", lambda s: float(s[s <= 0].mean()) if (s <= 0).any() else np.nan),
+            )
+            .reset_index()
+            .sort_values("trades", ascending=False)
+        )
+        by_regime["win_rate"] = by_regime["win_rate"] * 100.0
+        by_regime["profit_factor"] = by_regime.apply(
+            lambda r: (float(r["avg_win_pips"]) * float(r["wins"]) / abs(float(r["avg_loss_pips"]) * float(r["losses"])))
+            if pd.notna(r["avg_win_pips"]) and pd.notna(r["avg_loss_pips"]) and float(r["avg_loss_pips"]) < 0 and float(r["losses"]) > 0
+            else (None if float(r["losses"]) > 0 else None),
+            axis=1,
+        )
+        by_regime_records = by_regime.to_dict("records")
+
     by_day = (
         tdf.groupby("entry_day", dropna=False)
         .agg(trades=("trade_id", "size"), wins=("is_win", "sum"), net_pips=("pips", "sum"), net_usd=("usd", "sum"))
@@ -1336,6 +1433,7 @@ def _v3_metrics_from_closed(closed: list[ClosedTrade], max_open_positions: int, 
         "by_mode": by_mode.to_dict("records"),
         "by_entry_signal_mode": by_sig_records,
         "by_session": by_sess.to_dict("records"),
+        "by_regime": by_regime_records,
         "by_exit_reason": by_exit.to_dict("records"),
         "exit_reason_counts": exit_reason_counts,
         "closed_trades": tdf[
@@ -3283,6 +3381,15 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
     # Tokyo Fade state
     t_fade_fired_today: bool = False
     t_fade_session_date: Optional[object] = None
+    # News yield breakout state (per event timestamp key).
+    news_yield_state: dict[str, dict[str, object]] = {}
+    # News trend-confirm state (per event timestamp key).
+    news_trend_state: dict[str, dict[str, object]] = {}
+    # V5 pullback re-entry state (per day/session key).
+    pullback_reentry_state: dict[str, dict[str, int]] = {}
+    # Tokyo informational range filter state (per UTC day).
+    tokyo_range_hilo_by_day: dict[str, dict[str, float]] = {}
+    tokyo_range_pips_by_day: dict[str, float] = {}
 
     regime_distribution = {"Trending": 0, "Flat": 0}
     def _parse_hour_token(tok: str) -> float:
@@ -3324,7 +3431,7 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
     news_window_after_min = max(0, int(getattr(args, "v5_news_window_minutes_after", 30)))
     news_impact_floor = impact_rank(str(getattr(args, "v5_news_impact_min", "high")))
     news_calendar_path = str(getattr(args, "v5_news_calendar_path", "research_out/v5_scheduled_events_utc.csv"))
-    news_events_utc: list[tuple[pd.Timestamp, int]] = []
+    news_events_utc: list[dict[str, object]] = []
     news_calendar_loaded = False
     if news_filter_enabled:
         try:
@@ -3338,9 +3445,10 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                     imp = impact_rank(row.get("impact", "high"))
                     if imp < news_impact_floor:
                         continue
+                    ev_id = str(row.get("event_id", "scheduled_event")).strip() or "scheduled_event"
                     ts_event = pd.Timestamp(d, tz="UTC") + pd.Timedelta(minutes=int(mins))
-                    news_events_utc.append((ts_event, imp))
-                news_events_utc.sort(key=lambda x: x[0])
+                    news_events_utc.append({"ts": ts_event, "impact_rank": int(imp), "event_id": ev_id})
+                news_events_utc.sort(key=lambda x: x["ts"])
                 news_calendar_loaded = len(news_events_utc) > 0
         except Exception as exc:
             print(f"WARNING: failed to load news calendar '{news_calendar_path}': {exc}", file=sys.stderr)
@@ -3353,7 +3461,8 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         now_utc = pd.Timestamp(ts_now).tz_convert("UTC")
         window_start = now_utc - pd.Timedelta(minutes=news_window_before_min)
         window_end = now_utc + pd.Timedelta(minutes=news_window_after_min)
-        for ev_ts, _ in news_events_utc:
+        for ev in news_events_utc:
+            ev_ts = pd.Timestamp(ev["ts"])
             if ev_ts < window_start:
                 continue
             if ev_ts > window_end:
@@ -3737,6 +3846,14 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
 
         ts_dt = pd.Timestamp(ts)
         h_now = ts_hour(ts_dt)
+        # Track Tokyo 00:00-02:59 UTC range for informational London gating.
+        if 0.0 <= float(h_now) < 3.0:
+            _tokyo_hilo = tokyo_range_hilo_by_day.setdefault(day_key, {"high": float(h), "low": float(l)})
+            _tokyo_hilo["high"] = max(float(_tokyo_hilo["high"]), float(h))
+            _tokyo_hilo["low"] = min(float(_tokyo_hilo["low"]), float(l))
+        elif day_key in tokyo_range_hilo_by_day and day_key not in tokyo_range_pips_by_day:
+            _tokyo_hilo = tokyo_range_hilo_by_day[day_key]
+            tokyo_range_pips_by_day[day_key] = (float(_tokyo_hilo["high"]) - float(_tokyo_hilo["low"])) / PIP_SIZE
         spread_pips = compute_spread_pips(i, ts, str(args.spread_mode), float(args.spread_pips), float(args.spread_min_pips), float(args.spread_max_pips))
         spread_pips = _apply_v5_spread_spikes(float(spread_pips), float(h_now))
         half_spread = spread_pips * PIP_SIZE / 2.0
@@ -4260,6 +4377,275 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             if _v39_max_open_hit:
                 add_block("v5_max_open_cap")
 
+        # ── NEWS_YIELD breakout module (post-scheduled-event range break) ─────────
+        _news_yield_enabled = bool(getattr(args, "v5_news_yield_enabled", False))
+        if news_filter_enabled and _news_yield_enabled and sess in {"london", "ny_overlap"} and len(news_events_utc) > 0:
+            _ny_after = max(0, int(getattr(args, "v5_news_window_minutes_after", 30)))
+            _ny_range_m = max(1, int(getattr(args, "v5_news_yield_range_minutes", 10)))
+            _ny_window_m = max(1, int(getattr(args, "v5_news_yield_window_minutes", 60)))
+            _ny_min_range = float(getattr(args, "v5_news_yield_min_range_pips", 6.0))
+            _ny_max_range = float(getattr(args, "v5_news_yield_max_range_pips", 40.0))
+            _ny_sl_pips = max(0.1, float(getattr(args, "v5_news_yield_sl_pips", 8.0)))
+            _ny_tp_pips = max(0.1, float(getattr(args, "v5_news_yield_tp_pips", 10.0)))
+            _ny_risk_pct = max(0.0, float(getattr(args, "v5_news_yield_risk_pct", 0.25)))
+            _ny_max_per_event = max(1, int(getattr(args, "v5_news_yield_max_per_event", 1)))
+
+            _now_utc = pd.Timestamp(ts).tz_convert("UTC")
+            _active_news = []
+            for _ev in news_events_utc:
+                _ev_ts = pd.Timestamp(_ev.get("ts"))
+                if _ev_ts.date() != _now_utc.date():
+                    continue
+                _build_start = _ev_ts + pd.Timedelta(minutes=_ny_after)
+                _build_end = _build_start + pd.Timedelta(minutes=_ny_range_m)
+                _entry_end = _build_end + pd.Timedelta(minutes=_ny_window_m)
+                if _build_start <= _now_utc <= _entry_end:
+                    _active_news.append((_ev, _build_start, _build_end, _entry_end))
+            if _active_news:
+                _active_news.sort(key=lambda x: abs((_now_utc - pd.Timestamp(x[0].get("ts"))).total_seconds()))
+                _ev, _build_start, _build_end, _entry_end = _active_news[0]
+                _ev_key = str(pd.Timestamp(_ev.get("ts")).isoformat())
+                _st = news_yield_state.setdefault(
+                    _ev_key,
+                    {
+                        "range_high": None,
+                        "range_low": None,
+                        "range_built": False,
+                        "fired": False,
+                        "entries": 0,
+                        "range_pips": None,
+                    },
+                )
+
+                # Build post-event range over configured build minutes.
+                if _build_start <= _now_utc < _build_end:
+                    _st["range_high"] = float(h) if _st["range_high"] is None else max(float(_st["range_high"]), float(h))
+                    _st["range_low"] = float(l) if _st["range_low"] is None else min(float(_st["range_low"]), float(l))
+
+                # Finalize range once build period ends.
+                if (not bool(_st.get("range_built", False))) and (_now_utc >= _build_end):
+                    _rh = _st.get("range_high")
+                    _rl = _st.get("range_low")
+                    if _rh is not None and _rl is not None:
+                        _rp = (float(_rh) - float(_rl)) / PIP_SIZE
+                        _st["range_pips"] = float(_rp)
+                        _st["range_built"] = True
+                        if _rp < _ny_min_range:
+                            _st["fired"] = True
+                            add_block("v5_news_yield_range_too_small")
+                        elif _rp > _ny_max_range:
+                            _st["fired"] = True
+                            add_block("v5_news_yield_range_too_large")
+                    else:
+                        _st["fired"] = True
+                        add_block("v5_news_yield_range_too_small")
+
+                # Entry window breakout after range build.
+                if (
+                    bool(_st.get("range_built", False))
+                    and not bool(_st.get("fired", False))
+                    and int(_st.get("entries", 0)) < _ny_max_per_event
+                    and _build_end <= _now_utc <= _entry_end
+                ):
+                    _ny_effective_max_open = int(getattr(args, "v5_max_open", 2))
+                    if len(open_positions) >= _ny_effective_max_open:
+                        add_block("v5_max_open_cap")
+                    elif float(spread_pips) > float(args.max_entry_spread_pips):
+                        add_block("v5_entry_spread_too_high")
+                    else:
+                        _rh = float(_st.get("range_high", float("nan")))
+                        _rl = float(_st.get("range_low", float("nan")))
+                        _entry_side = None
+                        if float(c) > _rh:
+                            _entry_side = "buy"
+                        elif float(c) < _rl:
+                            _entry_side = "sell"
+                        if _entry_side is not None:
+                            _entry_px = float(ask) if _entry_side == "buy" else float(bid)
+                            _sl_px = _entry_px - _ny_sl_pips * PIP_SIZE if _entry_side == "buy" else _entry_px + _ny_sl_pips * PIP_SIZE
+                            _tp1_px = _entry_px + _ny_tp_pips * PIP_SIZE if _entry_side == "buy" else _entry_px - _ny_tp_pips * PIP_SIZE
+                            _tp2_px = _tp1_px + 999.0 * PIP_SIZE if _entry_side == "buy" else _tp1_px - 999.0 * PIP_SIZE
+                            _risk_usd = float(args.v5_account_size) * _ny_risk_pct / 100.0
+                            _lot_size = _risk_usd / max(1e-9, _ny_sl_pips * pip_value_usd_per_lot(float(_entry_px)))
+                            _lot_size = max(float(getattr(args, "v5_rp_min_lot", 1.0)), min(float(getattr(args, "v5_rp_max_lot", 20.0)), float(_lot_size)))
+                            if not _margin_gate_allows(float(_lot_size)):
+                                add_block("v5_margin_cap")
+                            else:
+                                trade_id_seq += 1
+                                _ny_pos = OpenPosition(
+                                    trade_id=int(trade_id_seq),
+                                    side=_entry_side,
+                                    entry_mode=5,
+                                    entry_session=str(sess),
+                                    entry_time=pd.Timestamp(ts),
+                                    entry_day=str(day_key),
+                                    entry_index_in_day=0,
+                                    entry_price=float(_entry_px),
+                                    lots_initial=float(_lot_size),
+                                    lots_remaining=float(_lot_size),
+                                    stop_price=float(_sl_px),
+                                    tp1_price=float(_tp1_px),
+                                    tp2_price=float(_tp2_px),
+                                    sl_pips=float(_ny_sl_pips),
+                                    tp1_pips=float(_ny_tp_pips),
+                                    tp2_pips=999.0,
+                                    tp1_filled=False,
+                                    realized_pips=0.0,
+                                    realized_usd=0.0,
+                                    exit_price_last=None,
+                                    entry_regime="NEWS_YIELD",
+                                    entry_profile="news_yield",
+                                    position_type="Single",
+                                    tp1_close_fraction=1.0,
+                                    trail_buffer_pips=999.0,
+                                    trail_ema_period=9,
+                                    trail_armed=False,
+                                    trail_start_multiple=999.0,
+                                    trail_delay_observed=False,
+                                    entry_bar_index=int(i),
+                                    entry_signal_mode="news_yield_breakout",
+                                    wr_size_scale=1.0,
+                                    conviction_scale=1.0,
+                                    peak_mfe_pips=0.0,
+                                )
+                                open_positions.append(_ny_pos)
+                                _st["entries"] = int(_st.get("entries", 0)) + 1
+                                if int(_st["entries"]) >= _ny_max_per_event:
+                                    _st["fired"] = True
+                                add_block(f"v5_news_yield_entry_{_entry_side}")
+
+        # ── NEWS_TREND_CONFIRM module (post-event trend continuation) ─────────────
+        _news_trend_enabled = bool(getattr(args, "v5_news_trend_enabled", False))
+        if (
+            news_filter_enabled
+            and _news_trend_enabled
+            and new_m5_bar
+            and p5 >= 0
+            and sess in {"london", "ny_overlap"}
+            and len(news_events_utc) > 0
+        ):
+            _nt_delay_m = max(0, int(getattr(args, "v5_news_trend_delay_minutes", 45)))
+            _nt_window_m = max(1, int(getattr(args, "v5_news_trend_window_minutes", 90)))
+            _nt_confirm_n = max(1, int(getattr(args, "v5_news_trend_confirm_bars", 3)))
+            _nt_min_body = max(0.0, float(getattr(args, "v5_news_trend_min_body_pips", 1.5)))
+            _nt_req_ema = bool(getattr(args, "v5_news_trend_require_ema_align", True))
+            _nt_risk_pct = max(0.0, float(getattr(args, "v5_news_trend_risk_pct", 0.5)))
+            _nt_rr = max(0.1, float(getattr(args, "v5_news_trend_tp_rr", 1.5)))
+            _nt_sl_pips = max(0.1, float(getattr(args, "v5_news_trend_sl_pips", 8.0)))
+
+            _now_utc = pd.Timestamp(ts).tz_convert("UTC")
+            _active_news = []
+            for _ev in news_events_utc:
+                _ev_ts = pd.Timestamp(_ev.get("ts"))
+                if _ev_ts.date() != _now_utc.date():
+                    continue
+                _start = _ev_ts + pd.Timedelta(minutes=max(_nt_delay_m, news_window_after_min))
+                _end = _start + pd.Timedelta(minutes=_nt_window_m)
+                if _start <= _now_utc <= _end:
+                    _active_news.append((_ev, _start, _end))
+            if _active_news:
+                _active_news.sort(key=lambda x: abs((_now_utc - pd.Timestamp(x[0].get("ts"))).total_seconds()))
+                _ev, _start, _end = _active_news[0]
+                _ev_key = str(pd.Timestamp(_ev.get("ts")).isoformat())
+                _st = news_trend_state.setdefault(
+                    _ev_key,
+                    {
+                        "fired": False,
+                        "entries": 0,
+                    },
+                )
+                _max_per_event = 1
+                if (not bool(_st.get("fired", False))) and int(_st.get("entries", 0)) < _max_per_event:
+                    if p5 >= (_nt_confirm_n - 1):
+                        _w = m5.iloc[p5 - _nt_confirm_n + 1 : p5 + 1].copy()
+                        _bull = True
+                        _bear = True
+                        for _, _r in _w.iterrows():
+                            _body = abs(float(_r["close"]) - float(_r["open"])) / PIP_SIZE
+                            if _body < _nt_min_body:
+                                _bull = False
+                                _bear = False
+                                break
+                            if not (float(_r["close"]) > float(_r["open"])):
+                                _bull = False
+                            if not (float(_r["close"]) < float(_r["open"])):
+                                _bear = False
+                        _entry_side = None
+                        if _bull:
+                            _entry_side = "buy"
+                        elif _bear:
+                            _entry_side = "sell"
+                        if _entry_side is None:
+                            add_block("v5_news_trend_no_confirm")
+                        else:
+                            if _nt_req_ema:
+                                _ef = float(m5.iloc[p5]["ema_fast_v5"])
+                                _es = float(m5.iloc[p5]["ema_slow_v5"])
+                                if (_entry_side == "buy" and not (_ef > _es)) or (_entry_side == "sell" and not (_ef < _es)):
+                                    add_block("v5_news_trend_ema_misaligned")
+                                    _entry_side = None
+                            if _entry_side is not None:
+                                if float(spread_pips) > float(args.max_entry_spread_pips):
+                                    add_block("v5_entry_spread_too_high")
+                                else:
+                                    _nt_effective_max_open = int(getattr(args, "v5_max_open", 2))
+                                    if len(open_positions) >= _nt_effective_max_open:
+                                        add_block("v5_max_open_cap")
+                                    else:
+                                        _entry_px = float(ask) if _entry_side == "buy" else float(bid)
+                                        _sl_px = _entry_px - _nt_sl_pips * PIP_SIZE if _entry_side == "buy" else _entry_px + _nt_sl_pips * PIP_SIZE
+                                        _tp_pips = _nt_sl_pips * _nt_rr
+                                        _tp1_px = _entry_px + _tp_pips * PIP_SIZE if _entry_side == "buy" else _entry_px - _tp_pips * PIP_SIZE
+                                        _tp2_px = _tp1_px + 999.0 * PIP_SIZE if _entry_side == "buy" else _tp1_px - 999.0 * PIP_SIZE
+                                        _risk_usd = float(args.v5_account_size) * _nt_risk_pct / 100.0
+                                        _lot_size = _risk_usd / max(1e-9, _nt_sl_pips * pip_value_usd_per_lot(float(_entry_px)))
+                                        _lot_size = max(float(getattr(args, "v5_rp_min_lot", 1.0)), min(float(getattr(args, "v5_rp_max_lot", 20.0)), float(_lot_size)))
+                                        if not _margin_gate_allows(float(_lot_size)):
+                                            add_block("v5_margin_cap")
+                                        else:
+                                            trade_id_seq += 1
+                                            _nt_pos = OpenPosition(
+                                                trade_id=int(trade_id_seq),
+                                                side=_entry_side,
+                                                entry_mode=5,
+                                                entry_session=str(sess),
+                                                entry_time=pd.Timestamp(ts),
+                                                entry_day=str(day_key),
+                                                entry_index_in_day=0,
+                                                entry_price=float(_entry_px),
+                                                lots_initial=float(_lot_size),
+                                                lots_remaining=float(_lot_size),
+                                                stop_price=float(_sl_px),
+                                                tp1_price=float(_tp1_px),
+                                                tp2_price=float(_tp2_px),
+                                                sl_pips=float(_nt_sl_pips),
+                                                tp1_pips=float(_tp_pips),
+                                                tp2_pips=999.0,
+                                                tp1_filled=False,
+                                                realized_pips=0.0,
+                                                realized_usd=0.0,
+                                                exit_price_last=None,
+                                                entry_regime="NEWS_TREND",
+                                                entry_profile="news_trend",
+                                                position_type="Single",
+                                                tp1_close_fraction=1.0,
+                                                trail_buffer_pips=999.0,
+                                                trail_ema_period=9,
+                                                trail_armed=False,
+                                                trail_start_multiple=999.0,
+                                                trail_delay_observed=False,
+                                                entry_bar_index=int(i),
+                                                entry_signal_mode="news_trend_confirm",
+                                                wr_size_scale=1.0,
+                                                conviction_scale=1.0,
+                                                peak_mfe_pips=0.0,
+                                            )
+                                            open_positions.append(_nt_pos)
+                                            _st["entries"] = int(_st.get("entries", 0)) + 1
+                                            if int(_st["entries"]) >= _max_per_event:
+                                                _st["fired"] = True
+                                            add_block(f"v5_news_trend_entry_{_entry_side}")
+
         # ── BB Reversion System (independent of V39 filters) ──────────────────────
         if bool(getattr(args, "bb_rev_enabled", False)) and new_m5_bar and p5 >= int(getattr(args, "bb_rev_period", 20)):
             _bbr_sess_start = float(getattr(args, "bb_rev_session_start", 6.0))
@@ -4588,6 +4974,9 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         strength = "Strong"
         slope_abs = 0.0
         pullback_trigger = False
+        pullback_reentry_trigger = False
+        pullback_reentry_state_key: Optional[str] = None
+        pullback_tp_mode = "v39"
         breakout_trigger = False
         range_fade_trigger = False
         orb_trigger = False
@@ -4784,6 +5173,14 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         if sess in {"london", "ny_overlap"} and is_in_news_window(ts):
             add_block("v5_news_window")
             continue
+        if sess == "london" and bool(getattr(args, "v5_tokyo_filter_enabled", False)):
+            if day_key not in tokyo_range_pips_by_day and day_key in tokyo_range_hilo_by_day:
+                _tokyo_hilo = tokyo_range_hilo_by_day[day_key]
+                tokyo_range_pips_by_day[day_key] = (float(_tokyo_hilo["high"]) - float(_tokyo_hilo["low"])) / PIP_SIZE
+            tokyo_range_today = tokyo_range_pips_by_day.get(day_key)
+            if tokyo_range_today is not None and float(tokyo_range_today) > float(getattr(args, "v5_tokyo_filter_range_max_pips", 50.0)):
+                add_block("v5_tokyo_filter_skip_london")
+                continue
         gl_extra_entries = int(getattr(args, "v5_gl_extra_entries", 2)) if green_light_active else 0
         effective_day_cap = int(args.v5_max_entries_day) + gl_extra_entries
         if int(day_cfg["entries_opened"]) >= effective_day_cap:
@@ -4893,11 +5290,80 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                 if cross_ok and body_ok and slope_ok and bar_dir:
                     breakout_trigger = True
             if not pullback_trigger and not breakout_trigger:
-                continue
+                # Optional V5 pullback re-entry module (supplement to core V39 logic).
+                if (
+                    bool(getattr(args, "v5_pullback_enabled", False))
+                    and active_mode == "trend"
+                    and sess in {"london", "ny_overlap"}
+                    and new_m5_bar
+                    and trend_side in {"buy", "sell"}
+                    and p5 >= 0
+                ):
+                    state_key = f"{day_key}:{sess}"
+                    pb_state = pullback_reentry_state.setdefault(state_key, {"count": 0, "last_p5": -10_000_000})
+                    pb_max_per_session = max(0, int(getattr(args, "v5_pullback_max_per_session", 2)))
+                    pb_cooldown = max(0, int(getattr(args, "v5_pullback_cooldown_bars", 3)))
+                    if int(pb_state.get("count", 0)) >= pb_max_per_session:
+                        add_block("v5_pullback_session_cap")
+                    elif int(p5) - int(pb_state.get("last_p5", -10_000_000)) < pb_cooldown:
+                        add_block("v5_pullback_cooldown")
+                    else:
+                        pb_require_trend = bool(getattr(args, "v5_pullback_require_trend", True))
+                        if pb_require_trend:
+                            if not setup_active:
+                                add_block("v5_pullback_trend_not_aligned")
+                                continue
+                            m5diff_now = float(m5.iloc[p5]["ema_fast_v5"]) - float(m5.iloc[p5]["ema_slow_v5"])
+                            if not ((trend_side == "buy" and m5diff_now > 0) or (trend_side == "sell" and m5diff_now < 0)):
+                                add_block("v5_pullback_trend_not_aligned")
+                                continue
+                        pb_ema_col = str(getattr(args, "v5_pullback_ema_col", "ema_fast_v5"))
+                        if pb_ema_col not in m5.columns:
+                            pb_ema_col = "ema_fast_v5"
+                        pb_lookback = max(2, int(getattr(args, "v5_pullback_lookback_bars", 6)))
+                        pb_touch_min = max(1, int(getattr(args, "v5_pullback_min_touch_bars", 1)))
+                        if p5 < pb_lookback - 1:
+                            add_block("v5_pullback_insufficient_history")
+                            continue
+                        m5w_pb = m5.iloc[p5 - pb_lookback + 1 : p5 + 1]
+                        if trend_side == "buy":
+                            touch_count = int((m5w_pb["close"] < m5w_pb[pb_ema_col]).sum())
+                        else:
+                            touch_count = int((m5w_pb["close"] > m5w_pb[pb_ema_col]).sum())
+                        if touch_count < pb_touch_min:
+                            add_block("v5_pullback_no_touch")
+                            continue
+                        m5_now_pb = m5.iloc[p5]
+                        bounce_body_pips = abs(float(m5_now_pb["close"]) - float(m5_now_pb["open"])) / PIP_SIZE
+                        bounce_min_body = float(getattr(args, "v5_pullback_bounce_body_pips", 1.5))
+                        ema_now_pb = float(m5_now_pb[pb_ema_col])
+                        close_now_pb = float(m5_now_pb["close"])
+                        bounce_ok = (close_now_pb > ema_now_pb) if trend_side == "buy" else (close_now_pb < ema_now_pb)
+                        if bounce_body_pips < bounce_min_body:
+                            add_block("v5_pullback_body_too_small")
+                            continue
+                        if not bounce_ok:
+                            add_block("v5_pullback_no_bounce")
+                            continue
+                        pullback_reentry_trigger = True
+                        pullback_reentry_state_key = state_key
+                        entry_side = str(trend_side)
+                        entry_signal_mode = "v5_pullback_bounce"
+                        entry_regime = "PULLBACK"
+                        entry_profile_label = "pullback_reentry"
+                        pullback_tp_mode = str(getattr(args, "v5_pullback_tp_mode", "v39"))
+                        add_block("v5_pullback_entry")
+                if not pullback_reentry_trigger:
+                    continue
             entry_side = str(trend_side)
-            entry_signal_mode = "breakout" if (breakout_trigger and not pullback_trigger) else "pullback"
+            if breakout_trigger and not pullback_trigger:
+                entry_signal_mode = "breakout"
+            elif pullback_reentry_trigger:
+                entry_signal_mode = "v5_pullback_bounce"
+            else:
+                entry_signal_mode = "pullback"
 
-        if pullback_trigger:
+        if pullback_trigger and not pullback_reentry_trigger:
             if sess == "london":
                 confirm_bars = int(args.v5_london_confirm_bars)
                 min_body_pips = float(args.v5_london_min_body_pips)
@@ -4947,6 +5413,26 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                     raw_stop = float(entry_price) - float(sl_dist) * PIP_SIZE
                 else:
                     raw_stop = float(entry_price) + float(sl_dist) * PIP_SIZE
+        elif pullback_reentry_trigger:
+            pb_sl_mode = str(getattr(args, "v5_pullback_sl_mode", "swing"))
+            if pb_sl_mode == "fixed":
+                sl_dist = max(0.1, float(getattr(args, "v5_pullback_sl_fixed_pips", 7.0)))
+                raw_stop = entry_price - float(sl_dist) * PIP_SIZE if entry_side == "buy" else entry_price + float(sl_dist) * PIP_SIZE
+            else:
+                pb_swing_lb = max(1, int(getattr(args, "v5_pullback_sl_swing_lookback", 4)))
+                pb_sl_buf = float(getattr(args, "v5_pullback_sl_buffer_pips", 1.5))
+                if p5 < pb_swing_lb - 1:
+                    add_block("v5_pullback_sl_invalid")
+                    continue
+                m5w_sl = m5.iloc[p5 - pb_swing_lb + 1 : p5 + 1]
+                if entry_side == "buy":
+                    raw_stop = float(m5w_sl["low"].min()) - pb_sl_buf * PIP_SIZE
+                else:
+                    raw_stop = float(m5w_sl["high"].max()) + pb_sl_buf * PIP_SIZE
+                sl_dist = abs(entry_price - float(raw_stop)) / PIP_SIZE
+                if sl_dist <= 0:
+                    add_block("v5_pullback_sl_invalid")
+                    continue
         elif float(getattr(args, "v5_sl_atr_scale", 0.0)) > 0 and p5 >= 0:
             atr_val = float(m5.iloc[p5].get("atr14_v5_pips", 7.0))
             sl_dist = max(float(atr_val) * float(args.v5_sl_atr_scale), float(args.v5_sl_floor_pips))
@@ -5047,7 +5533,10 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             add_block("v5_conviction_fired")
 
         if str(args.v5_sizing_mode) in {"risk_parity", "hybrid"}:
-            base_risk_usd = float(args.v5_account_size) * (float(args.v5_risk_per_trade_pct) / 100.0)
+            risk_pct_for_trade = float(args.v5_risk_per_trade_pct)
+            if pullback_reentry_trigger:
+                risk_pct_for_trade = float(getattr(args, "v5_pullback_risk_pct", risk_pct_for_trade))
+            base_risk_usd = float(args.v5_account_size) * (float(risk_pct_for_trade) / 100.0)
             pip_value_per_lot = (100000.0 * PIP_SIZE) / max(1e-6, float(entry_price))
             raw_lot = base_risk_usd / max(1e-9, float(sl_dist) * float(pip_value_per_lot))
             if str(args.v5_sizing_mode) == "hybrid":
@@ -5110,6 +5599,13 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         else:
             tp1_pips = tp1_mult * float(sl_dist)
             tp2_pips = tp2_mult * float(sl_dist)
+        if pullback_reentry_trigger and pullback_tp_mode == "fixed_rr":
+            rr = max(0.1, float(getattr(args, "v5_pullback_tp_rr", 1.5)))
+            tp1_pips = rr * float(sl_dist)
+            tp2_pips = rr * float(sl_dist)
+            tp1_close_pct = 1.0
+            trail_buf = 999.0
+            tp1_mult = tp1_pips / max(1e-9, float(sl_dist))
         tp1_price = entry_price + tp1_pips * PIP_SIZE if entry_side == "buy" else entry_price - tp1_pips * PIP_SIZE
         tp2_price = entry_price + tp2_pips * PIP_SIZE if entry_side == "buy" else entry_price - tp2_pips * PIP_SIZE
 
@@ -5157,6 +5653,10 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             peak_mfe_pips=0.0,
         )
         open_positions.append(new_pos)
+        if pullback_reentry_trigger and pullback_reentry_state_key is not None:
+            pb_state = pullback_reentry_state.setdefault(pullback_reentry_state_key, {"count": 0, "last_p5": -10_000_000})
+            pb_state["count"] = int(pb_state.get("count", 0)) + 1
+            pb_state["last_p5"] = int(p5)
         max_open_positions = max(max_open_positions, len(open_positions))
 
     if open_positions:
@@ -6035,6 +6535,8 @@ def main(argv: list[str]) -> int:
                 "tokyo_cutoff_minutes": int(args.v5_tokyo_cutoff_minutes),
                 "tokyo_trail_buffer": float(args.v5_tokyo_trail_buffer),
                 "tokyo_require_h4_trend": bool(args.v5_tokyo_require_h4_trend),
+                "tokyo_filter_enabled": bool(args.v5_tokyo_filter_enabled),
+                "tokyo_filter_range_max_pips": float(args.v5_tokyo_filter_range_max_pips),
                 "london_allow_strength": str(args.v5_london_allow_strength) if getattr(args, "v5_london_allow_strength", None) is not None else None,
                 "allow_normal_plus": bool(args.v5_allow_normal_plus),
                 "normalplus_atr_min_pips": float(args.v5_normalplus_atr_min_pips),
@@ -6137,6 +6639,21 @@ def main(argv: list[str]) -> int:
                 "breakout_min_body_pips": float(args.v5_breakout_min_body_pips),
                 "breakout_slope_min": float(args.v5_breakout_slope_min),
                 "breakout_sl_lookback": int(args.v5_breakout_sl_lookback),
+                "pullback_enabled": bool(args.v5_pullback_enabled),
+                "pullback_ema_col": str(args.v5_pullback_ema_col),
+                "pullback_lookback_bars": int(args.v5_pullback_lookback_bars),
+                "pullback_min_touch_bars": int(args.v5_pullback_min_touch_bars),
+                "pullback_bounce_body_pips": float(args.v5_pullback_bounce_body_pips),
+                "pullback_require_trend": bool(args.v5_pullback_require_trend),
+                "pullback_sl_mode": str(args.v5_pullback_sl_mode),
+                "pullback_sl_fixed_pips": float(args.v5_pullback_sl_fixed_pips),
+                "pullback_sl_swing_lookback": int(args.v5_pullback_sl_swing_lookback),
+                "pullback_sl_buffer_pips": float(args.v5_pullback_sl_buffer_pips),
+                "pullback_tp_mode": str(args.v5_pullback_tp_mode),
+                "pullback_tp_rr": float(args.v5_pullback_tp_rr),
+                "pullback_risk_pct": float(args.v5_pullback_risk_pct),
+                "pullback_max_per_session": int(args.v5_pullback_max_per_session),
+                "pullback_cooldown_bars": int(args.v5_pullback_cooldown_bars),
                 "atr_min_entry_pips": float(args.v5_atr_min_entry_pips),
                 "atr_pct_filter_enabled": bool(args.v5_atr_pct_filter_enabled),
                 "atr_pct_cap": float(args.v5_atr_pct_cap),
@@ -6146,6 +6663,24 @@ def main(argv: list[str]) -> int:
                 "news_window_minutes_after": int(args.v5_news_window_minutes_after),
                 "news_impact_min": str(args.v5_news_impact_min),
                 "news_calendar_path": str(args.v5_news_calendar_path),
+                "news_yield_enabled": bool(args.v5_news_yield_enabled),
+                "news_yield_range_minutes": int(args.v5_news_yield_range_minutes),
+                "news_yield_window_minutes": int(args.v5_news_yield_window_minutes),
+                "news_yield_min_range_pips": float(args.v5_news_yield_min_range_pips),
+                "news_yield_max_range_pips": float(args.v5_news_yield_max_range_pips),
+                "news_yield_sl_pips": float(args.v5_news_yield_sl_pips),
+                "news_yield_tp_pips": float(args.v5_news_yield_tp_pips),
+                "news_yield_risk_pct": float(args.v5_news_yield_risk_pct),
+                "news_yield_max_per_event": int(args.v5_news_yield_max_per_event),
+                "news_trend_enabled": bool(args.v5_news_trend_enabled),
+                "news_trend_delay_minutes": int(args.v5_news_trend_delay_minutes),
+                "news_trend_window_minutes": int(args.v5_news_trend_window_minutes),
+                "news_trend_confirm_bars": int(args.v5_news_trend_confirm_bars),
+                "news_trend_min_body_pips": float(args.v5_news_trend_min_body_pips),
+                "news_trend_require_ema_align": bool(args.v5_news_trend_require_ema_align),
+                "news_trend_risk_pct": float(args.v5_news_trend_risk_pct),
+                "news_trend_tp_rr": float(args.v5_news_trend_tp_rr),
+                "news_trend_sl_pips": float(args.v5_news_trend_sl_pips),
                 "normal_mid_atr_allowed": bool(args.v5_normal_mid_atr_allowed),
                 "atr_pct_low_normal": float(args.v5_atr_pct_low_normal),
                 "rolling_wr_lookback": int(args.v5_rolling_wr_lookback),
