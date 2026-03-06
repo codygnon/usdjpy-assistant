@@ -1,0 +1,270 @@
+{
+  "strategy_id": "tokyo_mean_reversion_v9",
+  "run_label": "1000k",
+  "input_csv": "research_out/USDJPY_M1_OANDA_1000k.csv",
+  "summary": {
+    "total_trades": 2,
+    "win_rate_pct": 50.0,
+    "average_win_pips": 12.539999999998486,
+    "average_win_usd": 409.46127880149174,
+    "average_loss_pips": -11.500000000000911,
+    "average_loss_usd": -298.1663523989342,
+    "largest_win_usd": 409.46127880149174,
+    "largest_loss_usd": -298.1663523989342,
+    "profit_factor": 1.373264540103605,
+    "net_profit_usd": 111.29492640255756,
+    "net_profit_pips": 1.0399999999975744,
+    "return_on_starting_equity_pct": 0.22258985280511845,
+    "max_drawdown_usd": 298.16635239893367,
+    "max_drawdown_pct": 0.5963327047978673,
+    "max_consecutive_wins": 1,
+    "max_consecutive_losses": 1,
+    "average_trade_duration_minutes": 1454.5,
+    "sharpe_ratio": 0.22654877630183093,
+    "calmar_ratio": 0.37326454010361115,
+    "starting_equity_usd": 50000.0,
+    "ending_equity_usd": 50111.29492640256
+  },
+  "breakdown": {
+    "day_of_week": [
+      {
+        "day": "Fri",
+        "trades": 1,
+        "wr": 100.0,
+        "net": 409.46127880149174
+      },
+      {
+        "day": "Tue",
+        "trades": 1,
+        "wr": 0.0,
+        "net": -298.1663523989342
+      }
+    ],
+    "monthly": [
+      {
+        "month": "2023-08",
+        "trades": 1,
+        "wr": 0.0,
+        "net": -298.1663523989342
+      },
+      {
+        "month": "2024-04",
+        "trades": 1,
+        "wr": 100.0,
+        "net": 409.46127880149174
+      }
+    ],
+    "hourly": [
+      {
+        "hour": 20,
+        "trades": 1,
+        "wr": 100.0,
+        "net": 409.46127880149174
+      },
+      {
+        "hour": 21,
+        "trades": 1,
+        "wr": 0.0,
+        "net": -298.1663523989342
+      }
+    ],
+    "exit_distribution": [
+      {
+        "exit_reason": "early_exit_midpoint_shift",
+        "count": 1,
+        "net_usd": -298.1663523989342
+      },
+      {
+        "exit_reason": "session_close",
+        "count": 1,
+        "net_usd": 409.46127880149174
+      }
+    ],
+    "average_trades_per_session": 0.0035587188612099642,
+    "pct_sessions_with_zero_trades": 99.644128113879
+  },
+  "rejection_candle_stats": {
+    "total_rejections_detected": 2,
+    "rejections_in_zone": 2,
+    "rejections_with_confirmation": 2,
+    "entries_taken": 2,
+    "avg_wick_to_body_ratio_winners": 6.124999999989786,
+    "avg_wick_to_body_ratio_losers": 8.157894736839822
+  },
+  "session_envelope_stats": {
+    "avg_initial_range_pips": 15.297153024911019,
+    "avg_zone_width_pips": 6.164195316392595,
+    "sessions_with_lower_zone_touch": 65,
+    "sessions_with_upper_zone_touch": 71,
+    "sessions_with_both_zone_touch": 10
+  },
+  "divergence_stats": {
+    "bullish_divergences_detected": 0,
+    "bearish_divergences_detected": 0,
+    "divergence_as_confirmation_count": 0,
+    "wr_with_divergence": 0.0,
+    "wr_without_divergence": 50.0
+  },
+  "volume_climax_stats": {
+    "climaxes_detected": 2,
+    "climax_as_confirmation_count": 2
+  },
+  "sl_placement_stats": {
+    "avg_sl_distance_pips": 14.400000000000546,
+    "trades_skipped_sl_too_wide": 0,
+    "sl_distance_distribution": {
+      "6-10": 1,
+      "10-15": 0,
+      "15-20": 1,
+      "20-25": 0
+    }
+  },
+  "funnel": {
+    "bars_in_session": 177013,
+    "m5_bars_in_session": 32115,
+    "rejections_detected": 2,
+    "rejections_in_zone": 2,
+    "rejections_with_confirmation": 2,
+    "entries_taken": 2,
+    "signals_bottleneck_no_confirmation": 0,
+    "signals_bottleneck_constraints": 0
+  },
+  "verification_samples": {
+    "rejections": [
+      {
+        "time": "2023-08-01 21:15:00+00:00",
+        "ohlc": [
+          143.316,
+          143.365,
+          143.142,
+          143.297
+        ],
+        "wick_body_ratio": 8.157894736839822,
+        "zone": "lower",
+        "confirmations": [
+          "climax"
+        ]
+      },
+      {
+        "time": "2024-04-12 20:55:00+00:00",
+        "ohlc": [
+          153.282,
+          153.331,
+          153.256,
+          153.274
+        ],
+        "wick_body_ratio": 6.124999999989786,
+        "zone": "upper",
+        "confirmations": [
+          "climax"
+        ]
+      }
+    ],
+    "trades": [
+      {
+        "time": "2023-08-01 21:15:00+00:00",
+        "direction": "long",
+        "entry": 143.305,
+        "sl": 143.112,
+        "tp1": 143.416,
+        "confirmations": [
+          "climax"
+        ]
+      },
+      {
+        "time": "2024-04-12 20:55:00+00:00",
+        "direction": "short",
+        "entry": 153.266,
+        "sl": 153.361,
+        "tp1": 153.173,
+        "confirmations": [
+          "climax"
+        ]
+      }
+    ]
+  },
+  "equity_curve": [
+    {
+      "trade_number": 1,
+      "entry_datetime": "2023-08-01 21:15:00+00:00",
+      "exit_datetime": "2023-08-01 21:35:00+00:00",
+      "equity_after": 49701.833647601066,
+      "drawdown_usd": 298.16635239893367,
+      "drawdown_pct": 0.5963327047978673
+    },
+    {
+      "trade_number": 2,
+      "entry_datetime": "2024-04-12 20:55:00+00:00",
+      "exit_datetime": "2024-04-14 21:04:00+00:00",
+      "equity_after": 50111.29492640256,
+      "drawdown_usd": 0.0,
+      "drawdown_pct": 0.0
+    }
+  ],
+  "drawdown_curve": [
+    {
+      "trade_number": 1,
+      "drawdown_usd": 298.16635239893367,
+      "drawdown_pct": 0.5963327047978673
+    },
+    {
+      "trade_number": 2,
+      "drawdown_usd": 0.0,
+      "drawdown_pct": 0.0
+    }
+  ],
+  "trades": [
+    {
+      "trade_id": 1,
+      "entry_datetime": "2023-08-01 21:15:00+00:00",
+      "exit_datetime": "2023-08-01 21:35:00+00:00",
+      "direction": "long",
+      "entry_price": 143.305,
+      "exit_price": 143.19,
+      "sl_price": 143.112,
+      "tp_price": 143.416,
+      "exit_reason": "early_exit_midpoint_shift",
+      "pips": -11.500000000000911,
+      "usd": -298.1663523989342,
+      "position_size_units": 371256,
+      "sl_pips": 19.300000000001205,
+      "mfe_pips": 0.0,
+      "mae_pips": 14.700000000001978,
+      "rejection_wick_body_ratio": 8.157894736839822,
+      "confirmation_types": "climax",
+      "entry_session_day": "2023-08-01",
+      "duration_minutes": 20.0,
+      "equity_before": 50000.0,
+      "equity_after": 49701.833647601066,
+      "entry_regime": "TOKYO_MEANREV_V9",
+      "entry_signal_mode": "rejection_envelope",
+      "entry_session": "tokyo"
+    },
+    {
+      "trade_id": 2,
+      "entry_datetime": "2024-04-12 20:55:00+00:00",
+      "exit_datetime": "2024-04-14 21:04:00+00:00",
+      "direction": "short",
+      "entry_price": 153.266,
+      "exit_price": 153.092,
+      "sl_price": 153.361,
+      "tp_price": 153.173,
+      "exit_reason": "session_close",
+      "pips": 12.539999999998486,
+      "usd": 409.46127880149174,
+      "position_size_units": 500000,
+      "sl_pips": 9.499999999999886,
+      "mfe_pips": 17.399999999997817,
+      "mae_pips": 5.400000000003047,
+      "rejection_wick_body_ratio": 6.124999999989786,
+      "confirmation_types": "climax",
+      "entry_session_day": "2024-04-12",
+      "duration_minutes": 2889.0,
+      "equity_before": 49701.833647601066,
+      "equity_after": 50111.29492640256,
+      "entry_regime": "TOKYO_MEANREV_V9",
+      "entry_signal_mode": "rejection_envelope",
+      "entry_session": "tokyo"
+    }
+  ]
+}

@@ -1,0 +1,2802 @@
+{
+  "monthly_performance": [
+    {
+      "month": "2024-11",
+      "trades": 11,
+      "wins": 6,
+      "wr": 54.54545454545454,
+      "gross_profit": 285.38622440897626,
+      "gross_loss": 815.4682101961723,
+      "net_pnl": -530.081985787196,
+      "profit_factor": 0.3499660941293133,
+      "avg_atr_during_trades": 0.13483116883116758,
+      "avg_bb_width_during_trades": 0.001714925664966044
+    },
+    {
+      "month": "2024-12",
+      "trades": 4,
+      "wins": 4,
+      "wr": 100.0,
+      "gross_profit": 515.9739379353331,
+      "gross_loss": 0.0,
+      "net_pnl": 515.9739379353331,
+      "profit_factor": Infinity,
+      "avg_atr_during_trades": 0.10114285714285891,
+      "avg_bb_width_during_trades": 0.0012884076336485812
+    },
+    {
+      "month": "2025-01",
+      "trades": 13,
+      "wins": 10,
+      "wr": 76.92307692307693,
+      "gross_profit": 686.8264368509675,
+      "gross_loss": 357.3391874839831,
+      "net_pnl": 329.4872493669845,
+      "profit_factor": 1.9220574202535594,
+      "avg_atr_during_trades": 0.12139010989010934,
+      "avg_bb_width_during_trades": 0.0013788667739778662
+    },
+    {
+      "month": "2025-02",
+      "trades": 10,
+      "wins": 7,
+      "wr": 70.0,
+      "gross_profit": 338.8460259140219,
+      "gross_loss": 740.1497781955559,
+      "net_pnl": -401.3037522815341,
+      "profit_factor": 0.457807373448263,
+      "avg_atr_during_trades": 0.11234285714285734,
+      "avg_bb_width_during_trades": 0.0015559381242315792
+    },
+    {
+      "month": "2025-03",
+      "trades": 9,
+      "wins": 6,
+      "wr": 66.66666666666666,
+      "gross_profit": 482.2981916505788,
+      "gross_loss": 511.5255497439342,
+      "net_pnl": -29.227358093355434,
+      "profit_factor": 0.942862369029296,
+      "avg_atr_during_trades": 0.13853174603174634,
+      "avg_bb_width_during_trades": 0.0018497418763675317
+    },
+    {
+      "month": "2025-04",
+      "trades": 8,
+      "wins": 7,
+      "wr": 87.5,
+      "gross_profit": 519.0062534659019,
+      "gross_loss": 249.9354410047087,
+      "net_pnl": 269.0708124611931,
+      "profit_factor": 2.0765612566971803,
+      "avg_atr_during_trades": 0.14607142857142813,
+      "avg_bb_width_during_trades": 0.002312205999739747
+    },
+    {
+      "month": "2025-05",
+      "trades": 14,
+      "wins": 6,
+      "wr": 42.857142857142854,
+      "gross_profit": 262.8782277225291,
+      "gross_loss": 1658.2956692807513,
+      "net_pnl": -1395.4174415582222,
+      "profit_factor": 0.1585231346811312,
+      "avg_atr_during_trades": 0.1307653061224489,
+      "avg_bb_width_during_trades": 0.001656725502670861
+    },
+    {
+      "month": "2025-06",
+      "trades": 18,
+      "wins": 12,
+      "wr": 66.66666666666666,
+      "gross_profit": 528.381130955087,
+      "gross_loss": 824.2990726553475,
+      "net_pnl": -295.9179417002605,
+      "profit_factor": 0.641006581813797,
+      "avg_atr_during_trades": 0.10454761904762006,
+      "avg_bb_width_during_trades": 0.001435677373581883
+    },
+    {
+      "month": "2025-07",
+      "trades": 9,
+      "wins": 1,
+      "wr": 11.11111111111111,
+      "gross_profit": 58.11174914475754,
+      "gross_loss": 1078.1878142612027,
+      "net_pnl": -1020.0760651164453,
+      "profit_factor": 0.05389761262009528,
+      "avg_atr_during_trades": 0.09730158730158743,
+      "avg_bb_width_during_trades": 0.0014302333438947984
+    },
+    {
+      "month": "2025-08",
+      "trades": 12,
+      "wins": 9,
+      "wr": 75.0,
+      "gross_profit": 1620.2054002850127,
+      "gross_loss": 335.4141608379032,
+      "net_pnl": 1284.7912394471093,
+      "profit_factor": 4.830462125503447,
+      "avg_atr_during_trades": 0.12859523809523696,
+      "avg_bb_width_during_trades": 0.001089810144107352
+    },
+    {
+      "month": "2025-09",
+      "trades": 13,
+      "wins": 9,
+      "wr": 69.23076923076923,
+      "gross_profit": 1317.9750668334364,
+      "gross_loss": 977.8202001582985,
+      "net_pnl": 340.1548666751378,
+      "profit_factor": 1.3478705662043702,
+      "avg_atr_during_trades": 0.08736263736263408,
+      "avg_bb_width_during_trades": 0.0012499961113325356
+    },
+    {
+      "month": "2025-10",
+      "trades": 18,
+      "wins": 14,
+      "wr": 77.77777777777779,
+      "gross_profit": 1246.8125440492595,
+      "gross_loss": 907.4165173190964,
+      "net_pnl": 339.3960267301631,
+      "profit_factor": 1.3740245193385796,
+      "avg_atr_during_trades": 0.10980952380952441,
+      "avg_bb_width_during_trades": 0.0012729380391602796
+    },
+    {
+      "month": "2025-11",
+      "trades": 12,
+      "wins": 8,
+      "wr": 66.66666666666666,
+      "gross_profit": 899.5829014711542,
+      "gross_loss": 463.6490427022502,
+      "net_pnl": 435.9338587689041,
+      "profit_factor": 1.9402237870010128,
+      "avg_atr_during_trades": 0.10472023809523699,
+      "avg_bb_width_during_trades": 0.0013214671161093634
+    },
+    {
+      "month": "2025-12",
+      "trades": 18,
+      "wins": 16,
+      "wr": 88.88888888888889,
+      "gross_profit": 1141.4843173829731,
+      "gross_loss": 504.9229784227406,
+      "net_pnl": 636.5613389602324,
+      "profit_factor": 2.2607097837945482,
+      "avg_atr_during_trades": 0.07978968253968419,
+      "avg_bb_width_during_trades": 0.000970436900925415
+    },
+    {
+      "month": "2026-01",
+      "trades": 11,
+      "wins": 7,
+      "wr": 63.63636363636363,
+      "gross_profit": 405.20571999166265,
+      "gross_loss": 143.3656803027504,
+      "net_pnl": 261.8400396889122,
+      "profit_factor": 2.8263788037414206,
+      "avg_atr_during_trades": 0.09170779220779099,
+      "avg_bb_width_during_trades": 0.000988120801261879
+    },
+    {
+      "month": "2026-02",
+      "trades": 15,
+      "wins": 7,
+      "wr": 46.666666666666664,
+      "gross_profit": 446.5993860913958,
+      "gross_loss": 1174.4497938239965,
+      "net_pnl": -727.8504077326011,
+      "profit_factor": 0.3802626459129196,
+      "avg_atr_during_trades": 0.0927809523809517,
+      "avg_bb_width_during_trades": 0.001262569082738034
+    }
+  ],
+  "per_session_granular_breakdown": [
+    {
+      "session_day": "2024-10-23",
+      "session_range_pips": 28.79999999999825,
+      "pivot_range_pips": NaN,
+      "avg_atr_m15": 0.08679968454258735,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-10-24",
+      "session_range_pips": 44.80000000000075,
+      "pivot_range_pips": 45.30520000000138,
+      "avg_atr_m15": 0.11205221518986945,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-10-25",
+      "session_range_pips": 34.699999999998,
+      "pivot_range_pips": 164.71839999999816,
+      "avg_atr_m15": 0.10902534562211944,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-10-26",
+      "session_range_pips": 28.600000000000136,
+      "pivot_range_pips": 97.8683999999987,
+      "avg_atr_m15": 0.0947920870950614,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-10-30",
+      "session_range_pips": 28.999999999999204,
+      "pivot_range_pips": 112.46080000000234,
+      "avg_atr_m15": 0.13351433049709077,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-10-31",
+      "session_range_pips": 42.900000000000205,
+      "pivot_range_pips": 84.95679999999766,
+      "avg_atr_m15": 0.10308412698412606,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-11-01",
+      "session_range_pips": 67.9000000000002,
+      "pivot_range_pips": 54.77879999999686,
+      "avg_atr_m15": 0.16546001796945073,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-11-02",
+      "session_range_pips": 26.300000000000523,
+      "pivot_range_pips": 137.13799999999878,
+      "avg_atr_m15": 0.124079365079366,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-11-06",
+      "session_range_pips": 75.80000000000098,
+      "pivot_range_pips": 79.53239999999937,
+      "avg_atr_m15": 0.1451948051948062,
+      "trades_taken": 1,
+      "session_pnl": 34.16991619818586,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2024-11-07",
+      "session_range_pips": 34.29999999999893,
+      "pivot_range_pips": 92.29119999999966,
+      "avg_atr_m15": 0.15379545454545668,
+      "trades_taken": 2,
+      "session_pnl": -187.45613281728893,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2024-11-08",
+      "session_range_pips": 78.19999999999823,
+      "pivot_range_pips": 260.9824000000003,
+      "avg_atr_m15": 0.180704545454543,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-11-09",
+      "session_range_pips": 37.89999999999907,
+      "pivot_range_pips": 154.4807999999989,
+      "avg_atr_m15": 0.1439253246753259,
+      "trades_taken": 2,
+      "session_pnl": 92.98035448240712,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2024-11-13",
+      "session_range_pips": 41.39999999999873,
+      "pivot_range_pips": 98.40320000000133,
+      "avg_atr_m15": 0.10587987012986917,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-11-14",
+      "session_range_pips": 49.39999999999998,
+      "pivot_range_pips": 115.97520000000257,
+      "avg_atr_m15": 0.13668181818181638,
+      "trades_taken": 1,
+      "session_pnl": -249.247472880676,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2024-11-15",
+      "session_range_pips": 74.59999999999809,
+      "pivot_range_pips": 98.32680000000096,
+      "avg_atr_m15": 0.15833441558441474,
+      "trades_taken": 1,
+      "session_pnl": -248.00641843189624,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2024-11-16",
+      "session_range_pips": 105.19999999999925,
+      "pivot_range_pips": 82.13000000000079,
+      "avg_atr_m15": 0.2178636363636369,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-11-20",
+      "session_range_pips": 54.09999999999968,
+      "pivot_range_pips": 116.28080000000409,
+      "avg_atr_m15": 0.16367532467532608,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-11-21",
+      "session_range_pips": 36.19999999999948,
+      "pivot_range_pips": 116.05160000000298,
+      "avg_atr_m15": 0.15787987012987081,
+      "trades_taken": 2,
+      "session_pnl": -5.2775066901721885,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2024-11-22",
+      "session_range_pips": 29.599999999999227,
+      "pivot_range_pips": 103.904,
+      "avg_atr_m15": 0.16961038961039315,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-11-23",
+      "session_range_pips": 25.99999999999909,
+      "pivot_range_pips": 116.35720000000447,
+      "avg_atr_m15": 0.1285941558441589,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-11-27",
+      "session_range_pips": 61.60000000000139,
+      "pivot_range_pips": 89.92279999999937,
+      "avg_atr_m15": 0.15821103896103797,
+      "trades_taken": 2,
+      "session_pnl": 32.75527435224436,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2024-11-28",
+      "session_range_pips": 80.49999999999784,
+      "pivot_range_pips": 114.9819999999977,
+      "avg_atr_m15": 0.20385714285714243,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-11-29",
+      "session_range_pips": 12.399999999999523,
+      "pivot_range_pips": 212.62120000000098,
+      "avg_atr_m15": 0.06000335871025248,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-11-30",
+      "session_range_pips": 106.60000000000025,
+      "pivot_range_pips": 78.53920000000016,
+      "avg_atr_m15": 0.1712238675958209,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-12-04",
+      "session_range_pips": 63.30000000000098,
+      "pivot_range_pips": 127.96999999999912,
+      "avg_atr_m15": 0.2147857142857126,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-12-05",
+      "session_range_pips": 67.9000000000002,
+      "pivot_range_pips": 121.78159999999707,
+      "avg_atr_m15": 0.18183766233766113,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-12-06",
+      "session_range_pips": 43.10000000000116,
+      "pivot_range_pips": 130.64400000000091,
+      "avg_atr_m15": 0.14053896103895966,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-12-07",
+      "session_range_pips": 45.599999999998886,
+      "pivot_range_pips": 85.72080000000142,
+      "avg_atr_m15": 0.169399350649352,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-12-11",
+      "session_range_pips": 32.099999999999795,
+      "pivot_range_pips": 126.67119999999841,
+      "avg_atr_m15": 0.104613636363635,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-12-12",
+      "session_range_pips": 47.800000000000864,
+      "pivot_range_pips": 98.25040000000058,
+      "avg_atr_m15": 0.15093181818181928,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-12-13",
+      "session_range_pips": 65.00000000000057,
+      "pivot_range_pips": 142.25680000000125,
+      "avg_atr_m15": 0.12988536691271885,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-12-14",
+      "session_range_pips": 20.199999999999818,
+      "pivot_range_pips": 74.33720000000221,
+      "avg_atr_m15": 0.08712662337662432,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-12-18",
+      "session_range_pips": 46.700000000001296,
+      "pivot_range_pips": 88.31839999999715,
+      "avg_atr_m15": 0.11563311688311756,
+      "trades_taken": 2,
+      "session_pnl": 253.75980841853647,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2024-12-19",
+      "session_range_pips": 115.39999999999964,
+      "pivot_range_pips": 90.76320000000351,
+      "avg_atr_m15": 0.15277272727272728,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-12-20",
+      "session_range_pips": 46.000000000000796,
+      "pivot_range_pips": 117.65599999999951,
+      "avg_atr_m15": 0.162633116883117,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-12-21",
+      "session_range_pips": 51.99999999999818,
+      "pivot_range_pips": 257.6972000000012,
+      "avg_atr_m15": 0.14993506493506617,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2024-12-25",
+      "session_range_pips": 23.30000000000041,
+      "pivot_range_pips": 71.35759999999891,
+      "avg_atr_m15": 0.06481033642126188,
+      "trades_taken": 1,
+      "session_pnl": 100.2196298279264,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2024-12-27",
+      "session_range_pips": 20.79999999999984,
+      "pivot_range_pips": 38.505600000002005,
+      "avg_atr_m15": 0.07812337662337583,
+      "trades_taken": 1,
+      "session_pnl": 161.9944996888702,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2024-12-28",
+      "session_range_pips": 46.50000000000034,
+      "pivot_range_pips": 77.16399999999908,
+      "avg_atr_m15": 0.09971581010452817,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-01-01",
+      "session_range_pips": 38.400000000001455,
+      "pivot_range_pips": 107.41840000000023,
+      "avg_atr_m15": 0.1136511072514118,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-01-03",
+      "session_range_pips": 38.700000000000045,
+      "pivot_range_pips": 116.89200000000142,
+      "avg_atr_m15": 0.16141558441558315,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-01-04",
+      "session_range_pips": 50.7000000000005,
+      "pivot_range_pips": 107.95320000000288,
+      "avg_atr_m15": 0.11264935064935165,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-01-08",
+      "session_range_pips": 51.200000000000045,
+      "pivot_range_pips": 132.09560000000238,
+      "avg_atr_m15": 0.1569610389610391,
+      "trades_taken": 2,
+      "session_pnl": -13.499382010625482,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-01-09",
+      "session_range_pips": 25.200000000000955,
+      "pivot_range_pips": 81.28959999999665,
+      "avg_atr_m15": 0.10175649350649087,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-01-10",
+      "session_range_pips": 24.199999999999022,
+      "pivot_range_pips": 49.73640000000046,
+      "avg_atr_m15": 0.06146428571428547,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-01-11",
+      "session_range_pips": 42.09999999999923,
+      "pivot_range_pips": 63.106399999998075,
+      "avg_atr_m15": 0.20246103896103362,
+      "trades_taken": 1,
+      "session_pnl": 31.22210545228273,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-01-15",
+      "session_range_pips": 32.59999999999934,
+      "pivot_range_pips": 80.52559999999858,
+      "avg_atr_m15": 0.12675974025973888,
+      "trades_taken": 2,
+      "session_pnl": 80.569943064611,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-01-16",
+      "session_range_pips": 33.500000000000796,
+      "pivot_range_pips": 82.35920000000192,
+      "avg_atr_m15": 0.13631168831168816,
+      "trades_taken": 1,
+      "session_pnl": 131.59793332424954,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-01-17",
+      "session_range_pips": 41.29999999999825,
+      "pivot_range_pips": 164.1836000000012,
+      "avg_atr_m15": 0.18001948051948088,
+      "trades_taken": 1,
+      "session_pnl": 17.035289265017276,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-01-18",
+      "session_range_pips": 27.199999999999136,
+      "pivot_range_pips": 109.25199999999792,
+      "avg_atr_m15": 0.11925974025973776,
+      "trades_taken": 1,
+      "session_pnl": -37.664477115271346,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-01-22",
+      "session_range_pips": 20.199999999999818,
+      "pivot_range_pips": 89.69359999999824,
+      "avg_atr_m15": 0.12162662337662286,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-01-23",
+      "session_range_pips": 26.599999999999113,
+      "pivot_range_pips": 112.23160000000121,
+      "avg_atr_m15": 0.09818181818181822,
+      "trades_taken": 1,
+      "session_pnl": 60.08047995540862,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-01-24",
+      "session_range_pips": 38.900000000001,
+      "pivot_range_pips": 103.82759999999962,
+      "avg_atr_m15": 0.13718831168831638,
+      "trades_taken": 1,
+      "session_pnl": 31.39883364345945,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-01-25",
+      "session_range_pips": 51.200000000000045,
+      "pivot_range_pips": 77.24039999999945,
+      "avg_atr_m15": 0.14103896103895994,
+      "trades_taken": 1,
+      "session_pnl": 218.64691235405095,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-01-29",
+      "session_range_pips": 23.799999999999955,
+      "pivot_range_pips": 193.750399999999,
+      "avg_atr_m15": 0.11758116883116672,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-01-30",
+      "session_range_pips": 61.099999999999,
+      "pivot_range_pips": 113.53040000000192,
+      "avg_atr_m15": 0.15656818181818075,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-01-31",
+      "session_range_pips": 50.0,
+      "pivot_range_pips": 65.09280000000217,
+      "avg_atr_m15": 0.1410097402597393,
+      "trades_taken": 1,
+      "session_pnl": -252.6898924172703,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-02-01",
+      "session_range_pips": 55.800000000002115,
+      "pivot_range_pips": 111.00920000000089,
+      "avg_atr_m15": 0.15738636363636205,
+      "trades_taken": 1,
+      "session_pnl": 62.78950385107201,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-02-05",
+      "session_range_pips": 45.49999999999841,
+      "pivot_range_pips": 143.32640000000083,
+      "avg_atr_m15": 0.12660389610389525,
+      "trades_taken": 1,
+      "session_pnl": 48.501242447340786,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-02-06",
+      "session_range_pips": 61.40000000000043,
+      "pivot_range_pips": 103.1400000000019,
+      "avg_atr_m15": 0.1436136363636349,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-02-07",
+      "session_range_pips": 82.29999999999791,
+      "pivot_range_pips": 179.46359999999686,
+      "avg_atr_m15": 0.16680844155844268,
+      "trades_taken": 1,
+      "session_pnl": -252.14739823127155,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-02-08",
+      "session_range_pips": 93.29999999999927,
+      "pivot_range_pips": 126.67119999999841,
+      "avg_atr_m15": 0.2415616883116831,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-02-12",
+      "session_range_pips": 34.80000000000132,
+      "pivot_range_pips": 99.62560000000167,
+      "avg_atr_m15": 0.11010064935065167,
+      "trades_taken": 2,
+      "session_pnl": 102.49860324204708,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-02-13",
+      "session_range_pips": 52.00000000000102,
+      "pivot_range_pips": 73.42040000000338,
+      "avg_atr_m15": 0.14618506493506486,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-02-14",
+      "session_range_pips": 65.00000000000057,
+      "pivot_range_pips": 183.971200000002,
+      "avg_atr_m15": 0.16250974025974035,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-02-15",
+      "session_range_pips": 33.40000000000032,
+      "pivot_range_pips": 150.58440000000246,
+      "avg_atr_m15": 0.09460213414633876,
+      "trades_taken": 2,
+      "session_pnl": 62.74571901788295,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-02-19",
+      "session_range_pips": 44.10000000000025,
+      "pivot_range_pips": 80.29639999999745,
+      "avg_atr_m15": 0.08433441558441843,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-02-20",
+      "session_range_pips": 43.79999999999882,
+      "pivot_range_pips": 75.78879999999799,
+      "avg_atr_m15": 0.10746428571428421,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-02-21",
+      "session_range_pips": 43.10000000000116,
+      "pivot_range_pips": 81.97720000000004,
+      "avg_atr_m15": 0.12450974025974058,
+      "trades_taken": 2,
+      "session_pnl": -488.0023799642844,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-02-22",
+      "session_range_pips": 64.80000000000246,
+      "pivot_range_pips": 155.70319999999924,
+      "avg_atr_m15": 0.14000324675324854,
+      "trades_taken": 1,
+      "session_pnl": 60.49360808387691,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-02-26",
+      "session_range_pips": 48.099999999999454,
+      "pivot_range_pips": 78.61560000000054,
+      "avg_atr_m15": 0.17758441558441362,
+      "trades_taken": 1,
+      "session_pnl": 64.60685312287413,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-02-27",
+      "session_range_pips": 53.10000000000059,
+      "pivot_range_pips": 133.0124000000012,
+      "avg_atr_m15": 0.16316233766233837,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-02-28",
+      "session_range_pips": 52.50000000000057,
+      "pivot_range_pips": 96.72239999999874,
+      "avg_atr_m15": 0.16624350649350522,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-03-01",
+      "session_range_pips": 43.899999999999295,
+      "pivot_range_pips": 108.33519999999908,
+      "avg_atr_m15": 0.18839610389610364,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-03-05",
+      "session_range_pips": 141.10000000000014,
+      "pivot_range_pips": 168.6148000000003,
+      "avg_atr_m15": 0.1988084415584436,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-03-06",
+      "session_range_pips": 66.90000000000111,
+      "pivot_range_pips": 136.60320000000183,
+      "avg_atr_m15": 0.24334415584415434,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-03-07",
+      "session_range_pips": 76.60000000000196,
+      "pivot_range_pips": 137.0615999999984,
+      "avg_atr_m15": 0.2207305194805237,
+      "trades_taken": 1,
+      "session_pnl": 91.4397306358888,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-03-08",
+      "session_range_pips": 124.20000000000186,
+      "pivot_range_pips": 154.71000000000004,
+      "avg_atr_m15": 0.26025649350649394,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-03-12",
+      "session_range_pips": 89.6000000000015,
+      "pivot_range_pips": 93.5136,
+      "avg_atr_m15": 0.20608779301193916,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-03-13",
+      "session_range_pips": 31.000000000000227,
+      "pivot_range_pips": 120.63560000000278,
+      "avg_atr_m15": 0.1311545741324918,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-03-14",
+      "session_range_pips": 41.200000000000614,
+      "pivot_range_pips": 112.07880000000047,
+      "avg_atr_m15": 0.13374007936508273,
+      "trades_taken": 2,
+      "session_pnl": 83.00225077595732,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-03-15",
+      "session_range_pips": 41.70000000000016,
+      "pivot_range_pips": 73.344000000003,
+      "avg_atr_m15": 0.12085714285714418,
+      "trades_taken": 2,
+      "session_pnl": -441.9955929577609,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-03-19",
+      "session_range_pips": 50.80000000000098,
+      "pivot_range_pips": 80.21999999999707,
+      "avg_atr_m15": 0.12890004422821663,
+      "trades_taken": 2,
+      "session_pnl": 179.1127343943678,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-03-20",
+      "session_range_pips": 139.0999999999991,
+      "pivot_range_pips": 63.94680000000222,
+      "avg_atr_m15": 0.17378151260504263,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-03-21",
+      "session_range_pips": 23.799999999999955,
+      "pivot_range_pips": 117.65599999999951,
+      "avg_atr_m15": 0.10666628753411932,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-03-22",
+      "session_range_pips": 35.90000000000089,
+      "pivot_range_pips": 60.356000000001586,
+      "avg_atr_m15": 0.11667063492063598,
+      "trades_taken": 1,
+      "session_pnl": -69.52995678617334,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-03-26",
+      "session_range_pips": 23.60000000000184,
+      "pivot_range_pips": 105.58480000000257,
+      "avg_atr_m15": 0.09154710305174824,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-03-27",
+      "session_range_pips": 41.499999999999204,
+      "pivot_range_pips": 106.6543999999965,
+      "avg_atr_m15": 0.117613716038563,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-03-28",
+      "session_range_pips": 20.299999999997453,
+      "pivot_range_pips": 69.14199999999937,
+      "avg_atr_m15": 0.11697732426303824,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-03-29",
+      "session_range_pips": 50.499999999999545,
+      "pivot_range_pips": 83.8107999999977,
+      "avg_atr_m15": 0.14006746031745612,
+      "trades_taken": 1,
+      "session_pnl": 128.7434758443649,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-04-02",
+      "session_range_pips": 41.99999999999875,
+      "pivot_range_pips": 119.6423999999979,
+      "avg_atr_m15": 0.14158700489541687,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-04-03",
+      "session_range_pips": 179.6999999999997,
+      "pivot_range_pips": 88.92960000000016,
+      "avg_atr_m15": 0.165949605609113,
+      "trades_taken": 1,
+      "session_pnl": 68.14899307918492,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-04-04",
+      "session_range_pips": 60.80000000000041,
+      "pivot_range_pips": 137.29079999999954,
+      "avg_atr_m15": 0.23398469387755114,
+      "trades_taken": 1,
+      "session_pnl": -249.9354410047087,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-04-05",
+      "session_range_pips": 131.3999999999993,
+      "pivot_range_pips": 269.0808000000004,
+      "avg_atr_m15": 0.3730357142857156,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-04-09",
+      "session_range_pips": 91.29999999999825,
+      "pivot_range_pips": 254.48840000000249,
+      "avg_atr_m15": 0.25175602968460287,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-04-10",
+      "session_range_pips": 365.1999999999987,
+      "pivot_range_pips": 164.8711999999989,
+      "avg_atr_m15": 0.4770404135338353,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-04-11",
+      "session_range_pips": 100.90000000000146,
+      "pivot_range_pips": 328.0616000000009,
+      "avg_atr_m15": 0.2725233516483516,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-04-12",
+      "session_range_pips": 73.99999999999807,
+      "pivot_range_pips": 282.8327999999999,
+      "avg_atr_m15": 0.232912698412696,
+      "trades_taken": 1,
+      "session_pnl": 160.1849490494597,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-04-16",
+      "session_range_pips": 24.00000000000091,
+      "pivot_range_pips": 141.56919999999786,
+      "avg_atr_m15": 0.12958820861678097,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-04-17",
+      "session_range_pips": 106.1000000000007,
+      "pivot_range_pips": 76.17079999999987,
+      "avg_atr_m15": 0.1681272321428595,
+      "trades_taken": 1,
+      "session_pnl": 37.062089169765535,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-04-18",
+      "session_range_pips": 36.7999999999995,
+      "pivot_range_pips": 125.44880000000376,
+      "avg_atr_m15": 0.13911548731641998,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-04-19",
+      "session_range_pips": 19.10000000000025,
+      "pivot_range_pips": 112.6135999999974,
+      "avg_atr_m15": 0.04911384783798602,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-04-23",
+      "session_range_pips": 160.2000000000004,
+      "pivot_range_pips": 129.19239999999945,
+      "avg_atr_m15": 0.17243321539142384,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-04-24",
+      "session_range_pips": 75.20000000000095,
+      "pivot_range_pips": 210.4820000000018,
+      "avg_atr_m15": 0.21303198948290997,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-04-25",
+      "session_range_pips": 34.600000000000364,
+      "pivot_range_pips": 156.61999999999807,
+      "avg_atr_m15": 0.12465290178571856,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-04-26",
+      "session_range_pips": 40.99999999999966,
+      "pivot_range_pips": 81.36599999999703,
+      "avg_atr_m15": 0.11219047619047265,
+      "trades_taken": 2,
+      "session_pnl": 104.3344040917455,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-04-30",
+      "session_range_pips": 44.20000000000073,
+      "pivot_range_pips": 146.22959999999807,
+      "avg_atr_m15": 0.13547419354838716,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-05-01",
+      "session_range_pips": 59.70000000000084,
+      "pivot_range_pips": 60.737999999997776,
+      "avg_atr_m15": 0.14650241016652252,
+      "trades_taken": 2,
+      "session_pnl": 149.27581807574614,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-05-02",
+      "session_range_pips": 45.300000000000296,
+      "pivot_range_pips": 78.46279999999979,
+      "avg_atr_m15": 0.1481041574524525,
+      "trades_taken": 1,
+      "session_pnl": -250.5971076578614,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-05-03",
+      "session_range_pips": 53.700000000000614,
+      "pivot_range_pips": 218.1984,
+      "avg_atr_m15": 0.16732235793945338,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-05-07",
+      "session_range_pips": 43.600000000000705,
+      "pivot_range_pips": 111.08560000000125,
+      "avg_atr_m15": 0.1304533482142904,
+      "trades_taken": 2,
+      "session_pnl": -499.3833403861312,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-05-08",
+      "session_range_pips": 109.60000000000036,
+      "pivot_range_pips": 146.84080000000108,
+      "avg_atr_m15": 0.19460194604157738,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-05-09",
+      "session_range_pips": 58.29999999999984,
+      "pivot_range_pips": 120.17720000000052,
+      "avg_atr_m15": 0.17593823000898354,
+      "trades_taken": 1,
+      "session_pnl": -246.85055127751988,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-05-10",
+      "session_range_pips": 23.199999999999932,
+      "pivot_range_pips": 208.8011999999992,
+      "avg_atr_m15": 0.09814682539682486,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-05-14",
+      "session_range_pips": 40.800000000001546,
+      "pivot_range_pips": 225.532800000002,
+      "avg_atr_m15": 0.12758571428571427,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-05-15",
+      "session_range_pips": 68.50000000000023,
+      "pivot_range_pips": 82.66480000000342,
+      "avg_atr_m15": 0.17285340659340642,
+      "trades_taken": 1,
+      "session_pnl": 17.20415460815721,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-05-16",
+      "session_range_pips": 22.699999999997544,
+      "pivot_range_pips": 157.76599999999803,
+      "avg_atr_m15": 0.11935714285714356,
+      "trades_taken": 1,
+      "session_pnl": 46.52261690492803,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-05-17",
+      "session_range_pips": 48.49999999999852,
+      "pivot_range_pips": 102.52879999999891,
+      "avg_atr_m15": 0.1014087301587268,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-05-21",
+      "session_range_pips": 45.60000000000173,
+      "pivot_range_pips": 62.3424,
+      "avg_atr_m15": 0.10209568733153362,
+      "trades_taken": 2,
+      "session_pnl": -289.7590122123713,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-05-22",
+      "session_range_pips": 48.799999999999955,
+      "pivot_range_pips": 108.64080000000058,
+      "avg_atr_m15": 0.1318469069870907,
+      "trades_taken": 1,
+      "session_pnl": -245.1327316305644,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-05-23",
+      "session_range_pips": 42.69999999999925,
+      "pivot_range_pips": 92.59680000000117,
+      "avg_atr_m15": 0.13125971971066594,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-05-24",
+      "session_range_pips": 31.399999999999295,
+      "pivot_range_pips": 123.30959999999891,
+      "avg_atr_m15": 0.11254365079364861,
+      "trades_taken": 2,
+      "session_pnl": 63.16614317358571,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-05-28",
+      "session_range_pips": 17.99999999999784,
+      "pivot_range_pips": 65.7039999999995,
+      "avg_atr_m15": 0.08893099647266373,
+      "trades_taken": 1,
+      "session_pnl": 85.34185054957534,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-05-29",
+      "session_range_pips": 29.800000000000182,
+      "pivot_range_pips": 179.84559999999874,
+      "avg_atr_m15": 0.10525153374233108,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-05-30",
+      "session_range_pips": 29.60000000000207,
+      "pivot_range_pips": 93.89560000000188,
+      "avg_atr_m15": 0.11068575851393589,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-05-31",
+      "session_range_pips": 30.19999999999925,
+      "pivot_range_pips": 177.85920000000033,
+      "avg_atr_m15": 0.12748412698412487,
+      "trades_taken": 2,
+      "session_pnl": -75.92946363002022,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-06-04",
+      "session_range_pips": 28.20000000000107,
+      "pivot_range_pips": 110.77999999999975,
+      "avg_atr_m15": 0.10390245535714422,
+      "trades_taken": 3,
+      "session_pnl": 109.6882260826706,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-06-05",
+      "session_range_pips": 32.49999999999886,
+      "pivot_range_pips": 132.63039999999933,
+      "avg_atr_m15": 0.11822089947089794,
+      "trades_taken": 2,
+      "session_pnl": 27.91293965522947,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-06-06",
+      "session_range_pips": 38.39999999999861,
+      "pivot_range_pips": 136.90879999999765,
+      "avg_atr_m15": 0.15715145502645245,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-06-07",
+      "session_range_pips": 21.50000000000034,
+      "pivot_range_pips": 110.55079999999862,
+      "avg_atr_m15": 0.11942460317460149,
+      "trades_taken": 1,
+      "session_pnl": -78.21633279841068,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-06-11",
+      "session_range_pips": 26.500000000001478,
+      "pivot_range_pips": 74.87199999999916,
+      "avg_atr_m15": 0.08400615384615724,
+      "trades_taken": 1,
+      "session_pnl": 83.75064296343984,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-06-12",
+      "session_range_pips": 37.000000000000455,
+      "pivot_range_pips": 68.14880000000016,
+      "avg_atr_m15": 0.12210901098901406,
+      "trades_taken": 2,
+      "session_pnl": 61.10399947920328,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-06-13",
+      "session_range_pips": 27.199999999999136,
+      "pivot_range_pips": 87.40159999999833,
+      "avg_atr_m15": 0.11117857142857161,
+      "trades_taken": 1,
+      "session_pnl": -244.98954170665812,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-06-14",
+      "session_range_pips": 34.59999999999752,
+      "pivot_range_pips": 103.44559999999774,
+      "avg_atr_m15": 0.10534466277217064,
+      "trades_taken": 1,
+      "session_pnl": 113.6623716935696,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-06-18",
+      "session_range_pips": 39.30000000000007,
+      "pivot_range_pips": 93.81919999999582,
+      "avg_atr_m15": 0.11409703504043125,
+      "trades_taken": 3,
+      "session_pnl": 94.7663475893605,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-06-19",
+      "session_range_pips": 90.10000000000105,
+      "pivot_range_pips": 76.01799999999912,
+      "avg_atr_m15": 0.1472530040053392,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-06-20",
+      "session_range_pips": 38.80000000000052,
+      "pivot_range_pips": 85.18599999999878,
+      "avg_atr_m15": 0.07470647321428579,
+      "trades_taken": 1,
+      "session_pnl": 34.87861459242618,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-06-21",
+      "session_range_pips": 43.79999999999882,
+      "pivot_range_pips": 78.99759999999674,
+      "avg_atr_m15": 0.07678571428571426,
+      "trades_taken": 1,
+      "session_pnl": -244.33591358273944,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-06-25",
+      "session_range_pips": 38.299999999998136,
+      "pivot_range_pips": 154.4807999999989,
+      "avg_atr_m15": 0.11013608776843974,
+      "trades_taken": 1,
+      "session_pnl": -243.75144806502547,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-06-26",
+      "session_range_pips": 40.399999999999636,
+      "pivot_range_pips": 127.2824000000014,
+      "avg_atr_m15": 0.08810181898846617,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-06-27",
+      "session_range_pips": 41.40000000000157,
+      "pivot_range_pips": 102.6051999999993,
+      "avg_atr_m15": 0.11945723104056546,
+      "trades_taken": 1,
+      "session_pnl": -10.387847603326216,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-06-28",
+      "session_range_pips": 36.40000000000043,
+      "pivot_range_pips": 115.74600000000146,
+      "avg_atr_m15": 0.13074206349206474,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-07-02",
+      "session_range_pips": 41.200000000000614,
+      "pivot_range_pips": 75.17760000000067,
+      "avg_atr_m15": 0.11364065934066231,
+      "trades_taken": 1,
+      "session_pnl": -45.883024539572205,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-07-03",
+      "session_range_pips": 24.600000000000932,
+      "pivot_range_pips": 104.05680000000075,
+      "avg_atr_m15": 0.09741250000000187,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-07-04",
+      "session_range_pips": 30.500000000000682,
+      "pivot_range_pips": 70.89920000000234,
+      "avg_atr_m15": 0.10067834960070972,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-07-05",
+      "session_range_pips": 14.499999999998181,
+      "pivot_range_pips": 136.7559999999969,
+      "avg_atr_m15": 0.040536643653741634,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-07-09",
+      "session_range_pips": 34.30000000000177,
+      "pivot_range_pips": 154.1751999999974,
+      "avg_atr_m15": 0.08336263736263944,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-07-10",
+      "session_range_pips": 24.00000000000091,
+      "pivot_range_pips": 87.63079999999945,
+      "avg_atr_m15": 0.09229294478527521,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-07-11",
+      "session_range_pips": 34.29999999999893,
+      "pivot_range_pips": 71.51039999999966,
+      "avg_atr_m15": 0.08832700892857256,
+      "trades_taken": 2,
+      "session_pnl": -93.42149189837642,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-07-12",
+      "session_range_pips": 16.19999999999777,
+      "pivot_range_pips": 78.92119999999636,
+      "avg_atr_m15": 0.0821904761904723,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-07-16",
+      "session_range_pips": 18.600000000000705,
+      "pivot_range_pips": 71.05200000000309,
+      "avg_atr_m15": 0.09947776280323119,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-07-17",
+      "session_range_pips": 82.90000000000077,
+      "pivot_range_pips": 112.3080000000016,
+      "avg_atr_m15": 0.27580173564752875,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-07-18",
+      "session_range_pips": 26.99999999999818,
+      "pivot_range_pips": 174.11559999999895,
+      "avg_atr_m15": 0.08894607379375619,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-07-19",
+      "session_range_pips": 26.200000000000045,
+      "pivot_range_pips": 103.904,
+      "avg_atr_m15": 0.0894523809523778,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-07-23",
+      "session_range_pips": 33.00000000000125,
+      "pivot_range_pips": 121.01759999999899,
+      "avg_atr_m15": 0.09882760989011227,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-07-24",
+      "session_range_pips": 25.29999999999859,
+      "pivot_range_pips": 125.60159999999881,
+      "avg_atr_m15": 0.11431527093596373,
+      "trades_taken": 1,
+      "session_pnl": 58.11174914475754,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-07-25",
+      "session_range_pips": 37.000000000000455,
+      "pivot_range_pips": 84.34560000000033,
+      "avg_atr_m15": 0.10121405967449972,
+      "trades_taken": 2,
+      "session_pnl": -355.446344918468,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-07-26",
+      "session_range_pips": 26.499999999998636,
+      "pivot_range_pips": 96.8751999999995,
+      "avg_atr_m15": 0.08265873015873179,
+      "trades_taken": 1,
+      "session_pnl": -104.54147112263315,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-07-30",
+      "session_range_pips": 26.600000000001955,
+      "pivot_range_pips": 81.28960000000234,
+      "avg_atr_m15": 0.10091651501364889,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-07-31",
+      "session_range_pips": 101.60000000000196,
+      "pivot_range_pips": 49.812800000000834,
+      "avg_atr_m15": 0.14347274725274803,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-08-01",
+      "session_range_pips": 28.600000000000136,
+      "pivot_range_pips": 132.47759999999857,
+      "avg_atr_m15": 0.10745824175824252,
+      "trades_taken": 2,
+      "session_pnl": -478.89548178215296,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-08-02",
+      "session_range_pips": 71.09999999999843,
+      "pivot_range_pips": 172.2056000000009,
+      "avg_atr_m15": 0.18466666666666395,
+      "trades_taken": 1,
+      "session_pnl": -237.47560026179903,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-08-06",
+      "session_range_pips": 27.899999999999636,
+      "pivot_range_pips": 93.5136,
+      "avg_atr_m15": 0.09754464285714118,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-08-07",
+      "session_range_pips": 66.70000000000016,
+      "pivot_range_pips": 92.90240000000267,
+      "avg_atr_m15": 0.10870829636202095,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-08-08",
+      "session_range_pips": 62.60000000000048,
+      "pivot_range_pips": 69.52400000000125,
+      "avg_atr_m15": 0.10924872861765844,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-08-09",
+      "session_range_pips": 18.999999999999773,
+      "pivot_range_pips": 78.08079999999791,
+      "avg_atr_m15": 0.08807142857142525,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-08-13",
+      "session_range_pips": 21.60000000000082,
+      "pivot_range_pips": 68.76000000000317,
+      "avg_atr_m15": 0.1312574123989245,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-08-14",
+      "session_range_pips": 25.900000000001455,
+      "pivot_range_pips": 71.89240000000154,
+      "avg_atr_m15": 0.07369541778975548,
+      "trades_taken": 1,
+      "session_pnl": -71.69171082061862,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-08-15",
+      "session_range_pips": 24.399999999999977,
+      "pivot_range_pips": 82.74119999999812,
+      "avg_atr_m15": 0.08754973707274048,
+      "trades_taken": 1,
+      "session_pnl": 72.85044413582429,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-08-16",
+      "session_range_pips": 22.49999999999943,
+      "pivot_range_pips": 133.92920000000004,
+      "avg_atr_m15": 0.08718253968254373,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-08-20",
+      "session_range_pips": 25.099999999997635,
+      "pivot_range_pips": 69.065599999999,
+      "avg_atr_m15": 0.08334486607143148,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-08-21",
+      "session_range_pips": 48.40000000000089,
+      "pivot_range_pips": 51.34079999999699,
+      "avg_atr_m15": 0.08142100578548948,
+      "trades_taken": 2,
+      "session_pnl": 518.927436525796,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-08-22",
+      "session_range_pips": 23.799999999999955,
+      "pivot_range_pips": 72.27439999999774,
+      "avg_atr_m15": 0.08683444592790329,
+      "trades_taken": 2,
+      "session_pnl": 72.81575660665409,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-08-23",
+      "session_range_pips": 42.600000000001614,
+      "pivot_range_pips": 88.01280000000133,
+      "avg_atr_m15": 0.14626984126984008,
+      "trades_taken": 2,
+      "session_pnl": 768.8271746191651,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-08-27",
+      "session_range_pips": 41.100000000000136,
+      "pivot_range_pips": 84.80400000000259,
+      "avg_atr_m15": 0.08688273253226649,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-08-28",
+      "session_range_pips": 35.09999999999991,
+      "pivot_range_pips": 70.44080000000008,
+      "avg_atr_m15": 0.09472274143302367,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-08-29",
+      "session_range_pips": 33.799999999999386,
+      "pivot_range_pips": 68.6836000000028,
+      "avg_atr_m15": 0.08130173564753253,
+      "trades_taken": 3,
+      "session_pnl": 160.5377386420874,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-08-30",
+      "session_range_pips": 23.599999999999,
+      "pivot_range_pips": 63.41199999999957,
+      "avg_atr_m15": 0.07733730158730273,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-09-03",
+      "session_range_pips": 28.79999999999825,
+      "pivot_range_pips": 45.228800000001,
+      "avg_atr_m15": 0.09166838334079487,
+      "trades_taken": 2,
+      "session_pnl": -486.9436970840076,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-09-04",
+      "session_range_pips": 28.000000000000114,
+      "pivot_range_pips": 144.93079999999736,
+      "avg_atr_m15": 0.10203904455673225,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-09-05",
+      "session_range_pips": 29.100000000002524,
+      "pivot_range_pips": 95.95840000000067,
+      "avg_atr_m15": 0.07438708961845793,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-09-06",
+      "session_range_pips": 61.700000000001864,
+      "pivot_range_pips": 75.4068000000018,
+      "avg_atr_m15": 0.11521031746031504,
+      "trades_taken": 1,
+      "session_pnl": 775.2086696656472,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-09-10",
+      "session_range_pips": 28.90000000000157,
+      "pivot_range_pips": 94.58319999999958,
+      "avg_atr_m15": 0.0979625220458511,
+      "trades_taken": 1,
+      "session_pnl": 44.62315693851629,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-09-11",
+      "session_range_pips": 22.299999999998477,
+      "pivot_range_pips": 93.59000000000037,
+      "avg_atr_m15": 0.07211927013795674,
+      "trades_taken": 1,
+      "session_pnl": 28.040284802299727,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-09-12",
+      "session_range_pips": 29.09999999999968,
+      "pivot_range_pips": 41.408799999999246,
+      "avg_atr_m15": 0.09621889400921661,
+      "trades_taken": 2,
+      "session_pnl": 78.42388689291504,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-09-13",
+      "session_range_pips": 32.30000000000075,
+      "pivot_range_pips": 91.98559999999816,
+      "avg_atr_m15": 0.07596031746032117,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-09-17",
+      "session_range_pips": 26.300000000000523,
+      "pivot_range_pips": 42.70759999999996,
+      "avg_atr_m15": 0.08111198738170144,
+      "trades_taken": 1,
+      "session_pnl": -246.00088151783677,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-09-18",
+      "session_range_pips": 156.79999999999836,
+      "pivot_range_pips": 96.49319999999761,
+      "avg_atr_m15": 0.18854294615042258,
+      "trades_taken": 1,
+      "session_pnl": 30.564350478506555,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-09-19",
+      "session_range_pips": 21.79999999999893,
+      "pivot_range_pips": 119.79519999999866,
+      "avg_atr_m15": 0.0873021978021967,
+      "trades_taken": 1,
+      "session_pnl": 56.940140150329334,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-09-20",
+      "session_range_pips": 15.000000000000568,
+      "pivot_range_pips": 114.6000000000015,
+      "avg_atr_m15": 0.07010317460317324,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-09-24",
+      "session_range_pips": 46.700000000001296,
+      "pivot_range_pips": 54.931599999997616,
+      "avg_atr_m15": 0.10359186813186981,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-09-25",
+      "session_range_pips": 21.399999999999864,
+      "pivot_range_pips": 35.678799999999455,
+      "avg_atr_m15": 0.05857363998230446,
+      "trades_taken": 1,
+      "session_pnl": -244.87562155645412,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-09-26",
+      "session_range_pips": 20.09999999999934,
+      "pivot_range_pips": 107.11279999999873,
+      "avg_atr_m15": 0.09373516483516346,
+      "trades_taken": 1,
+      "session_pnl": 108.53430145209168,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-09-27",
+      "session_range_pips": 15.699999999998226,
+      "pivot_range_pips": 104.66799999999807,
+      "avg_atr_m15": 0.07055952380952507,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-10-01",
+      "session_range_pips": 33.30000000000268,
+      "pivot_range_pips": 79.91440000000125,
+      "avg_atr_m15": 0.09220634920635214,
+      "trades_taken": 1,
+      "session_pnl": 195.64027645313047,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-10-02",
+      "session_range_pips": 23.199999999999932,
+      "pivot_range_pips": 91.29800000000046,
+      "avg_atr_m15": 0.10099203892082864,
+      "trades_taken": 1,
+      "session_pnl": 58.53321543191076,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-10-03",
+      "session_range_pips": 16.800000000000637,
+      "pivot_range_pips": 125.37239999999771,
+      "avg_atr_m15": 0.07356150793651027,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-10-04",
+      "session_range_pips": 16.30000000000109,
+      "pivot_range_pips": 69.98239999999782,
+      "avg_atr_m15": 0.07865476190476313,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-10-08",
+      "session_range_pips": 85.29999999999802,
+      "pivot_range_pips": 109.32839999999828,
+      "avg_atr_m15": 0.11656697819314604,
+      "trades_taken": 2,
+      "session_pnl": -16.75336281086291,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-10-09",
+      "session_range_pips": 35.69999999999993,
+      "pivot_range_pips": 137.21439999999916,
+      "avg_atr_m15": 0.08637000459348018,
+      "trades_taken": 2,
+      "session_pnl": 100.89841967526223,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-10-10",
+      "session_range_pips": 30.19999999999925,
+      "pivot_range_pips": 96.49319999999761,
+      "avg_atr_m15": 0.117553016858916,
+      "trades_taken": 2,
+      "session_pnl": 95.92081968088755,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-10-11",
+      "session_range_pips": 96.99999999999989,
+      "pivot_range_pips": 85.56800000000067,
+      "avg_atr_m15": 0.18323015873016044,
+      "trades_taken": 2,
+      "session_pnl": -119.38559473487028,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-10-15",
+      "session_range_pips": 26.99999999999818,
+      "pivot_range_pips": 55.619200000001,
+      "avg_atr_m15": 0.10986497695852364,
+      "trades_taken": 1,
+      "session_pnl": 30.73072215583379,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-10-16",
+      "session_range_pips": 37.000000000000455,
+      "pivot_range_pips": 77.16399999999908,
+      "avg_atr_m15": 0.10970436507936514,
+      "trades_taken": 3,
+      "session_pnl": 2.3943632587713637,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-10-17",
+      "session_range_pips": 36.60000000000139,
+      "pivot_range_pips": 74.71919999999841,
+      "avg_atr_m15": 0.13337925696594555,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-10-18",
+      "session_range_pips": 30.89999999999975,
+      "pivot_range_pips": 90.68680000000313,
+      "avg_atr_m15": 0.09830952380952618,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-10-22",
+      "session_range_pips": 15.500000000000114,
+      "pivot_range_pips": 71.05200000000309,
+      "avg_atr_m15": 0.09048875661375666,
+      "trades_taken": 1,
+      "session_pnl": 105.95810764669626,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-10-23",
+      "session_range_pips": 50.7000000000005,
+      "pivot_range_pips": 130.18559999999866,
+      "avg_atr_m15": 0.10710604732690625,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-10-24",
+      "session_range_pips": 27.50000000000057,
+      "pivot_range_pips": 42.78400000000033,
+      "avg_atr_m15": 0.06562428129146616,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-10-25",
+      "session_range_pips": 15.000000000000568,
+      "pivot_range_pips": 74.48999999999728,
+      "avg_atr_m15": 0.06767460317460566,
+      "trades_taken": 1,
+      "session_pnl": 41.93507739487696,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-10-29",
+      "session_range_pips": 36.099999999999,
+      "pivot_range_pips": 52.86879999999883,
+      "avg_atr_m15": 0.10126621384750342,
+      "trades_taken": 2,
+      "session_pnl": -24.99198174113593,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-10-30",
+      "session_range_pips": 101.99999999999818,
+      "pivot_range_pips": 85.95000000000255,
+      "avg_atr_m15": 0.16647188940092233,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-10-31",
+      "session_range_pips": 15.000000000000568,
+      "pivot_range_pips": 116.58639999999991,
+      "avg_atr_m15": 0.08366345311130642,
+      "trades_taken": 1,
+      "session_pnl": 64.15624077279335,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-11-01",
+      "session_range_pips": 20.599999999998886,
+      "pivot_range_pips": 174.65040000000158,
+      "avg_atr_m15": 0.0866904761904753,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-11-05",
+      "session_range_pips": 27.700000000001523,
+      "pivot_range_pips": 28.573600000004262,
+      "avg_atr_m15": 0.07891558441558473,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-11-06",
+      "session_range_pips": 28.999999999999204,
+      "pivot_range_pips": 89.23519999999598,
+      "avg_atr_m15": 0.08398376623376178,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-11-07",
+      "session_range_pips": 32.59999999999934,
+      "pivot_range_pips": 106.88359999999761,
+      "avg_atr_m15": 0.1075032467532457,
+      "trades_taken": 2,
+      "session_pnl": 43.907981050351296,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-11-08",
+      "session_range_pips": 58.10000000000173,
+      "pivot_range_pips": 100.08399999999824,
+      "avg_atr_m15": 0.1181720779220813,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-11-12",
+      "session_range_pips": 22.999999999998977,
+      "pivot_range_pips": 64.63439999999991,
+      "avg_atr_m15": 0.07132792207791984,
+      "trades_taken": 1,
+      "session_pnl": 15.01349120105952,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-11-13",
+      "session_range_pips": 37.20000000000141,
+      "pivot_range_pips": 63.41199999999958,
+      "avg_atr_m15": 0.07362012987013102,
+      "trades_taken": 2,
+      "session_pnl": -186.2477559971826,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-11-14",
+      "session_range_pips": 34.899999999998954,
+      "pivot_range_pips": 76.17079999999987,
+      "avg_atr_m15": 0.11826948051947736,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-11-15",
+      "session_range_pips": 24.199999999999022,
+      "pivot_range_pips": 68.14880000000016,
+      "avg_atr_m15": 0.10053571428571291,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-11-19",
+      "session_range_pips": 31.900000000001683,
+      "pivot_range_pips": 68.07239999999979,
+      "avg_atr_m15": 0.10185714285714319,
+      "trades_taken": 1,
+      "session_pnl": 129.96006757819998,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-11-20",
+      "session_range_pips": 59.200000000001296,
+      "pivot_range_pips": 70.21159999999895,
+      "avg_atr_m15": 0.11141558441558082,
+      "trades_taken": 3,
+      "session_pnl": -68.01831910302516,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-11-21",
+      "session_range_pips": 43.199999999998795,
+      "pivot_range_pips": 150.58440000000246,
+      "avg_atr_m15": 0.17356818181818304,
+      "trades_taken": 1,
+      "session_pnl": 41.69060866429726,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-11-22",
+      "session_range_pips": 46.79999999999893,
+      "pivot_range_pips": 77.54600000000096,
+      "avg_atr_m15": 0.14963961038961057,
+      "trades_taken": 1,
+      "session_pnl": 121.5211136479418,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-11-26",
+      "session_range_pips": 53.299999999998704,
+      "pivot_range_pips": 59.6683999999982,
+      "avg_atr_m15": 0.13493506493506502,
+      "trades_taken": 1,
+      "session_pnl": 338.106671727262,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-11-27",
+      "session_range_pips": 22.199999999998,
+      "pivot_range_pips": 90.1520000000005,
+      "avg_atr_m15": 0.08195454545454228,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-11-28",
+      "session_range_pips": 10.599999999999454,
+      "pivot_range_pips": 82.97039999999924,
+      "avg_atr_m15": 0.03710069899519542,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-11-29",
+      "session_range_pips": 20.199999999999818,
+      "pivot_range_pips": 58.827999999999754,
+      "avg_atr_m15": 0.0982500000000009,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-12-03",
+      "session_range_pips": 33.40000000000032,
+      "pivot_range_pips": 113.83599999999774,
+      "avg_atr_m15": 0.08909740259740309,
+      "trades_taken": 1,
+      "session_pnl": 40.08141441851506,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-12-04",
+      "session_range_pips": 31.000000000000227,
+      "pivot_range_pips": 57.45279999999866,
+      "avg_atr_m15": 0.111509740259741,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-12-05",
+      "session_range_pips": 38.79999999999768,
+      "pivot_range_pips": 68.45440000000167,
+      "avg_atr_m15": 0.08738636363636325,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-12-06",
+      "session_range_pips": 20.000000000001705,
+      "pivot_range_pips": 78.92120000000205,
+      "avg_atr_m15": 0.08678571428571823,
+      "trades_taken": 2,
+      "session_pnl": 158.65657571608898,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-12-10",
+      "session_range_pips": 14.399999999997704,
+      "pivot_range_pips": 82.97039999999924,
+      "avg_atr_m15": 0.09120129870129465,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-12-11",
+      "session_range_pips": 88.900000000001,
+      "pivot_range_pips": 92.59680000000117,
+      "avg_atr_m15": 0.13885389610389537,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-12-12",
+      "session_range_pips": 60.09999999999991,
+      "pivot_range_pips": 87.4779999999987,
+      "avg_atr_m15": 0.10974350649350609,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-12-13",
+      "session_range_pips": 21.999999999999886,
+      "pivot_range_pips": 93.13159999999812,
+      "avg_atr_m15": 0.10304545454545602,
+      "trades_taken": 1,
+      "session_pnl": 31.28635462840797,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-12-17",
+      "session_range_pips": 35.599999999999454,
+      "pivot_range_pips": 87.7836000000002,
+      "avg_atr_m15": 0.1304090909090885,
+      "trades_taken": 1,
+      "session_pnl": 68.30487407423072,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-12-18",
+      "session_range_pips": 28.20000000000107,
+      "pivot_range_pips": 65.24560000000292,
+      "avg_atr_m15": 0.08537662337662123,
+      "trades_taken": 1,
+      "session_pnl": 147.9720022743181,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-12-19",
+      "session_range_pips": 29.400000000001114,
+      "pivot_range_pips": 94.65959999999995,
+      "avg_atr_m15": 0.10557792207792337,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2025-12-20",
+      "session_range_pips": 38.400000000001455,
+      "pivot_range_pips": 53.02159999999958,
+      "avg_atr_m15": 0.09050649350649528,
+      "trades_taken": 4,
+      "session_pnl": -269.6598627676823,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2025-12-24",
+      "session_range_pips": 23.900000000000432,
+      "pivot_range_pips": 77.0875999999987,
+      "avg_atr_m15": 0.08433441558441807,
+      "trades_taken": 1,
+      "session_pnl": 54.07046972874947,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-12-25",
+      "session_range_pips": 23.400000000000887,
+      "pivot_range_pips": 107.03639999999837,
+      "avg_atr_m15": 0.0730399999999985,
+      "trades_taken": 2,
+      "session_pnl": 72.85033663274154,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-12-27",
+      "session_range_pips": 29.09999999999968,
+      "pivot_range_pips": 55.619200000001,
+      "avg_atr_m15": 0.0830909090909071,
+      "trades_taken": 2,
+      "session_pnl": 126.24466553488281,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2025-12-31",
+      "session_range_pips": 29.09999999999968,
+      "pivot_range_pips": 50.500399999998535,
+      "avg_atr_m15": 0.07644155844155931,
+      "trades_taken": 2,
+      "session_pnl": 87.05472117612317,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2026-01-01",
+      "session_range_pips": 30.699999999998795,
+      "pivot_range_pips": 62.95360000000301,
+      "avg_atr_m15": 0.07819480519480511,
+      "trades_taken": 1,
+      "session_pnl": 119.69978754385698,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2026-01-03",
+      "session_range_pips": 31.699999999997885,
+      "pivot_range_pips": 50.72959999999966,
+      "avg_atr_m15": 0.0709512987013015,
+      "trades_taken": 1,
+      "session_pnl": 77.1169010476471,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2026-01-07",
+      "session_range_pips": 17.900000000000205,
+      "pivot_range_pips": 90.457600000002,
+      "avg_atr_m15": 0.07111363636363661,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2026-01-08",
+      "session_range_pips": 22.799999999998022,
+      "pivot_range_pips": 48.43759999999975,
+      "avg_atr_m15": 0.08284415584415415,
+      "trades_taken": 2,
+      "session_pnl": -88.4430785522283,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2026-01-09",
+      "session_range_pips": 21.89999999999941,
+      "pivot_range_pips": 39.422400000000835,
+      "avg_atr_m15": 0.06990259740259668,
+      "trades_taken": 2,
+      "session_pnl": 120.72080293348603,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2026-01-10",
+      "session_range_pips": 29.699999999999704,
+      "pivot_range_pips": 46.756799999997156,
+      "avg_atr_m15": 0.11249025974026017,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2026-01-14",
+      "session_range_pips": 19.999999999998863,
+      "pivot_range_pips": 52.945199999999204,
+      "avg_atr_m15": 0.0923962223187139,
+      "trades_taken": 1,
+      "session_pnl": -27.82183194826699,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2026-01-15",
+      "session_range_pips": 47.99999999999898,
+      "pivot_range_pips": 98.86160000000359,
+      "avg_atr_m15": 0.10911038961038931,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2026-01-16",
+      "session_range_pips": 23.099999999999454,
+      "pivot_range_pips": 103.82759999999962,
+      "avg_atr_m15": 0.07306168831169002,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2026-01-17",
+      "session_range_pips": 27.40000000000009,
+      "pivot_range_pips": 50.34759999999778,
+      "avg_atr_m15": 0.09547277874564493,
+      "trades_taken": 1,
+      "session_pnl": 36.93176971563829,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2026-01-21",
+      "session_range_pips": 44.29999999999836,
+      "pivot_range_pips": 56.612400000000214,
+      "avg_atr_m15": 0.10517857142857064,
+      "trades_taken": 1,
+      "session_pnl": -27.100769802255112,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2026-01-22",
+      "session_range_pips": 49.500000000000455,
+      "pivot_range_pips": 86.63760000000025,
+      "avg_atr_m15": 0.09979870129870277,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2026-01-23",
+      "session_range_pips": 27.199999999999136,
+      "pivot_range_pips": 60.05040000000008,
+      "avg_atr_m15": 0.09154220779220656,
+      "trades_taken": 1,
+      "session_pnl": 31.6171096183951,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2026-01-24",
+      "session_range_pips": 222.90000000000134,
+      "pivot_range_pips": 54.54960000000142,
+      "avg_atr_m15": 0.29675000000000334,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2026-01-28",
+      "session_range_pips": 106.19999999999834,
+      "pivot_range_pips": 156.1616000000015,
+      "avg_atr_m15": 0.187564935064933,
+      "trades_taken": 2,
+      "session_pnl": 138.8191366764961,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2026-01-29",
+      "session_range_pips": 75.0,
+      "pivot_range_pips": 213.1559999999979,
+      "avg_atr_m15": 0.2169383116883083,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2026-01-30",
+      "session_range_pips": 41.200000000000614,
+      "pivot_range_pips": 140.95800000000054,
+      "avg_atr_m15": 0.16085996526270388,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2026-01-31",
+      "session_range_pips": 50.80000000000098,
+      "pivot_range_pips": 65.39840000000368,
+      "avg_atr_m15": 0.15295918367346767,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2026-02-04",
+      "session_range_pips": 28.20000000000107,
+      "pivot_range_pips": 94.58319999999958,
+      "avg_atr_m15": 0.09532142857143285,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2026-02-05",
+      "session_range_pips": 48.60000000000184,
+      "pivot_range_pips": 60.43240000000196,
+      "avg_atr_m15": 0.10277597402597256,
+      "trades_taken": 2,
+      "session_pnl": -164.71720351256943,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2026-02-06",
+      "session_range_pips": 32.800000000000296,
+      "pivot_range_pips": 96.1876000000018,
+      "avg_atr_m15": 0.11395454545454588,
+      "trades_taken": 3,
+      "session_pnl": -92.13256258533647,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2026-02-07",
+      "session_range_pips": 30.89999999999975,
+      "pivot_range_pips": 62.113199999998876,
+      "avg_atr_m15": 0.08384415584415357,
+      "trades_taken": 1,
+      "session_pnl": -251.9714656702308,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2026-02-11",
+      "session_range_pips": 48.399999999998045,
+      "pivot_range_pips": 163.34320000000275,
+      "avg_atr_m15": 0.137113636363637,
+      "trades_taken": 1,
+      "session_pnl": 86.50882116601595,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2026-02-12",
+      "session_range_pips": 78.39999999999918,
+      "pivot_range_pips": 171.05960000000096,
+      "avg_atr_m15": 0.23849350649350545,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2026-02-13",
+      "session_range_pips": 55.800000000002115,
+      "pivot_range_pips": 160.74560000000133,
+      "avg_atr_m15": 0.17151623376623468,
+      "trades_taken": 2,
+      "session_pnl": -20.676967092075778,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2026-02-14",
+      "session_range_pips": 31.399999999999295,
+      "pivot_range_pips": 113.98879999999849,
+      "avg_atr_m15": 0.14187662337662638,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2026-02-18",
+      "session_range_pips": 45.19999999999982,
+      "pivot_range_pips": 76.85839999999757,
+      "avg_atr_m15": 0.10761363636363538,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2026-02-19",
+      "session_range_pips": 54.59999999999923,
+      "pivot_range_pips": 93.74280000000113,
+      "avg_atr_m15": 0.11794805194804955,
+      "trades_taken": 2,
+      "session_pnl": -502.6465759123398,
+      "classification": "losing"
+    },
+    {
+      "session_day": "2026-02-20",
+      "session_range_pips": 30.399999999997362,
+      "pivot_range_pips": 137.7492000000018,
+      "avg_atr_m15": 0.10133766233766368,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2026-02-21",
+      "session_range_pips": 39.30000000000007,
+      "pivot_range_pips": 61.11999999999966,
+      "avg_atr_m15": 0.1663701298701301,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2026-02-25",
+      "session_range_pips": 34.29999999999893,
+      "pivot_range_pips": 80.21999999999707,
+      "avg_atr_m15": 0.09870129870129392,
+      "trades_taken": 2,
+      "session_pnl": 79.68945746069278,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2026-02-26",
+      "session_range_pips": 30.400000000000205,
+      "pivot_range_pips": 134.15840000000117,
+      "avg_atr_m15": 0.09495779220779059,
+      "trades_taken": 1,
+      "session_pnl": 31.18226294024963,
+      "classification": "profitable"
+    },
+    {
+      "session_day": "2026-02-27",
+      "session_range_pips": 37.5,
+      "pivot_range_pips": 112.91919999999891,
+      "avg_atr_m15": 0.11012662337662084,
+      "trades_taken": 0,
+      "session_pnl": 0.0,
+      "classification": "no_trade"
+    },
+    {
+      "session_day": "2026-02-28",
+      "session_range_pips": 30.599999999998317,
+      "pivot_range_pips": 56.459599999999455,
+      "avg_atr_m15": 0.10506168831168558,
+      "trades_taken": 1,
+      "session_pnl": 106.91382547299298,
+      "classification": "profitable"
+    }
+  ],
+  "session_threshold_analysis": {
+    "avg_session_range_profitable_pips": 40.779069767441754,
+    "avg_session_range_losing_pips": 43.29361702127644,
+    "avg_pivot_range_profitable_pips": 93.87516744186013,
+    "avg_pivot_range_losing_pips": 92.50739574468096,
+    "simple_session_range_threshold_pips": 42.03634339435909
+  },
+  "winning_vs_losing_trade_characteristics_250k": {
+    "winning_trades": {
+      "count": 72,
+      "avg_distance_to_nearest_pivot_pips": 30.64945740740765,
+      "avg_bb_band_penetration_depth_pips": 0.8873549641498594,
+      "avg_rsi_at_entry": 51.47654932298545,
+      "avg_atr_at_entry": 0.1008591269841268,
+      "avg_entry_hour_utc": 18.708333333333332,
+      "avg_confirmation_delay_candles": 2.138888888888889,
+      "confluence_combo_distribution": {
+        "ABDE": 9,
+        "ACE": 8,
+        "ABCDE": 8,
+        "ADE": 7,
+        "AE": 6,
+        "ACDE": 5,
+        "ABD": 4,
+        "ABCE": 4,
+        "ACD": 4,
+        "AB": 3,
+        "BD": 3,
+        "A": 3,
+        "": 2,
+        "AC": 1,
+        "ABE": 1,
+        "ABC": 1,
+        "CD": 1,
+        "ABCD": 1,
+        "BCD": 1
+      }
+    },
+    "losing_trades": {
+      "count": 37,
+      "avg_distance_to_nearest_pivot_pips": 43.61034594594595,
+      "avg_bb_band_penetration_depth_pips": 0.5895795610147591,
+      "avg_rsi_at_entry": 57.58805742645117,
+      "avg_atr_at_entry": 0.09480308880308778,
+      "avg_entry_hour_utc": 19.027027027027028,
+      "avg_confirmation_delay_candles": 2.189189189189189,
+      "confluence_combo_distribution": {
+        "ACE": 5,
+        "AE": 5,
+        "ABCDE": 4,
+        "ABE": 4,
+        "ACD": 3,
+        "ADE": 3,
+        "ABCD": 3,
+        "A": 2,
+        "ACDE": 2,
+        "ABCE": 2,
+        "AC": 1,
+        "AD": 1,
+        "ABC": 1,
+        "ABD": 1
+      }
+    }
+  },
+  "top_3_separating_features": [
+    {
+      "feature": "Nearest Pivot Dist (pips)",
+      "winner_mean": 30.64945740740765,
+      "loser_mean": 43.61034594594595,
+      "effect_size_abs": 0.33901167448365815
+    },
+    {
+      "feature": "RSI at Entry",
+      "winner_mean": 51.47654932298545,
+      "loser_mean": 57.58805742645117,
+      "effect_size_abs": 0.2770094182069763
+    },
+    {
+      "feature": "BB Penetration (pips)",
+      "winner_mean": 0.8873549641498594,
+      "loser_mean": 0.5895795610147591,
+      "effect_size_abs": 0.23340164983861422
+    }
+  ]
+}

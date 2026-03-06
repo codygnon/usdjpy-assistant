@@ -1,0 +1,375 @@
+{
+  "source_file": "research_out/tokyo_meanrev_v3_250k_trades.csv",
+  "total_trades": 194,
+  "combination_stats_observed": [
+    {
+      "combination": "ACE",
+      "trades": 39,
+      "win_rate_pct": 28.205128205128204,
+      "avg_pips": -2.3065059829061503,
+      "avg_usd": -45.63650117955069,
+      "profit_factor": 0.766601305596118,
+      "net_usd": -1779.8235460024769,
+      "net_pips": -89.95373333333987
+    },
+    {
+      "combination": "ACDE",
+      "trades": 37,
+      "win_rate_pct": 43.24324324324324,
+      "avg_pips": 0.19705609881390182,
+      "avg_usd": -16.323591007002552,
+      "profit_factor": 0.8963606594790303,
+      "net_usd": -603.9728672590944,
+      "net_pips": 7.2910756561143675
+    },
+    {
+      "combination": "ABCDE",
+      "trades": 27,
+      "win_rate_pct": 44.44444444444444,
+      "avg_pips": 1.3794033974976547,
+      "avg_usd": -16.11190454827825,
+      "profit_factor": 0.8975156177619924,
+      "net_usd": -435.02142280351273,
+      "net_pips": 37.24389173243668
+    },
+    {
+      "combination": "ACD",
+      "trades": 22,
+      "win_rate_pct": 31.818181818181817,
+      "avg_pips": -4.653012121210829,
+      "avg_usd": -84.36522643870734,
+      "profit_factor": 0.4215564213497325,
+      "net_usd": -1856.0349816515613,
+      "net_pips": -102.36626666663824
+    },
+    {
+      "combination": "ABCD",
+      "trades": 21,
+      "win_rate_pct": 52.38095238095239,
+      "avg_pips": -0.804761904760469,
+      "avg_usd": -12.804566112523874,
+      "profit_factor": 0.8218558241077528,
+      "net_usd": -268.89588836300135,
+      "net_pips": -16.89999999996985
+    },
+    {
+      "combination": "ABCE",
+      "trades": 14,
+      "win_rate_pct": 21.428571428571427,
+      "avg_pips": -5.729761904761484,
+      "avg_usd": -151.67593226446303,
+      "profit_factor": 0.23180478378477937,
+      "net_usd": -2123.4630517024825,
+      "net_pips": -80.21666666666079
+    },
+    {
+      "combination": "ABC",
+      "trades": 12,
+      "win_rate_pct": 50.0,
+      "avg_pips": -1.6749999999982872,
+      "avg_usd": -26.00592718067277,
+      "profit_factor": 0.7013559346839265,
+      "net_usd": -312.07112616807325,
+      "net_pips": -20.099999999979445
+    },
+    {
+      "combination": "AC",
+      "trades": 11,
+      "win_rate_pct": 18.181818181818183,
+      "avg_pips": -8.254545454544303,
+      "avg_usd": -144.4608743944276,
+      "profit_factor": 0.18649198842186626,
+      "net_usd": -1589.0696183387038,
+      "net_pips": -90.79999999998734
+    },
+    {
+      "combination": "BC",
+      "trades": 5,
+      "win_rate_pct": 40.0,
+      "avg_pips": -2.3233333333325845,
+      "avg_usd": -49.42507945529405,
+      "profit_factor": 0.6821999751033034,
+      "net_usd": -247.12539727647027,
+      "net_pips": -11.616666666662923
+    },
+    {
+      "combination": "BCD",
+      "trades": 3,
+      "win_rate_pct": 66.66666666666666,
+      "avg_pips": 10.700000000001827,
+      "avg_usd": 181.41949191165315,
+      "profit_factor": 32.99348298420772,
+      "net_usd": 544.2584757349595,
+      "net_pips": 32.10000000000548
+    },
+    {
+      "combination": "CD",
+      "trades": 2,
+      "win_rate_pct": 100.0,
+      "avg_pips": 18.45000000000141,
+      "avg_usd": 309.3439981781354,
+      "profit_factor": 9999.0,
+      "net_usd": 618.6879963562708,
+      "net_pips": 36.90000000000282
+    },
+    {
+      "combination": "C",
+      "trades": 1,
+      "win_rate_pct": 100.0,
+      "avg_pips": 8.199999999999363,
+      "avg_usd": 134.9238882452295,
+      "profit_factor": 9999.0,
+      "net_usd": 134.9238882452295,
+      "net_pips": 8.199999999999363
+    }
+  ],
+  "combination_stats_requested_only_observed": [
+    {
+      "combination": "AC",
+      "trades": 11,
+      "win_rate_pct": 18.181818181818183,
+      "avg_pips": -8.254545454544303,
+      "avg_usd": -144.4608743944276,
+      "profit_factor": 0.18649198842186626,
+      "net_usd": -1589.0696183387038,
+      "net_pips": -90.79999999998734
+    },
+    {
+      "combination": "BC",
+      "trades": 5,
+      "win_rate_pct": 40.0,
+      "avg_pips": -2.3233333333325845,
+      "avg_usd": -49.42507945529405,
+      "profit_factor": 0.6821999751033034,
+      "net_usd": -247.12539727647027,
+      "net_pips": -11.616666666662923
+    },
+    {
+      "combination": "CD",
+      "trades": 2,
+      "win_rate_pct": 100.0,
+      "avg_pips": 18.45000000000141,
+      "avg_usd": 309.3439981781354,
+      "profit_factor": 9999.0,
+      "net_usd": 618.6879963562708,
+      "net_pips": 36.90000000000282
+    },
+    {
+      "combination": "ABC",
+      "trades": 12,
+      "win_rate_pct": 50.0,
+      "avg_pips": -1.6749999999982872,
+      "avg_usd": -26.00592718067277,
+      "profit_factor": 0.7013559346839265,
+      "net_usd": -312.07112616807325,
+      "net_pips": -20.099999999979445
+    },
+    {
+      "combination": "ACD",
+      "trades": 22,
+      "win_rate_pct": 31.818181818181817,
+      "avg_pips": -4.653012121210829,
+      "avg_usd": -84.36522643870734,
+      "profit_factor": 0.4215564213497325,
+      "net_usd": -1856.0349816515613,
+      "net_pips": -102.36626666663824
+    },
+    {
+      "combination": "ACE",
+      "trades": 39,
+      "win_rate_pct": 28.205128205128204,
+      "avg_pips": -2.3065059829061503,
+      "avg_usd": -45.63650117955069,
+      "profit_factor": 0.766601305596118,
+      "net_usd": -1779.8235460024769,
+      "net_pips": -89.95373333333987
+    },
+    {
+      "combination": "BCD",
+      "trades": 3,
+      "win_rate_pct": 66.66666666666666,
+      "avg_pips": 10.700000000001827,
+      "avg_usd": 181.41949191165315,
+      "profit_factor": 32.99348298420772,
+      "net_usd": 544.2584757349595,
+      "net_pips": 32.10000000000548
+    },
+    {
+      "combination": "ABCD",
+      "trades": 21,
+      "win_rate_pct": 52.38095238095239,
+      "avg_pips": -0.804761904760469,
+      "avg_usd": -12.804566112523874,
+      "profit_factor": 0.8218558241077528,
+      "net_usd": -268.89588836300135,
+      "net_pips": -16.89999999996985
+    },
+    {
+      "combination": "ABCE",
+      "trades": 14,
+      "win_rate_pct": 21.428571428571427,
+      "avg_pips": -5.729761904761484,
+      "avg_usd": -151.67593226446303,
+      "profit_factor": 0.23180478378477937,
+      "net_usd": -2123.4630517024825,
+      "net_pips": -80.21666666666079
+    },
+    {
+      "combination": "ACDE",
+      "trades": 37,
+      "win_rate_pct": 43.24324324324324,
+      "avg_pips": 0.19705609881390182,
+      "avg_usd": -16.323591007002552,
+      "profit_factor": 0.8963606594790303,
+      "net_usd": -603.9728672590944,
+      "net_pips": 7.2910756561143675
+    },
+    {
+      "combination": "ABCDE",
+      "trades": 27,
+      "win_rate_pct": 44.44444444444444,
+      "avg_pips": 1.3794033974976547,
+      "avg_usd": -16.11190454827825,
+      "profit_factor": 0.8975156177619924,
+      "net_usd": -435.02142280351273,
+      "net_pips": 37.24389173243668
+    }
+  ],
+  "individual_condition_marginal_impact": {
+    "A": {
+      "present": {
+        "trades": 183,
+        "win_rate_pct": 37.15846994535519,
+        "avg_usd": -49.0073907228902,
+        "avg_pips": -1.944271580754232
+      },
+      "absent": {
+        "trades": 11,
+        "win_rate_pct": 63.63636363636363,
+        "avg_usd": 95.52226936908995,
+        "avg_pips": 5.962121212122249
+      }
+    },
+    "B": {
+      "present": {
+        "trades": 82,
+        "win_rate_pct": 43.90243902439025,
+        "avg_usd": -34.6624196412022,
+        "avg_pips": -0.7254809951320834
+      },
+      "absent": {
+        "trades": 112,
+        "win_rate_pct": 34.82142857142857,
+        "avg_usd": -45.31508150580658,
+        "avg_pips": -2.060079681641508
+      }
+    },
+    "C": {
+      "present": {
+        "trades": 194,
+        "win_rate_pct": 38.659793814432994,
+        "avg_usd": -40.81240999602535,
+        "avg_pips": -1.4959709584777305
+      },
+      "absent": {
+        "trades": 0,
+        "win_rate_pct": 0.0,
+        "avg_usd": 0.0,
+        "avg_pips": 0.0
+      }
+    },
+    "D": {
+      "present": {
+        "trades": 112,
+        "win_rate_pct": 44.642857142857146,
+        "avg_usd": -17.8658811427316,
+        "avg_pips": -0.0511723149825782
+      },
+      "absent": {
+        "trades": 82,
+        "win_rate_pct": 30.48780487804878,
+        "avg_usd": -72.15401038101191,
+        "avg_pips": -3.4693544715442806
+      }
+    },
+    "E": {
+      "present": {
+        "trades": 117,
+        "win_rate_pct": 35.8974358974359,
+        "avg_usd": -42.241716989466376,
+        "avg_pips": -1.0738071163371758
+      },
+      "absent": {
+        "trades": 77,
+        "win_rate_pct": 42.857142857142854,
+        "avg_usd": -38.64060586313441,
+        "avg_pips": -2.1374406926393523
+      }
+    }
+  },
+  "top_3_combinations_by_profit_factor_min3trades": [
+    {
+      "combination": "BCD",
+      "trades": 3,
+      "win_rate_pct": 66.66666666666666,
+      "avg_pips": 10.700000000001827,
+      "avg_usd": 181.41949191165315,
+      "profit_factor": 32.99348298420772,
+      "net_usd": 544.2584757349595,
+      "net_pips": 32.10000000000548
+    },
+    {
+      "combination": "ABCDE",
+      "trades": 27,
+      "win_rate_pct": 44.44444444444444,
+      "avg_pips": 1.3794033974976547,
+      "avg_usd": -16.11190454827825,
+      "profit_factor": 0.8975156177619924,
+      "net_usd": -435.02142280351273,
+      "net_pips": 37.24389173243668
+    },
+    {
+      "combination": "ACDE",
+      "trades": 37,
+      "win_rate_pct": 43.24324324324324,
+      "avg_pips": 0.19705609881390182,
+      "avg_usd": -16.323591007002552,
+      "profit_factor": 0.8963606594790303,
+      "net_usd": -603.9728672590944,
+      "net_pips": 7.2910756561143675
+    }
+  ],
+  "bottom_3_combinations_by_profit_factor_min3trades": [
+    {
+      "combination": "AC",
+      "trades": 11,
+      "win_rate_pct": 18.181818181818183,
+      "avg_pips": -8.254545454544303,
+      "avg_usd": -144.4608743944276,
+      "profit_factor": 0.18649198842186626,
+      "net_usd": -1589.0696183387038,
+      "net_pips": -90.79999999998734
+    },
+    {
+      "combination": "ABCE",
+      "trades": 14,
+      "win_rate_pct": 21.428571428571427,
+      "avg_pips": -5.729761904761484,
+      "avg_usd": -151.67593226446303,
+      "profit_factor": 0.23180478378477937,
+      "net_usd": -2123.4630517024825,
+      "net_pips": -80.21666666666079
+    },
+    {
+      "combination": "ACD",
+      "trades": 22,
+      "win_rate_pct": 31.818181818181817,
+      "avg_pips": -4.653012121210829,
+      "avg_usd": -84.36522643870734,
+      "profit_factor": 0.4215564213497325,
+      "net_usd": -1856.0349816515613,
+      "net_pips": -102.36626666663824
+    }
+  ],
+  "note": "Condition C (SAR flip) inferred as always true for executed v3 trades because engine requires it for signal generation."
+}

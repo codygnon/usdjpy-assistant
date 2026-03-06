@@ -1,0 +1,202 @@
+{
+  "dataset": "research_out/USDJPY_M1_OANDA_1000k.csv",
+  "rejection_frequency_matrix": [
+    {
+      "wick_ratio": 1.0,
+      "close_pct": 0.25,
+      "total_m5_bars": 201533,
+      "bullish_found": 18718,
+      "bearish_found": 17120,
+      "total_found": 35838,
+      "per_1000_bars": 177.82695637935225
+    },
+    {
+      "wick_ratio": 1.0,
+      "close_pct": 0.33,
+      "total_m5_bars": 201533,
+      "bullish_found": 25071,
+      "bearish_found": 22999,
+      "total_found": 48070,
+      "per_1000_bars": 238.52173093240313
+    },
+    {
+      "wick_ratio": 1.0,
+      "close_pct": 0.4,
+      "total_m5_bars": 201533,
+      "bullish_found": 31770,
+      "bearish_found": 29275,
+      "total_found": 61045,
+      "per_1000_bars": 302.9032466146984
+    },
+    {
+      "wick_ratio": 1.0,
+      "close_pct": 0.5,
+      "total_m5_bars": 201533,
+      "bullish_found": 42549,
+      "bearish_found": 39875,
+      "total_found": 81973,
+      "per_1000_bars": 406.74728208283506
+    },
+    {
+      "wick_ratio": 1.2,
+      "close_pct": 0.25,
+      "total_m5_bars": 201533,
+      "bullish_found": 16623,
+      "bearish_found": 15132,
+      "total_found": 31755,
+      "per_1000_bars": 157.5672470513514
+    },
+    {
+      "wick_ratio": 1.2,
+      "close_pct": 0.33,
+      "total_m5_bars": 201533,
+      "bullish_found": 22535,
+      "bearish_found": 20571,
+      "total_found": 43106,
+      "per_1000_bars": 213.89052909449072
+    },
+    {
+      "wick_ratio": 1.2,
+      "close_pct": 0.4,
+      "total_m5_bars": 201533,
+      "bullish_found": 28875,
+      "bearish_found": 26488,
+      "total_found": 55363,
+      "per_1000_bars": 274.709352810706
+    },
+    {
+      "wick_ratio": 1.2,
+      "close_pct": 0.5,
+      "total_m5_bars": 201533,
+      "bullish_found": 38517,
+      "bearish_found": 35928,
+      "total_found": 74042,
+      "per_1000_bars": 367.39392556057817
+    },
+    {
+      "wick_ratio": 1.5,
+      "close_pct": 0.25,
+      "total_m5_bars": 201533,
+      "bullish_found": 14342,
+      "bearish_found": 13036,
+      "total_found": 27378,
+      "per_1000_bars": 135.84871956453782
+    },
+    {
+      "wick_ratio": 1.5,
+      "close_pct": 0.33,
+      "total_m5_bars": 201533,
+      "bullish_found": 19706,
+      "bearish_found": 17990,
+      "total_found": 37696,
+      "per_1000_bars": 187.0462901857264
+    },
+    {
+      "wick_ratio": 1.5,
+      "close_pct": 0.4,
+      "total_m5_bars": 201533,
+      "bullish_found": 25575,
+      "bearish_found": 23418,
+      "total_found": 48993,
+      "per_1000_bars": 243.10162603643076
+    },
+    {
+      "wick_ratio": 1.5,
+      "close_pct": 0.5,
+      "total_m5_bars": 201533,
+      "bullish_found": 33119,
+      "bearish_found": 30835,
+      "total_found": 63627,
+      "per_1000_bars": 315.7150441863119
+    },
+    {
+      "wick_ratio": 2.0,
+      "close_pct": 0.25,
+      "total_m5_bars": 201533,
+      "bullish_found": 11581,
+      "bearish_found": 10588,
+      "total_found": 22169,
+      "per_1000_bars": 110.00183592761483
+    },
+    {
+      "wick_ratio": 2.0,
+      "close_pct": 0.33,
+      "total_m5_bars": 201533,
+      "bullish_found": 16338,
+      "bearish_found": 14914,
+      "total_found": 31252,
+      "per_1000_bars": 155.07137788848476
+    },
+    {
+      "wick_ratio": 2.0,
+      "close_pct": 0.4,
+      "total_m5_bars": 201533,
+      "bullish_found": 20714,
+      "bearish_found": 18881,
+      "total_found": 39595,
+      "per_1000_bars": 196.46906461969007
+    },
+    {
+      "wick_ratio": 2.0,
+      "close_pct": 0.5,
+      "total_m5_bars": 201533,
+      "bullish_found": 26127,
+      "bearish_found": 24249,
+      "total_found": 50165,
+      "per_1000_bars": 248.9170508055753
+    },
+    {
+      "wick_ratio": 2.5,
+      "close_pct": 0.25,
+      "total_m5_bars": 201533,
+      "bullish_found": 9668,
+      "bearish_found": 8849,
+      "total_found": 18517,
+      "per_1000_bars": 91.88073417256727
+    },
+    {
+      "wick_ratio": 2.5,
+      "close_pct": 0.33,
+      "total_m5_bars": 201533,
+      "bullish_found": 13543,
+      "bearish_found": 12387,
+      "total_found": 25930,
+      "per_1000_bars": 128.66379203405896
+    },
+    {
+      "wick_ratio": 2.5,
+      "close_pct": 0.4,
+      "total_m5_bars": 201533,
+      "bullish_found": 16791,
+      "bearish_found": 15361,
+      "total_found": 32152,
+      "per_1000_bars": 159.5371477624012
+    },
+    {
+      "wick_ratio": 2.5,
+      "close_pct": 0.5,
+      "total_m5_bars": 201533,
+      "bullish_found": 20682,
+      "bearish_found": 19266,
+      "total_found": 39833,
+      "per_1000_bars": 197.65001265301467
+    }
+  ],
+  "recommended_params": {
+    "wick_ratio": 2.5,
+    "close_pct": 0.25,
+    "per_1000_bars": 91.88073417256727,
+    "rationale": "No combination landed in 5-15/1000; selected closest to 10/1000."
+  },
+  "session_envelope_analysis": {
+    "total_sessions": 562,
+    "avg_initial_range_pips": 15.306227758007106,
+    "avg_session_total_range_pips": 43.07437722419919,
+    "avg_extension_beyond_ir_up_pips": 13.305338078291813,
+    "avg_extension_beyond_ir_down_pips": 14.462811387900278,
+    "sessions_extending_5_pips_beyond_ir": 93.06049822064057,
+    "sessions_extending_10_pips_beyond_ir": 70.99644128113879,
+    "sessions_extending_15_pips_beyond_ir": 50.88967971530249,
+    "recommended_zone_offset": "13.0 pips from IR boundary (reach=58.9% of sessions)"
+  }
+}

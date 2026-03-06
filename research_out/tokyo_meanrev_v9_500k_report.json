@@ -1,0 +1,89 @@
+{
+  "strategy_id": "tokyo_mean_reversion_v9",
+  "run_label": "500k",
+  "input_csv": "research_out/USDJPY_M1_OANDA_500k.csv",
+  "summary": {
+    "total_trades": 0,
+    "win_rate_pct": 0.0,
+    "profit_factor": 0.0,
+    "net_profit_usd": 0.0,
+    "net_profit_pips": 0.0,
+    "max_drawdown_usd": 0.0,
+    "max_drawdown_pct": 0.0,
+    "average_win_pips": 0.0,
+    "average_loss_pips": 0.0,
+    "average_win_usd": 0.0,
+    "average_loss_usd": 0.0,
+    "largest_win_usd": 0.0,
+    "largest_loss_usd": 0.0,
+    "return_on_starting_equity_pct": 0.0,
+    "max_consecutive_wins": 0,
+    "max_consecutive_losses": 0,
+    "average_trade_duration_minutes": 0.0,
+    "sharpe_ratio": 0.0,
+    "calmar_ratio": 0.0,
+    "starting_equity_usd": 50000.0,
+    "ending_equity_usd": 50000.0
+  },
+  "breakdown": {
+    "day_of_week": [],
+    "monthly": [],
+    "hourly": [],
+    "exit_distribution": [],
+    "average_trades_per_session": 0.0,
+    "pct_sessions_with_zero_trades": 100.0
+  },
+  "rejection_candle_stats": {
+    "total_rejections_detected": 0,
+    "rejections_in_zone": 0,
+    "rejections_with_confirmation": 0,
+    "entries_taken": 0,
+    "avg_wick_to_body_ratio_winners": 0.0,
+    "avg_wick_to_body_ratio_losers": 0.0
+  },
+  "session_envelope_stats": {
+    "avg_initial_range_pips": 17.12357142857151,
+    "avg_zone_width_pips": 6.892694284475656,
+    "sessions_with_lower_zone_touch": 28,
+    "sessions_with_upper_zone_touch": 36,
+    "sessions_with_both_zone_touch": 4
+  },
+  "divergence_stats": {
+    "bullish_divergences_detected": 0,
+    "bearish_divergences_detected": 0,
+    "divergence_as_confirmation_count": 0,
+    "wr_with_divergence": 0.0,
+    "wr_without_divergence": 0.0
+  },
+  "volume_climax_stats": {
+    "climaxes_detected": 0,
+    "climax_as_confirmation_count": 0
+  },
+  "sl_placement_stats": {
+    "avg_sl_distance_pips": 0.0,
+    "trades_skipped_sl_too_wide": 0,
+    "sl_distance_distribution": {
+      "6-10": 0,
+      "10-15": 0,
+      "15-20": 0,
+      "20-25": 0
+    }
+  },
+  "funnel": {
+    "bars_in_session": 89064,
+    "m5_bars_in_session": 16149,
+    "rejections_detected": 0,
+    "rejections_in_zone": 0,
+    "rejections_with_confirmation": 0,
+    "entries_taken": 0,
+    "signals_bottleneck_no_confirmation": 0,
+    "signals_bottleneck_constraints": 0
+  },
+  "verification_samples": {
+    "rejections": [],
+    "trades": []
+  },
+  "equity_curve": [],
+  "drawdown_curve": [],
+  "trades": []
+}

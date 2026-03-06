@@ -1,0 +1,408 @@
+{
+  "strategy_id": "tokyo_mean_reversion_v7",
+  "run_label": "1000k",
+  "input_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_1000k.csv",
+  "summary": {
+    "total_trades": 0,
+    "win_rate_pct": 0.0,
+    "average_win_pips": 0.0,
+    "average_win_usd": 0.0,
+    "average_loss_pips": 0.0,
+    "average_loss_usd": 0.0,
+    "largest_win_usd": 0.0,
+    "largest_loss_usd": 0.0,
+    "profit_factor": 0.0,
+    "net_profit_usd": 0.0,
+    "net_profit_pips": 0.0,
+    "return_on_starting_equity_pct": 0.0,
+    "max_drawdown_usd": 0.0,
+    "max_drawdown_pct": 0.0,
+    "max_consecutive_wins": 0,
+    "max_consecutive_losses": 0,
+    "average_trade_duration_minutes": 0.0,
+    "sharpe_ratio": 0.0,
+    "calmar_ratio": 0.0,
+    "starting_equity_usd": 100000.0,
+    "ending_equity_usd": 100000.0
+  },
+  "breakdown": {
+    "long_performance": {
+      "trades": 0,
+      "win_rate_pct": 0.0,
+      "avg_pips": 0.0,
+      "profit_factor": 0.0,
+      "net_usd": 0.0
+    },
+    "short_performance": {
+      "trades": 0,
+      "win_rate_pct": 0.0,
+      "avg_pips": 0.0,
+      "profit_factor": 0.0,
+      "net_usd": 0.0
+    },
+    "day_of_week": [],
+    "monthly": [],
+    "average_trades_per_session": 0.0,
+    "pct_sessions_with_zero_trades": 100.0,
+    "exit_distribution": [],
+    "avg_confluence_score_winners": 0.0,
+    "avg_confluence_score_losers": 0.0
+  },
+  "partial_tp_stats": {
+    "times_partial_tp_hit": 0,
+    "avg_pips_at_partial_tp": 0.0,
+    "remaining_50pct_outcomes": {
+      "hit_full_tp": 0,
+      "hit_trailing_stop": 0,
+      "hit_breakeven_stop": 0,
+      "closed_time_decay": 0,
+      "closed_session_end": 0
+    }
+  },
+  "entry_confirmation_stats": {
+    "signals_generated": 821,
+    "signals_confirmed": 0,
+    "signals_expired": 279,
+    "avg_confirmation_delay_candles": 0.0
+  },
+  "session_pnl_distribution": {
+    "sessions_positive": 0,
+    "sessions_negative": 0,
+    "sessions_zero_trades": 423,
+    "avg_session_pnl": 0.0,
+    "best_session_pnl": 0.0,
+    "worst_session_pnl": 0.0
+  },
+  "day_of_week_detailed": {
+    "Tuesday": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0,
+      "pf": 0.0
+    },
+    "Wednesday": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0,
+      "pf": 0.0
+    },
+    "Thursday": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0,
+      "pf": 0.0
+    },
+    "Friday": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0,
+      "pf": 0.0
+    }
+  },
+  "hourly_detailed": {
+    "16": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0
+    },
+    "17": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0
+    },
+    "18": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0
+    },
+    "19": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0
+    },
+    "20": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0
+    },
+    "21": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0
+    },
+    "22": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0
+    }
+  },
+  "regime_gate_stats": {
+    "bars_favorable": 0,
+    "bars_neutral": 0,
+    "bars_unfavorable": 0,
+    "trades_at_full_size": 0,
+    "trades_at_reduced_size": 0,
+    "trades_blocked_by_regime": 0,
+    "pnl_favorable_trades": 0.0,
+    "pnl_neutral_trades": 0.0
+  },
+  "signal_quality_stats": {
+    "high_quality_trades": 0,
+    "medium_quality_trades": 0,
+    "low_quality_skipped": 0,
+    "pnl_high_quality": 0.0,
+    "pnl_medium_quality": 0.0
+  },
+  "drawdown_sizing_stats": {
+    "trades_at_full_size": 0,
+    "trades_at_tier1_reduction": 0,
+    "trades_at_tier2_reduction": 0,
+    "times_trading_paused": 0,
+    "total_bars_paused": 0
+  },
+  "hour_preference_stats": {
+    "16": {
+      "trades": 0,
+      "avg_size_mult": 0.0,
+      "net_pnl": 0.0
+    },
+    "17": {
+      "trades": 0,
+      "avg_size_mult": 0.0,
+      "net_pnl": 0.0
+    },
+    "18": {
+      "trades": 0,
+      "avg_size_mult": 0.0,
+      "net_pnl": 0.0
+    },
+    "19": {
+      "trades": 0,
+      "avg_size_mult": 0.0,
+      "net_pnl": 0.0
+    },
+    "20": {
+      "trades": 0,
+      "avg_size_mult": 0.0,
+      "net_pnl": 0.0
+    },
+    "21": {
+      "trades": 0,
+      "avg_size_mult": 0.0,
+      "net_pnl": 0.0
+    },
+    "22": {
+      "trades": 0,
+      "avg_size_mult": 0.0,
+      "net_pnl": 0.0
+    }
+  },
+  "adx_filter_stats": {
+    "trades_allowed": 0,
+    "trades_blocked_by_adx": 0,
+    "avg_adx_at_entry": 0.0,
+    "avg_adx_at_blocked": 0.0
+  },
+  "combo_filter_stats": {
+    "mode_used": "blocklist",
+    "trades_allowed": 0,
+    "trades_blocked_by_combo": 199,
+    "combo_distribution": {}
+  },
+  "daily_range_filter_stats": {
+    "sessions_allowed": 0,
+    "sessions_blocked_high_range": 0,
+    "sessions_blocked_low_range": 0
+  },
+  "entry_improvement_stats": {
+    "signals_with_limit_placed": 0,
+    "limits_filled": 0,
+    "limits_expired": 0,
+    "fill_rate": 0.0,
+    "avg_improvement_pips": 0.0
+  },
+  "filter_impact_summary": {
+    "adx_filter_used": true,
+    "adx_trades_blocked": 0,
+    "combo_filter_used": true,
+    "combo_trades_blocked": 199,
+    "daily_range_filter_used": false,
+    "sessions_blocked": 0,
+    "chase_filter_used": false,
+    "entries_blocked_by_chase": 0,
+    "total_v4_equivalent_signals": 821,
+    "total_v7_entries": 0,
+    "filter_pass_rate": 0.0
+  },
+  "signal_strength_analysis": {
+    "avg_score_winners": 0.0,
+    "avg_score_losers": 0.0,
+    "score_distribution": {
+      "weak_1_3": {
+        "trades": 0,
+        "wr": 0.0,
+        "pf": 0.0,
+        "net": 0.0
+      },
+      "moderate_4_6": {
+        "trades": 0,
+        "wr": 0.0,
+        "pf": 0.0,
+        "net": 0.0
+      },
+      "strong_7_10": {
+        "trades": 0,
+        "wr": 0.0,
+        "pf": 0.0,
+        "net": 0.0
+      }
+    }
+  },
+  "vs_v4_comparison": {
+    "v4_trades": 0,
+    "v4_pf": 0.0,
+    "v4_net": 0.0,
+    "v7_trades": 0,
+    "v7_pf": 0.0,
+    "v7_net": 0.0,
+    "trade_reduction_pct": 0.0,
+    "pf_improvement": 0.0
+  },
+  "session_envelope_tp_stats": {
+    "times_midpoint_used_as_tp": 0,
+    "times_pivot_used_as_tp": 0,
+    "avg_tp_distance_midpoint": 0.0,
+    "avg_tp_distance_pivot": 0.0,
+    "wr_midpoint_tp": 0.0,
+    "wr_pivot_tp": 0.0
+  },
+  "trend_regime_stats": {
+    "sessions_traded": 0,
+    "sessions_skipped_by_trend": 0,
+    "estimated_pnl_skipped": 0.0
+  },
+  "trend_skip_calibration": {
+    "threshold_used": 80.0,
+    "selection_method": "configured",
+    "sessions_blocked_pct": 0.0
+  },
+  "quality_marker_matrix": {
+    "none": {
+      "trades": 0,
+      "wr": 0.0,
+      "pf": 0.0
+    },
+    "rejection_only": {
+      "trades": 0,
+      "wr": 0.0,
+      "pf": 0.0
+    },
+    "divergence_only": {
+      "trades": 0,
+      "wr": 0.0,
+      "pf": 0.0
+    },
+    "rejection_and_divergence": {
+      "trades": 0,
+      "wr": 0.0,
+      "pf": 0.0
+    },
+    "inside_ir": {
+      "trades": 0,
+      "wr": 0.0,
+      "pf": 0.0
+    },
+    "outside_ir": {
+      "trades": 0,
+      "wr": 0.0,
+      "pf": 0.0
+    }
+  },
+  "vs_v7_comparison": {
+    "v7_trades": 0,
+    "v7_wr": 0.0,
+    "v7_pf": 0.0,
+    "v7_net": 0.0,
+    "v7_maxdd": 0.0,
+    "v10_trades": 0,
+    "v10_wr": 0.0,
+    "v10_pf": 0.0,
+    "v10_net": 0.0,
+    "v10_maxdd": 0.0
+  },
+  "diagnostics": {
+    "counts": {
+      "bars_total": 1000000,
+      "bars_outside_tokyo_hours": 437749,
+      "bars_disallowed_day": 417374,
+      "bars_in_session": 144877,
+      "bars_passed_session_filter": 144877,
+      "bars_passed_indicator_check": 144675,
+      "bars_passed_breakout_check": 134680,
+      "bars_passed_regime_filter": 123147,
+      "bars_after_global_filters": 121947,
+      "bars_passed_atr_filter": 121947,
+      "bars_reached_signal_scoring": 121947,
+      "blocked_no_signal": 120927,
+      "bars_with_sar_flip": 115256,
+      "short_cond_sar_true": 57769,
+      "long_cond_sar_true": 57487,
+      "bars_with_short_signal_zone": 49864,
+      "short_cond_zone_true": 49864,
+      "bars_with_long_signal_zone": 31423,
+      "long_cond_zone_true": 31423,
+      "short_cond_rsi_soft_true": 22822,
+      "long_cond_rsi_soft_true": 17233,
+      "blocked_regime_not_ranging": 11533,
+      "bars_with_bb_touch": 10648,
+      "blocked_breakout_cooldown_active": 9320,
+      "short_cond_bb_true": 5583,
+      "long_cond_bb_true": 5065,
+      "blocked_atr_above_max": 1200,
+      "bars_with_confluence_met": 1020,
+      "signals_pre_v7_filters": 1020,
+      "blocked_breakout_rolling_range": 675,
+      "gate_breakout_disable_triggered": 675,
+      "short_all_core_conditions_true": 613,
+      "short_confluence_min_met": 613,
+      "signal_short": 509,
+      "long_all_core_conditions_true": 407,
+      "long_confluence_min_met": 407,
+      "signal_long": 312,
+      "blocked_missing_pivots": 202,
+      "blocked_combo_filter": 199
+    },
+    "top_15": {
+      "bars_total": 1000000,
+      "bars_outside_tokyo_hours": 437749,
+      "bars_disallowed_day": 417374,
+      "bars_in_session": 144877,
+      "bars_passed_session_filter": 144877,
+      "bars_passed_indicator_check": 144675,
+      "bars_passed_breakout_check": 134680,
+      "bars_passed_regime_filter": 123147,
+      "bars_after_global_filters": 121947,
+      "bars_passed_atr_filter": 121947,
+      "bars_reached_signal_scoring": 121947,
+      "blocked_no_signal": 120927,
+      "bars_with_sar_flip": 115256,
+      "short_cond_sar_true": 57769,
+      "long_cond_sar_true": 57487
+    },
+    "verification": {
+      "first_valid_indicator_bar": 203,
+      "total_in_session_bars": 144877,
+      "in_session_valid_indicator_bars": 144675,
+      "in_session_valid_indicator_pct": 99.86057138124063,
+      "in_session_not_blocked_by_breakout_preview": 134882,
+      "in_session_not_blocked_by_breakout_preview_pct": 93.10104433415933,
+      "breakout_mode": "rolling",
+      "rolling_window_minutes": 60,
+      "rolling_range_threshold_pips": 40.0,
+      "cooldown_minutes": 15
+    }
+  },
+  "equity_curve": [],
+  "drawdown_curve": [],
+  "trades": []
+}

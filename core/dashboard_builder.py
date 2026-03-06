@@ -330,12 +330,17 @@ def build_dashboard_filters(
         max_per_side = getattr(policy, "max_open_trades_per_side", None)
         if max_per_side is not None:
             max_per_side = max(cap_min, int(round(float(max_per_side) * cap_multiplier)))
-        if max_per_side is not None and store is not None:
+        if (max_per_side is not None or getattr(profile.risk, "max_open_trades", None) is not None) and store is not None:
             try:
                 side_counts, live_ok = _live_side_counts(profile, adapter)
                 if not live_ok:
                     side_counts = _store_side_counts(store, profile.profile_name)
-                filters.extend(report_max_trades_by_side(side_counts, max_per_side))
+                max_open_trades_total = getattr(profile.risk, "max_open_trades", None)
+                if max_open_trades_total is not None:
+                    total_open = side_counts.get("buy", 0) + side_counts.get("sell", 0)
+                    filters.append(report_max_trades(total_open, int(max_open_trades_total), side, side_counts))
+                if max_per_side is not None:
+                    filters.extend(report_max_trades_by_side(side_counts, max_per_side))
                 open_trades = store.list_open_trades(profile.profile_name)
                 # Prefer live broker position ids so cap reflects actually open positions (not stale DB rows)
                 live_ids = _live_position_ids(profile, adapter)
@@ -394,12 +399,17 @@ def build_dashboard_filters(
         max_per_side = getattr(policy, "max_open_trades_per_side", None)
         if max_per_side is not None:
             max_per_side = max(cap_min, int(round(float(max_per_side) * cap_multiplier)))
-        if max_per_side is not None and store is not None:
+        if (max_per_side is not None or getattr(profile.risk, "max_open_trades", None) is not None) and store is not None:
             try:
                 side_counts, live_ok = _live_side_counts(profile, adapter)
                 if not live_ok:
                     side_counts = _store_side_counts(store, profile.profile_name)
-                filters.extend(report_max_trades_by_side(side_counts, max_per_side))
+                max_open_trades_total = getattr(profile.risk, "max_open_trades", None)
+                if max_open_trades_total is not None:
+                    total_open = side_counts.get("buy", 0) + side_counts.get("sell", 0)
+                    filters.append(report_max_trades(total_open, int(max_open_trades_total), side, side_counts))
+                if max_per_side is not None:
+                    filters.extend(report_max_trades_by_side(side_counts, max_per_side))
                 open_trades = store.list_open_trades(profile.profile_name)
                 live_ids = _live_position_ids(profile, adapter)
 

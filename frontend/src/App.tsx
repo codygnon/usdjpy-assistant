@@ -3768,6 +3768,11 @@ interface EditedSettings {
 
 const TRIAL7_DEFAULT_TIER_EMA_PERIODS: number[] = [9, ...Array.from({ length: 24 }, (_, i) => i + 11)];
 const TRIAL7_ALLOWED_TIER_EMA_PERIODS = new Set<number>(TRIAL7_DEFAULT_TIER_EMA_PERIODS);
+
+/** Trial #8: only 17, 21, 27, 33, 50, 75, 100 (no 9–16; deeper tiers 50/75/100). */
+const TRIAL8_DEFAULT_TIER_EMA_PERIODS: number[] = [17, 21, 27, 33, 50, 75, 100];
+const TRIAL8_ALLOWED_TIER_EMA_PERIODS = new Set<number>(TRIAL8_DEFAULT_TIER_EMA_PERIODS);
+
 const TRIAL7_EXHAUSTION_THRESHOLD_DEFAULTS = {
   p80_global: 12.03,
   p90_global: 17.02,
@@ -3801,6 +3806,18 @@ function sanitizeTrial7TierPeriods(periods: number[] | null | undefined): number
     )
   ).sort((a, b) => a - b);
   return cleaned.length > 0 ? cleaned : [...TRIAL7_DEFAULT_TIER_EMA_PERIODS];
+}
+
+function sanitizeTrial8TierPeriods(periods: number[] | null | undefined): number[] {
+  if (!Array.isArray(periods)) return [...TRIAL8_DEFAULT_TIER_EMA_PERIODS];
+  const cleaned = Array.from(
+    new Set(
+      periods
+        .map((p) => Math.trunc(Number(p)))
+        .filter((p) => TRIAL8_ALLOWED_TIER_EMA_PERIODS.has(p))
+    )
+  ).sort((a, b) => a - b);
+  return cleaned.length > 0 ? cleaned : [...TRIAL8_DEFAULT_TIER_EMA_PERIODS];
 }
 
 function PresetsPage({ profile }: { profile: Profile }) {
@@ -4257,7 +4274,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
             t7M1ZoneEntryEmaFast = (pol.m1_zone_entry_ema_fast as number) ?? 5;
             t7M1ZoneEntryEmaSlow = (pol.m1_zone_entry_ema_slow as number) ?? 9;
             t8M1ZoneEntryPriceEmaPeriod = (pol.m1_zone_entry_price_ema_period as number) ?? 5;
-            tierEmaPeriods = sanitizeTrial7TierPeriods(pol.tier_ema_periods as number[] | undefined);
+            tierEmaPeriods = sanitizeTrial8TierPeriods(pol.tier_ema_periods as number[] | undefined);
             policySlPips = (pol.sl_pips as number) ?? 20;
             t7TrendExhaustionEnabled = (pol.trend_exhaustion_enabled as boolean) ?? false;
             t7TrendExhaustionMode = (pol.trend_exhaustion_mode as 'global' | 'session' | 'session_and_side') ?? 'session_and_side';
@@ -4765,7 +4782,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
             updates.m1_zone_entry_ema_slow = Math.max(1, Math.min(100, editedSettings.m1_zone_entry_ema_slow));
           }
           updates.m1_zone_entry_price_ema_period = Math.max(2, Math.min(50, editedSettings.t8_m1_zone_entry_price_ema_period));
-          updates.tier_ema_periods = sanitizeTrial7TierPeriods(editedSettings.tier_ema_periods);
+          updates.tier_ema_periods = sanitizeTrial8TierPeriods(editedSettings.tier_ema_periods);
           updates.spread_aware_be_enabled = editedSettings.spread_aware_be_enabled;
           updates.spread_aware_be_trigger_mode = 'spread_relative';
           updates.spread_aware_be_spread_buffer_pips = Math.max(0, editedSettings.spread_aware_be_spread_buffer_pips);
@@ -6783,48 +6800,76 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       )}
                     </div>
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                        Tiered Pullback — Tiers 9–17
-                      </div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                        {[9, 11, 12, 13, 14, 15, 16, 17].map(tier => (
-                          <label key={tier} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '2px 6px', background: editedSettings.tier_ema_periods.includes(tier) ? 'var(--success)' : 'var(--bg-secondary)', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600, color: editedSettings.tier_ema_periods.includes(tier) ? '#fff' : 'var(--text-secondary)' }}>
-                            <input
-                              type="checkbox"
-                              checked={editedSettings.tier_ema_periods.includes(tier)}
-                              onChange={(e) => {
-                                const periods = e.target.checked
-                                  ? [...editedSettings.tier_ema_periods, tier].sort((a, b) => a - b)
-                                  : editedSettings.tier_ema_periods.filter(t => t !== tier);
-                                setEditedSettings({ ...editedSettings, tier_ema_periods: periods });
-                              }}
-                              style={{ width: 14, height: 14, cursor: 'pointer' }}
-                            />
-                            EMA {tier}
-                          </label>
-                        ))}
-                      </div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, marginTop: 12 }}>
-                        Tiered Pullback — Tiers 18–34
-                      </div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                        {[18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34].map(tier => (
-                          <label key={tier} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '2px 6px', background: editedSettings.tier_ema_periods.includes(tier) ? 'var(--success)' : 'var(--bg-secondary)', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600, color: editedSettings.tier_ema_periods.includes(tier) ? '#fff' : 'var(--text-secondary)' }}>
-                            <input
-                              type="checkbox"
-                              checked={editedSettings.tier_ema_periods.includes(tier)}
-                              onChange={(e) => {
-                                const periods = e.target.checked
-                                  ? [...editedSettings.tier_ema_periods, tier].sort((a, b) => a - b)
-                                  : editedSettings.tier_ema_periods.filter(t => t !== tier);
-                                setEditedSettings({ ...editedSettings, tier_ema_periods: periods });
-                              }}
-                              style={{ width: 14, height: 14, cursor: 'pointer' }}
-                            />
-                            EMA {tier}
-                          </label>
-                        ))}
-                      </div>
+                      {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8') ? (
+                        <>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                            Tiered Pullback — Trial #8 (17, 21, 27, 33, 50, 75, 100)
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {TRIAL8_DEFAULT_TIER_EMA_PERIODS.map(tier => (
+                              <label key={tier} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '2px 6px', background: editedSettings.tier_ema_periods.includes(tier) ? 'var(--success)' : 'var(--bg-secondary)', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600, color: editedSettings.tier_ema_periods.includes(tier) ? '#fff' : 'var(--text-secondary)' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={editedSettings.tier_ema_periods.includes(tier)}
+                                  onChange={(e) => {
+                                    const periods = e.target.checked
+                                      ? [...editedSettings.tier_ema_periods, tier].sort((a, b) => a - b)
+                                      : editedSettings.tier_ema_periods.filter(t => t !== tier);
+                                    setEditedSettings({ ...editedSettings, tier_ema_periods: sanitizeTrial8TierPeriods(periods) });
+                                  }}
+                                  style={{ width: 14, height: 14, cursor: 'pointer' }}
+                                />
+                                EMA {tier}
+                              </label>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                            Tiered Pullback — Tiers 9–17
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {[9, 11, 12, 13, 14, 15, 16, 17].map(tier => (
+                              <label key={tier} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '2px 6px', background: editedSettings.tier_ema_periods.includes(tier) ? 'var(--success)' : 'var(--bg-secondary)', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600, color: editedSettings.tier_ema_periods.includes(tier) ? '#fff' : 'var(--text-secondary)' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={editedSettings.tier_ema_periods.includes(tier)}
+                                  onChange={(e) => {
+                                    const periods = e.target.checked
+                                      ? [...editedSettings.tier_ema_periods, tier].sort((a, b) => a - b)
+                                      : editedSettings.tier_ema_periods.filter(t => t !== tier);
+                                    setEditedSettings({ ...editedSettings, tier_ema_periods: periods });
+                                  }}
+                                  style={{ width: 14, height: 14, cursor: 'pointer' }}
+                                />
+                                EMA {tier}
+                              </label>
+                            ))}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, marginTop: 12 }}>
+                            Tiered Pullback — Tiers 18–34
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {[18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34].map(tier => (
+                              <label key={tier} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '2px 6px', background: editedSettings.tier_ema_periods.includes(tier) ? 'var(--success)' : 'var(--bg-secondary)', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600, color: editedSettings.tier_ema_periods.includes(tier) ? '#fff' : 'var(--text-secondary)' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={editedSettings.tier_ema_periods.includes(tier)}
+                                  onChange={(e) => {
+                                    const periods = e.target.checked
+                                      ? [...editedSettings.tier_ema_periods, tier].sort((a, b) => a - b)
+                                      : editedSettings.tier_ema_periods.filter(t => t !== tier);
+                                    setEditedSettings({ ...editedSettings, tier_ema_periods: periods });
+                                  }}
+                                  style={{ width: 14, height: 14, cursor: 'pointer' }}
+                                />
+                                EMA {tier}
+                              </label>
+                            ))}
+                          </div>
+                        </>
+                      )}
                       <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
                         When price touches M1 EMA tiers, triggers entry. Each tier fires once per touch and resets when price moves away.
                       </div>

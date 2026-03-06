@@ -1,0 +1,343 @@
+{
+  "baseline": {
+    "tag": "baseline_v7_100k_1000k",
+    "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/baseline_v7_100k_1000k_report.json",
+    "trades_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/baseline_v7_100k_1000k_trades.csv",
+    "equity_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/baseline_v7_100k_1000k_equity.csv",
+    "trades": 203,
+    "wr": 66.00985221674877,
+    "pf": 1.1616353001819995,
+    "net_usd": 2742.966113514455,
+    "max_dd_usd": 4587.361697409171,
+    "max_dd_pct": 4.428561956271194,
+    "avg_win_pips": 5.835549267063498,
+    "avg_loss_pips": -10.143436274508844,
+    "expectancy_per_trade": 13.51214834243574,
+    "sharpe": 0.876438097564793,
+    "net_over_maxdd": 0.5979397951252928,
+    "blocked_counts": {
+      "bars_total": 1000000,
+      "bars_outside_tokyo_hours": 604441,
+      "bars_disallowed_day": 218546,
+      "bars_in_session": 177013,
+      "bars_passed_session_filter": 177013,
+      "bars_passed_indicator_check": 176811,
+      "bars_passed_breakout_check": 166507,
+      "bars_passed_regime_filter": 157468,
+      "bars_after_global_filters": 156173,
+      "bars_passed_atr_filter": 156173,
+      "bars_reached_signal_scoring": 156173,
+      "blocked_no_signal": 154357,
+      "bars_with_sar_flip": 146418,
+      "short_cond_sar_true": 73365,
+      "long_cond_sar_true": 73053,
+      "bars_with_short_signal_zone": 61407,
+      "short_cond_zone_true": 61407,
+      "bars_with_long_signal_zone": 41644,
+      "long_cond_zone_true": 41644,
+      "short_cond_rsi_soft_true": 29135,
+      "bars_with_bb_touch": 22621,
+      "long_cond_rsi_soft_true": 22191,
+      "short_cond_bb_true": 11917,
+      "long_cond_bb_true": 10704,
+      "blocked_breakout_cooldown_active": 9606,
+      "blocked_regime_not_ranging": 9039,
+      "bars_with_confluence_met": 1816,
+      "signals_pre_v7_filters": 1816,
+      "blocked_atr_above_max": 1295,
+      "short_all_core_conditions_true": 1048,
+      "short_confluence_min_met": 1048,
+      "signal_short": 865,
+      "long_all_core_conditions_true": 768,
+      "long_confluence_min_met": 768,
+      "blocked_breakout_rolling_range": 698,
+      "gate_breakout_disable_triggered": 698,
+      "signal_long": 608,
+      "blocked_combo_filter": 343,
+      "blocked_adx_filter": 286,
+      "bars_with_entry_triggered": 203,
+      "entries_total": 203,
+      "blocked_missing_pivots": 202,
+      "entries_short": 120,
+      "blocked_min_entry_gap": 107,
+      "entries_long": 83,
+      "blocked_max_open_cap": 38,
+      "blocked_reentry_after_stop": 13
+    }
+  },
+  "final_full_1000k": {
+    "tag": "tokyo_optimized_v13_1000k",
+    "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_optimized_v13_1000k_report.json",
+    "trades_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_optimized_v13_1000k_trades.csv",
+    "equity_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_optimized_v13_1000k_equity.csv",
+    "trades": 41,
+    "wr": 78.04878048780488,
+    "pf": 3.7916653797269726,
+    "net_usd": 1319.2580512418715,
+    "max_dd_usd": 219.15567794942763,
+    "max_dd_pct": 0.21713688609416373,
+    "avg_win_pips": 6.110213409914074,
+    "avg_loss_pips": -7.642592592592084,
+    "expectancy_per_trade": 32.17702564004565,
+    "sharpe": 3.168383282389121,
+    "net_over_maxdd": 6.019730191732945,
+    "blocked_counts": {
+      "bars_total": 1000000,
+      "bars_outside_tokyo_hours": 437749,
+      "bars_disallowed_day": 417374,
+      "bars_in_session": 144877,
+      "bars_passed_session_filter": 144877,
+      "bars_passed_indicator_check": 144675,
+      "bars_passed_breakout_check": 134680,
+      "bars_passed_regime_filter": 123147,
+      "bars_after_global_filters": 121947,
+      "bars_passed_atr_filter": 121947,
+      "bars_reached_signal_scoring": 121947,
+      "blocked_no_signal": 120927,
+      "bars_with_sar_flip": 115256,
+      "short_cond_sar_true": 57769,
+      "long_cond_sar_true": 57487,
+      "bars_with_short_signal_zone": 49864,
+      "short_cond_zone_true": 49864,
+      "bars_with_long_signal_zone": 31423,
+      "long_cond_zone_true": 31423,
+      "short_cond_rsi_soft_true": 22822,
+      "long_cond_rsi_soft_true": 17233,
+      "blocked_regime_not_ranging": 11533,
+      "bars_with_bb_touch": 10648,
+      "blocked_breakout_cooldown_active": 9320,
+      "short_cond_bb_true": 5583,
+      "long_cond_bb_true": 5065,
+      "blocked_atr_above_max": 1200,
+      "bars_with_confluence_met": 1020,
+      "signals_pre_v7_filters": 1020,
+      "blocked_breakout_rolling_range": 675,
+      "gate_breakout_disable_triggered": 675,
+      "short_all_core_conditions_true": 613,
+      "short_confluence_min_met": 613,
+      "signal_short": 509,
+      "long_all_core_conditions_true": 407,
+      "long_confluence_min_met": 407,
+      "signal_long": 312,
+      "blocked_adx_filter": 297,
+      "blocked_missing_pivots": 202,
+      "blocked_combo_filter": 199,
+      "bars_with_entry_triggered": 41,
+      "entries_total": 41,
+      "blocked_min_entry_gap": 23,
+      "entries_long": 21,
+      "entries_short": 20,
+      "blocked_max_open_cap": 7
+    }
+  },
+  "experiment_summary_rows": [
+    {
+      "experiment": 1,
+      "feature": "Session Window",
+      "verdict": "KEEP",
+      "best_param": "16:00-22:00",
+      "pf_impact": 0.09181547422944503
+    },
+    {
+      "experiment": 2,
+      "feature": "Day-of-Week",
+      "verdict": "KEEP",
+      "best_param": "Tue,Wed,Fri",
+      "pf_impact": 0.11087383418270025
+    },
+    {
+      "experiment": 3,
+      "feature": "Bollinger",
+      "verdict": "KEEP",
+      "best_param": "BB(25,2.2)",
+      "pf_impact": 0.5393696744215468
+    },
+    {
+      "experiment": 4,
+      "feature": "RSI",
+      "verdict": "DISCARD",
+      "best_param": "baseline",
+      "pf_impact": 0.0
+    },
+    {
+      "experiment": 5,
+      "feature": "Pivot Tolerance",
+      "verdict": "DISCARD",
+      "best_param": "baseline",
+      "pf_impact": 0.0
+    },
+    {
+      "experiment": 6,
+      "feature": "Stop Loss",
+      "verdict": "KEEP",
+      "best_param": "buf8 max35 min12",
+      "pf_impact": 0.39805691040386426
+    },
+    {
+      "experiment": 7,
+      "feature": "Partial TP",
+      "verdict": "DISCARD",
+      "best_param": "baseline",
+      "pf_impact": 0.0
+    },
+    {
+      "experiment": 8,
+      "feature": "Trailing Stop",
+      "verdict": "KEEP",
+      "best_param": "act8 trail5",
+      "pf_impact": 0.10100786796145567
+    },
+    {
+      "experiment": 9,
+      "feature": "Risk Per Trade",
+      "verdict": "KEEP",
+      "best_param": "0.25%",
+      "pf_impact": 0.16367215525107337
+    },
+    {
+      "experiment": 10,
+      "feature": "ADX Filter",
+      "verdict": "KEEP",
+      "best_param": "max 20",
+      "pf_impact": 1.096743461914424
+    },
+    {
+      "experiment": 11,
+      "feature": "Confirmation Candle",
+      "verdict": "KEEP",
+      "best_param": "m1<=8",
+      "pf_impact": 0.12849070118046368
+    },
+    {
+      "experiment": 12,
+      "feature": "News Filter",
+      "verdict": "DISCARD",
+      "best_param": "baseline",
+      "pf_impact": 0.0
+    }
+  ],
+  "changelog": [
+    {
+      "experiment": 1,
+      "feature": "Session Window",
+      "verdict": "KEEP",
+      "variant": "1B",
+      "label": "16:00-22:00",
+      "pf_delta": 0.09181547422944503
+    },
+    {
+      "experiment": 2,
+      "feature": "Day-of-Week",
+      "verdict": "KEEP",
+      "variant": "2E",
+      "label": "Tue,Wed,Fri",
+      "pf_delta": 0.20268930841214527
+    },
+    {
+      "experiment": 3,
+      "feature": "Bollinger",
+      "verdict": "KEEP",
+      "variant": "3G",
+      "label": "BB(25,2.2)",
+      "pf_delta": 0.7420589828336921
+    },
+    {
+      "experiment": 4,
+      "feature": "RSI",
+      "verdict": "DISCARD",
+      "variant": "baseline",
+      "label": "baseline",
+      "pf_delta": 0.0
+    },
+    {
+      "experiment": 5,
+      "feature": "Pivot Tolerance",
+      "verdict": "DISCARD",
+      "variant": "baseline",
+      "label": "baseline",
+      "pf_delta": 0.0
+    },
+    {
+      "experiment": 6,
+      "feature": "Stop Loss",
+      "verdict": "KEEP",
+      "variant": "6E",
+      "label": "buf8 max35 min12",
+      "pf_delta": 1.1401158932375564
+    },
+    {
+      "experiment": 7,
+      "feature": "Partial TP",
+      "verdict": "DISCARD",
+      "variant": "baseline",
+      "label": "baseline",
+      "pf_delta": 0.0
+    },
+    {
+      "experiment": 8,
+      "feature": "Trailing Stop",
+      "verdict": "KEEP",
+      "variant": "8A",
+      "label": "act8 trail5",
+      "pf_delta": 1.241123761199012
+    },
+    {
+      "experiment": 9,
+      "feature": "Risk Per Trade",
+      "verdict": "KEEP",
+      "variant": "9A",
+      "label": "0.25%",
+      "pf_delta": 1.4047959164500854
+    },
+    {
+      "experiment": 10,
+      "feature": "ADX Filter",
+      "verdict": "KEEP",
+      "variant": "10B",
+      "label": "max 20",
+      "pf_delta": 2.5015393783645097
+    },
+    {
+      "experiment": 11,
+      "feature": "Confirmation Candle",
+      "verdict": "KEEP",
+      "variant": "11D",
+      "label": "m1<=8",
+      "pf_delta": 2.630030079544973
+    },
+    {
+      "experiment": 12,
+      "feature": "News Filter",
+      "verdict": "DISCARD",
+      "variant": "baseline",
+      "label": "baseline",
+      "pf_delta": 0.0
+    }
+  ],
+  "walkforward": {
+    "walk_forward_validation": {
+      "training": {
+        "candles": 700000,
+        "trades": 31,
+        "wr": 74.19354838709677,
+        "pf": 3.490112828096556,
+        "net": 1017.6127628209634,
+        "maxdd": 219.15567794942763
+      },
+      "testing": {
+        "candles": 300000,
+        "trades": 10,
+        "wr": 90.0,
+        "pf": 5.719907636873845,
+        "net": 298.6068548575743,
+        "maxdd": 0.0
+      },
+      "degradation": {
+        "pf_change": 2.229794808777289,
+        "pf_change_pct": 63.88890327059652,
+        "wr_change": 15.806451612903231,
+        "pf_retention_pct": 163.8889032705965
+      }
+    }
+  }
+}

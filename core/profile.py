@@ -834,12 +834,9 @@ class ExecutionPolicyKtCgTrial8(BaseModel):
     # still allow zone entries when price is within this many pips of EMA.
     zone_entry_price_buffer_pips: float = 0.5
 
-    # Tiered Pullback Configuration
+    # Tiered Pullback Configuration (17, 21, 27, 33 + deeper 50, 75, 100)
     tiered_pullback_enabled: bool = True
-    tier_ema_periods: tuple[int, ...] = (
-        9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-        28, 29, 30, 31, 32, 33, 34
-    )
+    tier_ema_periods: tuple[int, ...] = (17, 21, 27, 33, 50, 75, 100)
     tier_reset_buffer_pips: float = 1.0
 
     cooldown_minutes: float = 3.0

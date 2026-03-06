@@ -3741,8 +3741,8 @@ def _trial7_session_name_utc(ts_utc: pd.Timestamp) -> str:
 
 
 def _canonical_trial7_tier_periods(periods: Optional[list[int] | tuple[int, ...]]) -> list[int]:
-    """Canonical Trial #7 tiers: EMA 9 and EMA 11..34 (EMA10 intentionally excluded)."""
-    allowed = {9, *range(11, 35)}
+    """Canonical Trial #7/8 tiers: EMA 9 and 11..34 (EMA10 excluded); Trial #8 may also use 50, 75, 100."""
+    allowed = {9, *range(11, 35), 50, 75, 100}
     default_tiers = [9, *list(range(11, 35))]
     if not periods:
         return default_tiers
@@ -4856,6 +4856,12 @@ def execute_kt_cg_trial_7_policy_demo_only(
     exhaustion_result = None
     tier_updates: dict[int, bool] = {}
     effective_tiers = _canonical_trial7_tier_periods(getattr(policy, "tier_ema_periods", tuple(range(9, 35))))
+    # Trial #8: only allow tiers 17, 21, 27, 33, 50, 75, 100 (never 9-16)
+    if policy_type == "kt_cg_trial_8":
+        _t8_allowed = {17, 21, 27, 33, 50, 75, 100}
+        effective_tiers = sorted([t for t in effective_tiers if int(t) in _t8_allowed])
+        if not effective_tiers:
+            effective_tiers = [17, 21, 27, 33, 50, 75, 100]
     block_zone_entry_by_exhaustion = False
     cap_multiplier = 1.0
     cap_minimum = 1
@@ -5119,12 +5125,31 @@ def execute_kt_cg_trial_7_policy_demo_only(
     if trigger_type == "tiered_pullback" and tiered_pullback_tier:
         rule_id = f"{policy_type}:{policy.id}:tier_{tiered_pullback_tier}"
 
+    # Enforce profile-level max_open_trades (total) and policy max_open_trades_per_side; block if any violated
+    open_positions = []
+    try:
+        open_positions = adapter.get_open_positions(profile.symbol) or []
+        total_open = len(open_positions)
+        r = get_effective_risk(profile)
+        max_open_trades = getattr(r, "max_open_trades", None)
+        if max_open_trades is not None and total_open >= int(max_open_trades):
+            return _result_payload(
+                ExecutionDecision(
+                    attempted=True,
+                    placed=False,
+                    reason=f"max_open_trades: {total_open} total open >= {max_open_trades}",
+                ),
+            )
+    except Exception:
+        open_positions = []
+
     max_open_per_side = getattr(policy, "max_open_trades_per_side", None)
     if max_open_per_side is not None:
         max_open_per_side = max(cap_minimum, int(round(float(max_open_per_side) * cap_multiplier)))
     if max_open_per_side is not None:
         try:
-            open_positions = adapter.get_open_positions(profile.symbol)
+            if not open_positions:
+                open_positions = adapter.get_open_positions(profile.symbol) or []
             side_open = 0
             if open_positions:
                 for pos in open_positions:

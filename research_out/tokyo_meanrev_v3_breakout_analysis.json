@@ -1,0 +1,361 @@
+{
+  "summary": {
+    "sessions": 35,
+    "breached_sessions": 29,
+    "breach_pct": 82.85714285714286,
+    "median_minutes_to_breach": 72.0,
+    "threshold_pips": 30.0
+  },
+  "sessions": [
+    {
+      "session_day_jst": "2026-01-07",
+      "session_open_price": 156.408,
+      "session_high": 156.75,
+      "session_low": 156.404,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 67,
+      "breach_side": "high_side"
+    },
+    {
+      "session_day_jst": "2026-01-08",
+      "session_open_price": 156.433,
+      "session_high": 156.802,
+      "session_low": 156.408,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 72,
+      "breach_side": "high_side"
+    },
+    {
+      "session_day_jst": "2026-01-09",
+      "session_open_price": 156.974,
+      "session_high": 157.056,
+      "session_low": 156.775,
+      "threshold_pips": 30.0,
+      "breached": false,
+      "breach_minute_offset": null,
+      "breach_side": null
+    },
+    {
+      "session_day_jst": "2026-01-12",
+      "session_open_price": 158.076,
+      "session_high": 158.184,
+      "session_low": 157.982,
+      "threshold_pips": 30.0,
+      "breached": false,
+      "breach_minute_offset": null,
+      "breach_side": null
+    },
+    {
+      "session_day_jst": "2026-01-13",
+      "session_open_price": 157.94,
+      "session_high": 158.201,
+      "session_low": 157.854,
+      "threshold_pips": 30.0,
+      "breached": false,
+      "breach_minute_offset": null,
+      "breach_side": null
+    },
+    {
+      "session_day_jst": "2026-01-14",
+      "session_open_price": 158.916,
+      "session_high": 159.206,
+      "session_low": 158.858,
+      "threshold_pips": 30.0,
+      "breached": false,
+      "breach_minute_offset": null,
+      "breach_side": null
+    },
+    {
+      "session_day_jst": "2026-01-15",
+      "session_open_price": 158.21,
+      "session_high": 158.602,
+      "session_low": 158.094,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 289,
+      "breach_side": "high_side"
+    },
+    {
+      "session_day_jst": "2026-01-16",
+      "session_open_price": 158.742,
+      "session_high": 158.744,
+      "session_low": 158.414,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 85,
+      "breach_side": "low_side"
+    },
+    {
+      "session_day_jst": "2026-01-19",
+      "session_open_price": 157.92,
+      "session_high": 157.969,
+      "session_low": 157.501,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 88,
+      "breach_side": "low_side"
+    },
+    {
+      "session_day_jst": "2026-01-20",
+      "session_open_price": 157.907,
+      "session_high": 158.228,
+      "session_low": 157.863,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 509,
+      "breach_side": "high_side"
+    },
+    {
+      "session_day_jst": "2026-01-21",
+      "session_open_price": 158.037,
+      "session_high": 158.301,
+      "session_low": 157.852,
+      "threshold_pips": 30.0,
+      "breached": false,
+      "breach_minute_offset": null,
+      "breach_side": null
+    },
+    {
+      "session_day_jst": "2026-01-22",
+      "session_open_price": 158.113,
+      "session_high": 158.534,
+      "session_low": 158.039,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 269,
+      "breach_side": "high_side"
+    },
+    {
+      "session_day_jst": "2026-01-23",
+      "session_open_price": 158.616,
+      "session_high": 158.652,
+      "session_low": 158.238,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 74,
+      "breach_side": "low_side"
+    },
+    {
+      "session_day_jst": "2026-01-26",
+      "session_open_price": 154.876,
+      "session_high": 155.28,
+      "session_low": 154.208,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 17,
+      "breach_side": "high_side"
+    },
+    {
+      "session_day_jst": "2026-01-27",
+      "session_open_price": 153.743,
+      "session_high": 154.43,
+      "session_low": 153.618,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 149,
+      "breach_side": "high_side"
+    },
+    {
+      "session_day_jst": "2026-01-28",
+      "session_open_price": 153.224,
+      "session_high": 153.344,
+      "session_low": 152.09,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 17,
+      "breach_side": "low_side"
+    },
+    {
+      "session_day_jst": "2026-01-29",
+      "session_open_price": 152.828,
+      "session_high": 154.051,
+      "session_low": 152.77,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 7,
+      "breach_side": "high_side"
+    },
+    {
+      "session_day_jst": "2026-01-30",
+      "session_open_price": 153.074,
+      "session_high": 153.514,
+      "session_low": 152.682,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 16,
+      "breach_side": "high_side"
+    },
+    {
+      "session_day_jst": "2026-02-02",
+      "session_open_price": 154.903,
+      "session_high": 155.512,
+      "session_low": 154.899,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 22,
+      "breach_side": "high_side"
+    },
+    {
+      "session_day_jst": "2026-02-03",
+      "session_open_price": 155.326,
+      "session_high": 155.79,
+      "session_low": 155.326,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 18,
+      "breach_side": "high_side"
+    },
+    {
+      "session_day_jst": "2026-02-04",
+      "session_open_price": 155.868,
+      "session_high": 155.938,
+      "session_low": 155.528,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 136,
+      "breach_side": "low_side"
+    },
+    {
+      "session_day_jst": "2026-02-05",
+      "session_open_price": 156.465,
+      "session_high": 156.948,
+      "session_low": 156.354,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 212,
+      "breach_side": "high_side"
+    },
+    {
+      "session_day_jst": "2026-02-06",
+      "session_open_price": 156.88,
+      "session_high": 157.096,
+      "session_low": 156.55,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 34,
+      "breach_side": "low_side"
+    },
+    {
+      "session_day_jst": "2026-02-09",
+      "session_open_price": 157.53,
+      "session_high": 157.662,
+      "session_low": 156.822,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 2,
+      "breach_side": "low_side"
+    },
+    {
+      "session_day_jst": "2026-02-10",
+      "session_open_price": 155.605,
+      "session_high": 156.148,
+      "session_low": 155.572,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 63,
+      "breach_side": "high_side"
+    },
+    {
+      "session_day_jst": "2026-02-11",
+      "session_open_price": 154.391,
+      "session_high": 154.588,
+      "session_low": 154.055,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 54,
+      "breach_side": "low_side"
+    },
+    {
+      "session_day_jst": "2026-02-12",
+      "session_open_price": 153.449,
+      "session_high": 153.69,
+      "session_low": 152.55,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 100,
+      "breach_side": "low_side"
+    },
+    {
+      "session_day_jst": "2026-02-13",
+      "session_open_price": 153.028,
+      "session_high": 153.067,
+      "session_low": 152.366,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 41,
+      "breach_side": "low_side"
+    },
+    {
+      "session_day_jst": "2026-02-16",
+      "session_open_price": 152.728,
+      "session_high": 152.866,
+      "session_low": 152.632,
+      "threshold_pips": 30.0,
+      "breached": false,
+      "breach_minute_offset": null,
+      "breach_side": null
+    },
+    {
+      "session_day_jst": "2026-02-17",
+      "session_open_price": 153.356,
+      "session_high": 153.761,
+      "session_low": 153.3,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 489,
+      "breach_side": "high_side"
+    },
+    {
+      "session_day_jst": "2026-02-18",
+      "session_open_price": 153.456,
+      "session_high": 153.927,
+      "session_low": 153.106,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 34,
+      "breach_side": "high_side"
+    },
+    {
+      "session_day_jst": "2026-02-19",
+      "session_open_price": 154.38,
+      "session_high": 154.874,
+      "session_low": 154.235,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 201,
+      "breach_side": "high_side"
+    },
+    {
+      "session_day_jst": "2026-02-20",
+      "session_open_price": 155.218,
+      "session_high": 155.266,
+      "session_low": 154.83,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 66,
+      "breach_side": "low_side"
+    },
+    {
+      "session_day_jst": "2026-02-23",
+      "session_open_price": 154.925,
+      "session_high": 154.972,
+      "session_low": 154.317,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 76,
+      "breach_side": "low_side"
+    },
+    {
+      "session_day_jst": "2026-02-24",
+      "session_open_price": 154.549,
+      "session_high": 154.769,
+      "session_low": 154.222,
+      "threshold_pips": 30.0,
+      "breached": true,
+      "breach_minute_offset": 126,
+      "breach_side": "low_side"
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "trend_skip_threshold_test": [
+    {
+      "threshold_pips": 80,
+      "sessions_blocked": 93,
+      "sessions_allowed": 58,
+      "v7_trades_in_allowed_sessions": 79,
+      "v7_trades_in_blocked_sessions": 124,
+      "pf_allowed_trades": 1.302612269932208,
+      "pf_blocked_trades": 1.0435849461723377,
+      "net_allowed": 1074.5355428473367,
+      "net_blocked": 316.73528504920876
+    },
+    {
+      "threshold_pips": 100,
+      "sessions_blocked": 76,
+      "sessions_allowed": 75,
+      "v7_trades_in_allowed_sessions": 105,
+      "v7_trades_in_blocked_sessions": 98,
+      "pf_allowed_trades": 1.3235904742236713,
+      "pf_blocked_trades": 0.9901458116664889,
+      "net_allowed": 1453.6067207215842,
+      "net_blocked": -62.33589282503884
+    },
+    {
+      "threshold_pips": 120,
+      "sessions_blocked": 62,
+      "sessions_allowed": 89,
+      "v7_trades_in_allowed_sessions": 122,
+      "v7_trades_in_blocked_sessions": 81,
+      "pf_allowed_trades": 1.3913205095713919,
+      "pf_blocked_trades": 0.8731980619686106,
+      "net_allowed": 2086.8067550227393,
+      "net_blocked": -695.5359271261938
+    },
+    {
+      "threshold_pips": 140,
+      "sessions_blocked": 45,
+      "sessions_allowed": 106,
+      "v7_trades_in_allowed_sessions": 149,
+      "v7_trades_in_blocked_sessions": 54,
+      "pf_allowed_trades": 1.2824479596487977,
+      "pf_blocked_trades": 0.8846438922776059,
+      "net_allowed": 1873.8696357985095,
+      "net_blocked": -482.59880790196377
+    },
+    {
+      "threshold_pips": 160,
+      "sessions_blocked": 36,
+      "sessions_allowed": 115,
+      "v7_trades_in_allowed_sessions": 158,
+      "v7_trades_in_blocked_sessions": 45,
+      "pf_allowed_trades": 1.1830033864821918,
+      "pf_blocked_trades": 0.9903080418022945,
+      "net_allowed": 1420.8679694400762,
+      "net_blocked": -29.597141543530427
+    },
+    {
+      "threshold_pips": 200,
+      "sessions_blocked": 20,
+      "sessions_allowed": 131,
+      "v7_trades_in_allowed_sessions": 179,
+      "v7_trades_in_blocked_sessions": 24,
+      "pf_allowed_trades": 1.1247950454340332,
+      "pf_blocked_trades": 1.1528850456227107,
+      "net_allowed": 1166.7882674186776,
+      "net_blocked": 224.4825604778684
+    },
+    {
+      "threshold_pips": 999,
+      "sessions_blocked": 0,
+      "sessions_allowed": 151,
+      "v7_trades_in_allowed_sessions": 203,
+      "v7_trades_in_blocked_sessions": 0,
+      "pf_allowed_trades": 1.1286076744475888,
+      "pf_blocked_trades": 0.0,
+      "net_allowed": 1391.2708278965458,
+      "net_blocked": 0.0
+    }
+  ],
+  "optimal_threshold": {
+    "value": 999,
+    "selection_method": "disabled",
+    "rationale": "No threshold achieved PF>1.2 with >150 trades; disabling trend skip."
+  }
+}

@@ -1,0 +1,648 @@
+{
+  "strategy_id": "tokyo_mean_reversion_v10",
+  "run_label": "50k",
+  "input_csv": "/Users/codygnon/Documents/usdjpy_assistant/USDJPY_M1_50k_new.csv",
+  "summary": {
+    "total_trades": 2,
+    "win_rate_pct": 100.0,
+    "average_win_pips": 5.700000000000216,
+    "average_win_usd": 57.29906206917806,
+    "average_loss_pips": 0.0,
+    "average_loss_usd": 0.0,
+    "largest_win_usd": 71.89512026187563,
+    "largest_loss_usd": 42.703003876480494,
+    "profit_factor": Infinity,
+    "net_profit_usd": 114.59812413835613,
+    "net_profit_pips": 11.400000000000432,
+    "return_on_starting_equity_pct": 0.22919624827671212,
+    "max_drawdown_usd": 0.0,
+    "max_drawdown_pct": 0.0,
+    "max_consecutive_wins": 2,
+    "max_consecutive_losses": 0,
+    "average_trade_duration_minutes": 153.5,
+    "sharpe_ratio": 5.5604256580918205,
+    "calmar_ratio": 0.0,
+    "starting_equity_usd": 50000.0,
+    "ending_equity_usd": 50114.598124138356
+  },
+  "breakdown": {
+    "long_performance": {
+      "trades": 0,
+      "win_rate_pct": 0.0,
+      "avg_pips": 0.0,
+      "profit_factor": 0.0,
+      "net_usd": 0.0
+    },
+    "short_performance": {
+      "trades": 2,
+      "win_rate_pct": 100.0,
+      "avg_pips": 5.700000000000216,
+      "profit_factor": Infinity,
+      "net_usd": 114.59812413835613
+    },
+    "day_of_week": [
+      {
+        "day": "Thu",
+        "trades": 2,
+        "win_rate_pct": 100.0,
+        "net_usd": 114.59812413835613,
+        "avg_pips": 5.700000000000216
+      }
+    ],
+    "monthly": [
+      {
+        "month": "2026-01",
+        "trades": 2,
+        "win_rate_pct": 100.0,
+        "net_usd": 114.59812413835613,
+        "net_pips": 11.400000000000432
+      }
+    ],
+    "average_trades_per_session": 0.07142857142857142,
+    "pct_sessions_with_zero_trades": 96.42857142857143,
+    "exit_distribution": [
+      {
+        "exit_reason": "tp1_then_session_close",
+        "count": 1,
+        "net_usd": 71.89512026187563
+      },
+      {
+        "exit_reason": "tp1_then_time_decay",
+        "count": 1,
+        "net_usd": 42.703003876480494
+      }
+    ],
+    "avg_confluence_score_winners": 5.0,
+    "avg_confluence_score_losers": 0.0
+  },
+  "partial_tp_stats": {
+    "times_partial_tp_hit": 2,
+    "avg_pips_at_partial_tp": 6.0,
+    "remaining_50pct_outcomes": {
+      "hit_full_tp": 0,
+      "hit_trailing_stop": 0,
+      "hit_breakeven_stop": 0,
+      "closed_time_decay": 1,
+      "closed_session_end": 1
+    }
+  },
+  "entry_confirmation_stats": {
+    "signals_generated": 5,
+    "signals_confirmed": 2,
+    "signals_expired": 0,
+    "avg_confirmation_delay_candles": 2.5
+  },
+  "session_pnl_distribution": {
+    "sessions_positive": 1,
+    "sessions_negative": 0,
+    "sessions_zero_trades": 27,
+    "avg_session_pnl": 4.092790147798433,
+    "best_session_pnl": 114.59812413835613,
+    "worst_session_pnl": 0.0
+  },
+  "day_of_week_detailed": {
+    "Tuesday": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0,
+      "pf": 0.0
+    },
+    "Wednesday": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0,
+      "pf": 0.0
+    },
+    "Thursday": {
+      "trades": 2,
+      "wr": 100.0,
+      "net_pnl": 114.59812413835613,
+      "pf": Infinity
+    },
+    "Friday": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0,
+      "pf": 0.0
+    }
+  },
+  "hourly_detailed": {
+    "16": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0
+    },
+    "17": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0
+    },
+    "18": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0
+    },
+    "19": {
+      "trades": 2,
+      "wr": 100.0,
+      "net_pnl": 114.59812413835613
+    },
+    "20": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0
+    },
+    "21": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0
+    },
+    "22": {
+      "trades": 0,
+      "wr": 0.0,
+      "net_pnl": 0.0
+    }
+  },
+  "regime_gate_stats": {
+    "bars_favorable": 0,
+    "bars_neutral": 0,
+    "bars_unfavorable": 0,
+    "trades_at_full_size": 0,
+    "trades_at_reduced_size": 2,
+    "trades_blocked_by_regime": 0,
+    "pnl_favorable_trades": 0.0,
+    "pnl_neutral_trades": 114.59812413835613
+  },
+  "signal_quality_stats": {
+    "high_quality_trades": 0,
+    "medium_quality_trades": 2,
+    "low_quality_skipped": 0,
+    "pnl_high_quality": 0.0,
+    "pnl_medium_quality": 114.59812413835613
+  },
+  "drawdown_sizing_stats": {
+    "trades_at_full_size": 2,
+    "trades_at_tier1_reduction": 0,
+    "trades_at_tier2_reduction": 0,
+    "times_trading_paused": 0,
+    "total_bars_paused": 0
+  },
+  "hour_preference_stats": {
+    "16": {
+      "trades": 0,
+      "avg_size_mult": 0.0,
+      "net_pnl": 0.0
+    },
+    "17": {
+      "trades": 0,
+      "avg_size_mult": 0.0,
+      "net_pnl": 0.0
+    },
+    "18": {
+      "trades": 0,
+      "avg_size_mult": 0.0,
+      "net_pnl": 0.0
+    },
+    "19": {
+      "trades": 2,
+      "avg_size_mult": 1.0,
+      "net_pnl": 114.59812413835613
+    },
+    "20": {
+      "trades": 0,
+      "avg_size_mult": 0.0,
+      "net_pnl": 0.0
+    },
+    "21": {
+      "trades": 0,
+      "avg_size_mult": 0.0,
+      "net_pnl": 0.0
+    },
+    "22": {
+      "trades": 0,
+      "avg_size_mult": 0.0,
+      "net_pnl": 0.0
+    }
+  },
+  "adx_filter_stats": {
+    "trades_allowed": 2,
+    "trades_blocked_by_adx": 0,
+    "avg_adx_at_entry": 30.531228957267746,
+    "avg_adx_at_blocked": 0.0
+  },
+  "combo_filter_stats": {
+    "mode_used": "blocklist",
+    "trades_allowed": 2,
+    "trades_blocked_by_combo": 14,
+    "combo_distribution": {
+      "ABCDE": {
+        "trades": 2,
+        "wr": 100.0,
+        "pf": Infinity,
+        "net": 114.59812413835613
+      }
+    }
+  },
+  "daily_range_filter_stats": {
+    "sessions_allowed": 0,
+    "sessions_blocked_high_range": 0,
+    "sessions_blocked_low_range": 0
+  },
+  "entry_improvement_stats": {
+    "signals_with_limit_placed": 0,
+    "limits_filled": 0,
+    "limits_expired": 0,
+    "fill_rate": 0.0,
+    "avg_improvement_pips": 0.0
+  },
+  "filter_impact_summary": {
+    "adx_filter_used": true,
+    "adx_trades_blocked": 0,
+    "combo_filter_used": true,
+    "combo_trades_blocked": 14,
+    "daily_range_filter_used": false,
+    "sessions_blocked": 0,
+    "chase_filter_used": false,
+    "entries_blocked_by_chase": 0,
+    "total_v4_equivalent_signals": 23,
+    "total_v7_entries": 2,
+    "filter_pass_rate": 8.695652173913043
+  },
+  "signal_strength_analysis": {
+    "avg_score_winners": 5.5,
+    "avg_score_losers": 0.0,
+    "score_distribution": {
+      "weak_1_3": {
+        "trades": 0,
+        "wr": 0.0,
+        "pf": 0.0,
+        "net": 0.0
+      },
+      "moderate_4_6": {
+        "trades": 2,
+        "wr": 100.0,
+        "pf": Infinity,
+        "net": 114.59812413835613
+      },
+      "strong_7_10": {
+        "trades": 0,
+        "wr": 0.0,
+        "pf": 0.0,
+        "net": 0.0
+      }
+    }
+  },
+  "signal_strength_filter_stats": {
+    "min_score_used": 0,
+    "trades_above_threshold": 0,
+    "trades_below_threshold_skipped": 0,
+    "pf_above": Infinity,
+    "pf_below": 0.0
+  },
+  "regime_switch_stats": {
+    "metric_used": "avg_atr_m15",
+    "threshold_used": 0.0,
+    "sessions_traded": 0,
+    "sessions_skipped": 0,
+    "pnl_traded_sessions": 114.59812413835613,
+    "estimated_pnl_skipped_sessions": 0.0
+  },
+  "momentum_check_stats": {
+    "entries_immediate": 2,
+    "entries_delayed_then_filled": 0,
+    "entries_delayed_then_expired": 0,
+    "pf_immediate": Infinity,
+    "pf_delayed": 0.0
+  },
+  "early_exit_stats": {
+    "early_exits_triggered": 0,
+    "avg_loss_saved_pips": 0.0
+  },
+  "mfe_mae_tracking": {
+    "all_trades_avg_mfe": 9.299999999998931,
+    "all_trades_avg_mae": 8.29999999999984,
+    "winners_avg_mfe": 9.299999999998931,
+    "winners_avg_mae": 8.29999999999984,
+    "losers_avg_mfe": 0.0,
+    "losers_avg_mae": 0.0
+  },
+  "vs_v4_comparison": {
+    "v4_trades": 21,
+    "v4_pf": 0.41777111710814324,
+    "v4_net": -757.2019938007397,
+    "v7_trades": 2,
+    "v7_pf": Infinity,
+    "v7_net": 114.59812413835613,
+    "trade_reduction_pct": 90.47619047619048,
+    "pf_improvement": Infinity
+  },
+  "rejection_bonus_stats": {
+    "trades_with_rejection": 0,
+    "trades_without_rejection": 2,
+    "wr_with_rejection": 0.0,
+    "wr_without_rejection": 100.0,
+    "pf_with_rejection": 0.0,
+    "pf_without_rejection": Infinity,
+    "avg_sl_with_rejection_pips": 0.0,
+    "avg_sl_without_rejection_pips": 27.991666666667868,
+    "net_pnl_with_rejection": 0.0,
+    "net_pnl_without_rejection": 114.59812413835613
+  },
+  "session_envelope_tp_stats": {
+    "times_midpoint_used_as_tp": 0,
+    "times_pivot_used_as_tp": 2,
+    "avg_tp_distance_midpoint": 5.849999999999511,
+    "avg_tp_distance_pivot": 30.46666666666482,
+    "wr_midpoint_tp": 0.0,
+    "wr_pivot_tp": 100.0
+  },
+  "divergence_tracking_stats": {
+    "trades_with_divergence": 1,
+    "trades_without_divergence": 1,
+    "wr_with_divergence": 100.0,
+    "wr_without_divergence": 100.0,
+    "pf_with_divergence": Infinity,
+    "pf_without_divergence": Infinity
+  },
+  "trend_regime_stats": {
+    "sessions_traded": 8,
+    "sessions_skipped_by_trend": 20,
+    "estimated_pnl_skipped": 286.4953103458903
+  },
+  "quality_marker_matrix": {
+    "none": {
+      "trades": 1,
+      "wr": 100.0,
+      "pf": Infinity,
+      "net": 42.703003876480494
+    },
+    "rejection_only": {
+      "trades": 0,
+      "wr": 0.0,
+      "pf": 0.0,
+      "net": 0.0
+    },
+    "divergence_only": {
+      "trades": 1,
+      "wr": 100.0,
+      "pf": Infinity,
+      "net": 71.89512026187563
+    },
+    "rejection_and_divergence": {
+      "trades": 0,
+      "wr": 0.0,
+      "pf": 0.0,
+      "net": 0.0
+    },
+    "inside_ir": {
+      "trades": 2,
+      "wr": 100.0,
+      "pf": Infinity,
+      "net": 114.59812413835613
+    },
+    "outside_ir": {
+      "trades": 0,
+      "wr": 0.0,
+      "pf": 0.0,
+      "net": 0.0
+    }
+  },
+  "vs_v7_comparison": {
+    "v7_trades": 9,
+    "v7_wr": 55.55555555555556,
+    "v7_pf": 0.6954970135071677,
+    "v7_net": -137.7489061133208,
+    "v7_maxdd": 381.20656384780887,
+    "v10_trades": 2,
+    "v10_wr": 100.0,
+    "v10_pf": Infinity,
+    "v10_net": 114.59812413835613,
+    "v10_maxdd": 0.0
+  },
+  "diagnostics": {
+    "counts": {
+      "bars_total": 50000,
+      "bars_outside_tokyo_hours": 29978,
+      "bars_disallowed_day": 10787,
+      "bars_in_session": 9235,
+      "bars_passed_session_filter": 9235,
+      "blocked_trend_regime_skip": 6595,
+      "bars_passed_breakout_check": 2310,
+      "bars_passed_indicator_check": 2310,
+      "bars_after_global_filters": 2245,
+      "bars_passed_atr_filter": 2245,
+      "bars_passed_regime_filter": 2245,
+      "bars_reached_signal_scoring": 2245,
+      "blocked_no_signal": 2222,
+      "bars_with_sar_flip": 2137,
+      "long_cond_sar_true": 1078,
+      "short_cond_sar_true": 1059,
+      "bars_with_short_signal_zone": 901,
+      "short_cond_zone_true": 901,
+      "short_cond_rsi_soft_true": 580,
+      "bars_with_bb_touch": 331,
+      "blocked_missing_pivots": 330,
+      "long_cond_rsi_soft_true": 215,
+      "short_cond_bb_true": 205,
+      "long_cond_bb_true": 126,
+      "bars_with_long_signal_zone": 107,
+      "long_cond_zone_true": 107,
+      "blocked_regime_not_ranging": 65,
+      "bars_with_confluence_met": 23,
+      "short_all_core_conditions_true": 23,
+      "short_confluence_min_met": 23,
+      "signals_pre_v7_filters": 23,
+      "blocked_combo_filter": 14,
+      "signal_short": 9,
+      "bars_with_entry_triggered": 2,
+      "blocked_min_entry_gap": 2,
+      "entries_short": 2,
+      "entries_total": 2,
+      "blocked_max_open_cap": 1,
+      "signal_long": 0
+    },
+    "top_15": {
+      "bars_total": 50000,
+      "bars_outside_tokyo_hours": 29978,
+      "bars_disallowed_day": 10787,
+      "bars_in_session": 9235,
+      "bars_passed_session_filter": 9235,
+      "blocked_trend_regime_skip": 6595,
+      "bars_passed_breakout_check": 2310,
+      "bars_passed_indicator_check": 2310,
+      "bars_after_global_filters": 2245,
+      "bars_passed_atr_filter": 2245,
+      "bars_passed_regime_filter": 2245,
+      "bars_reached_signal_scoring": 2245,
+      "blocked_no_signal": 2222,
+      "bars_with_sar_flip": 2137,
+      "long_cond_sar_true": 1078
+    },
+    "verification": {
+      "first_valid_indicator_bar": 940,
+      "total_in_session_bars": 9235,
+      "in_session_valid_indicator_bars": 8905,
+      "in_session_valid_indicator_pct": 96.42663779101245,
+      "in_session_not_blocked_by_breakout_preview": 8515,
+      "in_session_not_blocked_by_breakout_preview_pct": 92.20357336220899,
+      "breakout_mode": "rolling",
+      "rolling_window_minutes": 60,
+      "rolling_range_threshold_pips": 40.0,
+      "cooldown_minutes": 15
+    }
+  },
+  "equity_curve": [
+    {
+      "trade_number": 1,
+      "entry_datetime": "2026-01-08 19:15:00+00:00",
+      "exit_datetime": "2026-01-08 21:44:00+00:00",
+      "equity_after": 50042.70300387648,
+      "drawdown_usd": 0.0,
+      "drawdown_pct": 0.0
+    },
+    {
+      "trade_number": 2,
+      "entry_datetime": "2026-01-08 19:26:00+00:00",
+      "exit_datetime": "2026-01-08 22:04:00+00:00",
+      "equity_after": 50114.598124138356,
+      "drawdown_usd": 0.0,
+      "drawdown_pct": 0.0
+    }
+  ],
+  "drawdown_curve": [
+    {
+      "trade_number": 1,
+      "drawdown_usd": 0.0,
+      "drawdown_pct": 0.0
+    },
+    {
+      "trade_number": 2,
+      "drawdown_usd": 0.0,
+      "drawdown_pct": 0.0
+    }
+  ],
+  "trades": [
+    {
+      "trade_id": 1,
+      "entry_datetime": "2026-01-08 19:15:00+00:00",
+      "signal_datetime": "2026-01-08 19:14:00+00:00",
+      "confirmation_delay_candles": 1,
+      "exit_datetime": "2026-01-08 21:44:00+00:00",
+      "direction": "short",
+      "entry_price": 156.9005,
+      "exit_price": 156.8755,
+      "sl_price": 156.88049999999998,
+      "tp_price": 156.42322133333334,
+      "exit_reason": "tp1_then_time_decay",
+      "pips": 4.250000000000398,
+      "usd": 42.703003876480494,
+      "confluence_score": 5,
+      "position_size_units": 157600,
+      "partial_tp_pips": 6.0,
+      "initial_sl_pips": 28.0,
+      "regime_label": "neutral",
+      "confluence_combo": "ABCDE",
+      "quality_label": "medium",
+      "size_mult_total": 0.75,
+      "size_mult_regime": 1.0,
+      "size_mult_quality": 0.75,
+      "size_mult_hour": 1.0,
+      "size_mult_dd": 1.0,
+      "dd_tier": "full",
+      "signal_strength_score": 6,
+      "signal_strength_tier": "moderate",
+      "entry_delay_type": "immediate",
+      "mfe_pips": 7.499999999998863,
+      "mae_pips": 10.099999999999909,
+      "rejection_confirmed": false,
+      "divergence_present": false,
+      "inside_ir": true,
+      "quality_markers": "inside_ir",
+      "sl_source": "pivot",
+      "tp_source": "pivot_fallback",
+      "distance_to_ir_boundary_pips": 3.999999999999204,
+      "distance_to_midpoint_pips": 5.150000000000432,
+      "distance_to_pivot_pips": 29.766666666665742,
+      "entry_session_day": "2026-01-09",
+      "duration_minutes": 149.0,
+      "equity_before": 50000.0,
+      "equity_after": 50042.70300387648,
+      "entry_regime": "TOKYO_MEANREV",
+      "entry_signal_mode": "tokyo_meanrev",
+      "entry_session": "tokyo",
+      "pivot_P": 156.62033333333335,
+      "pivot_R1": 156.81744533333335,
+      "pivot_R2": 156.93922133333334,
+      "pivot_S1": 156.42322133333334,
+      "pivot_S2": 156.30144533333336,
+      "bb_upper": 156.91470164904158,
+      "bb_mid": 156.85785,
+      "bb_lower": 156.80099835095845,
+      "sar_value": 156.902,
+      "sar_direction": "bullish",
+      "rsi_m5": 75.11520737327243,
+      "atr_m15": 0.07214285714285243
+    },
+    {
+      "trade_id": 2,
+      "entry_datetime": "2026-01-08 19:26:00+00:00",
+      "signal_datetime": "2026-01-08 19:22:00+00:00",
+      "confirmation_delay_candles": 4,
+      "exit_datetime": "2026-01-08 22:04:00+00:00",
+      "direction": "short",
+      "entry_price": 156.9365,
+      "exit_price": 156.8535,
+      "sl_price": 156.91649999999998,
+      "tp_price": 156.42322133333334,
+      "exit_reason": "tp1_then_session_close",
+      "pips": 7.150000000000034,
+      "usd": 71.89512026187563,
+      "confluence_score": 5,
+      "position_size_units": 157730,
+      "partial_tp_pips": 6.0,
+      "initial_sl_pips": 27.983333333335736,
+      "regime_label": "neutral",
+      "confluence_combo": "ABCDE",
+      "quality_label": "medium",
+      "size_mult_total": 0.75,
+      "size_mult_regime": 1.0,
+      "size_mult_quality": 0.75,
+      "size_mult_hour": 1.0,
+      "size_mult_dd": 1.0,
+      "dd_tier": "full",
+      "signal_strength_score": 5,
+      "signal_strength_tier": "moderate",
+      "entry_delay_type": "immediate",
+      "mfe_pips": 11.099999999999,
+      "mae_pips": 6.499999999999773,
+      "rejection_confirmed": false,
+      "divergence_present": true,
+      "inside_ir": true,
+      "quality_markers": "divergence,inside_ir",
+      "sl_source": "pivot",
+      "tp_source": "pivot_fallback",
+      "distance_to_ir_boundary_pips": 2.600000000001046,
+      "distance_to_midpoint_pips": 6.54999999999859,
+      "distance_to_pivot_pips": 31.1666666666639,
+      "entry_session_day": "2026-01-09",
+      "duration_minutes": 158.0,
+      "equity_before": 50042.70300387648,
+      "equity_after": 50114.598124138356,
+      "entry_regime": "TOKYO_MEANREV",
+      "entry_signal_mode": "tokyo_meanrev",
+      "entry_session": "tokyo",
+      "pivot_P": 156.62033333333335,
+      "pivot_R1": 156.81744533333335,
+      "pivot_R2": 156.93922133333334,
+      "pivot_S1": 156.42322133333334,
+      "pivot_S2": 156.30144533333336,
+      "bb_upper": 156.92972726044275,
+      "bb_mid": 156.8624,
+      "bb_lower": 156.79507273955727,
+      "sar_value": 156.9090810070568,
+      "sar_direction": "bullish",
+      "rsi_m5": 71.57894736841963,
+      "atr_m15": 0.06857142857142508
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "asian_range_stats": {
+    "avg_width_pips": 33.48764204545451,
+    "median_width_pips": 27.250000000000796,
+    "min_width": 5.599999999998317,
+    "max_width": 458.6999999999989,
+    "pct_under_12_pips": 6.534090909090909,
+    "pct_12_to_30_pips": 52.55681818181818,
+    "pct_30_to_40_pips": 16.90340909090909,
+    "pct_over_40_pips": 24.005681818181817,
+    "performance_by_range_bucket": {
+      "tight_under_12": {
+        "trades": 26,
+        "wr": 19.230769230769234,
+        "pf": 0.22104512217664438,
+        "net": -3864.303926674525
+      },
+      "normal_12_30": {
+        "trades": 174,
+        "wr": 38.50574712643678,
+        "pf": 0.4725130144409713,
+        "net": -9083.08525375405
+      },
+      "wide_30_40": {
+        "trades": 4,
+        "wr": 50.0,
+        "pf": 0.9790284000617975,
+        "net": -2.9496549316950933
+      }
+    }
+  },
+  "fakeout_stats": {
+    "total_breakout_signals": 2313,
+    "confirmed_breakouts": 204,
+    "fakeouts_avoided": 221,
+    "whipsaws_detected": 3,
+    "sessions_stopped_after_2_fails": 6,
+    "time_exit_45min_triggers": 27,
+    "avg_breakout_speed_pips_per_5min": {
+      "winners": 1.260246350347188,
+      "losers": -2.0095010775036712
+    }
+  }
+}

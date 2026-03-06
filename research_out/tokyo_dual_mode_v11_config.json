@@ -1,0 +1,204 @@
+{
+  "strategy_id": "tokyo_dual_mode_v11",
+  "name": "Tokyo Dual-Mode V11",
+  "broker": "OANDA",
+  "account_type": "demo",
+  "instrument": "USD_JPY",
+  "starting_equity_usd": 100000,
+  "execution_model": {
+    "spread_pips": 1.6,
+    "commission_per_million": 0.0,
+    "leverage": 50,
+    "lot_sizing": "units"
+  },
+  "run_sequence": [
+    {
+      "label": "250k",
+      "input_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_250k.csv",
+      "output_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_250k_report.json",
+      "output_trades_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_250k_trades.csv",
+      "output_equity_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_250k_equity.csv"
+    },
+    {
+      "label": "500k",
+      "input_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_500k.csv",
+      "output_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_500k_report.json",
+      "output_trades_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_500k_trades.csv",
+      "output_equity_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_500k_equity.csv"
+    },
+    {
+      "label": "1000k",
+      "input_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_1000k.csv",
+      "output_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_1000k_report.json",
+      "output_trades_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_1000k_trades.csv",
+      "output_equity_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_1000k_equity.csv"
+    },
+    {
+      "label": "walkforward_700k",
+      "input_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_700k_split.csv",
+      "output_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_walkforward_700k_report.json",
+      "output_trades_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_walkforward_700k_trades.csv",
+      "output_equity_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_walkforward_700k_equity.csv"
+    },
+    {
+      "label": "walkforward_300k",
+      "input_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_300k_split.csv",
+      "output_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_walkforward_300k_report.json",
+      "output_trades_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_walkforward_300k_trades.csv",
+      "output_equity_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_walkforward_300k_equity.csv"
+    }
+  ],
+  "walkforward_comparison_output": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_walkforward_comparison.json",
+  "day_analysis_output": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_day_analysis.json",
+  "month_analysis_output": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_month_analysis.json",
+  "hour_analysis_output": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_dualmode_v11_hour_analysis.json",
+  "session_phases": {
+    "morning_active": {
+      "start_jst": "09:00",
+      "end_jst": "11:00",
+      "start_utc": "00:00",
+      "end_utc": "02:00",
+      "trading_allowed": true,
+      "modes_allowed": ["breakout", "mean_reversion"]
+    },
+    "lunch_deadzone": {
+      "start_jst": "11:00",
+      "end_jst": "13:00",
+      "start_utc": "02:00",
+      "end_utc": "04:00",
+      "trading_allowed": false,
+      "modes_allowed": []
+    },
+    "afternoon_active": {
+      "start_jst": "13:00",
+      "end_jst": "15:00",
+      "start_utc": "04:00",
+      "end_utc": "06:00",
+      "trading_allowed": true,
+      "modes_allowed": ["mean_reversion", "breakout", "continuation"]
+    }
+  },
+  "session_filter": {
+    "allowed_trading_days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+  },
+  "news_filter": {
+    "enabled": true,
+    "data_source": "built_in",
+    "calendar_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/v5_scheduled_events_utc.csv",
+    "pre_event_block_minutes": 30,
+    "post_event_block_minutes": 60,
+    "high_impact_block_minutes_pre": 60,
+    "high_impact_block_minutes_post": 90,
+    "action_during_block": "no_new_entries",
+    "existing_positions_during_block": "tighten_trail_to_3_pips",
+    "news_trend_mode": {
+      "enabled": true,
+      "min_move_pips": 15,
+      "entry_window_after_block_minutes": 30,
+      "strategy": "breakout"
+    }
+  },
+  "day_type_detection": {
+    "evaluation_time_utc": "01:00",
+    "ranging_criteria": {
+      "max_first_hour_range_pips": 20,
+      "max_first_hour_direction_pips": 10,
+      "max_adx": 25,
+      "no_high_impact_news": true
+    },
+    "trending_criteria": {
+      "min_first_hour_range_pips": 20,
+      "min_first_hour_direction_pips": 15,
+      "min_adx": 25
+    }
+  },
+  "position_sizing": {
+    "base_risk_pct": 1.0,
+    "mode_adjustments": {
+      "mean_reversion": 1.0,
+      "breakout": 0.75,
+      "news_reaction": 0.5
+    },
+    "max_position_units": 1000000,
+    "max_concurrent_positions": 2,
+    "max_trades_per_phase": 3,
+    "max_trades_per_session": 5
+  },
+  "trade_management": {
+    "min_time_between_entries_minutes": 10,
+    "afternoon_max_trades": 2
+  },
+  "indicators": {
+    "fibonacci_pivots_daily": {
+      "type": "fibonacci",
+      "ny_close_hour_utc": 22
+    },
+    "bollinger_bands": {
+      "period": 20,
+      "std_dev": 2.0,
+      "timeframe": "M5"
+    },
+    "rsi": {
+      "period": 14,
+      "timeframe": "M5"
+    },
+    "atr": {
+      "period": 14,
+      "timeframe": "M15"
+    },
+    "adx": {
+      "period": 14,
+      "timeframe": "M15"
+    },
+    "parabolic_sar": {
+      "af_start": 0.02,
+      "af_increment": 0.02,
+      "af_max": 0.2
+    },
+    "ema": {
+      "period": 20,
+      "timeframe": "M5"
+    },
+    "roc": {
+      "period": 10,
+      "timeframe": "M5"
+    }
+  },
+  "mode_rules": {
+    "mean_reversion": {
+      "pivot_tolerance_pips": 10,
+      "rsi_long_max": 40,
+      "rsi_short_min": 60
+    },
+    "breakout": {
+      "break_buffer_pips": 3,
+      "min_adx": 20
+    }
+  },
+  "exit_rules": {
+    "mean_reversion": {
+      "tp_min_pips": 5,
+      "partial_close_pct": 0.6,
+      "trail_activate_pips": 0.0,
+      "trail_distance_pips": 6.0,
+      "sl_buffer_pips": 8.0,
+      "sl_min_pips": 8.0,
+      "sl_max_pips": 25.0
+    },
+    "breakout": {
+      "tp_atr_mult": 1.5,
+      "tp_min_pips": 10.0,
+      "tp_max_pips": 40.0,
+      "trail_activate_pips": 10.0,
+      "trail_distance_pips": 8.0,
+      "sl_min_pips": 8.0,
+      "sl_max_pips": 30.0
+    }
+  },
+  "day_month_analysis": {
+    "track_by_day": true,
+    "track_by_month": true,
+    "track_by_day_and_mode": true,
+    "output_format": "detailed_table"
+  }
+}

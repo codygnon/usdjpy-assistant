@@ -1,0 +1,39 @@
+{
+  "training": {
+    "tag": "tokyo_optimized_v14_walkforward_700k",
+    "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_optimized_v14_walkforward_700k_report.json",
+    "trades_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_optimized_v14_walkforward_700k_trades.csv",
+    "equity_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_optimized_v14_walkforward_700k_equity.csv",
+    "months": 22.750125484827745,
+    "trades": 98,
+    "wr": 74.48979591836735,
+    "pf": 2.0621258707348438,
+    "net_usd": 8049.163964753544,
+    "max_dd_usd": 3025.131016854386,
+    "max_dd_pct": 2.838369292163944,
+    "usd_per_month": 353.8074535070851,
+    "net_over_maxdd": 2.6607654081452923,
+    "avg_win_pips": 6.376891715590957,
+    "avg_loss_pips": -9.167333333332408,
+    "expectancy_per_trade": 82.13432617095452
+  },
+  "testing": {
+    "tag": "tokyo_optimized_v14_walkforward_300k",
+    "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_optimized_v14_walkforward_300k_report.json",
+    "trades_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_optimized_v14_walkforward_300k_trades.csv",
+    "equity_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_optimized_v14_walkforward_300k_equity.csv",
+    "months": 9.71485284052019,
+    "trades": 41,
+    "wr": 80.48780487804879,
+    "pf": 2.234168830242588,
+    "net_usd": 3512.0184674546663,
+    "max_dd_usd": 1400.399931338281,
+    "max_dd_pct": 1.385039996107843,
+    "usd_per_month": 361.5102076282827,
+    "net_over_maxdd": 2.507868208832625,
+    "avg_win_pips": 5.833170995671477,
+    "avg_loss_pips": -10.487499999999628,
+    "expectancy_per_trade": 85.65898701108942
+  },
+  "pf_retention_pct": 108.34299020973128
+}
