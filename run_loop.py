@@ -2578,28 +2578,16 @@ def main() -> None:
                             try:
                                 d_df = data_by_tf.get("D")
                                 if d_df is not None and len(d_df) >= 2:
-                                    # Filter for complete candles (both high and low valid)
-                                    d_complete = d_df.dropna(subset=["high", "low"])
-                                    if len(d_complete) >= 2:
-                                        prev_row = d_complete.iloc[-2]
-                                        _ntz_levels["prev_day_high"] = float(prev_row["high"])
-                                        _ntz_levels["prev_day_low"] = float(prev_row["low"])
+                                    _ntz_levels["prev_day_high"] = float(d_df["high"].iloc[-2])
+                                    _ntz_levels["prev_day_low"] = float(d_df["low"].iloc[-2])
                                 w_df = data_by_tf.get("W")
                                 if w_df is not None and len(w_df) >= 2:
-                                    # Filter for complete candles
-                                    w_complete = w_df.dropna(subset=["high", "low"])
-                                    if len(w_complete) >= 2:
-                                        prev_row = w_complete.iloc[-2]
-                                        _ntz_levels["weekly_high"] = float(prev_row["high"])
-                                        _ntz_levels["weekly_low"] = float(prev_row["low"])
+                                    _ntz_levels["weekly_high"] = float(w_df["high"].iloc[-2])
+                                    _ntz_levels["weekly_low"] = float(w_df["low"].iloc[-2])
                                 mn_df = data_by_tf.get("MN")
                                 if mn_df is not None and len(mn_df) >= 2:
-                                    # Filter for complete candles
-                                    mn_complete = mn_df.dropna(subset=["high", "low"])
-                                    if len(mn_complete) >= 2:
-                                        prev_row = mn_complete.iloc[-2]
-                                        _ntz_levels["monthly_high"] = float(prev_row["high"])
-                                        _ntz_levels["monthly_low"] = float(prev_row["low"])
+                                    _ntz_levels["monthly_high"] = float(mn_df["high"].iloc[-2])
+                                    _ntz_levels["monthly_low"] = float(mn_df["low"].iloc[-2])
                                 ntz_filter.update_levels(**_ntz_levels)
                             except Exception as _ntz_err:
                                 print(f"[{profile.profile_name}] NTZ level update error: {_ntz_err}")
