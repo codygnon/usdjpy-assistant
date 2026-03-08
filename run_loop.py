@@ -2615,7 +2615,7 @@ def main() -> None:
                             _ntz_levels: dict = {}
                             try:
                                 def _prev_candle_hl(df, tf_label):
-                                    """Extract high/low from the previous completed candle (sort by time, skip today's forming candle)."""
+                                    """Extract high/low from the previous completed candle (sort by time, check if last is today)."""
                                     if df is None or df.empty or len(df) < 2:
                                         return None, None
                                     d_sorted = df.copy()
@@ -2623,11 +2623,19 @@ def main() -> None:
                                     d_sorted = d_sorted.dropna(subset=["_time"]).sort_values("_time")
                                     if len(d_sorted) < 2:
                                         return None, None
-                                    # Last candle may be forming/incomplete — use the one before it
-                                    prev_row = d_sorted.iloc[-2]
+                                    now_date = pd.Timestamp.now(tz="UTC").date().isoformat()
+                                    last_date = d_sorted.iloc[-1]["_time"].date().isoformat()
+                                    if last_date == now_date:
+                                        # Last candle is today's forming candle — use the one before
+                                        prev_row = d_sorted.iloc[-2]
+                                        _log(f"NTZ {tf_label}: last candle is today ({now_date}), using iloc[-2]")
+                                    else:
+                                        # Last candle is a past completed day — use it directly
+                                        prev_row = d_sorted.iloc[-1]
+                                        _log(f"NTZ {tf_label}: last candle is {last_date} (not today {now_date}), using iloc[-1]")
                                     h = float(prev_row["high"])
                                     l = float(prev_row["low"])
-                                    _log(f"NTZ {tf_label}: prev candle time={prev_row['_time']} H={h:.3f} L={l:.3f} (rows={len(d_sorted)})")
+                                    _log(f"NTZ {tf_label}: time={prev_row['_time']} H={h:.3f} L={l:.3f}")
                                     return h, l
 
                                 d_df = data_by_tf.get("D")
