@@ -3535,6 +3535,15 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
                 result["positions"] = _fetch_live_positions(profile_name, profile_path)
             except Exception:
                 result["positions"] = []
+            # Attach loop log if available
+            try:
+                _loop_log_path = log_dir / "loop_log.json"
+                if _loop_log_path.exists():
+                    result["loop_log"] = json.loads(_loop_log_path.read_text(encoding="utf-8"))
+                else:
+                    result["loop_log"] = []
+            except Exception:
+                result["loop_log"] = []
             return result
 
         return {

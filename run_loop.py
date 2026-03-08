@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import os
 import re
 import sys
 import time
+import traceback
 from pathlib import Path
 
 # Ensure project root is on path (fixes ModuleNotFoundError when started as subprocess)
@@ -1177,10 +1179,28 @@ def main() -> None:
     store = SqliteStore(log_dir / "assistant.db")
     store.init_db()
 
+    # Loop log ring buffer — captures last 200 log entries for dashboard display
+    _loop_log: collections.deque = collections.deque(maxlen=200)
+    _loop_log_path = log_dir / "loop_log.json"
+
+    def _log(msg: str, level: str = "INFO") -> None:
+        """Append a timestamped message to the loop log ring buffer and print to console."""
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        entry = {"ts": ts, "level": level, "msg": msg}
+        _loop_log.append(entry)
+        print(f"[{profile.profile_name}] [{level}] {msg}")
+        # Persist to disk so dashboard can read it
+        try:
+            _loop_log_path.write_text(json.dumps(list(_loop_log), ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
     adapter = get_adapter(profile)
     adapter.initialize()
     try:
         adapter.ensure_symbol(profile.symbol)
+        _log("Loop started, symbol ensured")
 
         last_seen_m1_time: str | None = None
         poll_sec = _poll_seconds(profile, args.poll_seconds)
@@ -1342,10 +1362,11 @@ def main() -> None:
             return df
 
         while True:
+          try:
             loop_count += 1
             if loop_count % 20 == 0:
-                print(f"[{profile.profile_name}] heartbeat loop={loop_count}")
-            
+                _log(f"heartbeat loop={loop_count}")
+
             # Periodic trade sync (detect externally closed trades; import from broker history)
             if loop_count - last_sync_loop >= SYNC_INTERVAL_LOOPS:
                 try:
@@ -1373,6 +1394,7 @@ def main() -> None:
             # Fetch market data with retries (502/503/timeouts); avoid exiting on transient broker errors
             data_by_tf = None
             tick = None
+            _log(f"Fetching market data (attempt loop={loop_count})")
             for _fetch_attempt in range(_MAX_FETCH_RETRIES):
                 try:
                     data_by_tf = {
@@ -1393,12 +1415,14 @@ def main() -> None:
                     if has_kt_cg_trial_9:
                         try:
                             data_by_tf["W"] = _get_bars_cached(profile.symbol, "W", 2)
+                            _log("W candle fetch OK")
                         except Exception as _w_err:
-                            print(f"[{profile.profile_name}] W candle fetch failed (NTZ will skip weekly levels): {_w_err}")
+                            _log(f"W candle fetch failed: {_w_err}", "WARN")
                         try:
                             data_by_tf["MN"] = _get_bars_cached(profile.symbol, "MN", 2)
+                            _log("MN candle fetch OK")
                         except Exception as _mn_err:
-                            print(f"[{profile.profile_name}] MN candle fetch failed (NTZ will skip monthly levels): {_mn_err}")
+                            _log(f"MN candle fetch failed: {_mn_err}", "WARN")
 
                     # Fetch H1 data when needed by Uncle Parsh H1 Breakout.
                     if has_uncle_parsh:
@@ -3010,6 +3034,10 @@ def main() -> None:
                 break
 
             time.sleep(poll_sec)
+
+          except Exception as _loop_exc:
+            _log(f"LOOP EXCEPTION: {_loop_exc}\n{traceback.format_exc()}", "ERROR")
+            time.sleep(5)
 
     finally:
         adapter.shutdown()
