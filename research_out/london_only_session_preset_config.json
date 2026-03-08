@@ -1,0 +1,63 @@
+{
+  "account": {
+    "starting_balance": 100000,
+    "leverage": 50,
+    "max_margin_usage_fraction_per_trade": 0.5,
+    "max_open_positions": 2,
+    "max_daily_risk_pct": 0.015
+  },
+  "execution_model": {
+    "spread_mode": "realistic",
+    "spread_avg_pips": 1.6,
+    "spread_min_pips": 1.0,
+    "spread_max_pips": 3.5
+  },
+  "session": {
+    "active_days_utc": ["Tuesday", "Wednesday", "Thursday"],
+    "entry_cutoff_minutes_before_ny_open": 60,
+    "force_close_at_ny_open": true
+  },
+  "position_sizing": {
+    "risk_per_trade_pct": 0.0075,
+    "round_to_units": 100
+  },
+  "arb": {
+    "enabled": true,
+    "breakout_buffer_pips": 7.0,
+    "sl_buffer_pips": 3.0,
+    "asian_range_min_pips": 25.0,
+    "asian_range_max_pips": 65.0,
+    "sl_min_pips": 15.0,
+    "sl_max_pips": 40.0,
+    "tp1_r_multiple": 1.0,
+    "tp2_r_multiple": 2.0,
+    "tp1_close_fraction": 0.5,
+    "be_offset_pips_after_tp1": 1.0,
+    "max_trades_per_day": 1
+  },
+  "lmp": {
+    "enabled": true,
+    "impulse_minutes": 90,
+    "impulse_range_min_pips": 20.0,
+    "zone_fib_ratio": 0.5,
+    "entry_touch_same_or_next_close": true,
+    "sl_buffer_pips": 5.0,
+    "sl_min_pips": 12.0,
+    "sl_max_pips": 30.0,
+    "tp2_extension_ratio": 0.618,
+    "tp1_close_fraction": 0.5,
+    "be_offset_pips_after_tp1": 1.0,
+    "max_trades_per_day": 1,
+    "ema_period_15m": 20
+  },
+  "reporting": {
+    "exit_reasons": [
+      "TP1_ONLY",
+      "TP2_FULL",
+      "SL_FULL",
+      "SL_AFTER_TP1",
+      "BE_STOP",
+      "HARD_CLOSE"
+    ]
+  }
+}

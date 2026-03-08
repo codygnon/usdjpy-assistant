@@ -331,18 +331,34 @@ class OandaAdapter:
         return self._base == _BASE_URLS["practice"]
 
     def get_open_positions(self, symbol: str | None = None):
+        """Return all open trades for the account (optionally filtered by symbol).
+        OANDA paginates openTrades (default 50, max 500 per page). We fetch all pages
+        so zone-entry cap and dashboard stay correct with hundreds of open positions.
+        """
         aid = self._get_account_id()
-        data = self._req("GET", f"/v3/accounts/{aid}/openTrades")
-        trades = data.get("trades", [])
+        path = f"/v3/accounts/{aid}/openTrades"
+        page_size = 500  # OANDA max per request
+        all_trades: list = []
+        params = {"count": page_size}
+        while True:
+            data = self._req("GET", path, params=params)
+            trades = data.get("trades", [])
+            all_trades.extend(trades)
+            if len(trades) < page_size:
+                break
+            # Next page: trades with ID < oldest ID in this batch (OANDA returns newest first)
+            last_id = trades[-1].get("id")
+            if last_id is None:
+                break
+            params = {"count": page_size, "beforeID": last_id}
         if symbol:
             inst = _symbol_to_instrument(symbol)
             want_base = _instrument_to_symbol(inst).split(".")[0]
-            # Match by normalized base symbol to avoid suffix mismatches.
-            trades = [
-                t for t in trades
+            all_trades = [
+                t for t in all_trades
                 if _instrument_to_symbol(str(t.get("instrument") or "")).split(".")[0] == want_base
             ]
-        return trades
+        return all_trades
 
     def order_send_market(
         self,
