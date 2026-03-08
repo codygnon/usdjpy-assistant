@@ -1492,10 +1492,17 @@ def main() -> None:
                         d_local["time"] = pd.to_datetime(d_local["time"], utc=True, errors="coerce")
                         d_local = d_local.dropna(subset=["time"]).sort_values("time")
                         if len(d_local) >= 2:
+                            # Log all D candles so we can debug PDH/PDL selection
+                            for _di in range(len(d_local)):
+                                _dr = d_local.iloc[_di]
+                                _log(f"D1 candle [{_di}]: time={_dr['time']} H={float(_dr['high']):.3f} L={float(_dr['low']):.3f}")
                             if str(d_local.iloc[-1]["time"].date().isoformat()) == now_date:
                                 prev_row = d_local.iloc[-2]
+                                _log(f"D1 prev_row: iloc[-2] (last candle is today={now_date})")
                             else:
                                 prev_row = d_local.iloc[-1]
+                                _log(f"D1 prev_row: iloc[-1] (last candle is NOT today={now_date}, last={d_local.iloc[-1]['time'].date().isoformat()})")
+                            _log(f"D1 selected: H={float(prev_row['high']):.3f} L={float(prev_row['low']):.3f}")
                             trial7_daily_state["prev_day_high"] = float(prev_row["high"])
                             trial7_daily_state["prev_day_low"] = float(prev_row["low"])
                     except Exception:
