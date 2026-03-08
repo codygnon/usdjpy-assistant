@@ -3500,6 +3500,25 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
     return {"preset_name": profile.active_preset_name or "", "filters": filters}
 
 
+@app.post("/api/debug/cleanup")
+def debug_cleanup() -> dict[str, Any]:
+    """Temporary endpoint to remove specific log directories from Railway volume."""
+    import shutil
+    to_remove = ["fillmorebanks", "cody_demo", "parsh_demo"]
+    results = {}
+    for name in to_remove:
+        target = DATA_BASE / "logs" / name
+        if target.exists():
+            try:
+                shutil.rmtree(target)
+                results[name] = "deleted"
+            except Exception as e:
+                results[name] = f"error: {e}"
+        else:
+            results[name] = "not found"
+    return results
+
+
 @app.get("/api/debug/disk")
 def debug_disk() -> dict[str, Any]:
     """Temporary endpoint to check disk usage on Railway volume."""
