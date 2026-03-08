@@ -1389,10 +1389,17 @@ def main() -> None:
                     # Fetch D1 data when needed by daily H/L filter (Trial #4/5/8/9).
                     if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_8 or has_kt_cg_trial_9:
                         data_by_tf["D"] = _get_bars_cached(profile.symbol, "D", 2)
-                    # Fetch W and MN data for Trial #9 NTZ.
+                    # Fetch W and MN data for Trial #9 NTZ (non-fatal if unavailable).
                     if has_kt_cg_trial_9:
-                        data_by_tf["W"] = _get_bars_cached(profile.symbol, "W", 2)
-                        data_by_tf["MN"] = _get_bars_cached(profile.symbol, "MN", 2)
+                        try:
+                            data_by_tf["W"] = _get_bars_cached(profile.symbol, "W", 2)
+                        except Exception as _w_err:
+                            print(f"[{profile.profile_name}] W candle fetch failed (NTZ will skip weekly levels): {_w_err}")
+                        try:
+                            data_by_tf["MN"] = _get_bars_cached(profile.symbol, "MN", 2)
+                        except Exception as _mn_err:
+                            print(f"[{profile.profile_name}] MN candle fetch failed (NTZ will skip monthly levels): {_mn_err}")
+
                     # Fetch H1 data when needed by Uncle Parsh H1 Breakout.
                     if has_uncle_parsh:
                         data_by_tf["H1"] = _get_bars_cached(profile.symbol, "H1", 200)
