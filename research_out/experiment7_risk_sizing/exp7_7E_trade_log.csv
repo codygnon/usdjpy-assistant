@@ -1,0 +1,1 @@
+trade_id,date,day_of_week,direction,entry_time_utc,exit_time_utc,entry_price,exit_price,sl_price,tp1_price,tp2_price,sl_pips,pnl_pips,pnl_usd,exit_reason,asian_range_pips,MAE_pips,MFE_pips,position_units,trade_duration_minutes,margin_used_pct

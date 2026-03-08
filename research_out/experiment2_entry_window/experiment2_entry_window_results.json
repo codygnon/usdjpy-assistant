@@ -1,0 +1,375 @@
+{
+  "dataset": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_250k.csv",
+  "variants": {
+    "2A": {
+      "entry_window": "LONDON_OPEN to NY_OPEN-60m",
+      "entry_window_end_minutes_after_london": null,
+      "aggregate_metrics": {
+        "total_trades": 32,
+        "win_rate_pct": 53.125,
+        "avg_winner_pips": 20.09249670539417,
+        "avg_winner_usd": 380.021649376292,
+        "avg_loser_pips": -15.210266850430875,
+        "avg_loser_usd": -292.0218788944356,
+        "profit_factor": 1.4748593641579744,
+        "expectancy_per_trade_usd": 65.00124549938842,
+        "max_consecutive_wins": 4,
+        "max_consecutive_losses": 4,
+        "max_drawdown_pct": 1.2873180283613925,
+        "max_drawdown_usd": 1305.0315901130234,
+        "sharpe": 0.9271849592669021,
+        "sortino": 1.548866161016043,
+        "net_pnl_usd": 2080.0398559804294,
+        "net_pnl_pct": 2.0800398559804307,
+        "annualized_return_pct": 3.094217326310411,
+        "avg_trades_per_week": 0.9077809798270893
+      },
+      "pnl_by_entry_hour_utc": [
+        {
+          "entry_hour_utc": 7,
+          "trades": 5,
+          "net_usd": 1188.6137191921518
+        },
+        {
+          "entry_hour_utc": 8,
+          "trades": 14,
+          "net_usd": 1701.4404246381253
+        },
+        {
+          "entry_hour_utc": 9,
+          "trades": 9,
+          "net_usd": -593.1838726833399
+        },
+        {
+          "entry_hour_utc": 10,
+          "trades": 3,
+          "net_usd": -217.42741058479578
+        },
+        {
+          "entry_hour_utc": 11,
+          "trades": 1,
+          "net_usd": 0.5969954182882917
+        }
+      ],
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "TP1_PARTIAL",
+          "count": 4,
+          "total_pnl_usd": 3273.2334483638097
+        },
+        {
+          "exit_reason": "TP2_FULL",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "SL_FULL",
+          "count": 3,
+          "total_pnl_usd": -2295.4536543617046
+        },
+        {
+          "exit_reason": "BE_STOP",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "HARD_CLOSE",
+          "count": 25,
+          "total_pnl_usd": 1102.2600619783248
+        }
+      ],
+      "paths": {
+        "config": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2A_config.json",
+        "report_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2A_report.json",
+        "trade_log_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2A_trade_log.csv",
+        "equity_curve_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2A_equity.csv"
+      }
+    },
+    "2B": {
+      "entry_window": "LONDON_OPEN to LONDON_OPEN+30m",
+      "entry_window_end_minutes_after_london": 30,
+      "aggregate_metrics": {
+        "total_trades": 8,
+        "win_rate_pct": 75.0,
+        "avg_winner_pips": 21.128485306762553,
+        "avg_winner_usd": 399.40386798526373,
+        "avg_loser_pips": -21.567093952835137,
+        "avg_loser_usd": -411.7826646528473,
+        "profit_factor": 2.9098155575974562,
+        "expectancy_per_trade_usd": 196.6072348257359,
+        "max_consecutive_wins": 4,
+        "max_consecutive_losses": 2,
+        "max_drawdown_pct": 0.8103346131721398,
+        "max_drawdown_usd": 823.5653293056967,
+        "sharpe": 1.1790094865019864,
+        "sortino": 2.2772524736088138,
+        "net_pnl_usd": 1572.8578786058872,
+        "net_pnl_pct": 1.5728578786058933,
+        "annualized_return_pct": 2.336928197527066,
+        "avg_trades_per_week": 0.22694524495677232
+      },
+      "pnl_by_entry_hour_utc": [
+        {
+          "entry_hour_utc": 7,
+          "trades": 4,
+          "net_usd": 809.1819233093419
+        },
+        {
+          "entry_hour_utc": 8,
+          "trades": 4,
+          "net_usd": 763.6759552965455
+        }
+      ],
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "TP1_PARTIAL",
+          "count": 2,
+          "total_pnl_usd": 1632.7472526150364
+        },
+        {
+          "exit_reason": "TP2_FULL",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "SL_FULL",
+          "count": 1,
+          "total_pnl_usd": -764.2782295243957
+        },
+        {
+          "exit_reason": "BE_STOP",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "HARD_CLOSE",
+          "count": 5,
+          "total_pnl_usd": 704.3888555152465
+        }
+      ],
+      "paths": {
+        "config": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2B_config.json",
+        "report_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2B_report.json",
+        "trade_log_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2B_trade_log.csv",
+        "equity_curve_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2B_equity.csv"
+      }
+    },
+    "2C": {
+      "entry_window": "LONDON_OPEN to LONDON_OPEN+60m",
+      "entry_window_end_minutes_after_london": 60,
+      "aggregate_metrics": {
+        "total_trades": 12,
+        "win_rate_pct": 75.0,
+        "avg_winner_pips": 25.97944287060489,
+        "avg_winner_usd": 493.96154897292695,
+        "avg_loser_pips": -16.86701058991389,
+        "avg_loser_usd": -322.7336550341773,
+        "profit_factor": 4.591664438472803,
+        "expectancy_per_trade_usd": 289.7877479711509,
+        "max_consecutive_wins": 5,
+        "max_consecutive_losses": 2,
+        "max_drawdown_pct": 0.8347629267469819,
+        "max_drawdown_usd": 851.6083004679676,
+        "sharpe": 1.9833934354988618,
+        "sortino": 4.902801483204712,
+        "net_pnl_usd": 3477.452975653811,
+        "net_pnl_pct": 3.47745297565381,
+        "annualized_return_pct": 5.190082572313548,
+        "avg_trades_per_week": 0.34041786743515845
+      },
+      "pnl_by_entry_hour_utc": [
+        {
+          "entry_hour_utc": 7,
+          "trades": 5,
+          "net_usd": 1191.5161828464486
+        },
+        {
+          "entry_hour_utc": 8,
+          "trades": 7,
+          "net_usd": 2285.9367928073625
+        }
+      ],
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "TP1_PARTIAL",
+          "count": 4,
+          "total_pnl_usd": 3291.7080237228533
+        },
+        {
+          "exit_reason": "TP2_FULL",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "SL_FULL",
+          "count": 1,
+          "total_pnl_usd": -766.9684028067765
+        },
+        {
+          "exit_reason": "BE_STOP",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "HARD_CLOSE",
+          "count": 7,
+          "total_pnl_usd": 952.7133547377346
+        }
+      ],
+      "paths": {
+        "config": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2C_config.json",
+        "report_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2C_report.json",
+        "trade_log_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2C_trade_log.csv",
+        "equity_curve_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2C_equity.csv"
+      }
+    },
+    "2D": {
+      "entry_window": "LONDON_OPEN to LONDON_OPEN+90m",
+      "entry_window_end_minutes_after_london": 90,
+      "aggregate_metrics": {
+        "total_trades": 16,
+        "win_rate_pct": 68.75,
+        "avg_winner_pips": 23.780894498634108,
+        "avg_winner_usd": 452.91769162144755,
+        "avg_loser_pips": -11.33925636139736,
+        "avg_loser_usd": -216.81435917216965,
+        "profit_factor": 4.59572385044821,
+        "expectancy_per_trade_usd": 243.62642574844216,
+        "max_consecutive_wins": 5,
+        "max_consecutive_losses": 3,
+        "max_drawdown_pct": 0.9142498494886439,
+        "max_drawdown_usd": 932.6992557757767,
+        "sharpe": 2.177406470309492,
+        "sortino": 5.452263577368829,
+        "net_pnl_usd": 3898.0228119750745,
+        "net_pnl_pct": 3.898022811975068,
+        "annualized_return_pct": 5.823534678447495,
+        "avg_trades_per_week": 0.45389048991354464
+      },
+      "pnl_by_entry_hour_utc": [
+        {
+          "entry_hour_utc": 7,
+          "trades": 5,
+          "net_usd": 1191.5161828464486
+        },
+        {
+          "entry_hour_utc": 8,
+          "trades": 8,
+          "net_usd": 2205.622997005746
+        },
+        {
+          "entry_hour_utc": 9,
+          "trades": 3,
+          "net_usd": 500.8836321228801
+        }
+      ],
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "TP1_PARTIAL",
+          "count": 4,
+          "total_pnl_usd": 3291.8255190361797
+        },
+        {
+          "exit_reason": "TP2_FULL",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "SL_FULL",
+          "count": 1,
+          "total_pnl_usd": -766.9684028067765
+        },
+        {
+          "exit_reason": "BE_STOP",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "HARD_CLOSE",
+          "count": 11,
+          "total_pnl_usd": 1373.1656957456717
+        }
+      ],
+      "paths": {
+        "config": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2D_config.json",
+        "report_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2D_report.json",
+        "trade_log_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2D_trade_log.csv",
+        "equity_curve_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2D_equity.csv"
+      }
+    },
+    "2E": {
+      "entry_window": "LONDON_OPEN to LONDON_OPEN+120m",
+      "entry_window_end_minutes_after_london": 120,
+      "aggregate_metrics": {
+        "total_trades": 24,
+        "win_rate_pct": 54.166666666666664,
+        "avg_winner_pips": 23.295277786301423,
+        "avg_winner_usd": 441.1303792329329,
+        "avg_loser_pips": -16.032315684705882,
+        "avg_loser_usd": -306.0599083291723,
+        "profit_factor": 1.7033786149119692,
+        "expectancy_per_trade_usd": 98.66816410030134,
+        "max_consecutive_wins": 5,
+        "max_consecutive_losses": 3,
+        "max_drawdown_pct": 1.218529674908806,
+        "max_drawdown_usd": 1234.6626830260502,
+        "sharpe": 1.110448105113507,
+        "sortino": 1.9055201966173383,
+        "net_pnl_usd": 2368.035938407232,
+        "net_pnl_pct": 2.3680359384072363,
+        "annualized_return_pct": 3.5250387478406475,
+        "avg_trades_per_week": 0.6808357348703169
+      },
+      "pnl_by_entry_hour_utc": [
+        {
+          "entry_hour_utc": 7,
+          "trades": 5,
+          "net_usd": 1192.7100753372513
+        },
+        {
+          "entry_hour_utc": 8,
+          "trades": 14,
+          "net_usd": 1702.8268171051445
+        },
+        {
+          "entry_hour_utc": 9,
+          "trades": 5,
+          "net_usd": -527.5009540351633
+        }
+      ],
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "TP1_PARTIAL",
+          "count": 4,
+          "total_pnl_usd": 3276.9135767201515
+        },
+        {
+          "exit_reason": "TP2_FULL",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "SL_FULL",
+          "count": 3,
+          "total_pnl_usd": -2296.6835932054532
+        },
+        {
+          "exit_reason": "BE_STOP",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "HARD_CLOSE",
+          "count": 17,
+          "total_pnl_usd": 1387.8059548925337
+        }
+      ],
+      "paths": {
+        "config": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2E_config.json",
+        "report_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2E_report.json",
+        "trade_log_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2E_trade_log.csv",
+        "equity_curve_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment2_entry_window/exp2_2E_equity.csv"
+      }
+    }
+  }
+}

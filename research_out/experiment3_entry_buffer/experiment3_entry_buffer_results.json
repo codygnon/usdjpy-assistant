@@ -1,0 +1,290 @@
+{
+  "dataset": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_250k.csv",
+  "variants": {
+    "3A": {
+      "entry_buffer": "0.07 (7 pips)",
+      "breakout_buffer_pips": 7.0,
+      "aggregate_metrics": {
+        "total_trades": 16,
+        "win_rate_pct": 68.75,
+        "avg_winner_pips": 23.780894498634108,
+        "avg_winner_usd": 452.91769162144755,
+        "avg_loser_pips": -11.33925636139736,
+        "avg_loser_usd": -216.81435917216965,
+        "profit_factor": 4.59572385044821,
+        "expectancy_per_trade_usd": 243.62642574844216,
+        "max_consecutive_wins": 5,
+        "max_consecutive_losses": 3,
+        "max_drawdown_pct": 0.9142498494886439,
+        "max_drawdown_usd": 932.6992557757767,
+        "sharpe": 2.177406470309492,
+        "sortino": 5.452263577368829,
+        "net_pnl_usd": 3898.0228119750745,
+        "net_pnl_pct": 3.898022811975068,
+        "annualized_return_pct": 5.823534678447495,
+        "avg_trades_per_week": 0.45389048991354464
+      },
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "TP1_PARTIAL",
+          "count": 4,
+          "total_pnl_usd": 3291.8255190361797
+        },
+        {
+          "exit_reason": "TP2_FULL",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "SL_FULL",
+          "count": 1,
+          "total_pnl_usd": -766.9684028067765
+        },
+        {
+          "exit_reason": "BE_STOP",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "HARD_CLOSE",
+          "count": 11,
+          "total_pnl_usd": 1373.1656957456717
+        }
+      ],
+      "paths": {
+        "config": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3A_config.json",
+        "report_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3A_report.json",
+        "trade_log_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3A_trade_log.csv",
+        "equity_curve_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3A_equity.csv"
+      }
+    },
+    "3B": {
+      "entry_buffer": "0.03 (3 pips)",
+      "breakout_buffer_pips": 3.0,
+      "aggregate_metrics": {
+        "total_trades": 26,
+        "win_rate_pct": 61.53846153846154,
+        "avg_winner_pips": 25.45207588224522,
+        "avg_winner_usd": 486.52774380831454,
+        "avg_loser_pips": -20.32632196142316,
+        "avg_loser_usd": -391.7444130527496,
+        "profit_factor": 1.987123144978926,
+        "expectancy_per_trade_usd": 148.73076040021297,
+        "max_consecutive_wins": 6,
+        "max_consecutive_losses": 2,
+        "max_drawdown_pct": 0.9130123343792875,
+        "max_drawdown_usd": 931.2235216742702,
+        "sharpe": 1.5511379495085729,
+        "sortino": 2.882426540346647,
+        "net_pnl_usd": 3866.999770405537,
+        "net_pnl_pct": 3.8669997704055423,
+        "annualized_return_pct": 5.776766387266008,
+        "avg_trades_per_week": 0.73757204610951
+      },
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "TP1_PARTIAL",
+          "count": 3,
+          "total_pnl_usd": 2611.938474001269
+        },
+        {
+          "exit_reason": "TP2_FULL",
+          "count": 1,
+          "total_pnl_usd": 1164.569988874725
+        },
+        {
+          "exit_reason": "SL_FULL",
+          "count": 2,
+          "total_pnl_usd": -1532.678973163821
+        },
+        {
+          "exit_reason": "BE_STOP",
+          "count": 1,
+          "total_pnl_usd": 389.93012480649975
+        },
+        {
+          "exit_reason": "HARD_CLOSE",
+          "count": 19,
+          "total_pnl_usd": 1233.240155886865
+        }
+      ],
+      "paths": {
+        "config": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3B_config.json",
+        "report_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3B_report.json",
+        "trade_log_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3B_trade_log.csv",
+        "equity_curve_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3B_equity.csv"
+      }
+    },
+    "3C": {
+      "entry_buffer": "0.05 (5 pips)",
+      "breakout_buffer_pips": 5.0,
+      "aggregate_metrics": {
+        "total_trades": 20,
+        "win_rate_pct": 60.0,
+        "avg_winner_pips": 26.727108363984687,
+        "avg_winner_usd": 508.7677585066503,
+        "avg_loser_pips": -17.946460873041303,
+        "avg_loser_usd": -344.1546852692988,
+        "profit_factor": 2.2174669426999496,
+        "expectancy_per_trade_usd": 167.5987809962707,
+        "max_consecutive_wins": 3,
+        "max_consecutive_losses": 2,
+        "max_drawdown_pct": 1.139421977823655,
+        "max_drawdown_usd": 1162.8524602583493,
+        "sharpe": 1.5031807743226588,
+        "sortino": 2.8735284251567292,
+        "net_pnl_usd": 3351.9756199254143,
+        "net_pnl_pct": 3.351975619925419,
+        "annualized_return_pct": 5.001330721881869,
+        "avg_trades_per_week": 0.5673631123919308
+      },
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "TP1_PARTIAL",
+          "count": 3,
+          "total_pnl_usd": 2564.0443626570122
+        },
+        {
+          "exit_reason": "TP2_FULL",
+          "count": 1,
+          "total_pnl_usd": 1152.696511841907
+        },
+        {
+          "exit_reason": "SL_FULL",
+          "count": 2,
+          "total_pnl_usd": -1531.58065018785
+        },
+        {
+          "exit_reason": "BE_STOP",
+          "count": 1,
+          "total_pnl_usd": 390.2102470225964
+        },
+        {
+          "exit_reason": "HARD_CLOSE",
+          "count": 13,
+          "total_pnl_usd": 776.605148591749
+        }
+      ],
+      "paths": {
+        "config": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3C_config.json",
+        "report_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3C_report.json",
+        "trade_log_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3C_trade_log.csv",
+        "equity_curve_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3C_equity.csv"
+      }
+    },
+    "3D": {
+      "entry_buffer": "0.10 (10 pips)",
+      "breakout_buffer_pips": 10.0,
+      "aggregate_metrics": {
+        "total_trades": 13,
+        "win_rate_pct": 69.23076923076923,
+        "avg_winner_pips": 18.878692011308427,
+        "avg_winner_usd": 357.32978070961326,
+        "avg_loser_pips": -15.239866632570198,
+        "avg_loser_usd": -290.2542957481891,
+        "profit_factor": 2.769957304246533,
+        "expectancy_per_trade_usd": 158.07314179952022,
+        "max_consecutive_wins": 5,
+        "max_consecutive_losses": 3,
+        "max_drawdown_pct": 1.0625898572457992,
+        "max_drawdown_usd": 1080.7844507607515,
+        "sharpe": 1.418525476473778,
+        "sortino": 2.835622530871599,
+        "net_pnl_usd": 2054.9508433937626,
+        "net_pnl_pct": 2.0549508433937587,
+        "annualized_return_pct": 3.0567135759688613,
+        "avg_trades_per_week": 0.368786023054755
+      },
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "TP1_PARTIAL",
+          "count": 2,
+          "total_pnl_usd": 1635.5139352953488
+        },
+        {
+          "exit_reason": "TP2_FULL",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "SL_FULL",
+          "count": 1,
+          "total_pnl_usd": -764.8162641808718
+        },
+        {
+          "exit_reason": "BE_STOP",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "HARD_CLOSE",
+          "count": 10,
+          "total_pnl_usd": 1184.2531722792858
+        }
+      ],
+      "paths": {
+        "config": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3D_config.json",
+        "report_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3D_report.json",
+        "trade_log_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3D_trade_log.csv",
+        "equity_curve_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3D_equity.csv"
+      }
+    },
+    "3E": {
+      "entry_buffer": "0.12 (12 pips)",
+      "breakout_buffer_pips": 12.0,
+      "aggregate_metrics": {
+        "total_trades": 12,
+        "win_rate_pct": 75.0,
+        "avg_winner_pips": 16.879445179226632,
+        "avg_winner_usd": 318.98478538743007,
+        "avg_loser_pips": -21.392331001539826,
+        "avg_loser_usd": -406.8442228832725,
+        "profit_factor": 2.3521394733847547,
+        "expectancy_per_trade_usd": 137.5275333197545,
+        "max_consecutive_wins": 5,
+        "max_consecutive_losses": 2,
+        "max_drawdown_pct": 1.1854772178905608,
+        "max_drawdown_usd": 1204.7575001126388,
+        "sharpe": 1.168713213807438,
+        "sortino": 2.193193172699574,
+        "net_pnl_usd": 1650.3303998370538,
+        "net_pnl_pct": 1.650330399837054,
+        "annualized_return_pct": 2.4524875757449216,
+        "avg_trades_per_week": 0.34041786743515845
+      },
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "TP1_PARTIAL",
+          "count": 2,
+          "total_pnl_usd": 1603.757745370342
+        },
+        {
+          "exit_reason": "TP2_FULL",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "SL_FULL",
+          "count": 1,
+          "total_pnl_usd": -764.0092121961576
+        },
+        {
+          "exit_reason": "BE_STOP",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "HARD_CLOSE",
+          "count": 9,
+          "total_pnl_usd": 810.5818666628696
+        }
+      ],
+      "paths": {
+        "config": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3E_config.json",
+        "report_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3E_report.json",
+        "trade_log_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3E_trade_log.csv",
+        "equity_curve_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment3_entry_buffer/exp3_3E_equity.csv"
+      }
+    }
+  }
+}

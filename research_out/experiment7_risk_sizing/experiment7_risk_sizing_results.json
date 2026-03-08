@@ -1,0 +1,305 @@
+{
+  "dataset": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_250k.csv",
+  "variants": {
+    "7A": {
+      "risk_per_trade_pct": 0.0075,
+      "aggregate_metrics": {
+        "total_trades": 15,
+        "win_rate_pct": 73.33333333333333,
+        "avg_winner_pips": 23.780847821553245,
+        "avg_winner_usd": 453.12843311749515,
+        "avg_loser_pips": -13.104954897475096,
+        "avg_loser_usd": -250.77102467424487,
+        "profit_factor": 4.969087607676435,
+        "expectancy_per_trade_usd": 265.4219110396979,
+        "max_consecutive_wins": 5,
+        "max_consecutive_losses": 2,
+        "max_drawdown_pct": 0.8347629267469819,
+        "max_drawdown_usd": 851.6083004679676,
+        "sharpe": 2.2256354366218574,
+        "sortino": 5.592778183264653,
+        "net_pnl_usd": 3981.328665595468,
+        "net_pnl_pct": 3.9813286655954725,
+        "annualized_return_pct": 5.949154269200219,
+        "avg_trades_per_week": 0.4255223342939481
+      },
+      "margin_utilization": {
+        "avg_margin_used_pct": 5.725789166553532,
+        "max_margin_used_pct": 5.9600926931136895
+      },
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "TP1_PARTIAL",
+          "count": 4,
+          "total_pnl_usd": 3293.162118000432
+        },
+        {
+          "exit_reason": "TP2_FULL",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "SL_FULL",
+          "count": 1,
+          "total_pnl_usd": -766.9684028067765
+        },
+        {
+          "exit_reason": "BE_STOP",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "HARD_CLOSE",
+          "count": 10,
+          "total_pnl_usd": 1455.1349504018126
+        }
+      ],
+      "paths": {
+        "config": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7A_config.json",
+        "report_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7A_report.json",
+        "trade_log_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7A_trade_log.csv",
+        "equity_curve_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7A_equity.csv"
+      }
+    },
+    "7B": {
+      "risk_per_trade_pct": 0.01,
+      "aggregate_metrics": {
+        "total_trades": 15,
+        "win_rate_pct": 73.33333333333333,
+        "avg_winner_pips": 23.78072351146942,
+        "avg_winner_usd": 607.3593242989817,
+        "avg_loser_pips": -13.104954897475096,
+        "avg_loser_usd": -336.4753278313837,
+        "profit_factor": 4.963924554549207,
+        "expectancy_per_trade_usd": 355.6700837308843,
+        "max_consecutive_wins": 5,
+        "max_consecutive_losses": 2,
+        "max_drawdown_pct": 1.1129182825033372,
+        "max_drawdown_usd": 1142.9274632737506,
+        "sharpe": 2.225618953223551,
+        "sortino": 5.592639398727976,
+        "net_pnl_usd": 5335.051255963264,
+        "net_pnl_pct": 5.335051255963263,
+        "annualized_return_pct": 7.9972370218908795,
+        "avg_trades_per_week": 0.4255223342939481
+      },
+      "margin_utilization": {
+        "avg_margin_used_pct": 7.635304769046182,
+        "max_margin_used_pct": 7.945903344297774
+      },
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "TP1_PARTIAL",
+          "count": 4,
+          "total_pnl_usd": 4409.334686472191
+        },
+        {
+          "exit_reason": "TP2_FULL",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "SL_FULL",
+          "count": 1,
+          "total_pnl_usd": -1029.529315167146
+        },
+        {
+          "exit_reason": "BE_STOP",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "HARD_CLOSE",
+          "count": 10,
+          "total_pnl_usd": 1955.245884658219
+        }
+      ],
+      "paths": {
+        "config": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7B_config.json",
+        "report_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7B_report.json",
+        "trade_log_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7B_trade_log.csv",
+        "equity_curve_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7B_equity.csv"
+      }
+    },
+    "7C": {
+      "risk_per_trade_pct": 0.015,
+      "aggregate_metrics": {
+        "total_trades": 15,
+        "win_rate_pct": 73.33333333333333,
+        "avg_winner_pips": 23.78082938658836,
+        "avg_winner_usd": 920.526093400412,
+        "avg_loser_pips": -13.104954897475096,
+        "avg_loser_usd": -510.961961072357,
+        "profit_factor": 4.954276344834712,
+        "expectancy_per_trade_usd": 538.795945541007,
+        "max_consecutive_wins": 5,
+        "max_consecutive_losses": 2,
+        "max_drawdown_pct": 1.6687217093851605,
+        "max_drawdown_usd": 1736.5028963708028,
+        "sharpe": 2.225619047971208,
+        "sortino": 5.592763964954242,
+        "net_pnl_usd": 8081.939183115105,
+        "net_pnl_pct": 8.0819391831151,
+        "annualized_return_pct": 12.191954037236874,
+        "avg_trades_per_week": 0.4255223342939481
+      },
+      "margin_utilization": {
+        "avg_margin_used_pct": 11.452967487270023,
+        "max_margin_used_pct": 11.920037585038168
+      },
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "TP1_PARTIAL",
+          "count": 4,
+          "total_pnl_usd": 6669.251794845457
+        },
+        {
+          "exit_reason": "TP2_FULL",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "SL_FULL",
+          "count": 1,
+          "total_pnl_usd": -1564.8737983609326
+        },
+        {
+          "exit_reason": "BE_STOP",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "HARD_CLOSE",
+          "count": 10,
+          "total_pnl_usd": 2977.5611866305812
+        }
+      ],
+      "paths": {
+        "config": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7C_config.json",
+        "report_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7C_report.json",
+        "trade_log_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7C_trade_log.csv",
+        "equity_curve_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7C_equity.csv"
+      }
+    },
+    "7D": {
+      "risk_per_trade_pct": 0.02,
+      "aggregate_metrics": {
+        "total_trades": 0,
+        "win_rate_pct": 0.0,
+        "avg_winner_pips": 0.0,
+        "avg_winner_usd": 0.0,
+        "avg_loser_pips": 0.0,
+        "avg_loser_usd": 0.0,
+        "profit_factor": 0.0,
+        "expectancy_per_trade_usd": 0.0,
+        "max_consecutive_wins": 0,
+        "max_consecutive_losses": 0,
+        "max_drawdown_pct": -0.0,
+        "max_drawdown_usd": -0.0,
+        "sharpe": 0.0,
+        "sortino": 0.0,
+        "net_pnl_usd": 0.0,
+        "net_pnl_pct": 0.0,
+        "annualized_return_pct": 0.0,
+        "avg_trades_per_week": 0.0
+      },
+      "margin_utilization": {
+        "avg_margin_used_pct": 0.0,
+        "max_margin_used_pct": 0.0
+      },
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "TP1_PARTIAL",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "TP2_FULL",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "SL_FULL",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "BE_STOP",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "HARD_CLOSE",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        }
+      ],
+      "paths": {
+        "config": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7D_config.json",
+        "report_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7D_report.json",
+        "trade_log_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7D_trade_log.csv",
+        "equity_curve_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7D_equity.csv"
+      }
+    },
+    "7E": {
+      "risk_per_trade_pct": 0.025,
+      "aggregate_metrics": {
+        "total_trades": 0,
+        "win_rate_pct": 0.0,
+        "avg_winner_pips": 0.0,
+        "avg_winner_usd": 0.0,
+        "avg_loser_pips": 0.0,
+        "avg_loser_usd": 0.0,
+        "profit_factor": 0.0,
+        "expectancy_per_trade_usd": 0.0,
+        "max_consecutive_wins": 0,
+        "max_consecutive_losses": 0,
+        "max_drawdown_pct": -0.0,
+        "max_drawdown_usd": -0.0,
+        "sharpe": 0.0,
+        "sortino": 0.0,
+        "net_pnl_usd": 0.0,
+        "net_pnl_pct": 0.0,
+        "annualized_return_pct": 0.0,
+        "avg_trades_per_week": 0.0
+      },
+      "margin_utilization": {
+        "avg_margin_used_pct": 0.0,
+        "max_margin_used_pct": 0.0
+      },
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "TP1_PARTIAL",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "TP2_FULL",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "SL_FULL",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "BE_STOP",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        },
+        {
+          "exit_reason": "HARD_CLOSE",
+          "count": 0,
+          "total_pnl_usd": 0.0
+        }
+      ],
+      "paths": {
+        "config": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7E_config.json",
+        "report_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7E_report.json",
+        "trade_log_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7E_trade_log.csv",
+        "equity_curve_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/experiment7_risk_sizing/exp7_7E_equity.csv"
+      }
+    }
+  }
+}

@@ -1,0 +1,180 @@
+{
+  "dataset": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_250k.csv",
+  "config": "/Users/codygnon/Documents/usdjpy_assistant/research_out/v2_baseline_uncapped_multiarb/v2_baseline_uncapped_multiarb_config.json",
+  "aggregate": {
+    "total_trades": 15,
+    "win_rate_pct": 73.33333333333333,
+    "avg_winner_pips": 23.78072351146942,
+    "avg_winner_usd": 607.3593242989817,
+    "avg_loser_pips": -13.104954897475096,
+    "avg_loser_usd": -336.4753278313837,
+    "profit_factor": 4.963924554549207,
+    "expectancy_per_trade_usd": 355.6700837308843,
+    "max_consecutive_wins": 5,
+    "max_consecutive_losses": 2,
+    "max_drawdown_usd": 1142.9274632737506,
+    "max_drawdown_pct": 1.1129182825033372,
+    "sharpe_ratio": 2.225618953223551,
+    "sortino_ratio": 5.592639398727976,
+    "net_pnl_usd": 5335.051255963264,
+    "net_pnl_pct": 5.335051255963263,
+    "annualized_return_pct": 7.9972370218908795,
+    "avg_trades_per_week": 0.4255223342939481,
+    "avg_trades_per_month": 1.850262292867435
+  },
+  "frequency_analysis": {
+    "trade_count_distribution_per_passed_day": [
+      {
+        "trades_in_day": 0,
+        "days": 35
+      },
+      {
+        "trades_in_day": 1,
+        "days": 15
+      }
+    ],
+    "average_trades_per_eligible_day": 0.3,
+    "days_with_0_entries_that_passed_range_filter": 35,
+    "total_reentries": 0,
+    "eligible_days_passing_range_filter": 50
+  },
+  "channel_breakdown": {
+    "long_entries": {
+      "count": 8,
+      "win_rate_pct": 62.5,
+      "profit_factor": 2.1707323471320152,
+      "total_pnl_usd": 1353.4476886733405
+    },
+    "short_entries": {
+      "count": 7,
+      "win_rate_pct": 85.71428571428571,
+      "profit_factor": 21.974349310344387,
+      "total_pnl_usd": 3981.6035672899234
+    },
+    "reentries_2nd_plus_same_channel_day": {
+      "count": 0,
+      "win_rate_pct": 0.0,
+      "profit_factor": 0.0,
+      "total_pnl_usd": 0.0
+    }
+  },
+  "pnl_by_day_of_week": [
+    {
+      "day": "Tuesday",
+      "trades": 5,
+      "win_rate_pct": 100.0,
+      "profit_factor": Infinity,
+      "net_pnl_usd": 2319.1681878360355
+    },
+    {
+      "day": "Wednesday",
+      "trades": 5,
+      "win_rate_pct": 80.0,
+      "profit_factor": 3.56046114133026,
+      "net_pnl_usd": 2636.0698053458314
+    },
+    {
+      "day": "Thursday",
+      "trades": 5,
+      "win_rate_pct": 40.0,
+      "profit_factor": 2.200527440460461,
+      "net_pnl_usd": 379.8132627813975
+    }
+  ],
+  "pnl_by_trade_sequence_number": [
+    {
+      "trade_sequence_number": 1,
+      "trades": 15,
+      "win_rate_pct": 73.33333333333333,
+      "net_pnl_usd": 5335.051255963264
+    }
+  ],
+  "exit_reason_breakdown_requested": [
+    {
+      "exit_reason": "TP1_PARTIAL",
+      "count": 4,
+      "total_pnl_usd": 4409.334686472191
+    },
+    {
+      "exit_reason": "TP2_FULL",
+      "count": 0,
+      "total_pnl_usd": 0.0
+    },
+    {
+      "exit_reason": "SL_FULL",
+      "count": 1,
+      "total_pnl_usd": -1029.529315167146
+    },
+    {
+      "exit_reason": "BE_STOP",
+      "count": 0,
+      "total_pnl_usd": 0.0
+    },
+    {
+      "exit_reason": "HARD_CLOSE",
+      "count": 10,
+      "total_pnl_usd": 1955.245884658219
+    }
+  ],
+  "monthly_pnl_table": [
+    {
+      "month": "2025-06",
+      "trades": 0,
+      "net_pnl_usd": 0.0,
+      "running_equity": 100000.0
+    },
+    {
+      "month": "2025-07",
+      "trades": 2,
+      "net_pnl_usd": 1767.076043729746,
+      "running_equity": 101767.07604372974
+    },
+    {
+      "month": "2025-08",
+      "trades": 1,
+      "net_pnl_usd": 929.3645882735616,
+      "running_equity": 102696.4406320033
+    },
+    {
+      "month": "2025-09",
+      "trades": 2,
+      "net_pnl_usd": -1109.205599299462,
+      "running_equity": 101587.23503270384
+    },
+    {
+      "month": "2025-10",
+      "trades": 0,
+      "net_pnl_usd": 0.0,
+      "running_equity": 101587.23503270384
+    },
+    {
+      "month": "2025-11",
+      "trades": 5,
+      "net_pnl_usd": 1433.6249914085643,
+      "running_equity": 103020.86002411241
+    },
+    {
+      "month": "2025-12",
+      "trades": 3,
+      "net_pnl_usd": 881.737858918226,
+      "running_equity": 103902.59788303063
+    },
+    {
+      "month": "2026-01",
+      "trades": 1,
+      "net_pnl_usd": 1000.416862974176,
+      "running_equity": 104903.0147460048
+    },
+    {
+      "month": "2026-02",
+      "trades": 1,
+      "net_pnl_usd": 432.036509958452,
+      "running_equity": 105335.05125596325
+    }
+  ],
+  "paths": {
+    "report_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/v2_baseline_uncapped_multiarb/v2_baseline_uncapped_multiarb_report.json",
+    "trade_log_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/v2_baseline_uncapped_multiarb/v2_baseline_uncapped_multiarb_trades.csv",
+    "equity_curve_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/v2_baseline_uncapped_multiarb/v2_baseline_uncapped_multiarb_equity.csv"
+  }
+}

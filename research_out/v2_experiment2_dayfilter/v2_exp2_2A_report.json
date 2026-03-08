@@ -1,0 +1,539 @@
+{
+  "dataset": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_250k.csv",
+  "config_snapshot": {
+    "account": {
+      "starting_balance": 100000.0,
+      "leverage": 33.0,
+      "max_margin_usage_fraction_per_trade": 0.5,
+      "max_open_positions": 5
+    },
+    "execution_model": {
+      "spread_mode": "realistic",
+      "spread_avg_pips": 1.6,
+      "spread_min_pips": 1.0,
+      "spread_max_pips": 3.5
+    },
+    "session": {
+      "active_days_utc": [
+        "Tuesday",
+        "Wednesday",
+        "Thursday"
+      ],
+      "hard_close_at_ny_open": true
+    },
+    "risk": {
+      "risk_per_trade_pct": 0.01,
+      "max_total_open_risk_pct": 0.05
+    },
+    "levels": {
+      "asian_range_min_pips": 30.0,
+      "asian_range_max_pips": 60.0,
+      "lor_range_min_pips": 4.0,
+      "lor_range_max_pips": 20.0
+    },
+    "setups": {
+      "A": {
+        "enabled": true,
+        "allow_long": true,
+        "allow_short": true,
+        "risk_per_trade_pct": 0.02,
+        "entry_start_min_after_london": 0,
+        "entry_end_min_after_london": 90,
+        "breakout_buffer_pips": 7.0,
+        "sl_buffer_pips": 3.0,
+        "sl_min_pips": 15.0,
+        "sl_max_pips": 40.0,
+        "tp1_r_multiple": 1.0,
+        "tp2_r_multiple": 2.0,
+        "tp1_close_fraction": 0.5,
+        "be_offset_pips": 1.0,
+        "reset_mode": "touch_level"
+      },
+      "B": {
+        "enabled": false,
+        "allow_long": true,
+        "allow_short": true,
+        "risk_per_trade_pct": 0.01,
+        "entry_start_min_after_london": 0,
+        "entry_end_min_before_ny": 60,
+        "confirm_window_candles": 3,
+        "reenter_cooldown_minutes": 10,
+        "close_back_inside_pips": 3.0,
+        "sl_wick_buffer_pips": 5.0,
+        "sl_min_pips": 5.0,
+        "sl_max_pips": 20.0,
+        "tp1_r_multiple": 1.0,
+        "tp2_r_multiple": 2.0,
+        "tp1_close_fraction": 0.5,
+        "be_offset_pips": 1.0,
+        "reset_mode": "cooldown"
+      },
+      "C": {
+        "enabled": false,
+        "allow_long": true,
+        "allow_short": true,
+        "risk_per_trade_pct": 0.01,
+        "entry_start_min_after_london": 0,
+        "entry_end_min_before_ny": 60,
+        "reenter_cooldown_minutes": 10,
+        "bounce_zone_pips": 5.0,
+        "min_close_offset_pips": 3.0,
+        "min_body_pips": 2.0,
+        "sl_buffer_pips": 5.0,
+        "sl_min_pips": 5.0,
+        "sl_max_pips": 15.0,
+        "tp1_r_multiple": 1.0,
+        "tp2_r_multiple": 2.0,
+        "tp1_close_fraction": 0.5,
+        "be_offset_pips": 1.0,
+        "reset_mode": "cooldown"
+      },
+      "D": {
+        "enabled": true,
+        "allow_long": true,
+        "allow_short": false,
+        "risk_per_trade_pct": 0.0075,
+        "entry_start_min_after_london": 15,
+        "entry_end_min_after_london": 120,
+        "breakout_buffer_pips": 3.0,
+        "sl_buffer_pips": 3.0,
+        "sl_min_pips": 5.0,
+        "sl_max_pips": 20.0,
+        "tp1_r_multiple": 1.0,
+        "tp2_r_multiple": 2.0,
+        "tp1_close_fraction": 0.5,
+        "be_offset_pips": 1.0,
+        "reset_mode": "touch_level"
+      }
+    }
+  },
+  "diagnostics": {
+    "days_total": 212,
+    "days_active": 106,
+    "days_asian_valid": 50,
+    "days_lor_valid": 85,
+    "trades_skipped_margin_constraint": 75,
+    "trades_skipped_open_risk_cap": 0
+  },
+  "aggregate_combined": {
+    "total_trades": 66,
+    "win_rate_pct": 53.03030303030303,
+    "avg_winner_pips": 18.16569620034136,
+    "avg_winner_usd": 829.8634165452456,
+    "avg_loser_pips": -15.02628876841164,
+    "avg_loser_usd": -652.320155545921,
+    "profit_factor": 1.4363231905399179,
+    "expectancy_per_trade_usd": 133.68628419939458,
+    "max_consecutive_wins": 7,
+    "max_consecutive_losses": 5,
+    "max_drawdown_usd": 3505.3012185718108,
+    "max_drawdown_pct": 3.250900674625151,
+    "sharpe": 1.3924799565902337,
+    "sortino": 2.4815884280423814,
+    "net_pnl_usd": 8823.294757160042,
+    "net_pnl_pct": 8.823294757160038,
+    "annualized_return_pct": 13.332918829757023,
+    "avg_trades_per_week": 1.8722982708933715,
+    "avg_trades_per_month": 8.141154088616714
+  },
+  "per_setup_breakdown": {
+    "A": {
+      "trades": 11,
+      "win_rate_pct": 72.72727272727273,
+      "profit_factor": 3.681703300234634,
+      "net_pnl_usd": 7265.613764008855,
+      "expectancy_per_trade_usd": 660.5103421826232,
+      "avg_winner_pips": 23.684509282668735,
+      "avg_loser_pips": -16.86701058991389
+    },
+    "B": {
+      "trades": 0,
+      "win_rate_pct": 0.0,
+      "profit_factor": 0.0,
+      "net_pnl_usd": 0.0,
+      "expectancy_per_trade_usd": 0.0,
+      "avg_winner_pips": 0.0,
+      "avg_loser_pips": 0.0
+    },
+    "C": {
+      "trades": 0,
+      "win_rate_pct": 0.0,
+      "profit_factor": 0.0,
+      "net_pnl_usd": 0.0,
+      "expectancy_per_trade_usd": 0.0,
+      "avg_winner_pips": 0.0,
+      "avg_loser_pips": 0.0
+    },
+    "D": {
+      "trades": 55,
+      "win_rate_pct": 49.09090909090909,
+      "profit_factor": 1.0889463171283242,
+      "net_pnl_usd": 1557.6809931511857,
+      "expectancy_per_trade_usd": 28.32147260274883,
+      "avg_winner_pips": 16.530492324096212,
+      "avg_loser_pips": -14.829068573250684
+    }
+  },
+  "frequency_analysis": {
+    "total_trades_per_setup": {
+      "A": 11,
+      "B": 0,
+      "C": 0,
+      "D": 55
+    },
+    "trades_per_day_distribution": [
+      {
+        "trades_in_day": 0,
+        "days": 44
+      },
+      {
+        "trades_in_day": 1,
+        "days": 59
+      },
+      {
+        "trades_in_day": 2,
+        "days": 2
+      },
+      {
+        "trades_in_day": 3,
+        "days": 1
+      }
+    ],
+    "average_trades_per_eligible_day": 0.7764705882352941,
+    "average_trades_per_calendar_month": 8.141154088616714,
+    "total_reentries_per_setup": {
+      "A": 0,
+      "B": 0,
+      "C": 0,
+      "D": 1
+    }
+  },
+  "direction_breakdown": {
+    "A_long": {
+      "count": 4,
+      "win_rate_pct": 50.0,
+      "net_pnl_usd": -942.1210392620271
+    },
+    "A_short": {
+      "count": 7,
+      "win_rate_pct": 85.71428571428571,
+      "net_pnl_usd": 8207.73480327088
+    },
+    "B_long": {
+      "count": 0,
+      "win_rate_pct": 0.0,
+      "net_pnl_usd": 0.0
+    },
+    "B_short": {
+      "count": 0,
+      "win_rate_pct": 0.0,
+      "net_pnl_usd": 0.0
+    },
+    "C_long": {
+      "count": 0,
+      "win_rate_pct": 0.0,
+      "net_pnl_usd": 0.0
+    },
+    "C_short": {
+      "count": 0,
+      "win_rate_pct": 0.0,
+      "net_pnl_usd": 0.0
+    },
+    "D_long": {
+      "count": 55,
+      "win_rate_pct": 49.09090909090909,
+      "net_pnl_usd": 1557.6809931511857
+    },
+    "D_short": {
+      "count": 0,
+      "win_rate_pct": 0.0,
+      "net_pnl_usd": 0.0
+    }
+  },
+  "margin_utilization": {
+    "avg_margin_used_pct": 29.426475563439002,
+    "max_margin_used_pct": 38.43990885581675,
+    "trades_skipped_margin_constraint": 75
+  },
+  "pnl_by_day_of_week": [
+    {
+      "day": "Tuesday",
+      "trades": 21,
+      "win_rate_pct": 61.904761904761905,
+      "profit_factor": 1.4330781021151198,
+      "net_pnl_usd": 2708.13970068499
+    },
+    {
+      "day": "Wednesday",
+      "trades": 27,
+      "win_rate_pct": 51.85185185185185,
+      "profit_factor": 1.7019132809489612,
+      "net_pnl_usd": 5898.575089836868
+    },
+    {
+      "day": "Thursday",
+      "trades": 18,
+      "win_rate_pct": 44.44444444444444,
+      "profit_factor": 1.038917381093545,
+      "net_pnl_usd": 216.5799666381829
+    }
+  ],
+  "pnl_by_entry_hour_utc": [
+    {
+      "entry_hour_utc": 7,
+      "trades": 30,
+      "win_rate_pct": 53.333333333333336,
+      "profit_factor": 1.4628435477632344,
+      "net_pnl_usd": 4442.72281713292
+    },
+    {
+      "entry_hour_utc": 8,
+      "trades": 29,
+      "win_rate_pct": 58.620689655172406,
+      "profit_factor": 1.628968277435705,
+      "net_pnl_usd": 5322.356605847094
+    },
+    {
+      "entry_hour_utc": 9,
+      "trades": 7,
+      "win_rate_pct": 28.57142857142857,
+      "profit_factor": 0.564215485040074,
+      "net_pnl_usd": -941.7846658199745
+    }
+  ],
+  "pnl_by_trade_sequence_number": [
+    {
+      "trade_sequence_number": 1,
+      "trades": 62,
+      "win_rate_pct": 56.451612903225815,
+      "net_pnl_usd": 13377.553017197732
+    },
+    {
+      "trade_sequence_number": 2,
+      "trades": 3,
+      "win_rate_pct": 0.0,
+      "net_pnl_usd": -3747.5187750014884
+    },
+    {
+      "trade_sequence_number": 3,
+      "trades": 1,
+      "win_rate_pct": 0.0,
+      "net_pnl_usd": -806.7394850362053
+    }
+  ],
+  "exit_reason_breakdown_per_setup": {
+    "A": [
+      {
+        "exit_reason": "TP1_PARTIAL",
+        "count": 3,
+        "total_pnl_usd": 6518.489953979759
+      },
+      {
+        "exit_reason": "TP2_FULL",
+        "count": 0,
+        "total_pnl_usd": 0.0
+      },
+      {
+        "exit_reason": "SL_FULL",
+        "count": 1,
+        "total_pnl_usd": -2145.951227355193
+      },
+      {
+        "exit_reason": "BE_STOP",
+        "count": 0,
+        "total_pnl_usd": 0.0
+      },
+      {
+        "exit_reason": "HARD_CLOSE",
+        "count": 7,
+        "total_pnl_usd": 2893.075037384289
+      }
+    ],
+    "B": [
+      {
+        "exit_reason": "TP1_PARTIAL",
+        "count": 0,
+        "total_pnl_usd": 0.0
+      },
+      {
+        "exit_reason": "TP2_FULL",
+        "count": 0,
+        "total_pnl_usd": 0.0
+      },
+      {
+        "exit_reason": "SL_FULL",
+        "count": 0,
+        "total_pnl_usd": 0.0
+      },
+      {
+        "exit_reason": "BE_STOP",
+        "count": 0,
+        "total_pnl_usd": 0.0
+      },
+      {
+        "exit_reason": "HARD_CLOSE",
+        "count": 0,
+        "total_pnl_usd": 0.0
+      }
+    ],
+    "C": [
+      {
+        "exit_reason": "TP1_PARTIAL",
+        "count": 0,
+        "total_pnl_usd": 0.0
+      },
+      {
+        "exit_reason": "TP2_FULL",
+        "count": 0,
+        "total_pnl_usd": 0.0
+      },
+      {
+        "exit_reason": "SL_FULL",
+        "count": 0,
+        "total_pnl_usd": 0.0
+      },
+      {
+        "exit_reason": "BE_STOP",
+        "count": 0,
+        "total_pnl_usd": 0.0
+      },
+      {
+        "exit_reason": "HARD_CLOSE",
+        "count": 0,
+        "total_pnl_usd": 0.0
+      }
+    ],
+    "D": [
+      {
+        "exit_reason": "TP1_PARTIAL",
+        "count": 7,
+        "total_pnl_usd": 5557.234722193506
+      },
+      {
+        "exit_reason": "TP2_FULL",
+        "count": 8,
+        "total_pnl_usd": 9482.48937415353
+      },
+      {
+        "exit_reason": "SL_FULL",
+        "count": 20,
+        "total_pnl_usd": -16062.587608218144
+      },
+      {
+        "exit_reason": "BE_STOP",
+        "count": 5,
+        "total_pnl_usd": 2102.9601783712096
+      },
+      {
+        "exit_reason": "HARD_CLOSE",
+        "count": 15,
+        "total_pnl_usd": 477.58432665108256
+      }
+    ]
+  },
+  "monthly_pnl": {
+    "combined": [
+      {
+        "month": "2025-07",
+        "net_pnl_usd": 2222.3287425268636
+      },
+      {
+        "month": "2025-08",
+        "net_pnl_usd": 4793.583593852893
+      },
+      {
+        "month": "2025-09",
+        "net_pnl_usd": -2088.2419708779917
+      },
+      {
+        "month": "2025-10",
+        "net_pnl_usd": 3264.2700182268272
+      },
+      {
+        "month": "2025-11",
+        "net_pnl_usd": 1002.6267909873507
+      },
+      {
+        "month": "2025-12",
+        "net_pnl_usd": 600.7173716811844
+      },
+      {
+        "month": "2026-01",
+        "net_pnl_usd": -1542.351685836301
+      },
+      {
+        "month": "2026-02",
+        "net_pnl_usd": 570.3618965992144
+      }
+    ],
+    "per_setup": {
+      "A": [
+        {
+          "month": "2025-07",
+          "net_pnl_usd": 3547.2096264020397
+        },
+        {
+          "month": "2025-08",
+          "net_pnl_usd": 1915.2091594697315
+        },
+        {
+          "month": "2025-09",
+          "net_pnl_usd": -2309.7196915051745
+        },
+        {
+          "month": "2025-11",
+          "net_pnl_usd": 541.7880340540192
+        },
+        {
+          "month": "2025-12",
+          "net_pnl_usd": 1478.9372751821227
+        },
+        {
+          "month": "2026-01",
+          "net_pnl_usd": 2092.189360406116
+        }
+      ],
+      "B": [],
+      "C": [],
+      "D": [
+        {
+          "month": "2025-07",
+          "net_pnl_usd": -1324.880883875176
+        },
+        {
+          "month": "2025-08",
+          "net_pnl_usd": 2878.374434383161
+        },
+        {
+          "month": "2025-09",
+          "net_pnl_usd": 221.47772062718286
+        },
+        {
+          "month": "2025-10",
+          "net_pnl_usd": 3264.2700182268272
+        },
+        {
+          "month": "2025-11",
+          "net_pnl_usd": 460.8387569333313
+        },
+        {
+          "month": "2025-12",
+          "net_pnl_usd": -878.2199035009382
+        },
+        {
+          "month": "2026-01",
+          "net_pnl_usd": -3634.541046242417
+        },
+        {
+          "month": "2026-02",
+          "net_pnl_usd": 570.3618965992144
+        }
+      ]
+    }
+  },
+  "paths": {
+    "report_json": "/Users/codygnon/Documents/usdjpy_assistant/research_out/v2_experiment2_dayfilter/v2_exp2_2A_report.json",
+    "trade_log_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/v2_experiment2_dayfilter/v2_exp2_2A_trades.csv",
+    "equity_curve_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/v2_experiment2_dayfilter/v2_exp2_2A_equity.csv"
+  }
+}

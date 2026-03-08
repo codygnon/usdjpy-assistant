@@ -34,6 +34,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "session": {
         "active_days_utc": ["Tuesday", "Wednesday", "Thursday"],
         "entry_cutoff_minutes_before_ny_open": 60,
+        # Optional explicit entry window cap from London open.
+        # If set (int minutes), overrides entry_cutoff_minutes_before_ny_open.
+        "entry_window_end_minutes_after_london": None,
         "force_close_at_ny_open": True,
     },
     "arb": {
@@ -47,8 +50,21 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "tp1_r_multiple": 1.0,
         "tp2_r_multiple": 2.0,
         "tp1_close_fraction": 0.5,
+        # Post-TP1 handling: "tp2" or "trail"
+        "post_tp1_management": "tp2",
+        # Used when post_tp1_management == "trail"
+        "trail_distance_pips": 8.0,
+        # Breakeven logic:
+        # if enabled=True and be_trigger_r_multiple=1.0, BE triggers at TP1.
+        "be_enabled": True,
+        "be_trigger_r_multiple": 1.0,
         "be_offset_pips_after_tp1": 1.0,
         "max_trades_per_day": 1,
+        # If true, ARB supports independent long/short multi-entry channels
+        # with pullback-based channel resets.
+        "multi_entry_channels_enabled": False,
+        # Max total planned open risk (sum of open positions) as fraction of equity.
+        "max_total_open_risk_pct": 0.05,
     },
     "lmp": {
         "enabled": True,
@@ -77,6 +93,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "SL_AFTER_TP1",
             "BE_STOP",
             "HARD_CLOSE",
+            # ARB experiment taxonomy:
+            "TP1_ONLY_HARD_CLOSE",
+            "TP1_THEN_TP2",
+            "TP1_THEN_TRAIL_STOP",
+            "TP1_THEN_HARD_CLOSE",
+            "HARD_CLOSE_NO_TP1",
         ]
     },
 }
@@ -111,6 +133,23 @@ class Position:
     exit_time: pd.Timestamp | None = None
     exit_price_last: float | None = None
     be_price_after_tp1: float | None = None
+    be_enabled: bool = True
+    be_trigger_r_multiple: float = 1.0
+    be_trigger_target_price: float | None = None
+    be_triggered: bool = False
+    be_trigger_time: pd.Timestamp | None = None
+    price_at_be_trigger: float | None = None
+    margin_used_pct: float = 0.0
+    post_tp1_mode: str = "tp2"
+    trail_activated: bool = False
+    trail_distance_pips: float | None = None
+    trail_highest_mfe_pips: float = 0.0
+    trail_stop_final_level: float | None = None
+    highest_since_tp1: float | None = None
+    lowest_since_tp1: float | None = None
+    trade_sequence_number: int = 1
+    is_reentry: bool = False
+    channel_resets_before_entry: int = 0
 
 
 def parse_args() -> argparse.Namespace:
@@ -444,7 +483,14 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
         london_open = day_start + pd.Timedelta(hours=london_h)
         ny_open = day_start + pd.Timedelta(hours=ny_h)
         entry_start = london_open
-        entry_end = ny_open - pd.Timedelta(minutes=entry_cutoff_min)
+        end_after_london = cfg["session"].get("entry_window_end_minutes_after_london")
+        if end_after_london is None:
+            entry_end = ny_open - pd.Timedelta(minutes=entry_cutoff_min)
+        else:
+            entry_end = london_open + pd.Timedelta(minutes=int(end_after_london))
+            # Never allow entries at/after hard close.
+            if entry_end > ny_open:
+                entry_end = ny_open
         hard_close = ny_open
 
         if day_df["time"].max() < hard_close:
@@ -488,6 +534,11 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
         open_positions: list[Position] = []
         pending_entries: list[dict[str, Any]] = []
         daily_risk_committed = 0.0
+        arb_multi_entry = bool(cfg["arb"].get("multi_entry_channels_enabled", False))
+        arb_channel_state: dict[str, str] = {"long": "ARMED", "short": "ARMED"}
+        arb_channel_reset_counts: dict[str, int] = {"long": 0, "short": 0}
+        arb_channel_entry_counts: dict[str, int] = {"long": 0, "short": 0}
+        daily_trade_sequence = 0
         arb_done = False
         lmp_done = False
         lmp_touch_state: dict[str, Any] | None = None
@@ -505,10 +556,16 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
             pending_entries = [x for x in pending_entries if x["execute_time"] != ts]
             for pe in to_exec:
                 if not (entry_start <= ts < entry_end):
+                    if pe.get("strategy") == "ARB" and arb_multi_entry and arb_channel_state.get(pe.get("direction", ""), "") == "PENDING":
+                        arb_channel_state[pe["direction"]] = "ARMED"
                     continue
                 if len(open_positions) >= max_open_positions:
+                    if pe.get("strategy") == "ARB" and arb_multi_entry and arb_channel_state.get(pe.get("direction", ""), "") == "PENDING":
+                        arb_channel_state[pe["direction"]] = "ARMED"
                     continue
-                if any(p.strategy == pe["strategy"] for p in open_positions):
+                if any(p.strategy == pe["strategy"] for p in open_positions) and not (arb_multi_entry and pe.get("strategy") == "ARB"):
+                    if pe.get("strategy") == "ARB" and arb_multi_entry and arb_channel_state.get(pe.get("direction", ""), "") == "PENDING":
+                        arb_channel_state[pe["direction"]] = "ARMED"
                     continue
 
                 entry_price = ask_o if pe["direction"] == "long" else bid_o
@@ -525,6 +582,13 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
                     sign = 1.0 if pe["direction"] == "long" else -1.0
                     tp1 = entry_price + sign * float(cfg["arb"]["tp1_r_multiple"]) * risk_dist * PIP_SIZE
                     tp2 = entry_price + sign * float(cfg["arb"]["tp2_r_multiple"]) * risk_dist * PIP_SIZE
+                    be_enabled = bool(cfg["arb"].get("be_enabled", True))
+                    be_trigger_r_mult = float(cfg["arb"].get("be_trigger_r_multiple", 1.0))
+                    be_trigger_target_price = (
+                        entry_price + sign * be_trigger_r_mult * risk_dist * PIP_SIZE if be_enabled else None
+                    )
+                    post_tp1_mode = str(cfg["arb"].get("post_tp1_management", "tp2")).strip().lower()
+                    trail_distance_pips = float(cfg["arb"].get("trail_distance_pips", 8.0)) if post_tp1_mode == "trail" else None
                 else:
                     raw_sl = pe["raw_sl"]
                     sl, sl_pips = clamp_sl(
@@ -540,20 +604,42 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
                     else:
                         tp1 = float(pe["impulse_low"])
                         tp2 = float(pe["impulse_low"] - float(cfg["lmp"]["tp2_extension_ratio"]) * (pe["impulse_high"] - pe["impulse_low"]))
+                    be_enabled = True
+                    be_trigger_r_mult = 1.0
+                    sign = 1.0 if pe["direction"] == "long" else -1.0
+                    be_trigger_target_price = entry_price + sign * 1.0 * sl_pips * PIP_SIZE
+                    post_tp1_mode = "tp2"
+                    trail_distance_pips = None
 
                 risk_usd = equity * risk_pct
                 if daily_risk_committed + risk_usd > equity * daily_risk_cap_pct:
+                    if pe.get("strategy") == "ARB" and arb_multi_entry and arb_channel_state.get(pe.get("direction", ""), "") == "PENDING":
+                        arb_channel_state[pe["direction"]] = "ARMED"
+                    continue
+                open_risk = float(sum(p.risk_usd_planned for p in open_positions))
+                max_open_risk_pct = float(cfg["arb"].get("max_total_open_risk_pct", 0.05)) if pe["strategy"] == "ARB" else 1.0
+                if pe["strategy"] == "ARB" and (open_risk + risk_usd > equity * max_open_risk_pct):
+                    if arb_multi_entry and arb_channel_state.get(pe.get("direction", ""), "") == "PENDING":
+                        arb_channel_state[pe["direction"]] = "ARMED"
                     continue
                 units = int(math.floor(risk_usd / max(1e-9, sl_pips * pip_value_per_unit(entry_price)) / round_units) * round_units)
                 if units <= 0:
+                    if pe.get("strategy") == "ARB" and arb_multi_entry and arb_channel_state.get(pe.get("direction", ""), "") == "PENDING":
+                        arb_channel_state[pe["direction"]] = "ARMED"
                     continue
                 used_margin = sum(p.remaining_units for p in open_positions) / leverage
                 free_margin = max(0.0, equity - used_margin)
                 req_margin = units / leverage
                 if req_margin > max_margin_frac * free_margin:
+                    if pe.get("strategy") == "ARB" and arb_multi_entry and arb_channel_state.get(pe.get("direction", ""), "") == "PENDING":
+                        arb_channel_state[pe["direction"]] = "ARMED"
                     continue
+                margin_used_pct = (req_margin / max(1e-9, equity)) * 100.0
 
                 trade_id += 1
+                daily_trade_sequence += 1
+                is_reentry = bool(pe.get("is_reentry", False)) if pe["strategy"] == "ARB" else False
+                resets_before = int(pe.get("channel_resets_before_entry", 0)) if pe["strategy"] == "ARB" else 0
                 p = Position(
                     trade_id=trade_id,
                     strategy=pe["strategy"],
@@ -571,13 +657,26 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
                     asian_range_pips=pe.get("asian_range_pips"),
                     impulse_range_pips=pe.get("impulse_range_pips"),
                     entry_hour_utc=int(ts.hour),
+                    be_enabled=be_enabled,
+                    be_trigger_r_multiple=be_trigger_r_mult,
+                    be_trigger_target_price=be_trigger_target_price,
+                    margin_used_pct=margin_used_pct,
+                    post_tp1_mode=post_tp1_mode,
+                    trail_distance_pips=trail_distance_pips,
+                    trade_sequence_number=daily_trade_sequence,
+                    is_reentry=is_reentry,
+                    channel_resets_before_entry=resets_before,
                 )
                 tp1_units = int(math.floor(units * float(cfg["arb"]["tp1_close_fraction" if pe["strategy"] == "ARB" else "tp1_close_fraction"]) / round_units) * round_units)
                 p.tp1_units_closed = max(0, min(units, tp1_units))
                 open_positions.append(p)
                 daily_risk_committed += risk_usd
                 if pe["strategy"] == "ARB":
-                    arb_done = True
+                    if arb_multi_entry:
+                        arb_channel_state[p.direction] = "FIRED"
+                        arb_channel_entry_counts[p.direction] += 1
+                    else:
+                        arb_done = True
                 else:
                     lmp_done = True
 
@@ -593,7 +692,13 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
                     p.remaining_units = 0
                     p.exit_time = ts
                     p.exit_price_last = float(exit_px)
-                    p.exit_reason = "TP1_ONLY" if p.tp1_hit else "HARD_CLOSE"
+                    if p.strategy == "ARB":
+                        if p.tp1_hit:
+                            p.exit_reason = "TP1_THEN_HARD_CLOSE" if p.post_tp1_mode == "trail" else "TP1_ONLY_HARD_CLOSE"
+                        else:
+                            p.exit_reason = "HARD_CLOSE_NO_TP1"
+                    else:
+                        p.exit_reason = "TP1_ONLY" if p.tp1_hit else "HARD_CLOSE"
                     equity += p.pnl_usd_realized
                     equity_events.append((ts, p.pnl_usd_realized))
                     trades_out.append(
@@ -621,8 +726,21 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
                             "position_units": p.initial_units,
                             "trade_duration_minutes": int((p.exit_time - p.entry_time).total_seconds() / 60.0),
                             "entry_hour_utc": p.entry_hour_utc,
+                            "tp1_hit": bool(p.tp1_hit),
+                            "be_triggered": bool(p.be_triggered),
+                            "be_trigger_time_utc": p.be_trigger_time,
+                            "price_at_be_trigger": p.price_at_be_trigger,
+                            "margin_used_pct": p.margin_used_pct,
+                            "trail_activated": bool(p.trail_activated),
+                            "trail_highest_mfe_pips": p.trail_highest_mfe_pips,
+                            "trail_stop_final_level": p.trail_stop_final_level,
+                            "trade_sequence_number": p.trade_sequence_number,
+                            "is_reentry": bool(p.is_reentry),
+                            "channel_resets_before_entry": int(p.channel_resets_before_entry),
                         }
                     )
+                    if p.strategy == "ARB" and arb_multi_entry:
+                        arb_channel_state[p.direction] = "WAITING_RESET"
                 open_positions = still
                 break
 
@@ -673,8 +791,21 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
                             "position_units": p.initial_units,
                             "trade_duration_minutes": int((p.exit_time - p.entry_time).total_seconds() / 60.0),
                             "entry_hour_utc": p.entry_hour_utc,
+                            "tp1_hit": bool(p.tp1_hit),
+                            "be_triggered": bool(p.be_triggered),
+                            "be_trigger_time_utc": p.be_trigger_time,
+                            "price_at_be_trigger": p.price_at_be_trigger,
+                            "margin_used_pct": p.margin_used_pct,
+                            "trail_activated": bool(p.trail_activated),
+                            "trail_highest_mfe_pips": p.trail_highest_mfe_pips,
+                            "trail_stop_final_level": p.trail_stop_final_level,
+                            "trade_sequence_number": p.trade_sequence_number,
+                            "is_reentry": bool(p.is_reentry),
+                            "channel_resets_before_entry": int(p.channel_resets_before_entry),
                         }
                     )
+                    if p.strategy == "ARB" and arb_multi_entry:
+                        arb_channel_state[p.direction] = "WAITING_RESET"
 
                 if p.direction == "long":
                     px_open = bid_o
@@ -690,7 +821,41 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
                     db = abs(px_open - level_b)
                     return "a" if da <= db else "b"
 
+                def be_level_for_position() -> float:
+                    offset_pips = (
+                        float(cfg["arb"].get("be_offset_pips_after_tp1", 1.0))
+                        if p.strategy == "ARB"
+                        else float(cfg["lmp"].get("be_offset_pips_after_tp1", 1.0))
+                    )
+                    return p.entry_price + (offset_pips * PIP_SIZE if p.direction == "long" else -offset_pips * PIP_SIZE)
+
+                def maybe_trigger_be() -> None:
+                    if (not p.be_enabled) or p.be_triggered:
+                        return
+                    if p.be_trigger_target_price is None:
+                        return
+                    old_sl = p.sl_price
+                    be_hit = px_high >= p.be_trigger_target_price if p.direction == "long" else px_low <= p.be_trigger_target_price
+                    if not be_hit:
+                        return
+                    old_sl_hit = px_low <= old_sl if p.direction == "long" else px_high >= old_sl
+                    if old_sl_hit:
+                        first = choose_first(p.be_trigger_target_price, old_sl)
+                        if first == "b":
+                            # SL likely hit before BE trigger on this candle.
+                            return
+                    p.be_triggered = True
+                    p.be_trigger_time = ts
+                    p.price_at_be_trigger = float(p.be_trigger_target_price)
+                    p.be_price_after_tp1 = be_level_for_position()
+                    # stop can only move in favorable direction
+                    if p.direction == "long":
+                        p.sl_price = max(p.sl_price, p.be_price_after_tp1)
+                    else:
+                        p.sl_price = min(p.sl_price, p.be_price_after_tp1)
+
                 if not p.tp1_hit:
+                    maybe_trigger_be()
                     tp1_hit = px_high >= p.tp1_price if p.direction == "long" else px_low <= p.tp1_price
                     sl_hit = px_low <= p.sl_price if p.direction == "long" else px_high >= p.sl_price
                     if tp1_hit and sl_hit:
@@ -703,7 +868,10 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
                         first = ""
 
                     if first == "b":
-                        close_remaining("SL_FULL", p.sl_price)
+                        if p.be_triggered and p.be_price_after_tp1 is not None and abs(p.sl_price - p.be_price_after_tp1) <= (0.2 * PIP_SIZE):
+                            close_remaining("BE_STOP", p.sl_price)
+                        else:
+                            close_remaining("SL_FULL", p.sl_price)
                         continue
                     if first == "a":
                         u_close = p.tp1_units_closed if p.tp1_units_closed > 0 else int(p.remaining_units / 2)
@@ -715,47 +883,130 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
                             p.remaining_units -= u_close
                         p.tp1_hit = True
                         p.tp1_time = ts
-                        p.be_price_after_tp1 = p.entry_price + (PIP_SIZE if p.direction == "long" else -PIP_SIZE)
-                        p.sl_price = p.be_price_after_tp1
+                        if p.be_enabled:
+                            if not p.be_triggered:
+                                p.be_triggered = True
+                                p.be_trigger_time = ts
+                                p.price_at_be_trigger = p.tp1_price
+                            p.be_price_after_tp1 = be_level_for_position()
+                            if p.direction == "long":
+                                p.sl_price = max(p.sl_price, p.be_price_after_tp1)
+                            else:
+                                p.sl_price = min(p.sl_price, p.be_price_after_tp1)
+                        if p.post_tp1_mode == "trail":
+                            p.trail_activated = True
+                            if p.direction == "long":
+                                p.highest_since_tp1 = float(row["high"])
+                                p.trail_highest_mfe_pips = max(p.trail_highest_mfe_pips, (p.highest_since_tp1 - p.entry_price) / PIP_SIZE)
+                            else:
+                                p.lowest_since_tp1 = float(row["low"])
+                                p.trail_highest_mfe_pips = max(p.trail_highest_mfe_pips, (p.entry_price - p.lowest_since_tp1) / PIP_SIZE)
+                            p.trail_stop_final_level = p.sl_price
                         if p.remaining_units <= 0:
-                            close_remaining("TP1_ONLY", p.tp1_price)
+                            close_remaining("TP1_ONLY_HARD_CLOSE" if p.strategy == "ARB" else "TP1_ONLY", p.tp1_price)
                             continue
 
                 if p.tp1_hit and p.remaining_units > 0:
-                    tp2_hit = px_high >= p.tp2_price if p.direction == "long" else px_low <= p.tp2_price
-                    sl2_hit = px_low <= p.sl_price if p.direction == "long" else px_high >= p.sl_price
-                    if tp2_hit and sl2_hit:
-                        first2 = choose_first(p.tp2_price, p.sl_price)
-                    elif tp2_hit:
-                        first2 = "a"
-                    elif sl2_hit:
-                        first2 = "b"
+                    if p.post_tp1_mode == "trail" and p.strategy == "ARB":
+                        # Update trailing anchor and ratchet stop.
+                        td = float(p.trail_distance_pips or 0.0)
+                        if p.direction == "long":
+                            p.highest_since_tp1 = max(float(p.highest_since_tp1 or -1e18), float(row["high"]))
+                            p.trail_highest_mfe_pips = max(
+                                p.trail_highest_mfe_pips, (float(p.highest_since_tp1) - p.entry_price) / PIP_SIZE
+                            )
+                            cand = float(p.highest_since_tp1) - td * PIP_SIZE
+                            if cand > p.sl_price:
+                                p.sl_price = cand
+                            p.trail_stop_final_level = p.sl_price
+                        else:
+                            p.lowest_since_tp1 = min(float(p.lowest_since_tp1 or 1e18), float(row["low"]))
+                            p.trail_highest_mfe_pips = max(
+                                p.trail_highest_mfe_pips, (p.entry_price - float(p.lowest_since_tp1)) / PIP_SIZE
+                            )
+                            cand = float(p.lowest_since_tp1) + td * PIP_SIZE
+                            if cand < p.sl_price:
+                                p.sl_price = cand
+                            p.trail_stop_final_level = p.sl_price
+
+                        sl2_hit = px_low <= p.sl_price if p.direction == "long" else px_high >= p.sl_price
+                        if sl2_hit:
+                            close_remaining("TP1_THEN_TRAIL_STOP", p.sl_price)
+                            continue
                     else:
-                        first2 = ""
-                    if first2 == "a":
-                        close_remaining("TP2_FULL", p.tp2_price)
-                        continue
-                    if first2 == "b":
-                        be = p.be_price_after_tp1 if p.be_price_after_tp1 is not None else p.entry_price
-                        reason = "BE_STOP" if abs(p.sl_price - be) <= (0.2 * PIP_SIZE) else "SL_AFTER_TP1"
-                        close_remaining(reason, p.sl_price)
-                        continue
+                        tp2_hit = px_high >= p.tp2_price if p.direction == "long" else px_low <= p.tp2_price
+                        sl2_hit = px_low <= p.sl_price if p.direction == "long" else px_high >= p.sl_price
+                        if tp2_hit and sl2_hit:
+                            first2 = choose_first(p.tp2_price, p.sl_price)
+                        elif tp2_hit:
+                            first2 = "a"
+                        elif sl2_hit:
+                            first2 = "b"
+                        else:
+                            first2 = ""
+                        if first2 == "a":
+                            close_remaining("TP1_THEN_TP2" if p.strategy == "ARB" else "TP2_FULL", p.tp2_price)
+                            continue
+                        if first2 == "b":
+                            if p.strategy == "ARB":
+                                close_remaining("TP1_ONLY_HARD_CLOSE", p.sl_price)
+                            else:
+                                be = p.be_price_after_tp1 if p.be_price_after_tp1 is not None else p.entry_price
+                                reason = "BE_STOP" if abs(p.sl_price - be) <= (0.2 * PIP_SIZE) else "SL_FULL"
+                                close_remaining(reason, p.sl_price)
+                            continue
 
                 survivors.append(p)
             open_positions = survivors
+
+            # ARB channel reset: re-arm after pullback to base level.
+            if arb_multi_entry and float(cfg["arb"]["asian_range_min_pips"]) <= asian_range_pips <= float(cfg["arb"]["asian_range_max_pips"]):
+                if arb_channel_state["long"] == "WAITING_RESET" and float(row["low"]) <= asian_high:
+                    arb_channel_state["long"] = "ARMED"
+                    arb_channel_reset_counts["long"] += 1
+                if arb_channel_state["short"] == "WAITING_RESET" and float(row["high"]) >= asian_low:
+                    arb_channel_state["short"] = "ARMED"
+                    arb_channel_reset_counts["short"] += 1
 
             # signal generation uses closed candle
             if not (entry_start <= ts < entry_end):
                 continue
 
-            # ARB first valid signal
-            if bool(cfg["arb"]["enabled"]) and not arb_done:
+            # ARB signals
+            if bool(cfg["arb"]["enabled"]) and (arb_multi_entry or not arb_done):
                 if float(cfg["arb"]["asian_range_min_pips"]) <= asian_range_pips <= float(cfg["arb"]["asian_range_max_pips"]):
                     long_break = float(row["close"]) > asian_high + float(cfg["arb"]["breakout_buffer_pips"]) * PIP_SIZE
                     short_break = float(row["close"]) < asian_low - float(cfg["arb"]["breakout_buffer_pips"]) * PIP_SIZE
-                    if long_break or short_break:
-                        if i + 1 < len(day_df):
-                            nxt_ts = pd.Timestamp(day_df.iloc[i + 1]["time"])
+                    if i + 1 < len(day_df):
+                        nxt_ts = pd.Timestamp(day_df.iloc[i + 1]["time"])
+                        if arb_multi_entry:
+                            if long_break and arb_channel_state["long"] == "ARMED":
+                                pending_entries.append(
+                                    {
+                                        "strategy": "ARB",
+                                        "direction": "long",
+                                        "execute_time": nxt_ts,
+                                        "raw_sl": asian_low - float(cfg["arb"]["sl_buffer_pips"]) * PIP_SIZE,
+                                        "asian_range_pips": asian_range_pips,
+                                        "is_reentry": arb_channel_entry_counts["long"] > 0,
+                                        "channel_resets_before_entry": arb_channel_reset_counts["long"],
+                                    }
+                                )
+                                arb_channel_state["long"] = "PENDING"
+                            if short_break and arb_channel_state["short"] == "ARMED":
+                                pending_entries.append(
+                                    {
+                                        "strategy": "ARB",
+                                        "direction": "short",
+                                        "execute_time": nxt_ts,
+                                        "raw_sl": asian_high + float(cfg["arb"]["sl_buffer_pips"]) * PIP_SIZE,
+                                        "asian_range_pips": asian_range_pips,
+                                        "is_reentry": arb_channel_entry_counts["short"] > 0,
+                                        "channel_resets_before_entry": arb_channel_reset_counts["short"],
+                                    }
+                                )
+                                arb_channel_state["short"] = "PENDING"
+                        elif long_break or short_break:
                             direction = "long" if long_break else "short"
                             raw_sl = asian_low - float(cfg["arb"]["sl_buffer_pips"]) * PIP_SIZE if direction == "long" else asian_high + float(cfg["arb"]["sl_buffer_pips"]) * PIP_SIZE
                             pending_entries.append(
@@ -856,6 +1107,17 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
                 "position_units",
                 "trade_duration_minutes",
                 "entry_hour_utc",
+                "tp1_hit",
+                "be_triggered",
+                "be_trigger_time_utc",
+                "price_at_be_trigger",
+                "margin_used_pct",
+                "trail_activated",
+                "trail_highest_mfe_pips",
+                "trail_stop_final_level",
+                "trade_sequence_number",
+                "is_reentry",
+                "channel_resets_before_entry",
             ]
         )
     else:
@@ -958,6 +1220,17 @@ def write_outputs(
         "MFE_pips",
         "position_units",
         "trade_duration_minutes",
+        "tp1_hit",
+        "be_triggered",
+        "be_trigger_time_utc",
+        "price_at_be_trigger",
+        "margin_used_pct",
+        "trail_activated",
+        "trail_highest_mfe_pips",
+        "trail_stop_final_level",
+        "trade_sequence_number",
+        "is_reentry",
+        "channel_resets_before_entry",
     ]
     trades.to_csv(trades_path, index=False)
     equity_curve.to_csv(equity_path, index=False)
