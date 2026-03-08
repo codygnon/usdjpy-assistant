@@ -46,5 +46,8 @@ Thumbs.db
 *.log
 .streamlit/secrets.toml
 
+# Research output (large CSV/JSON files — keep local only)
+research_out/
+
 # Cursor / plan files (optional)
 .cursor/
