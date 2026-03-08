@@ -1,0 +1,753 @@
+{
+  "summary": {
+    "trades": 267,
+    "wr_pct": 62.546816479400746,
+    "pf": 0.9527235463990646,
+    "net_usd": -3180.8771805303395,
+    "maxdd_usd": 22607.63980672325
+  },
+  "weekday_stats": [
+    {
+      "weekday": "Monday",
+      "trades": 84,
+      "wins": 43,
+      "wr_pct": 51.19047619047619,
+      "gross_profit": 15217.769665844358,
+      "gross_loss": -29731.72416283627,
+      "net_usd": -14513.954496991915,
+      "avg_usd": -172.78517258323708,
+      "avg_pips": -2.166805549296729,
+      "pf": 0.5118360974459092
+    },
+    {
+      "weekday": "Thursday",
+      "trades": 43,
+      "wins": 25,
+      "wr_pct": 58.139534883720934,
+      "gross_profit": 8672.302566193564,
+      "gross_loss": -13631.032639534182,
+      "net_usd": -4958.730073340617,
+      "avg_usd": -115.31930403117714,
+      "avg_pips": -1.3959345996995325,
+      "pf": 0.6362175776060592
+    },
+    {
+      "weekday": "Wednesday",
+      "trades": 43,
+      "wins": 25,
+      "wr_pct": 58.139534883720934,
+      "gross_profit": 9693.652866138755,
+      "gross_loss": -11239.791616973009,
+      "net_usd": -1546.1387508342555,
+      "avg_usd": -35.95671513568036,
+      "avg_pips": -0.8153996668859946,
+      "pf": 0.8624406213635262
+    },
+    {
+      "weekday": "Tuesday",
+      "trades": 43,
+      "wins": 34,
+      "wr_pct": 79.06976744186046,
+      "gross_profit": 13945.416447818114,
+      "gross_loss": -5940.275489501992,
+      "net_usd": 8005.140958316123,
+      "avg_usd": 186.16606879804937,
+      "avg_pips": 2.7381385667471694,
+      "pf": 2.3476043278570637
+    },
+    {
+      "weekday": "Friday",
+      "trades": 54,
+      "wins": 40,
+      "wr_pct": 74.07407407407408,
+      "gross_profit": 16572.46416401479,
+      "gross_loss": -6739.658981694461,
+      "net_usd": 9832.805182320328,
+      "avg_usd": 182.08898485778386,
+      "avg_pips": 2.6617757426687056,
+      "pf": 2.4589469896069134
+    }
+  ],
+  "outlier_by_weekday": {
+    "Friday": {
+      "day_total_net_usd": 9832.805182320328,
+      "day_trades": 54,
+      "negative_sessions": 11,
+      "worst5_sessions": [
+        {
+          "entry_date_utc": "2024-06-21",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1126.8914561992312,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-05-30",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1105.6918007015938,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-06-20",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1064.753128983464,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2026-01-16",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -925.3690381889083,
+          "sl_hits": 0,
+          "session_close_hits": 1
+        },
+        {
+          "entry_date_utc": "2023-08-25",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -541.2682873037227,
+          "sl_hits": 0,
+          "session_close_hits": 1
+        }
+      ],
+      "outlier_threshold_q10_net_usd": -519.1703303991826,
+      "outlier_sessions_q10": [
+        {
+          "entry_date_utc": "2024-06-21",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1126.8914561992312,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-05-30",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1105.6918007015938,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-06-20",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1064.753128983464,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2026-01-16",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -925.3690381889083,
+          "sl_hits": 0,
+          "session_close_hits": 1
+        },
+        {
+          "entry_date_utc": "2023-08-25",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -541.2682873037227,
+          "sl_hits": 0,
+          "session_close_hits": 1
+        }
+      ],
+      "worst3_loss_contribution_pct_of_day_negative": 53.63358467413272
+    },
+    "Monday": {
+      "day_total_net_usd": -14513.954496991915,
+      "day_trades": 84,
+      "negative_sessions": 26,
+      "worst5_sessions": [
+        {
+          "entry_date_utc": "2025-03-17",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -2394.258468576331,
+          "sl_hits": 2,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-05-19",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -2327.8571044989903,
+          "sl_hits": 2,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-06-02",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -2185.2707189940606,
+          "sl_hits": 2,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-09-08",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -2021.901502696312,
+          "sl_hits": 2,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-05-26",
+          "trades": 3,
+          "wins": 1,
+          "wr_pct": 33.33333333333333,
+          "net_usd": -1550.333713710036,
+          "sl_hits": 2,
+          "session_close_hits": 0
+        }
+      ],
+      "outlier_threshold_q10_net_usd": -1287.8753771987283,
+      "outlier_sessions_q10": [
+        {
+          "entry_date_utc": "2025-03-17",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -2394.258468576331,
+          "sl_hits": 2,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-05-19",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -2327.8571044989903,
+          "sl_hits": 2,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-06-02",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -2185.2707189940606,
+          "sl_hits": 2,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-09-08",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -2021.901502696312,
+          "sl_hits": 2,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-05-26",
+          "trades": 3,
+          "wins": 1,
+          "wr_pct": 33.33333333333333,
+          "net_usd": -1550.333713710036,
+          "sl_hits": 2,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2023-07-31",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1311.0159044698553,
+          "sl_hits": 0,
+          "session_close_hits": 2
+        }
+      ],
+      "worst3_loss_contribution_pct_of_day_negative": 25.285979762216567
+    },
+    "Thursday": {
+      "day_total_net_usd": -4958.730073340616,
+      "day_trades": 43,
+      "negative_sessions": 12,
+      "worst5_sessions": [
+        {
+          "entry_date_utc": "2024-04-04",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -2451.110151931607,
+          "sl_hits": 2,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2024-02-15",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -2401.2095184757636,
+          "sl_hits": 2,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-07-24",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1662.4598258456379,
+          "sl_hits": 1,
+          "session_close_hits": 1
+        },
+        {
+          "entry_date_utc": "2025-04-03",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1194.457054432782,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-01-30",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1168.469687602512,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        }
+      ],
+      "outlier_threshold_q10_net_usd": -1241.2573315740674,
+      "outlier_sessions_q10": [
+        {
+          "entry_date_utc": "2024-04-04",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -2451.110151931607,
+          "sl_hits": 2,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2024-02-15",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -2401.2095184757636,
+          "sl_hits": 2,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-07-24",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1662.4598258456379,
+          "sl_hits": 1,
+          "session_close_hits": 1
+        }
+      ],
+      "worst3_loss_contribution_pct_of_day_negative": 49.242527515077796
+    },
+    "Tuesday": {
+      "day_total_net_usd": 8005.140958316124,
+      "day_trades": 43,
+      "negative_sessions": 6,
+      "worst5_sessions": [
+        {
+          "entry_date_utc": "2024-05-28",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1906.2033282675056,
+          "sl_hits": 1,
+          "session_close_hits": 1
+        },
+        {
+          "entry_date_utc": "2024-07-23",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1212.836774670792,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-09-02",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1020.7867655784175,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-05-20",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -706.8213377633501,
+          "sl_hits": 0,
+          "session_close_hits": 1
+        },
+        {
+          "entry_date_utc": "2024-10-15",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -577.0652435439066,
+          "sl_hits": 0,
+          "session_close_hits": 1
+        }
+      ],
+      "outlier_threshold_q10_net_usd": -680.8701189194614,
+      "outlier_sessions_q10": [
+        {
+          "entry_date_utc": "2024-05-28",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1906.2033282675056,
+          "sl_hits": 1,
+          "session_close_hits": 1
+        },
+        {
+          "entry_date_utc": "2024-07-23",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1212.836774670792,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-09-02",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1020.7867655784175,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-05-20",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -706.8213377633501,
+          "sl_hits": 0,
+          "session_close_hits": 1
+        }
+      ],
+      "worst3_loss_contribution_pct_of_day_negative": 74.41008883071456
+    },
+    "Wednesday": {
+      "day_total_net_usd": -1546.138750834255,
+      "day_trades": 43,
+      "negative_sessions": 12,
+      "worst5_sessions": [
+        {
+          "entry_date_utc": "2024-05-22",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1465.167082749849,
+          "sl_hits": 1,
+          "session_close_hits": 1
+        },
+        {
+          "entry_date_utc": "2024-08-21",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1203.6787714183763,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-04-16",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1181.6986691687491,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-05-21",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1130.3991362153024,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2023-08-16",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1113.1128770083355,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        }
+      ],
+      "outlier_threshold_q10_net_usd": -1130.3991362153024,
+      "outlier_sessions_q10": [
+        {
+          "entry_date_utc": "2024-05-22",
+          "trades": 2,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1465.167082749849,
+          "sl_hits": 1,
+          "session_close_hits": 1
+        },
+        {
+          "entry_date_utc": "2024-08-21",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1203.6787714183763,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-04-16",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1181.6986691687491,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        },
+        {
+          "entry_date_utc": "2025-05-21",
+          "trades": 1,
+          "wins": 0,
+          "wr_pct": 0.0,
+          "net_usd": -1130.3991362153024,
+          "sl_hits": 1,
+          "session_close_hits": 0
+        }
+      ],
+      "worst3_loss_contribution_pct_of_day_negative": 39.89765750083009
+    }
+  },
+  "overall_worst_20_sessions": [
+    {
+      "entry_date_utc": "2024-04-04",
+      "weekday": "Thursday",
+      "trades": 2,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -2451.110151931607,
+      "sl_hits": 2,
+      "session_close_hits": 0
+    },
+    {
+      "entry_date_utc": "2024-02-15",
+      "weekday": "Thursday",
+      "trades": 2,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -2401.2095184757636,
+      "sl_hits": 2,
+      "session_close_hits": 0
+    },
+    {
+      "entry_date_utc": "2025-03-17",
+      "weekday": "Monday",
+      "trades": 2,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -2394.258468576331,
+      "sl_hits": 2,
+      "session_close_hits": 0
+    },
+    {
+      "entry_date_utc": "2025-05-19",
+      "weekday": "Monday",
+      "trades": 2,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -2327.8571044989903,
+      "sl_hits": 2,
+      "session_close_hits": 0
+    },
+    {
+      "entry_date_utc": "2025-06-02",
+      "weekday": "Monday",
+      "trades": 2,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -2185.2707189940606,
+      "sl_hits": 2,
+      "session_close_hits": 0
+    },
+    {
+      "entry_date_utc": "2025-09-08",
+      "weekday": "Monday",
+      "trades": 2,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -2021.901502696312,
+      "sl_hits": 2,
+      "session_close_hits": 0
+    },
+    {
+      "entry_date_utc": "2024-05-28",
+      "weekday": "Tuesday",
+      "trades": 2,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -1906.2033282675056,
+      "sl_hits": 1,
+      "session_close_hits": 1
+    },
+    {
+      "entry_date_utc": "2025-07-24",
+      "weekday": "Thursday",
+      "trades": 2,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -1662.4598258456379,
+      "sl_hits": 1,
+      "session_close_hits": 1
+    },
+    {
+      "entry_date_utc": "2025-05-26",
+      "weekday": "Monday",
+      "trades": 3,
+      "wins": 1,
+      "wr_pct": 33.33333333333333,
+      "net_usd": -1550.333713710036,
+      "sl_hits": 2,
+      "session_close_hits": 0
+    },
+    {
+      "entry_date_utc": "2024-05-22",
+      "weekday": "Wednesday",
+      "trades": 2,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -1465.167082749849,
+      "sl_hits": 1,
+      "session_close_hits": 1
+    },
+    {
+      "entry_date_utc": "2023-07-31",
+      "weekday": "Monday",
+      "trades": 2,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -1311.0159044698553,
+      "sl_hits": 0,
+      "session_close_hits": 2
+    },
+    {
+      "entry_date_utc": "2024-07-23",
+      "weekday": "Tuesday",
+      "trades": 1,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -1212.836774670792,
+      "sl_hits": 1,
+      "session_close_hits": 0
+    },
+    {
+      "entry_date_utc": "2024-08-21",
+      "weekday": "Wednesday",
+      "trades": 1,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -1203.6787714183763,
+      "sl_hits": 1,
+      "session_close_hits": 0
+    },
+    {
+      "entry_date_utc": "2024-10-21",
+      "weekday": "Monday",
+      "trades": 1,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -1195.3132681142206,
+      "sl_hits": 1,
+      "session_close_hits": 0
+    },
+    {
+      "entry_date_utc": "2025-04-03",
+      "weekday": "Thursday",
+      "trades": 1,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -1194.457054432782,
+      "sl_hits": 1,
+      "session_close_hits": 0
+    },
+    {
+      "entry_date_utc": "2024-09-23",
+      "weekday": "Monday",
+      "trades": 1,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -1189.3343044287144,
+      "sl_hits": 1,
+      "session_close_hits": 0
+    },
+    {
+      "entry_date_utc": "2024-10-28",
+      "weekday": "Monday",
+      "trades": 1,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -1183.011318843507,
+      "sl_hits": 1,
+      "session_close_hits": 0
+    },
+    {
+      "entry_date_utc": "2025-04-16",
+      "weekday": "Wednesday",
+      "trades": 1,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -1181.6986691687491,
+      "sl_hits": 1,
+      "session_close_hits": 0
+    },
+    {
+      "entry_date_utc": "2025-01-30",
+      "weekday": "Thursday",
+      "trades": 1,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -1168.469687602512,
+      "sl_hits": 1,
+      "session_close_hits": 0
+    },
+    {
+      "entry_date_utc": "2025-04-21",
+      "weekday": "Monday",
+      "trades": 1,
+      "wins": 0,
+      "wr_pct": 0.0,
+      "net_usd": -1167.7404073257514,
+      "sl_hits": 1,
+      "session_close_hits": 0
+    }
+  ]
+}

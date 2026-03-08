@@ -1,0 +1,2754 @@
+{
+  "versions": {
+    "V15": {
+      "summary": {
+        "trades": 97,
+        "wr_pct": 76.28865979381443,
+        "pf": 2.354396938017809,
+        "net_usd": 18869.976348193803,
+        "maxdd_usd": 3320.7933628269675,
+        "sharpe": 3.5045477641305505,
+        "calmar": 6.414848640911791,
+        "exp_per_trade_usd": 194.53583864117323,
+        "blocked_margin_cap": 1
+      },
+      "capture": {
+        "avg_winner_pips": 6.26103751898503,
+        "winners_avg_mfe_pips": 12.1253287795363,
+        "capture_ratio_avg": 0.5163602268296156,
+        "capture_ratio_trade_mean": 0.5826420696650308,
+        "all_avg_mfe": 9.742893711149426,
+        "all_avg_mae": 7.119220539474403,
+        "losers_avg_mfe": 2.077667838948178,
+        "losers_avg_mae": 12.184943132608524
+      },
+      "partial_tp": {
+        "times_partial_tp_hit": 67,
+        "avg_pips_at_partial_tp": 6.3329957356076765,
+        "remaining_50pct_outcomes": {
+          "hit_full_tp": 4,
+          "hit_trailing_stop": 29,
+          "hit_breakeven_stop": 24,
+          "closed_time_decay": 3,
+          "closed_session_end": 7
+        }
+      },
+      "early_exit": {
+        "early_exits_triggered": 0,
+        "avg_loss_saved_pips": 0.0
+      },
+      "exit_reason_stats": [
+        {
+          "exit_reason": "sl",
+          "trades": 6,
+          "wr": 0.0,
+          "net_usd": -7460.390927796946,
+          "avg_usd": -1243.3984879661577,
+          "avg_pips": -17.333333333332728
+        },
+        {
+          "exit_reason": "session_close",
+          "trades": 24,
+          "wr": 0.2916666666666667,
+          "net_usd": -5151.445565610958,
+          "avg_usd": -214.6435652337899,
+          "avg_pips": -3.1927891827892316
+        },
+        {
+          "exit_reason": "tp1_then_time_decay",
+          "trades": 3,
+          "wr": 1.0,
+          "net_usd": 866.7504445889338,
+          "avg_usd": 288.9168148629779,
+          "avg_pips": 4.4130549692667485
+        },
+        {
+          "exit_reason": "tp1_then_session_close",
+          "trades": 7,
+          "wr": 1.0,
+          "net_usd": 3753.0866049305587,
+          "avg_usd": 536.1552292757941,
+          "avg_pips": 6.831923977682567
+        },
+        {
+          "exit_reason": "tp1_then_tp2",
+          "trades": 4,
+          "wr": 1.0,
+          "net_usd": 3760.071946730712,
+          "avg_usd": 940.017986682678,
+          "avg_pips": 15.920712551140161
+        },
+        {
+          "exit_reason": "tp1_then_be_stop",
+          "trades": 24,
+          "wr": 1.0,
+          "net_usd": 6923.951813476217,
+          "avg_usd": 288.4979922281757,
+          "avg_pips": 4.043823684316453
+        },
+        {
+          "exit_reason": "tp1_then_trailing_stop",
+          "trades": 29,
+          "wr": 1.0,
+          "net_usd": 16177.952031875284,
+          "avg_usd": 557.8604148922511,
+          "avg_pips": 7.596743617528461
+        }
+      ],
+      "session_close_by_entry_hour": [
+        {
+          "hour": 20,
+          "trades": 9,
+          "wr": 0.3333333333333333,
+          "net_usd": -2080.8400350206293,
+          "avg_usd": -231.20444833562547
+        },
+        {
+          "hour": 18,
+          "trades": 7,
+          "wr": 0.2857142857142857,
+          "net_usd": -1626.830949548815,
+          "avg_usd": -232.40442136411642
+        },
+        {
+          "hour": 17,
+          "trades": 4,
+          "wr": 0.25,
+          "net_usd": -806.6429998623748,
+          "avg_usd": -201.6607499655937
+        },
+        {
+          "hour": 19,
+          "trades": 3,
+          "wr": 0.3333333333333333,
+          "net_usd": -488.1200351607869,
+          "avg_usd": -162.70667838692898
+        },
+        {
+          "hour": 21,
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -149.0115460183514,
+          "avg_usd": -149.0115460183514
+        }
+      ],
+      "hour_stats": [
+        {
+          "hour": 16,
+          "trades": 6,
+          "wr": 0.6666666666666666,
+          "net_usd": -488.51164468562195,
+          "avg_usd": -81.41860744760366
+        },
+        {
+          "hour": 17,
+          "trades": 17,
+          "wr": 0.7058823529411765,
+          "net_usd": 2525.925872287943,
+          "avg_usd": 148.58387484046725
+        },
+        {
+          "hour": 18,
+          "trades": 24,
+          "wr": 0.75,
+          "net_usd": 4265.4644209779835,
+          "avg_usd": 177.727684207416
+        },
+        {
+          "hour": 19,
+          "trades": 23,
+          "wr": 0.9130434782608695,
+          "net_usd": 8564.332654689824,
+          "avg_usd": 372.3622893343402
+        },
+        {
+          "hour": 20,
+          "trades": 23,
+          "wr": 0.6956521739130435,
+          "net_usd": 2763.6185648441865,
+          "avg_usd": 120.15732890626897
+        },
+        {
+          "hour": 21,
+          "trades": 4,
+          "wr": 0.75,
+          "net_usd": 1239.1464800794856,
+          "avg_usd": 309.7866200198714
+        }
+      ],
+      "day_stats": [
+        {
+          "entry_session_day": "2024-05-29",
+          "trades": 2,
+          "wr": 0.0,
+          "net_usd": -1993.3859423283343,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-05-31",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1308.421552721495,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-06-21",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1299.7253918139677,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-07-24",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1248.3019051018855,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-09-03",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1212.236965922515,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2026-01-17",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1144.445613838851,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-06-22",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1126.8914561992312,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-05-21",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -814.1343307676005,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-10-16",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -601.6311123705008,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2023-08-26",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -565.962639181033,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-06-08",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -490.0917277919363,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-06-07",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -403.67321974816525,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-07-06",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -314.02331960617016,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-09-07",
+          "trades": 2,
+          "wr": 0.0,
+          "net_usd": -237.4114937221152,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2026-02-25",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -149.0115460183514,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-04-20",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -20.19958821230194,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-04-06",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -16.31323908353543,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-05-08",
+          "trades": 2,
+          "wr": 0.5,
+          "net_usd": 9.481590975524796,
+          "pf_proxy": 1.0297029869423
+        },
+        {
+          "entry_session_day": "2023-06-28",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 36.355708424940914,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-01-27",
+          "trades": 3,
+          "wr": 0.6666666666666666,
+          "net_usd": 87.11909038882243,
+          "pf_proxy": 1.1940300466267957
+        },
+        {
+          "entry_session_day": "2024-03-06",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 94.15584310378148,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-07-15",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 226.75272127178903,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-27",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 228.2772344780041,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-08-05",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 229.8812307511066,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-08-12",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 230.55893510947217,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-07-26",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 246.74925971918583,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-05-04",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 252.61250048246927,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-12-28",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 253.6001985113445,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-01-11",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 254.01012126169636,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-10-15",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 254.56527444400135,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-02-26",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 259.35256926018747,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-12-13",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 265.190227593577,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2026-01-24",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 266.4371201195803,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-20",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 274.78474306428546,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-02",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 279.1934786307926,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-09-04",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 295.7849099580677,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2026-02-28",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 298.4841920686614,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-06-19",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 304.327769438515,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-07-01",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 310.1837802134328,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-10-25",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 320.0492737532566,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-06-04",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 328.1593851154612,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-23",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 343.8781025762389,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-06-15",
+          "trades": 3,
+          "wr": 0.6666666666666666,
+          "net_usd": 353.6587205527867,
+          "pf_proxy": 3.3692688679242795
+        },
+        {
+          "entry_session_day": "2025-12-24",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 357.0282722384816,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-07-22",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 378.76893577038,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-11-09",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 391.76315835916046,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-07-12",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 396.23584196875566,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-11-11",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 399.987833959235,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-11-18",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 400.8855698885386,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-01-15",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 406.6743348610056,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-08-19",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 408.0473699612437,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-10-18",
+          "trades": 3,
+          "wr": 0.6666666666666666,
+          "net_usd": 454.38467136159596,
+          "pf_proxy": 7.581363951143081
+        },
+        {
+          "entry_session_day": "2024-12-25",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 483.6670306213722,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-10-22",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 518.4213676096845,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-12-06",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 519.6144685299457,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-12-20",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 537.1087781056195,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-11-01",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 547.1703716525378,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-05-24",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 568.538760285715,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-11-22",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 575.9887334897435,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-08-02",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 610.4819940893169,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-12-27",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 614.533436306195,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-01-13",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 643.5758165520688,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-03-16",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 718.768335256643,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-09-28",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 738.6139545239719,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-02-28",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 776.0468428834102,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-12-18",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 777.7206838650352,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-03-29",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 822.3505353840312,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-16",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 829.2258938885867,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-02-12",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 843.793285191274,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-02-15",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 872.8801768440079,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-04-13",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 905.4060211550702,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-06-18",
+          "trades": 3,
+          "wr": 1.0,
+          "net_usd": 930.7457583041462,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-10-29",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 1006.0363251170199,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-09-25",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 1257.5391111642557,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-11-26",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 1452.435934423394,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-06-05",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 1513.1278821677258,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-09",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 2854.665925575642,
+          "pf_proxy": Infinity
+        }
+      ],
+      "combo_stats": [
+        {
+          "confluence_combo": "ABC",
+          "trades": 17,
+          "wr": 0.8823529411764706,
+          "net_usd": 4166.038314252394,
+          "pf_proxy": 4.135610435435622
+        },
+        {
+          "confluence_combo": "ABCDE",
+          "trades": 52,
+          "wr": 0.6923076923076923,
+          "net_usd": 6516.454283107778,
+          "pf_proxy": 1.643688920741691
+        },
+        {
+          "confluence_combo": "ABCE",
+          "trades": 28,
+          "wr": 0.8214285714285714,
+          "net_usd": 8187.48375083363,
+          "pf_proxy": 4.301200398692368
+        }
+      ],
+      "monthly_worst5": [
+        {
+          "month": "2024-05",
+          "trades": 5,
+          "wr": 0.4,
+          "net_usd": -1731.2918508703403
+        },
+        {
+          "month": "2024-07",
+          "trades": 2,
+          "wr": 0.0,
+          "net_usd": -1562.3252247080557
+        },
+        {
+          "month": "2025-05",
+          "trades": 4,
+          "wr": 0.5,
+          "net_usd": -1554.0171232033804
+        },
+        {
+          "month": "2025-09",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1212.236965922515
+        },
+        {
+          "month": "2026-01",
+          "trades": 2,
+          "wr": 0.5,
+          "net_usd": -878.0084937192706
+        }
+      ],
+      "monthly_best5": [
+        {
+          "month": "2023-09",
+          "trades": 7,
+          "wr": 1.0,
+          "net_usd": 4810.02537821355
+        },
+        {
+          "month": "2025-12",
+          "trades": 5,
+          "wr": 1.0,
+          "net_usd": 2293.4751827738187
+        },
+        {
+          "month": "2025-10",
+          "trades": 5,
+          "wr": 1.0,
+          "net_usd": 2099.0722409239625
+        },
+        {
+          "month": "2024-09",
+          "trades": 6,
+          "wr": 0.6666666666666666,
+          "net_usd": 2054.52648192418
+        },
+        {
+          "month": "2025-11",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 2028.4246679131375
+        }
+      ],
+      "loss_anatomy": {
+        "loss_trades": 23,
+        "losses_never_profit_gt_0p5pip": 8,
+        "losses_had_profit_before_loss": 15,
+        "pct_losses_had_profit": 65.21739130434783,
+        "loss_never_profit_avg_usd": -901.7214655135077,
+        "loss_had_profit_avg_usd": -447.9073924871671
+      },
+      "filter_funnel": {
+        "bars_total": 1000000,
+        "bars_disallowed_day": 617643,
+        "bars_outside_tokyo_hours": 287053,
+        "bars_in_session": 95304,
+        "bars_passed_session_filter": 95304,
+        "bars_passed_indicator_check": 95102,
+        "bars_passed_breakout_check": 90287,
+        "bars_passed_regime_filter": 83652,
+        "bars_after_global_filters": 82783,
+        "bars_passed_atr_filter": 82783,
+        "bars_reached_signal_scoring": 82783,
+        "blocked_no_signal": 81978,
+        "bars_with_sar_flip": 78690,
+        "short_cond_sar_true": 39455,
+        "long_cond_sar_true": 39235
+      }
+    },
+    "V15B": {
+      "summary": {
+        "trades": 97,
+        "wr_pct": 73.19587628865979,
+        "pf": 2.289776028346955,
+        "net_usd": 19025.40773740052,
+        "maxdd_usd": 4670.674899253732,
+        "sharpe": 3.4693818134564545,
+        "calmar": 4.7849550484032015,
+        "exp_per_trade_usd": 196.13822409691258,
+        "blocked_margin_cap": 1
+      },
+      "capture": {
+        "avg_winner_pips": 6.727474250314002,
+        "winners_avg_mfe_pips": 12.130060818366262,
+        "capture_ratio_avg": 0.5546117493597277,
+        "capture_ratio_trade_mean": 0.619920724115534,
+        "all_avg_mfe": 9.591176538658285,
+        "all_avg_mae": 7.408177736068761,
+        "losers_avg_mfe": 2.6580694671480387,
+        "losers_avg_mae": 12.204706328885951
+      },
+      "partial_tp": {
+        "times_partial_tp_hit": 59,
+        "avg_pips_at_partial_tp": 6.822109564164662,
+        "remaining_50pct_outcomes": {
+          "hit_full_tp": 4,
+          "hit_trailing_stop": 31,
+          "hit_breakeven_stop": 16,
+          "closed_time_decay": 2,
+          "closed_session_end": 6
+        }
+      },
+      "early_exit": {
+        "early_exits_triggered": 0,
+        "avg_loss_saved_pips": 0.0
+      },
+      "exit_reason_stats": [
+        {
+          "exit_reason": "sl",
+          "trades": 6,
+          "wr": 0.0,
+          "net_usd": -7464.447574749459,
+          "avg_usd": -1244.0745957915765,
+          "avg_pips": -17.333333333332728
+        },
+        {
+          "exit_reason": "session_close",
+          "trades": 32,
+          "wr": 0.375,
+          "net_usd": -4177.506288692005,
+          "avg_usd": -130.54707152162516,
+          "avg_pips": -2.0426246915629775
+        },
+        {
+          "exit_reason": "tp1_then_time_decay",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 577.6023840678905,
+          "avg_usd": 288.80119203394526,
+          "avg_pips": 4.3837030661053875
+        },
+        {
+          "exit_reason": "tp1_then_session_close",
+          "trades": 6,
+          "wr": 1.0,
+          "net_usd": 3364.8123625393937,
+          "avg_usd": 560.8020604232323,
+          "avg_pips": 6.924611142445776
+        },
+        {
+          "exit_reason": "tp1_then_tp2",
+          "trades": 4,
+          "wr": 1.0,
+          "net_usd": 3771.271644733551,
+          "avg_usd": 942.8179111833878,
+          "avg_pips": 15.920712716106314
+        },
+        {
+          "exit_reason": "tp1_then_be_stop",
+          "trades": 16,
+          "wr": 1.0,
+          "net_usd": 4766.34048220969,
+          "avg_usd": 297.8962801381056,
+          "avg_pips": 4.068637846689203
+        },
+        {
+          "exit_reason": "tp1_then_trailing_stop",
+          "trades": 31,
+          "wr": 1.0,
+          "net_usd": 18187.334727291458,
+          "avg_usd": 586.6882170094019,
+          "avg_pips": 8.190229872820264
+        }
+      ],
+      "session_close_by_entry_hour": [
+        {
+          "hour": 18,
+          "trades": 8,
+          "wr": 0.25,
+          "net_usd": -1791.6817770751638,
+          "avg_usd": -223.96022213439548
+        },
+        {
+          "hour": 17,
+          "trades": 6,
+          "wr": 0.16666666666666666,
+          "net_usd": -1452.5435040839761,
+          "avg_usd": -242.09058401399602
+        },
+        {
+          "hour": 20,
+          "trades": 11,
+          "wr": 0.45454545454545453,
+          "net_usd": -1442.072747867709,
+          "avg_usd": -131.0975225334281
+        },
+        {
+          "hour": 19,
+          "trades": 4,
+          "wr": 0.5,
+          "net_usd": 159.15826448275106,
+          "avg_usd": 39.789566120687766
+        },
+        {
+          "hour": 21,
+          "trades": 2,
+          "wr": 0.5,
+          "net_usd": 166.9438599672261,
+          "avg_usd": 83.47192998361305
+        },
+        {
+          "hour": 16,
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 182.68961588486695,
+          "avg_usd": 182.68961588486695
+        }
+      ],
+      "hour_stats": [
+        {
+          "hour": 16,
+          "trades": 6,
+          "wr": 0.6666666666666666,
+          "net_usd": -862.7129317326815,
+          "avg_usd": -143.78548862211358
+        },
+        {
+          "hour": 17,
+          "trades": 17,
+          "wr": 0.5882352941176471,
+          "net_usd": 1387.0883860804227,
+          "avg_usd": 81.59343447531899
+        },
+        {
+          "hour": 18,
+          "trades": 24,
+          "wr": 0.7083333333333334,
+          "net_usd": 4383.087336990441,
+          "avg_usd": 182.62863904126837
+        },
+        {
+          "hour": 19,
+          "trades": 23,
+          "wr": 0.9130434782608695,
+          "net_usd": 9769.104172125915,
+          "avg_usd": 424.7436596576485
+        },
+        {
+          "hour": 20,
+          "trades": 23,
+          "wr": 0.6956521739130435,
+          "net_usd": 3047.4882161889427,
+          "avg_usd": 132.4994876603888
+        },
+        {
+          "hour": 21,
+          "trades": 4,
+          "wr": 0.75,
+          "net_usd": 1301.3525577474784,
+          "avg_usd": 325.3381394368696
+        }
+      ],
+      "day_stats": [
+        {
+          "entry_session_day": "2024-05-29",
+          "trades": 2,
+          "wr": 0.0,
+          "net_usd": -2005.1973433833919,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-05-31",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1308.7150333647444,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-06-21",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1295.416572687618,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-07-24",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1248.8789604946585,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-09-03",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1212.236965922515,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2026-01-17",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1145.5099491206597,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-06-22",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1126.8914561992312,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-05-21",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -821.6943817468799,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-10-16",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -602.7826073846076,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2023-08-26",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -567.1197596743792,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-06-08",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -490.14380690439725,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-05-24",
+          "trades": 2,
+          "wr": 0.0,
+          "net_usd": -478.6395335212187,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-06-07",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -403.67321974816525,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-07-06",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -314.1682894000354,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-09-07",
+          "trades": 2,
+          "wr": 0.0,
+          "net_usd": -237.60431068339574,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2026-02-25",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -149.0115460183514,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-04-20",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -20.319280991005957,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-04-06",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -16.409896806974718,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-05-08",
+          "trades": 2,
+          "wr": 0.5,
+          "net_usd": 9.537498491730844,
+          "pf_proxy": 1.0297021125686683
+        },
+        {
+          "entry_session_day": "2023-06-28",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 36.355708424940914,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-03-06",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 94.71734760892316,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-01-27",
+          "trades": 3,
+          "wr": 0.6666666666666666,
+          "net_usd": 126.39006426154907,
+          "pf_proxy": 1.2800207212517014
+        },
+        {
+          "entry_session_day": "2025-10-22",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 182.68961588486695,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-07-15",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 226.94592286469037,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-27",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 228.74405908838855,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-08-05",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 230.1772010379771,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-08-12",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 230.85590345223565,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-02-26",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 237.1037051149725,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-07-26",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 246.95983051715865,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-10-15",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 253.7125098065826,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-05-04",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 254.10946017983576,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-12-28",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 254.4235260341784,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2026-01-24",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 269.8085820114749,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-20",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 275.3465049062766,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-02",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 279.76421334735124,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-12-13",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 310.16773777436856,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-07-01",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 310.1837802134328,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-01-11",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 315.9554059855775,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-09-04",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 334.4373121546146,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2026-02-28",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 340.4761041783778,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-06-19",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 343.7447926550541,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-23",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 344.58098168276075,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-06-15",
+          "trades": 3,
+          "wr": 0.6666666666666666,
+          "net_usd": 353.69648723935416,
+          "pf_proxy": 3.3692700324800895
+        },
+        {
+          "entry_session_day": "2025-12-24",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 357.3600224738794,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-10-25",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 357.87215679686693,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-06-04",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 368.64035262971754,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-07-22",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 379.09232404144706,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-11-18",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 400.8855698885386,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-11-11",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 400.949861307733,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-11-09",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 402.61095812443983,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-06-18",
+          "trades": 3,
+          "wr": 0.6666666666666666,
+          "net_usd": 481.0604551077077,
+          "pf_proxy": 2.5243002493358966
+        },
+        {
+          "entry_session_day": "2023-07-12",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 482.218143973232,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-08-19",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 486.58256854736,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-10-18",
+          "trades": 3,
+          "wr": 0.6666666666666666,
+          "net_usd": 495.5276884115298,
+          "pf_proxy": 8.162644819805898
+        },
+        {
+          "entry_session_day": "2025-12-06",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 519.3042000879999,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-12-25",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 524.6737579208115,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-11-01",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 547.1703716525378,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-12-27",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 615.1044976922524,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-08-02",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 655.3689975780926,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-12-20",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 672.7249048429512,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-11-22",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 709.5721756113278,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-03-16",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 718.768335256643,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-01-15",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 720.7766997473806,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-02-28",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 819.1376935066102,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-16",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 830.9212548474143,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-06-05",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 869.8121624622299,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-12-18",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 879.0063252448228,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-09-28",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 891.951991252274,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-04-13",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 910.7711958365396,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-03-29",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 938.200305428441,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-01-13",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 959.4712797001002,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-02-15",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 960.7462301867192,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-02-12",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 1000.5089644044763,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-09-25",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 1228.9023833271544,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-10-29",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 1344.0510596893723,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-11-26",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 1588.6910600604615,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-09",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 2860.5004488970117,
+          "pf_proxy": Infinity
+        }
+      ],
+      "combo_stats": [
+        {
+          "confluence_combo": "ABC",
+          "trades": 17,
+          "wr": 0.8823529411764706,
+          "net_usd": 4394.732275754204,
+          "pf_proxy": 4.306710916553387
+        },
+        {
+          "confluence_combo": "ABCDE",
+          "trades": 52,
+          "wr": 0.6730769230769231,
+          "net_usd": 6966.498217528685,
+          "pf_proxy": 1.676291610787096
+        },
+        {
+          "confluence_combo": "ABCE",
+          "trades": 28,
+          "wr": 0.75,
+          "net_usd": 7664.177244117629,
+          "pf_proxy": 3.455776185454621
+        }
+      ],
+      "monthly_worst5": [
+        {
+          "month": "2025-05",
+          "trades": 4,
+          "wr": 0.0,
+          "net_usd": -2609.048948632843
+        },
+        {
+          "month": "2024-05",
+          "trades": 5,
+          "wr": 0.4,
+          "net_usd": -1741.5503847118252
+        },
+        {
+          "month": "2024-07",
+          "trades": 2,
+          "wr": 0.0,
+          "net_usd": -1563.0472498946938
+        },
+        {
+          "month": "2025-09",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1212.236965922515
+        },
+        {
+          "month": "2026-01",
+          "trades": 2,
+          "wr": 0.5,
+          "net_usd": -875.7013671091847
+        }
+      ],
+      "monthly_best5": [
+        {
+          "month": "2023-09",
+          "trades": 7,
+          "wr": 1.0,
+          "net_usd": 4819.857462769203
+        },
+        {
+          "month": "2025-12",
+          "trades": 5,
+          "wr": 1.0,
+          "net_usd": 2474.6613628714513
+        },
+        {
+          "month": "2025-11",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 2298.2632356717895
+        },
+        {
+          "month": "2024-09",
+          "trades": 6,
+          "wr": 0.6666666666666666,
+          "net_usd": 2217.687376050647
+        },
+        {
+          "month": "2025-02",
+          "trades": 5,
+          "wr": 1.0,
+          "net_usd": 2198.358899706168
+        }
+      ],
+      "loss_anatomy": {
+        "loss_trades": 26,
+        "losses_never_profit_gt_0p5pip": 8,
+        "losses_had_profit_before_loss": 18,
+        "pct_losses_had_profit": 69.23076923076923,
+        "loss_never_profit_avg_usd": -902.4516330044186,
+        "loss_had_profit_avg_usd": -418.40700590115637
+      },
+      "filter_funnel": {
+        "bars_total": 1000000,
+        "bars_disallowed_day": 617643,
+        "bars_outside_tokyo_hours": 287053,
+        "bars_in_session": 95304,
+        "bars_passed_session_filter": 95304,
+        "bars_passed_indicator_check": 95102,
+        "bars_passed_breakout_check": 90287,
+        "bars_passed_regime_filter": 83652,
+        "bars_after_global_filters": 82783,
+        "bars_passed_atr_filter": 82783,
+        "bars_reached_signal_scoring": 82783,
+        "blocked_no_signal": 81978,
+        "bars_with_sar_flip": 78690,
+        "short_cond_sar_true": 39455,
+        "long_cond_sar_true": 39235
+      }
+    },
+    "V17": {
+      "summary": {
+        "trades": 140,
+        "wr_pct": 68.57142857142857,
+        "pf": 1.9097888467856097,
+        "net_usd": 20767.03038429862,
+        "maxdd_usd": 5809.732301906028,
+        "sharpe": 3.153593777168904,
+        "calmar": 4.116498076856227,
+        "exp_per_trade_usd": 148.33593131641874,
+        "blocked_margin_cap": 1
+      },
+      "capture": {
+        "avg_winner_pips": 6.75452630491655,
+        "winners_avg_mfe_pips": 12.024081490956434,
+        "capture_ratio_avg": 0.5617498775267593,
+        "capture_ratio_trade_mean": 0.6096847152260699,
+        "all_avg_mfe": 9.096947081779215,
+        "all_avg_mae": 8.117059647742845,
+        "losers_avg_mfe": 2.710472007210737,
+        "losers_avg_mae": 13.522557035353087
+      },
+      "partial_tp": {
+        "times_partial_tp_hit": 81,
+        "avg_pips_at_partial_tp": 6.933145943562624,
+        "remaining_50pct_outcomes": {
+          "hit_full_tp": 4,
+          "hit_trailing_stop": 44,
+          "hit_breakeven_stop": 21,
+          "closed_time_decay": 2,
+          "closed_session_end": 10
+        }
+      },
+      "early_exit": {
+        "early_exits_triggered": 0,
+        "avg_loss_saved_pips": 0.0
+      },
+      "exit_reason_stats": [
+        {
+          "exit_reason": "sl",
+          "trades": 13,
+          "wr": 0.0,
+          "net_usd": -12780.702979615437,
+          "avg_usd": -983.1309984319566,
+          "avg_pips": -18.153846153845386
+        },
+        {
+          "exit_reason": "session_close",
+          "trades": 46,
+          "wr": 0.32608695652173914,
+          "net_usd": -6444.18848720472,
+          "avg_usd": -140.09105406966782,
+          "avg_pips": -2.4893241945229723
+        },
+        {
+          "exit_reason": "tp1_then_time_decay",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 759.996082482952,
+          "avg_usd": 379.998041241476,
+          "avg_pips": 4.3837040042010305
+        },
+        {
+          "exit_reason": "tp1_then_tp2",
+          "trades": 4,
+          "wr": 1.0,
+          "net_usd": 3784.620219931029,
+          "avg_usd": 946.1550549827573,
+          "avg_pips": 15.920712861008829
+        },
+        {
+          "exit_reason": "tp1_then_session_close",
+          "trades": 10,
+          "wr": 1.0,
+          "net_usd": 4458.815532277937,
+          "avg_usd": 445.8815532277937,
+          "avg_pips": 7.064084931797593
+        },
+        {
+          "exit_reason": "tp1_then_be_stop",
+          "trades": 21,
+          "wr": 1.0,
+          "net_usd": 5894.906862375751,
+          "avg_usd": 280.7098505893215,
+          "avg_pips": 4.176444381807785
+        },
+        {
+          "exit_reason": "tp1_then_trailing_stop",
+          "trades": 44,
+          "wr": 1.0,
+          "net_usd": 25093.583154051106,
+          "avg_usd": 570.3087080466161,
+          "avg_pips": 8.331151541230147
+        }
+      ],
+      "session_close_by_entry_hour": [
+        {
+          "hour": 18,
+          "trades": 10,
+          "wr": 0.2,
+          "net_usd": -2446.603159393172,
+          "avg_usd": -244.6603159393172
+        },
+        {
+          "hour": 20,
+          "trades": 14,
+          "wr": 0.35714285714285715,
+          "net_usd": -1969.7549838937696,
+          "avg_usd": -140.69678456384068
+        },
+        {
+          "hour": 17,
+          "trades": 6,
+          "wr": 0.16666666666666666,
+          "net_usd": -1943.2386773597032,
+          "avg_usd": -323.87311289328386
+        },
+        {
+          "hour": 19,
+          "trades": 9,
+          "wr": 0.3333333333333333,
+          "net_usd": -326.72853861352496,
+          "avg_usd": -36.30317095705833
+        },
+        {
+          "hour": 16,
+          "trades": 2,
+          "wr": 0.5,
+          "net_usd": 90.18705028311939,
+          "avg_usd": 45.093525141559695
+        },
+        {
+          "hour": 21,
+          "trades": 5,
+          "wr": 0.6,
+          "net_usd": 151.94982177232987,
+          "avg_usd": 30.389964354465974
+        }
+      ],
+      "hour_stats": [
+        {
+          "hour": 16,
+          "trades": 10,
+          "wr": 0.6,
+          "net_usd": -922.6870189369697,
+          "avg_usd": -92.26870189369697
+        },
+        {
+          "hour": 17,
+          "trades": 22,
+          "wr": 0.5454545454545454,
+          "net_usd": -40.379844803605806,
+          "avg_usd": -1.8354474910729912
+        },
+        {
+          "hour": 18,
+          "trades": 34,
+          "wr": 0.7058823529411765,
+          "net_usd": 6297.327796162973,
+          "avg_usd": 185.21552341655803
+        },
+        {
+          "hour": 19,
+          "trades": 32,
+          "wr": 0.8125,
+          "net_usd": 11135.39442140249,
+          "avg_usd": 347.9810756688278
+        },
+        {
+          "hour": 20,
+          "trades": 33,
+          "wr": 0.6363636363636364,
+          "net_usd": 2447.9722454771486,
+          "avg_usd": 74.18097713567117
+        },
+        {
+          "hour": 21,
+          "trades": 9,
+          "wr": 0.7777777777777778,
+          "net_usd": 1849.4027849965828,
+          "avg_usd": 205.48919833295363
+        }
+      ],
+      "day_stats": [
+        {
+          "entry_session_day": "2024-05-29",
+          "trades": 2,
+          "wr": 0.0,
+          "net_usd": -2683.9113584905094,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-07-24",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1672.626543383848,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-05-31",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1312.0796289856955,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-06-21",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1304.485754386394,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-09-03",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1212.236965922515,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2026-01-17",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1159.3775168065915,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-06-22",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1126.8914561992312,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-05-21",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -1104.4382244289952,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-10-16",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -804.8346801163303,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-05-23",
+          "trades": 2,
+          "wr": 0.0,
+          "net_usd": -769.4060349619338,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-04-17",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -669.049092231049,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-05-22",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -662.4759287630484,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-10-16",
+          "trades": 3,
+          "wr": 0.3333333333333333,
+          "net_usd": -650.2913682548788,
+          "pf_proxy": 0.36328882648634747
+        },
+        {
+          "entry_session_day": "2024-08-22",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -619.4445396333214,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2023-08-17",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -580.9644723054718,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2023-08-26",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -567.3691908354809,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-11-07",
+          "trades": 2,
+          "wr": 0.5,
+          "net_usd": -544.8905141905277,
+          "pf_proxy": 0.1303073662406517
+        },
+        {
+          "entry_session_day": "2024-06-08",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -491.07478303857874,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-05-24",
+          "trades": 2,
+          "wr": 0.0,
+          "net_usd": -479.87019285602344,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-06-07",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -403.67321974816525,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-07-06",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -315.09215940102587,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-03-28",
+          "trades": 3,
+          "wr": 0.3333333333333333,
+          "net_usd": -267.610719512796,
+          "pf_proxy": 0.21404484412369632
+        },
+        {
+          "entry_session_day": "2024-04-04",
+          "trades": 2,
+          "wr": 0.0,
+          "net_usd": -262.51285729857227,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-09-07",
+          "trades": 2,
+          "wr": 0.0,
+          "net_usd": -237.26176245150992,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2023-06-29",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -171.08653008472635,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2026-02-25",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -149.0115460183514,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-09-25",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -40.20521848263189,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-04-20",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -20.588998092093185,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2024-04-06",
+          "trades": 1,
+          "wr": 0.0,
+          "net_usd": -16.56557546629961,
+          "pf_proxy": 0.0
+        },
+        {
+          "entry_session_day": "2025-09-11",
+          "trades": 2,
+          "wr": 0.5,
+          "net_usd": -13.797029923560004,
+          "pf_proxy": 0.8564074101027687
+        },
+        {
+          "entry_session_day": "2024-05-08",
+          "trades": 2,
+          "wr": 0.5,
+          "net_usd": -2.2391809739901873,
+          "pf_proxy": 0.9948255555722783
+        },
+        {
+          "entry_session_day": "2024-11-21",
+          "trades": 2,
+          "wr": 0.5,
+          "net_usd": 27.57784774866505,
+          "pf_proxy": 1.1821398827662994
+        },
+        {
+          "entry_session_day": "2023-11-09",
+          "trades": 2,
+          "wr": 0.5,
+          "net_usd": 46.355502431212415,
+          "pf_proxy": 1.2312038877451137
+        },
+        {
+          "entry_session_day": "2023-06-28",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 48.353084000555405,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-07-06",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 112.74876899640348,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-03-06",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 127.74071154271536,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-01-27",
+          "trades": 3,
+          "wr": 0.6666666666666666,
+          "net_usd": 127.85261136694095,
+          "pf_proxy": 1.280022489828108
+        },
+        {
+          "entry_session_day": "2024-06-06",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 169.88355998282358,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-14",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 173.60337927909984,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-10-22",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 182.68961588486695,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-09-26",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 187.1204546139699,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-10-02",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 205.1102346139479,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-07-20",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 207.67037795943057,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-06-12",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 226.66004237664703,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-07-15",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 227.19819436761895,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-08-05",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 231.57935865076917,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-08-12",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 232.26194916922225,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-12-28",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 254.8213177476907,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-05-04",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 257.4824261924041,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2026-01-24",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 273.0750916715625,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-02",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 279.88736492192186,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2026-03-05",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 298.80345821434025,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-27",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 305.1212437638619,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-07-24",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 309.41719562235005,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-07-01",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 309.6899609899699,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-12-13",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 312.8884019910903,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-01-11",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 316.4495273468925,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-02-26",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 318.6405958785049,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-12-07",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 318.64442792269824,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-07-26",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 329.496830323152,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-10-30",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 330.3053538303412,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-01-11",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 340.78180191627104,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-10-15",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 341.20302375328953,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2026-02-28",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 344.60296902561095,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-23",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 345.5911050335392,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-06-15",
+          "trades": 3,
+          "wr": 0.6666666666666666,
+          "net_usd": 354.3682108347666,
+          "pf_proxy": 3.369268070644657
+        },
+        {
+          "entry_session_day": "2025-10-25",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 360.0716852956507,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-20",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 366.97280109434166,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-07-22",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 380.2923315357719,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2026-01-01",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 381.5174357158349,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-12-24",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 383.970179858557,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-11-18",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 400.8855698885386,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-11-09",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 401.48901757786336,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-11-11",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 403.1782977784045,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-04-11",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 424.4410361403659,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-09-04",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 443.7155195356463,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-01-16",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 446.8519539142975,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-07-18",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 449.3398647541836,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-06-19",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 458.0492083021774,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-08-19",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 486.796437385682,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-06-04",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 491.5521844157155,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-12-06",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 523.8594872261942,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-11-01",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 547.1703716525378,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-05-01",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 608.0382956415469,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-12-27",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 620.5912705309859,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-07-12",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 641.050721840751,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-06-18",
+          "trades": 3,
+          "wr": 0.6666666666666666,
+          "net_usd": 643.403995213885,
+          "pf_proxy": 2.524299999818053
+        },
+        {
+          "entry_session_day": "2023-10-18",
+          "trades": 3,
+          "wr": 0.6666666666666666,
+          "net_usd": 661.7085801518595,
+          "pf_proxy": 8.165468909105691
+        },
+        {
+          "entry_session_day": "2025-12-20",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 672.7249048429512,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-12-25",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 697.8389286722363,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-11-22",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 709.5721756113278,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-03-16",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 718.768335256643,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-16",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 832.6494584701067,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-06-05",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 869.8121624622299,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-08-02",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 875.1007116424287,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-09-28",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 895.4369633651531,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-04-13",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 922.8605606957892,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-03-29",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 948.6327148751388,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-01-15",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 960.1334035883892,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-01-13",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 970.5685767135624,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-02-15",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 970.7772893533127,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-02-28",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 1102.0536358406457,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-12-18",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 1166.1094847332297,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-02-12",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 1340.7317573250275,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-10-29",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 1344.0510596893723,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2025-11-26",
+          "trades": 1,
+          "wr": 1.0,
+          "net_usd": 1588.6910600604615,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2024-09-25",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 1633.498339693582,
+          "pf_proxy": Infinity
+        },
+        {
+          "entry_session_day": "2023-09-09",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 2861.75965923524,
+          "pf_proxy": Infinity
+        }
+      ],
+      "combo_stats": [
+        {
+          "confluence_combo": "ABC",
+          "trades": 25,
+          "wr": 0.76,
+          "net_usd": 5059.686141522915,
+          "pf_proxy": 3.1896667588746355
+        },
+        {
+          "confluence_combo": "ABCDE",
+          "trades": 75,
+          "wr": 0.6666666666666666,
+          "net_usd": 7196.013460741025,
+          "pf_proxy": 1.467766301453046
+        },
+        {
+          "confluence_combo": "ABCE",
+          "trades": 40,
+          "wr": 0.675,
+          "net_usd": 8511.330782034678,
+          "pf_proxy": 2.658572934157737
+        }
+      ],
+      "monthly_worst5": [
+        {
+          "month": "2025-05",
+          "trades": 5,
+          "wr": 0.0,
+          "net_usd": -3558.8639750337625
+        },
+        {
+          "month": "2024-05",
+          "trades": 7,
+          "wr": 0.2857142857142857,
+          "net_usd": -3198.074148234029
+        },
+        {
+          "month": "2024-07",
+          "trades": 3,
+          "wr": 0.3333333333333333,
+          "net_usd": -1538.3788380306903
+        },
+        {
+          "month": "2025-09",
+          "trades": 4,
+          "wr": 0.25,
+          "net_usd": -1266.239214328707
+        },
+        {
+          "month": "2026-01",
+          "trades": 2,
+          "wr": 0.5,
+          "net_usd": -886.302425135029
+        }
+      ],
+      "monthly_best5": [
+        {
+          "month": "2023-09",
+          "trades": 8,
+          "wr": 1.0,
+          "net_usd": 5165.585011798111
+        },
+        {
+          "month": "2024-09",
+          "trades": 7,
+          "wr": 0.7142857142857143,
+          "net_usd": 2922.509514756842
+        },
+        {
+          "month": "2025-12",
+          "trades": 6,
+          "wr": 1.0,
+          "net_usd": 2895.5516801656136
+        },
+        {
+          "month": "2025-02",
+          "trades": 5,
+          "wr": 1.0,
+          "net_usd": 2630.149642556845
+        },
+        {
+          "month": "2025-11",
+          "trades": 2,
+          "wr": 1.0,
+          "net_usd": 2298.2632356717895
+        }
+      ],
+      "loss_anatomy": {
+        "loss_trades": 44,
+        "losses_never_profit_gt_0p5pip": 14,
+        "losses_had_profit_before_loss": 30,
+        "pct_losses_had_profit": 68.18181818181817,
+        "loss_never_profit_avg_usd": -644.2629790474559,
+        "loss_had_profit_avg_usd": -460.21757723962503
+      },
+      "filter_funnel": {
+        "bars_total": 1000000,
+        "bars_outside_tokyo_hours": 437749,
+        "bars_disallowed_day": 417374,
+        "bars_in_session": 144877,
+        "bars_passed_session_filter": 144877,
+        "bars_passed_indicator_check": 144675,
+        "bars_passed_breakout_check": 134680,
+        "bars_passed_regime_filter": 123147,
+        "bars_after_global_filters": 121947,
+        "bars_passed_atr_filter": 121947,
+        "bars_reached_signal_scoring": 121947,
+        "blocked_no_signal": 120792,
+        "bars_with_sar_flip": 115256,
+        "bars_with_short_signal_zone": 58127,
+        "short_cond_zone_true": 58127
+      }
+    }
+  },
+  "comparisons": {
+    "V15B_vs_V15": {
+      "delta_net_usd": 155.43138920671845,
+      "delta_pf": -0.06462090967085432,
+      "delta_wr_pct": -3.0927835051546424,
+      "delta_trades": 0,
+      "delta_maxdd_usd": 1349.8815364267648,
+      "delta_capture_ratio_avg": 0.0382515225301121,
+      "delta_session_close_net": 973.9392769189526
+    },
+    "V17_vs_V15": {
+      "delta_net_usd": 1897.0540361048188,
+      "delta_pf": -0.44460809123219946,
+      "delta_wr_pct": -7.717231222385863,
+      "delta_trades": 43,
+      "delta_maxdd_usd": 2488.93893907906,
+      "delta_capture_ratio_avg": 0.045389650697143735,
+      "delta_session_close_net": -1292.7429215937627
+    },
+    "V15B_vs_V17": {
+      "delta_net_usd": -1741.6226468981004,
+      "delta_pf": 0.37998718156134514,
+      "delta_wr_pct": 4.62444771723122,
+      "delta_trades": -43,
+      "delta_maxdd_usd": -1139.0574026522954,
+      "delta_capture_ratio_avg": -0.007138128167031632,
+      "delta_session_close_net": 2266.6821985127153
+    }
+  }
+}

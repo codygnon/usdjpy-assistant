@@ -1,0 +1,35 @@
+{
+  "variant": "london_9am",
+  "datasets": {
+    "500k": {
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/phase2_robustness_london_9am_500k_report.json",
+      "total_trades": 310,
+      "win_rate_pct": 47.41935483870968,
+      "profit_factor": 1.5555030951401092,
+      "net_usd": 28036.420816148686,
+      "max_drawdown_usd": 8749.990484464332,
+      "pct_net_from_top_5_days": 90.22554465014554,
+      "best_day": "Wednesday",
+      "worst_day": "Monday",
+      "best_hour_utc": 13,
+      "worst_hour_utc": 9,
+      "daily_pnl_top5_usd": 25296.013381776935,
+      "daily_pnl_total_usd": 28036.42081614869
+    },
+    "1000k": {
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/phase2_robustness_london_9am_1000k_report.json",
+      "total_trades": 599,
+      "win_rate_pct": 42.23706176961603,
+      "profit_factor": 1.3950667729632467,
+      "net_usd": 28472.57335317114,
+      "max_drawdown_usd": 12060.59005367737,
+      "pct_net_from_top_5_days": 98.36791134201786,
+      "best_day": "Friday",
+      "worst_day": "Monday",
+      "best_hour_utc": 13,
+      "worst_hour_utc": 9,
+      "daily_pnl_top5_usd": 28007.875712838388,
+      "daily_pnl_total_usd": 28472.573353171138
+    }
+  }
+}

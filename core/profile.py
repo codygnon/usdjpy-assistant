@@ -917,6 +917,104 @@ class ExecutionPolicyKtCgTrial8(BaseModel):
     trail_ema_period: int = 21
 
 
+class ExecutionPolicyKtCgTrial9(BaseModel):
+    """KT/CG Trial #9: T8 entry logic + No-Trade Zones (NTZ) + Kill Switch exit (M1-200 EMA)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["kt_cg_trial_9"] = "kt_cg_trial_9"
+    id: str = "kt_cg_trial_9_default"
+    enabled: bool = False
+
+    # M5 Trend EMAs
+    m5_trend_ema_fast: int = 9
+    m5_trend_ema_slow: int = 21
+    m5_min_ema_distance_pips: float = 1.0
+
+    # M1 Zone Entry
+    zone_entry_enabled: bool = True
+    zone_entry_mode: Literal["ema_cross", "price_vs_ema5"] = "price_vs_ema5"
+    m1_zone_entry_ema_fast: int = 5
+    m1_zone_entry_ema_slow: int = 9
+    m1_zone_entry_price_ema_period: int = 5
+    zone_entry_price_buffer_pips: float = 0.5
+
+    # Tiered Pullback Configuration
+    tiered_pullback_enabled: bool = True
+    tier_ema_periods: tuple[int, ...] = (17, 21, 27, 33, 50, 75, 100)
+    tier_reset_buffer_pips: float = 1.0
+
+    cooldown_minutes: float = 3.0
+    tp_pips: float = 4.0
+    confirm_bars: int = 1
+
+    # --- No-Trade Zones (NTZ) --- replaces Daily Level Filter
+    ntz_enabled: bool = True
+    ntz_buffer_pips: float = 10.0
+    ntz_use_prev_day_hl: bool = True
+    ntz_use_weekly_hl: bool = True
+    ntz_use_monthly_hl: bool = True
+
+    # --- Kill Switch (M1-200 EMA exit) ---
+    kill_switch_enabled: bool = True
+    kill_switch_zone_entry_action: Literal["kill", "hold"] = "kill"
+
+    # TP1 + BE + Trail (single exit flow — no exit_strategy enum)
+    trail_after_tp1: bool = True
+    tp1_pips: float = 4.0
+    tp1_close_pct: float = 50.0
+    be_spread_plus_pips: float = 2.0
+    trail_ema_period: int = 21
+
+    # Spread-Aware Breakeven
+    spread_aware_be_enabled: bool = False
+    spread_aware_be_trigger_mode: Literal["spread_relative"] = "spread_relative"
+    spread_aware_be_spread_buffer_pips: float = 1.0
+    spread_aware_be_apply_to_zone_entry: bool = True
+    spread_aware_be_apply_to_tiered_pullback: bool = True
+
+    # Trend exhaustion (same fields as T8)
+    trend_exhaustion_enabled: bool = False
+    trend_exhaustion_mode: Literal["global", "session", "session_and_side"] = "session_and_side"
+    trend_exhaustion_use_current_price: bool = True
+    trend_exhaustion_hysteresis_pips: float = 0.5
+    trend_exhaustion_p80_global: float = 12.03
+    trend_exhaustion_p90_global: float = 17.02
+    trend_exhaustion_p80_tokyo: float = 12.67
+    trend_exhaustion_p90_tokyo: float = 17.63
+    trend_exhaustion_p80_london: float = 11.06
+    trend_exhaustion_p90_london: float = 14.41
+    trend_exhaustion_p80_ny: float = 12.66
+    trend_exhaustion_p90_ny: float = 18.83
+    trend_exhaustion_p80_bull_tokyo: float = 11.85
+    trend_exhaustion_p90_bull_tokyo: float = 15.52
+    trend_exhaustion_p80_bull_london: float = 10.21
+    trend_exhaustion_p90_bull_london: float = 12.97
+    trend_exhaustion_p80_bull_ny: float = 11.21
+    trend_exhaustion_p90_bull_ny: float = 15.84
+    trend_exhaustion_p80_bear_tokyo: float = 13.44
+    trend_exhaustion_p90_bear_tokyo: float = 19.73
+    trend_exhaustion_p80_bear_london: float = 12.01
+    trend_exhaustion_p90_bear_london: float = 17.44
+    trend_exhaustion_p80_bear_ny: float = 13.97
+    trend_exhaustion_p90_bear_ny: float = 21.51
+    trend_exhaustion_extended_disable_zone_entry: bool = True
+    trend_exhaustion_very_extended_disable_zone_entry: bool = True
+    trend_exhaustion_extended_min_tier_period: int = 21
+    trend_exhaustion_very_extended_min_tier_period: int = 29
+    trend_exhaustion_very_extended_tighten_caps: bool = True
+    trend_exhaustion_very_extended_cap_multiplier: float = 0.5
+    trend_exhaustion_very_extended_cap_min: int = 1
+    trend_exhaustion_adaptive_tp_enabled: bool = False
+    trend_exhaustion_tp_extended_offset_pips: float = 1.0
+    trend_exhaustion_tp_very_extended_offset_pips: float = 2.0
+    trend_exhaustion_tp_min_pips: float = 0.5
+
+    max_open_trades_per_side: Optional[int] = 5
+    max_zone_entry_open: Optional[int] = 3
+    max_tiered_pullback_open: Optional[int] = 8
+
+
 class ExecutionPolicyKtCgTrial6(BaseModel):
     """KT/CG Trial #6 (BB Slope Trend + EMA Tier Pullback + BB Reversal).
 
@@ -1056,6 +1154,7 @@ ExecutionPolicy = Annotated[
         ExecutionPolicyKtCgTrial5,
         ExecutionPolicyKtCgTrial7,
         ExecutionPolicyKtCgTrial8,
+        ExecutionPolicyKtCgTrial9,
         ExecutionPolicyKtCgTrial6,
         ExecutionPolicyUncleParshH1Breakout,
     ],

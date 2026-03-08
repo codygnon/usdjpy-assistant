@@ -1,0 +1,287 @@
+{
+  "experiment": 26,
+  "selection_rule": "max Net USD (PF>1.5), tie-break: lower MaxDD, higher trades, higher WR, higher PF",
+  "baseline_path_used": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_v14_realism_maxopen3_risk1p5_maxu1p5m_config.json",
+  "variants": [
+    {
+      "variant": "26A",
+      "label": "disabled",
+      "trades": 97,
+      "wr": 76.28865979381443,
+      "pf": 2.354396938017809,
+      "net_usd": 18869.976348193803,
+      "max_dd_usd": 3320.7933628269675,
+      "max_dd_pct": 2.9416089769986793,
+      "net_over_maxdd": 5.682369929856137,
+      "usd_per_month": 581.2406082918159,
+      "expectancy_per_trade": 194.53583864117323,
+      "sharpe": 3.5045477641305505,
+      "calmar": 6.414848640911791,
+      "blocked_margin_cap": 1,
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "session_close",
+          "count": 24,
+          "net_usd": -5151.445565610958
+        },
+        {
+          "exit_reason": "sl",
+          "count": 6,
+          "net_usd": -7460.390927796946
+        },
+        {
+          "exit_reason": "tp1_then_be_stop",
+          "count": 24,
+          "net_usd": 6923.951813476217
+        },
+        {
+          "exit_reason": "tp1_then_session_close",
+          "count": 7,
+          "net_usd": 3753.0866049305587
+        },
+        {
+          "exit_reason": "tp1_then_time_decay",
+          "count": 3,
+          "net_usd": 866.7504445889338
+        },
+        {
+          "exit_reason": "tp1_then_tp2",
+          "count": 4,
+          "net_usd": 3760.071946730712
+        },
+        {
+          "exit_reason": "tp1_then_trailing_stop",
+          "count": 29,
+          "net_usd": 16177.952031875284
+        }
+      ],
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round3_exp26_26A_report.json",
+      "trades_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round3_exp26_26A_trades.csv",
+      "equity_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round3_exp26_26A_equity.csv"
+    },
+    {
+      "variant": "26B",
+      "label": "lb2 buf2.0 ratio1.5",
+      "trades": 97,
+      "wr": 75.25773195876289,
+      "pf": 2.2148878836628265,
+      "net_usd": 18794.46937592963,
+      "max_dd_usd": 3496.908028868609,
+      "max_dd_pct": 3.079547756328528,
+      "net_over_maxdd": 5.374596420830204,
+      "usd_per_month": 578.914812133979,
+      "expectancy_per_trade": 193.75741624669723,
+      "sharpe": 3.323233802630177,
+      "calmar": 6.102996564124292,
+      "blocked_margin_cap": 1,
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "session_close",
+          "count": 23,
+          "net_usd": -4330.294925462077
+        },
+        {
+          "exit_reason": "sl",
+          "count": 8,
+          "net_usd": -9609.34705698497
+        },
+        {
+          "exit_reason": "tp1_then_be_stop",
+          "count": 24,
+          "net_usd": 7660.650972985933
+        },
+        {
+          "exit_reason": "tp1_then_session_close",
+          "count": 6,
+          "net_usd": 3606.558919908419
+        },
+        {
+          "exit_reason": "tp1_then_time_decay",
+          "count": 3,
+          "net_usd": 867.7677012814568
+        },
+        {
+          "exit_reason": "tp1_then_tp2",
+          "count": 4,
+          "net_usd": 3775.5466688953784
+        },
+        {
+          "exit_reason": "tp1_then_trailing_stop",
+          "count": 29,
+          "net_usd": 16823.58709530549
+        }
+      ],
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round3_exp26_26B_report.json",
+      "trades_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round3_exp26_26B_trades.csv",
+      "equity_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round3_exp26_26B_equity.csv"
+    },
+    {
+      "variant": "26C",
+      "label": "lb3 buf1.5 ratio1.2",
+      "trades": 97,
+      "wr": 75.25773195876289,
+      "pf": 2.219815584894518,
+      "net_usd": 18859.91557493231,
+      "max_dd_usd": 3492.8236193441116,
+      "max_dd_pct": 3.082194171882774,
+      "net_over_maxdd": 5.399618655371397,
+      "usd_per_month": 580.9307123034748,
+      "expectancy_per_trade": 194.43211932919908,
+      "sharpe": 3.3339485063172165,
+      "calmar": 6.118990084071071,
+      "blocked_margin_cap": 1,
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "session_close",
+          "count": 23,
+          "net_usd": -4531.81219652693
+        },
+        {
+          "exit_reason": "sl",
+          "count": 8,
+          "net_usd": -9607.47249991377
+        },
+        {
+          "exit_reason": "tp1_then_be_stop",
+          "count": 24,
+          "net_usd": 7953.269650788505
+        },
+        {
+          "exit_reason": "tp1_then_session_close",
+          "count": 6,
+          "net_usd": 3603.7886094911546
+        },
+        {
+          "exit_reason": "tp1_then_time_decay",
+          "count": 3,
+          "net_usd": 866.3262748642834
+        },
+        {
+          "exit_reason": "tp1_then_tp2",
+          "count": 4,
+          "net_usd": 3767.810098291696
+        },
+        {
+          "exit_reason": "tp1_then_trailing_stop",
+          "count": 29,
+          "net_usd": 16808.005637937375
+        }
+      ],
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round3_exp26_26C_report.json",
+      "trades_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round3_exp26_26C_trades.csv",
+      "equity_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round3_exp26_26C_equity.csv"
+    },
+    {
+      "variant": "26D",
+      "label": "lb2 buf3.0 ratio2.0",
+      "trades": 97,
+      "wr": 75.25773195876289,
+      "pf": 2.160952720659805,
+      "net_usd": 18368.772894923386,
+      "max_dd_usd": 3489.7497622261726,
+      "max_dd_pct": 3.084426210669755,
+      "net_over_maxdd": 5.263636119056749,
+      "usd_per_month": 565.8023377459845,
+      "expectancy_per_trade": 189.36879273116892,
+      "sharpe": 3.2108591667412347,
+      "calmar": 5.955329011075568,
+      "blocked_margin_cap": 1,
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "session_close",
+          "count": 23,
+          "net_usd": -4694.696001221046
+        },
+        {
+          "exit_reason": "sl",
+          "count": 8,
+          "net_usd": -9600.010090253538
+        },
+        {
+          "exit_reason": "tp1_then_be_stop",
+          "count": 24,
+          "net_usd": 7650.189585772871
+        },
+        {
+          "exit_reason": "tp1_then_session_close",
+          "count": 6,
+          "net_usd": 3598.7913604376154
+        },
+        {
+          "exit_reason": "tp1_then_time_decay",
+          "count": 3,
+          "net_usd": 865.5034321924996
+        },
+        {
+          "exit_reason": "tp1_then_tp2",
+          "count": 4,
+          "net_usd": 3761.7038377775843
+        },
+        {
+          "exit_reason": "tp1_then_trailing_stop",
+          "count": 29,
+          "net_usd": 16787.290770217398
+        }
+      ],
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round3_exp26_26D_report.json",
+      "trades_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round3_exp26_26D_trades.csv",
+      "equity_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round3_exp26_26D_equity.csv"
+    }
+  ],
+  "winner": {
+    "variant": "26A",
+    "label": "disabled",
+    "trades": 97,
+    "wr": 76.28865979381443,
+    "pf": 2.354396938017809,
+    "net_usd": 18869.976348193803,
+    "max_dd_usd": 3320.7933628269675,
+    "max_dd_pct": 2.9416089769986793,
+    "net_over_maxdd": 5.682369929856137,
+    "usd_per_month": 581.2406082918159,
+    "expectancy_per_trade": 194.53583864117323,
+    "sharpe": 3.5045477641305505,
+    "calmar": 6.414848640911791,
+    "blocked_margin_cap": 1,
+    "exit_reason_breakdown": [
+      {
+        "exit_reason": "session_close",
+        "count": 24,
+        "net_usd": -5151.445565610958
+      },
+      {
+        "exit_reason": "sl",
+        "count": 6,
+        "net_usd": -7460.390927796946
+      },
+      {
+        "exit_reason": "tp1_then_be_stop",
+        "count": 24,
+        "net_usd": 6923.951813476217
+      },
+      {
+        "exit_reason": "tp1_then_session_close",
+        "count": 7,
+        "net_usd": 3753.0866049305587
+      },
+      {
+        "exit_reason": "tp1_then_time_decay",
+        "count": 3,
+        "net_usd": 866.7504445889338
+      },
+      {
+        "exit_reason": "tp1_then_tp2",
+        "count": 4,
+        "net_usd": 3760.071946730712
+      },
+      {
+        "exit_reason": "tp1_then_trailing_stop",
+        "count": 29,
+        "net_usd": 16177.952031875284
+      }
+    ],
+    "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round3_exp26_26A_report.json",
+    "trades_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round3_exp26_26A_trades.csv",
+    "equity_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round3_exp26_26A_equity.csv"
+  }
+}

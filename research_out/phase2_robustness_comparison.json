@@ -1,0 +1,130 @@
+{
+  "baseline": {
+    "500k": {
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/phase2_robustness_baseline_500k_report.json",
+      "total_trades": 317,
+      "win_rate_pct": 48.89589905362776,
+      "profit_factor": 1.8192829384425169,
+      "net_usd": 41935.56701280135,
+      "max_drawdown_usd": 7213.563308578945,
+      "pct_net_from_top_5_days": 86.4240203075975,
+      "best_day": "Tuesday",
+      "worst_day": "Monday",
+      "best_hour_utc": 13,
+      "worst_hour_utc": 15,
+      "daily_pnl_top5_usd": 36242.402951249605,
+      "daily_pnl_total_usd": 41935.56701280136
+    },
+    "1000k": {
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/phase2_robustness_baseline_1000k_report.json",
+      "total_trades": 615,
+      "win_rate_pct": 42.4390243902439,
+      "profit_factor": 1.6162560479465788,
+      "net_usd": 44197.595650799216,
+      "max_drawdown_usd": 13577.79796608338,
+      "pct_net_from_top_5_days": 97.6894675178448,
+      "best_day": "Tuesday",
+      "worst_day": "Monday",
+      "best_hour_utc": 13,
+      "worst_hour_utc": 15,
+      "daily_pnl_top5_usd": 43176.395846955886,
+      "daily_pnl_total_usd": 44197.595650799216
+    }
+  },
+  "skip_monday": {
+    "500k": {
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/phase2_robustness_skip_monday_500k_report.json",
+      "total_trades": 293,
+      "win_rate_pct": 51.19453924914675,
+      "profit_factor": 1.4144042590196884,
+      "net_usd": 19184.163423524857,
+      "max_drawdown_usd": 5572.533724627909,
+      "pct_net_from_top_5_days": 110.15207324150897,
+      "best_day": "Wednesday",
+      "worst_day": "Thursday",
+      "best_hour_utc": 14,
+      "worst_hour_utc": 8,
+      "daily_pnl_top5_usd": 21131.753745051876,
+      "daily_pnl_total_usd": 19184.163423524857
+    },
+    "1000k": {
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/phase2_robustness_skip_monday_1000k_report.json",
+      "total_trades": 568,
+      "win_rate_pct": 44.36619718309859,
+      "profit_factor": 1.2089832946953751,
+      "net_usd": 15363.996682348388,
+      "max_drawdown_usd": 13458.458227896568,
+      "pct_net_from_top_5_days": 126.05788430007729,
+      "best_day": "Wednesday",
+      "worst_day": "Thursday",
+      "best_hour_utc": 14,
+      "worst_hour_utc": 8,
+      "daily_pnl_top5_usd": 19367.52916170244,
+      "daily_pnl_total_usd": 15363.996682348385
+    }
+  },
+  "london_9am": {
+    "500k": {
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/phase2_robustness_london_9am_500k_report.json",
+      "total_trades": 310,
+      "win_rate_pct": 47.41935483870968,
+      "profit_factor": 1.5555030951401092,
+      "net_usd": 28036.420816148686,
+      "max_drawdown_usd": 8749.990484464332,
+      "pct_net_from_top_5_days": 90.22554465014554,
+      "best_day": "Wednesday",
+      "worst_day": "Monday",
+      "best_hour_utc": 13,
+      "worst_hour_utc": 9,
+      "daily_pnl_top5_usd": 25296.013381776935,
+      "daily_pnl_total_usd": 28036.42081614869
+    },
+    "1000k": {
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/phase2_robustness_london_9am_1000k_report.json",
+      "total_trades": 599,
+      "win_rate_pct": 42.23706176961603,
+      "profit_factor": 1.3950667729632467,
+      "net_usd": 28472.57335317114,
+      "max_drawdown_usd": 12060.59005367737,
+      "pct_net_from_top_5_days": 98.36791134201786,
+      "best_day": "Friday",
+      "worst_day": "Monday",
+      "best_hour_utc": 13,
+      "worst_hour_utc": 9,
+      "daily_pnl_top5_usd": 28007.875712838388,
+      "daily_pnl_total_usd": 28472.573353171138
+    }
+  },
+  "skip_monday_london_9am": {
+    "500k": {
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/phase2_robustness_skip_monday_london_9am_500k_report.json",
+      "total_trades": 287,
+      "win_rate_pct": 51.21951219512195,
+      "profit_factor": 1.416355350766945,
+      "net_usd": 19103.67092570301,
+      "max_drawdown_usd": 5670.788082137806,
+      "pct_net_from_top_5_days": 110.81393356741003,
+      "best_day": "Wednesday",
+      "worst_day": "Thursday",
+      "best_hour_utc": 14,
+      "worst_hour_utc": 15,
+      "daily_pnl_top5_usd": 21169.52920854515,
+      "daily_pnl_total_usd": 19103.670925703005
+    },
+    "1000k": {
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/phase2_robustness_skip_monday_london_9am_1000k_report.json",
+      "total_trades": 544,
+      "win_rate_pct": 45.036764705882355,
+      "profit_factor": 1.2216601154776503,
+      "net_usd": 15809.161526542845,
+      "max_drawdown_usd": 13125.31830629462,
+      "pct_net_from_top_5_days": 122.38775705122428,
+      "best_day": "Wednesday",
+      "worst_day": "Thursday",
+      "best_hour_utc": 14,
+      "worst_hour_utc": 9,
+      "daily_pnl_top5_usd": 19348.478200940874,
+      "daily_pnl_total_usd": 15809.16152654284
+    }
+  }
+}

@@ -31,6 +31,7 @@ from core.execution_engine import (
     execute_kt_cg_trial_6_policy_demo_only,
     execute_kt_cg_trial_7_policy_demo_only,
     execute_kt_cg_trial_8_policy_demo_only,
+    execute_kt_cg_trial_9_policy_demo_only,
     execute_price_level_policy_demo_only,
     execute_session_momentum_policy_demo_only,
     execute_signal_demo_only,
@@ -256,6 +257,13 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                     pass
             break
 
+    # Find Trial #9 policy for managed exits (TP1 + BE + bar-close trail + Kill Switch)
+    t9_policy = None
+    for pol in profile.execution.policies:
+        if getattr(pol, "type", None) == "kt_cg_trial_9" and getattr(pol, "enabled", True):
+            t9_policy = pol
+            break
+
     # Find Trial #7 policy (if any) that uses ema_scale_runner exit (H1 breakout style).
     t7_ema_policy = None
     for pol in profile.execution.policies:
@@ -268,8 +276,9 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
     has_simple_be = breakeven and getattr(breakeven, "enabled", False)
     has_scaled = target and getattr(target, "mode", None) == "scaled" and getattr(target, "tp1_pips", None)
     has_t8_trail = t8_policy is not None
+    has_t9_trail = t9_policy is not None
     has_t7_ema = t7_ema_policy is not None
-    if not has_simple_be and not has_scaled and t4_spread_be is None and up_policy is None and not has_t7_ema and not has_t8_trail:
+    if not has_simple_be and not has_scaled and t4_spread_be is None and up_policy is None and not has_t7_ema and not has_t8_trail and not has_t9_trail:
         return
     try:
         open_positions = adapter.get_open_positions(profile.symbol)
@@ -639,6 +648,139 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                 except Exception as e:
                     print(f"[{profile.profile_name}] T8 trailing EMA error pos {position_id}: {e}")
 
+        # 2c) Trial #9: TP1 + BE + bar-close-only M1 trail + Kill Switch
+        elif t9_policy is not None and entry_type in ("zone_entry", "tiered_pullback"):
+            tp1_done = trade_row.get("tp1_partial_done") or 0
+            t9_tp1_pips = float(getattr(t9_policy, "tp1_pips", 4.0))
+            t9_tp1_pct = float(getattr(t9_policy, "tp1_close_pct", 50.0))
+
+            if not tp1_done:
+                # TP1 partial close
+                reached_buy = mid >= entry + t9_tp1_pips * pip
+                reached_sell = mid <= entry - t9_tp1_pips * pip
+                if (side == "buy" and reached_buy) or (side == "sell" and reached_sell):
+                    if isinstance(pos, dict):
+                        current_units = pos.get("currentUnits") or 0
+                        current_lots = abs(int(current_units)) / 100_000.0
+                    else:
+                        current_lots = float(getattr(pos, "volume", 0) or 0)
+                    close_lots = current_lots * (t9_tp1_pct / 100.0)
+                    position_type = 1 if side == "sell" else 0
+                    try:
+                        adapter.close_position(
+                            ticket=position_id,
+                            symbol=profile.symbol,
+                            volume=close_lots,
+                            position_type=position_type,
+                        )
+                        # Set BE (no broker SL modification for T9 — just track in DB)
+                        _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 2.0))
+                        be_offset = current_spread + _t9_be_pips * pip
+                        if side == "buy":
+                            be_sl = entry + be_offset
+                        else:
+                            be_sl = entry - be_offset
+                        store.update_trade(trade_id, {"tp1_partial_done": 1, "breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
+                        print(f"[{profile.profile_name}] T9 TP1 partial close + BE: pos {position_id} ({t9_tp1_pct}%) BE->{be_sl:.3f}")
+                    except Exception as e:
+                        print(f"[{profile.profile_name}] T9 TP1/BE error pos {position_id}: {e}")
+
+            elif tp1_done:
+                # Bar-close-only trailing on M1 21 EMA — only close on completed bar close crossing EMA
+                try:
+                    _t9_trail_period = int(getattr(t9_policy, "trail_ema_period", 21))
+                    m1_df_trail = adapter.get_bars(profile.symbol, "M1", 100)
+                    if m1_df_trail is not None and not m1_df_trail.empty and len(m1_df_trail) > _t9_trail_period + 1:
+                        from core.indicators import ema as ema_fn
+                        m1_close_trail = m1_df_trail["close"].astype(float)
+                        trail_ema = ema_fn(m1_close_trail, _t9_trail_period)
+                        if not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):
+                            # Use completed bar (iloc[-2]) for bar-close-only trailing
+                            ema_val = float(trail_ema.iloc[-2])
+                            last_m1_close = float(m1_close_trail.iloc[-2])
+                            if side == "buy" and last_m1_close < ema_val:
+                                position_type = 0
+                                if isinstance(pos, dict):
+                                    vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                else:
+                                    vol = float(getattr(pos, "volume", 0) or 0)
+                                if vol > 0:
+                                    adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                    print(f"[{profile.profile_name}] T9 runner closed (BUY bar-close < EMA{_t9_trail_period}): pos {position_id}")
+                            elif side == "sell" and last_m1_close > ema_val:
+                                position_type = 1
+                                if isinstance(pos, dict):
+                                    vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                else:
+                                    vol = float(getattr(pos, "volume", 0) or 0)
+                                if vol > 0:
+                                    adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                    print(f"[{profile.profile_name}] T9 runner closed (SELL bar-close > EMA{_t9_trail_period}): pos {position_id}")
+                except Exception as e:
+                    print(f"[{profile.profile_name}] T9 trailing EMA error pos {position_id}: {e}")
+
+            # Kill Switch (M1-200 EMA): check on every poll, act on completed M1 bar close
+            if t9_policy is not None and getattr(t9_policy, "kill_switch_enabled", True):
+                try:
+                    m1_df_ks = adapter.get_bars(profile.symbol, "M1", 250)
+                    if m1_df_ks is not None and not m1_df_ks.empty and len(m1_df_ks) >= 202:
+                        from core.indicators import ema as ema_fn
+                        m1_close_ks = m1_df_ks["close"].astype(float)
+                        ema200 = ema_fn(m1_close_ks, 200)
+                        if not ema200.empty and pd.notna(ema200.iloc[-2]):
+                            last_ema200 = float(ema200.iloc[-2])
+                            last_m1_close_ks = float(m1_close_ks.iloc[-2])
+                            # Extract tier from comment
+                            comment = ""
+                            if isinstance(pos, dict):
+                                ce = pos.get("clientExtensions")
+                                if isinstance(ce, dict):
+                                    comment = str(ce.get("comment") or "")
+                                if not comment:
+                                    te = pos.get("tradeClientExtensions")
+                                    if isinstance(te, dict):
+                                        comment = str(te.get("comment") or "")
+                            if "kt_cg_trial_9" not in comment:
+                                pass  # Not a T9 trade
+                            else:
+                                kill_tiers = {17, 21, 27}
+                                # hold_tiers = {33, 50, 75, 100}
+                                tier_num = None
+                                is_zone_entry = "zone_entry" in comment
+                                if not is_zone_entry:
+                                    # Extract tier number from "tier_N"
+                                    import re
+                                    m = re.search(r"tier_(\d+)", comment)
+                                    if m:
+                                        tier_num = int(m.group(1))
+
+                                should_kill = False
+                                if side == "buy" and last_m1_close_ks < last_ema200:
+                                    if is_zone_entry:
+                                        if str(getattr(t9_policy, "kill_switch_zone_entry_action", "kill")) == "kill":
+                                            should_kill = True
+                                    elif tier_num is not None and tier_num in kill_tiers:
+                                        should_kill = True
+                                elif side == "sell" and last_m1_close_ks > last_ema200:
+                                    if is_zone_entry:
+                                        if str(getattr(t9_policy, "kill_switch_zone_entry_action", "kill")) == "kill":
+                                            should_kill = True
+                                    elif tier_num is not None and tier_num in kill_tiers:
+                                        should_kill = True
+
+                                if should_kill:
+                                    position_type = 1 if side == "sell" else 0
+                                    if isinstance(pos, dict):
+                                        vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                    else:
+                                        vol = float(getattr(pos, "volume", 0) or 0)
+                                    if vol > 0:
+                                        adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                        label = f"tier_{tier_num}" if tier_num else "zone_entry"
+                                        print(f"[{profile.profile_name}] T9 Kill Switch: closed {label} pos {position_id} (M1 close {last_m1_close_ks:.3f} vs EMA200 {last_ema200:.3f})")
+                except Exception as e:
+                    print(f"[{profile.profile_name}] T9 Kill Switch error pos {position_id}: {e}")
+
         # 2) TP1 partial close (for non-uncle_parsh policies)
         elif target and getattr(target, "mode", None) == "scaled":
             tp1_pips = getattr(target, "tp1_pips", None)
@@ -718,6 +860,7 @@ def _build_and_write_dashboard(
     exhaustion_result: dict | None = None,
     temp_overrides: dict | None = None,
     daily_level_filter=None,
+    ntz_filter=None,
 ) -> None:
     """Assemble and write dashboard state JSON for the current poll cycle."""
     from datetime import datetime, timezone
@@ -743,6 +886,7 @@ def _build_and_write_dashboard(
             adapter=adapter,
             temp_overrides=temp_overrides,
             daily_level_filter_snapshot=(daily_level_filter.get_state_snapshot() if daily_level_filter is not None else None),
+            ntz_filter_snapshot=(ntz_filter.get_levels_snapshot() if ntz_filter is not None else None),
         )
 
         # --- Context items (use effective policy when Apply Temporary Settings active) ---
@@ -768,6 +912,11 @@ def _build_and_write_dashboard(
                 exhaustion_result=exhaustion_result,
             )
         elif policy_type == "kt_cg_trial_8":
+            context_items = collect_trial_7_context(
+                policy_for_context, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
+                exhaustion_result=exhaustion_result,
+            )
+        elif policy_type == "kt_cg_trial_9":
             context_items = collect_trial_7_context(
                 policy_for_context, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
                 exhaustion_result=exhaustion_result,
@@ -1095,6 +1244,10 @@ def main() -> None:
             getattr(p, "type", None) == "kt_cg_trial_8" and getattr(p, "enabled", True)
             for p in profile.execution.policies
         )
+        has_kt_cg_trial_9 = any(
+            getattr(p, "type", None) == "kt_cg_trial_9" and getattr(p, "enabled", True)
+            for p in profile.execution.policies
+        )
         # Confirmed-cross setups can now use M5; detect if any do so we fetch M5 bars.
         m5_cross_setup_ids = {
             sid
@@ -1119,6 +1272,7 @@ def main() -> None:
         _CANDLE_TTL: dict[str, float] = {
             "M1": 28.0, "M3": 175.0, "M5": 295.0, "M15": 895.0,
             "H1": 3595.0, "H4": 14395.0, "D": 300.0,
+            "W": 3600.0, "MN": 3600.0,
         }
 
         # Logging state for Trial #5 — reduce log spam
@@ -1157,6 +1311,21 @@ def main() -> None:
                     buffer_pips=float(getattr(t8_policy, "daily_level_buffer_pips", 3.0)),
                     breakout_candles_required=int(getattr(t8_policy, "daily_level_breakout_candles_required", 2)),
                     pip_size=float(profile.pip_size),
+                )
+
+        # No-Trade Zone filter for Trial #9
+        ntz_filter = None
+        if has_kt_cg_trial_9:
+            from core.no_trade_zone import NoTradeZoneFilter
+            t9_policy = next((p for p in profile.execution.policies if getattr(p, "type", None) == "kt_cg_trial_9" and getattr(p, "enabled", True)), None)
+            if t9_policy is not None:
+                ntz_filter = NoTradeZoneFilter(
+                    enabled=bool(getattr(t9_policy, "ntz_enabled", True)),
+                    buffer_pips=float(getattr(t9_policy, "ntz_buffer_pips", 10.0)),
+                    pip_size=float(profile.pip_size),
+                    use_prev_day_hl=bool(getattr(t9_policy, "ntz_use_prev_day_hl", True)),
+                    use_weekly_hl=bool(getattr(t9_policy, "ntz_use_weekly_hl", True)),
+                    use_monthly_hl=bool(getattr(t9_policy, "ntz_use_monthly_hl", True)),
                 )
 
         def _get_bars_cached(symbol: str, tf: str, count: int) -> pd.DataFrame:
@@ -1212,14 +1381,18 @@ def main() -> None:
                         "M1": _get_bars_cached(profile.symbol, "M1", 3000),
                     }
                     # Fetch M5 data when needed by ema_pullback, kt_cg_ctp, kt_cg_hybrid, M5 confirmed-cross, or uncle_parsh.
-                    if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_uncle_parsh:
+                    if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_uncle_parsh:
                         data_by_tf["M5"] = _get_bars_cached(profile.symbol, "M5", 2000)
                     # Fetch M3 data when needed by kt_cg_trial_4/5/6 (trend detection).
                     if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6:
                         data_by_tf["M3"] = _get_bars_cached(profile.symbol, "M3", 3000)
-                    # Fetch D1 data when needed by daily H/L filter (Trial #4/5/8).
-                    if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_8:
+                    # Fetch D1 data when needed by daily H/L filter (Trial #4/5/8/9).
+                    if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_8 or has_kt_cg_trial_9:
                         data_by_tf["D"] = _get_bars_cached(profile.symbol, "D", 2)
+                    # Fetch W and MN data for Trial #9 NTZ.
+                    if has_kt_cg_trial_9:
+                        data_by_tf["W"] = _get_bars_cached(profile.symbol, "W", 2)
+                        data_by_tf["MN"] = _get_bars_cached(profile.symbol, "MN", 2)
                     # Fetch H1 data when needed by Uncle Parsh H1 Breakout.
                     if has_uncle_parsh:
                         data_by_tf["H1"] = _get_bars_cached(profile.symbol, "H1", 200)
@@ -1253,7 +1426,7 @@ def main() -> None:
             used_clock_fallback = False
             # Clock-based fallback: if broker hasn't delivered the new bar yet (e.g. API delay),
             # treat current UTC minute as new once we're a few seconds in, so Trial 7/8 still runs.
-            if not is_new and (has_kt_cg_trial_7 or has_kt_cg_trial_8):
+            if not is_new and (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9):
                 try:
                     now_utc = pd.Timestamp.now(tz="UTC")
                     current_minute_iso = now_utc.floor("min").isoformat()
@@ -1267,7 +1440,7 @@ def main() -> None:
                     pass
 
             # Update shared daily H/L state for Trial #7 / Trial #8 when we have a new M1 bar
-            if (has_kt_cg_trial_7 or has_kt_cg_trial_8) and is_new:
+            if (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9) and is_new:
                 now_date = pd.Timestamp.now(tz="UTC").date().isoformat()
                 mid_tick = (tick.bid + tick.ask) / 2.0
                 date_changed = trial7_daily_state.get("date_utc") != now_date
@@ -1306,7 +1479,7 @@ def main() -> None:
                     pass
 
             # Log when we skip Trial 7/8 due to no new M1 bar (so execution log shows why no evaluation)
-            if (has_kt_cg_trial_7 or has_kt_cg_trial_8) and not is_new and not args.once:
+            if (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9) and not is_new and not args.once:
                 try:
                     store.insert_execution(
                         {
@@ -2366,7 +2539,7 @@ def main() -> None:
                     )
 
             # Trial #7 / Trial #8 execution — M5 Trend + Tiered Pullback (+ Daily Level Filter for T8)
-            if has_kt_cg_trial_7 or has_kt_cg_trial_8:
+            if has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9:
                 t7_mkt = mkt
                 if t7_mkt is None:
                     spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
@@ -2392,13 +2565,48 @@ def main() -> None:
 
                 for pol in profile.execution.policies:
                     pol_type = getattr(pol, "type", None)
-                    if not getattr(pol, "enabled", True) or pol_type not in ("kt_cg_trial_7", "kt_cg_trial_8"):
+                    if not getattr(pol, "enabled", True) or pol_type not in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9"):
                         continue
                     m1_df = data_by_tf.get("M1")
                     if m1_df is None or m1_df.empty:
                         continue
                     bar_time_utc = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
-                    if pol_type == "kt_cg_trial_8":
+                    if pol_type == "kt_cg_trial_9":
+                        # Update NTZ levels from candle data
+                        if ntz_filter is not None:
+                            _ntz_levels: dict = {}
+                            try:
+                                d_df = data_by_tf.get("D")
+                                if d_df is not None and len(d_df) >= 2:
+                                    _ntz_levels["prev_day_high"] = float(d_df["high"].iloc[-2])
+                                    _ntz_levels["prev_day_low"] = float(d_df["low"].iloc[-2])
+                                w_df = data_by_tf.get("W")
+                                if w_df is not None and len(w_df) >= 2:
+                                    _ntz_levels["weekly_high"] = float(w_df["high"].iloc[-2])
+                                    _ntz_levels["weekly_low"] = float(w_df["low"].iloc[-2])
+                                mn_df = data_by_tf.get("MN")
+                                if mn_df is not None and len(mn_df) >= 2:
+                                    _ntz_levels["monthly_high"] = float(mn_df["high"].iloc[-2])
+                                    _ntz_levels["monthly_low"] = float(mn_df["low"].iloc[-2])
+                                ntz_filter.update_levels(**_ntz_levels)
+                            except Exception as _ntz_err:
+                                print(f"[{profile.profile_name}] NTZ level update error: {_ntz_err}")
+                        exec_result = execute_kt_cg_trial_9_policy_demo_only(
+                            adapter=adapter,
+                            profile=profile,
+                            log_dir=log_dir,
+                            policy=pol,
+                            context=t7_mkt,
+                            data_by_tf=data_by_tf,
+                            tick=tick,
+                            trades_df=trades_df,
+                            mode=mode,
+                            bar_time_utc=bar_time_utc,
+                            tier_state=tier_state,
+                            store=store,
+                            ntz_filter=ntz_filter,
+                        )
+                    elif pol_type == "kt_cg_trial_8":
                         exec_result = execute_kt_cg_trial_8_policy_demo_only(
                             adapter=adapter,
                             profile=profile,
@@ -2456,18 +2664,23 @@ def main() -> None:
                             side = dec.side or "buy"
                             entry_price = tick.ask if side == "buy" else tick.bid
                             pip = float(profile.pip_size)
-                            sl_pips = getattr(pol, "sl_pips", None)
-                            if sl_pips is None:
-                                sl_pips = float(get_effective_risk(profile).min_stop_pips)
-                            if side == "buy":
-                                tp_price = entry_price + pol.tp_pips * pip
-                                sl_price = entry_price - sl_pips * pip
-                            else:
-                                tp_price = entry_price - pol.tp_pips * pip
-                                sl_price = entry_price + sl_pips * pip
-                            # When T8 trailing exit is on, do not set broker TP so loop can partial-close + trail
-                            if pol_type == "kt_cg_trial_8" and getattr(pol, "trail_after_tp1", False):
+                            if pol_type == "kt_cg_trial_9":
+                                # Trial 9: no broker SL, no broker TP
+                                sl_price = None
                                 tp_price = None
+                            else:
+                                sl_pips = getattr(pol, "sl_pips", None)
+                                if sl_pips is None:
+                                    sl_pips = float(get_effective_risk(profile).min_stop_pips)
+                                if side == "buy":
+                                    tp_price = entry_price + pol.tp_pips * pip
+                                    sl_price = entry_price - sl_pips * pip
+                                else:
+                                    tp_price = entry_price - pol.tp_pips * pip
+                                    sl_price = entry_price + sl_pips * pip
+                                # When T8 trailing exit is on, do not set broker TP so loop can partial-close + trail
+                                if pol_type == "kt_cg_trial_8" and getattr(pol, "trail_after_tp1", False):
+                                    tp_price = None
                             print(f"[{profile.profile_name}] TRADE PLACED: {pol_type}:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
                                 profile=profile,
@@ -2498,8 +2711,9 @@ def main() -> None:
                         eval_result=exec_result,
                         exhaustion_result=exec_result.get("exhaustion_result"),
                         daily_level_filter=daily_level_filter if pol_type == "kt_cg_trial_8" else None,
+                        ntz_filter=ntz_filter if pol_type == "kt_cg_trial_9" else None,
                     )
-                # After Trial 7/8 block: mark this bar as seen so we don't re-run every poll for same bar
+                # After Trial 7/8/9 block: mark this bar as seen so we don't re-run every poll for same bar
                 if not used_clock_fallback:
                     last_seen_m1_time = m1_last_time
 
@@ -2778,7 +2992,7 @@ def main() -> None:
 
             # Catch-all dashboard write for profiles not using KT/CG policy types.
             # Runs every poll cycle so positions + prices are always fresh.
-            if not (has_kt_cg_hybrid or has_kt_cg_ctp or has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6 or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_uncle_parsh):
+            if not (has_kt_cg_hybrid or has_kt_cg_ctp or has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6 or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_uncle_parsh):
                 if tick is not None and data_by_tf is not None:
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,

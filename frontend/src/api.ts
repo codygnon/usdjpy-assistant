@@ -211,6 +211,11 @@ export interface TempEmaSettings {
   t8_m1_exit_ema_slow: number | null;
   t8_scale_out_pct: number | null;
   t8_initial_sl_spread_plus_pips: number | null;
+  // Trial #9 TP1/BE/Trail
+  t9_tp1_pips: number | null;
+  t9_tp1_close_pct: number | null;
+  t9_be_spread_plus_pips: number | null;
+  t9_trail_ema_period: number | null;
 }
 
 export async function getTempSettings(profileName: string): Promise<TempEmaSettings> {

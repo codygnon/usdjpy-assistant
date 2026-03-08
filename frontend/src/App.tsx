@@ -3750,6 +3750,20 @@ interface EditedSettings {
   t8_be_spread_plus_pips: number;
   t8_trail_ema_period: number;
   t8_m1_zone_entry_price_ema_period: number;
+  // Trial #9: No-Trade Zones
+  t9_ntz_enabled: boolean;
+  t9_ntz_buffer_pips: number;
+  t9_ntz_use_prev_day_hl: boolean;
+  t9_ntz_use_weekly_hl: boolean;
+  t9_ntz_use_monthly_hl: boolean;
+  // Trial #9: Kill Switch
+  t9_kill_switch_enabled: boolean;
+  t9_kill_switch_zone_entry_action: 'kill' | 'hold';
+  // Trial #9: TP1/BE/Trail
+  t9_tp1_pips: number;
+  t9_tp1_close_pct: number;
+  t9_be_spread_plus_pips: number;
+  t9_trail_ema_period: number;
   // Uncle Parsh H1 Breakout: Major Extremes Momentum Breakout
   up_major_extremes_only: boolean;
   up_h1_lookback_hours: number;
@@ -3818,6 +3832,22 @@ function sanitizeTrial8TierPeriods(periods: number[] | null | undefined): number
     )
   ).sort((a, b) => a - b);
   return cleaned.length > 0 ? cleaned : [...TRIAL8_DEFAULT_TIER_EMA_PERIODS];
+}
+
+/** Trial #9: same tiers as Trial #8 (17, 21, 27, 33, 50, 75, 100). */
+const TRIAL9_DEFAULT_TIER_EMA_PERIODS: number[] = [17, 21, 27, 33, 50, 75, 100];
+const TRIAL9_ALLOWED_TIER_EMA_PERIODS = new Set<number>(TRIAL9_DEFAULT_TIER_EMA_PERIODS);
+
+function sanitizeTrial9TierPeriods(periods: number[] | null | undefined): number[] {
+  if (!Array.isArray(periods)) return [...TRIAL9_DEFAULT_TIER_EMA_PERIODS];
+  const cleaned = Array.from(
+    new Set(
+      periods
+        .map((p) => Math.trunc(Number(p)))
+        .filter((p) => TRIAL9_ALLOWED_TIER_EMA_PERIODS.has(p))
+    )
+  ).sort((a, b) => a - b);
+  return cleaned.length > 0 ? cleaned : [...TRIAL9_DEFAULT_TIER_EMA_PERIODS];
 }
 
 function PresetsPage({ profile }: { profile: Profile }) {
@@ -3982,6 +4012,18 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t8BeSpreadPlusPips = 2.0;
       let t8TrailEmaPeriod = 21;
       let t8M1ZoneEntryPriceEmaPeriod = 5;
+      // Trial #9: No-Trade Zones + Kill Switch + TP1/BE/Trail
+      let t9NtzEnabled = false;
+      let t9NtzBufferPips = 5.0;
+      let t9NtzUsePrevDayHl = true;
+      let t9NtzUseWeeklyHl = false;
+      let t9NtzUseMonthlyHl = false;
+      let t9KillSwitchEnabled = false;
+      let t9KillSwitchZoneEntryAction: 'kill' | 'hold' = 'hold';
+      let t9Tp1Pips = 4.0;
+      let t9Tp1ClosePct = 50;
+      let t9BeSpreadPlusPips = 2.0;
+      let t9TrailEmaPeriod = 21;
       let t7M1ZoneEntryEmaFast: number | null = null;
       let t7M1ZoneEntryEmaSlow: number | null = null;
       let maxOpenTradesPerSide = 5;
@@ -4326,6 +4368,82 @@ function PresetsPage({ profile }: { profile: Profile }) {
             t8BeSpreadPlusPips = (pol.be_spread_plus_pips as number) ?? 2.0;
             t8TrailEmaPeriod = (pol.trail_ema_period as number) ?? 21;
           }
+          if (pol.type === 'kt_cg_trial_9') {
+            t7M5TrendEmaFast = (pol.m5_trend_ema_fast as number) ?? 9;
+            t7M5TrendEmaSlow = (pol.m5_trend_ema_slow as number) ?? 21;
+            t7M5MinEmaDistancePips = (pol.m5_min_ema_distance_pips as number) ?? 1.0;
+            t7ZoneEntryMode = (pol.zone_entry_mode as 'ema_cross' | 'price_vs_ema5') ?? 'price_vs_ema5';
+            if (t7ZoneEntryMode !== 'ema_cross' && t7ZoneEntryMode !== 'price_vs_ema5') {
+              t7ZoneEntryMode = 'price_vs_ema5';
+            }
+            t7M1ZoneEntryEmaFast = (pol.m1_zone_entry_ema_fast as number) ?? 5;
+            t7M1ZoneEntryEmaSlow = (pol.m1_zone_entry_ema_slow as number) ?? 9;
+            t8M1ZoneEntryPriceEmaPeriod = (pol.m1_zone_entry_price_ema_period as number) ?? 5;
+            tierEmaPeriods = sanitizeTrial9TierPeriods(pol.tier_ema_periods as number[] | undefined);
+            policySlPips = (pol.sl_pips as number) ?? 20;
+            t7TrendExhaustionEnabled = (pol.trend_exhaustion_enabled as boolean) ?? false;
+            t7TrendExhaustionMode = (pol.trend_exhaustion_mode as 'global' | 'session' | 'session_and_side') ?? 'session_and_side';
+            t7TrendExhaustionUseCurrentPrice = (pol.trend_exhaustion_use_current_price as boolean) ?? true;
+            t7TrendExhaustionHysteresisPips = (pol.trend_exhaustion_hysteresis_pips as number) ?? 0.5;
+            t7TrendExhaustionP80Global = (pol.trend_exhaustion_p80_global as number) ?? 12.03;
+            t7TrendExhaustionP90Global = (pol.trend_exhaustion_p90_global as number) ?? 17.02;
+            t7TrendExhaustionP80Tokyo = (pol.trend_exhaustion_p80_tokyo as number) ?? 12.67;
+            t7TrendExhaustionP90Tokyo = (pol.trend_exhaustion_p90_tokyo as number) ?? 17.63;
+            t7TrendExhaustionP80London = (pol.trend_exhaustion_p80_london as number) ?? 11.06;
+            t7TrendExhaustionP90London = (pol.trend_exhaustion_p90_london as number) ?? 14.41;
+            t7TrendExhaustionP80Ny = (pol.trend_exhaustion_p80_ny as number) ?? 12.66;
+            t7TrendExhaustionP90Ny = (pol.trend_exhaustion_p90_ny as number) ?? 18.83;
+            t7TrendExhaustionP80BullTokyo = (pol.trend_exhaustion_p80_bull_tokyo as number) ?? 11.85;
+            t7TrendExhaustionP90BullTokyo = (pol.trend_exhaustion_p90_bull_tokyo as number) ?? 15.52;
+            t7TrendExhaustionP80BullLondon = (pol.trend_exhaustion_p80_bull_london as number) ?? 10.21;
+            t7TrendExhaustionP90BullLondon = (pol.trend_exhaustion_p90_bull_london as number) ?? 12.97;
+            t7TrendExhaustionP80BullNy = (pol.trend_exhaustion_p80_bull_ny as number) ?? 11.21;
+            t7TrendExhaustionP90BullNy = (pol.trend_exhaustion_p90_bull_ny as number) ?? 15.84;
+            t7TrendExhaustionP80BearTokyo = (pol.trend_exhaustion_p80_bear_tokyo as number) ?? 13.44;
+            t7TrendExhaustionP90BearTokyo = (pol.trend_exhaustion_p90_bear_tokyo as number) ?? 19.73;
+            t7TrendExhaustionP80BearLondon = (pol.trend_exhaustion_p80_bear_london as number) ?? 12.01;
+            t7TrendExhaustionP90BearLondon = (pol.trend_exhaustion_p90_bear_london as number) ?? 17.44;
+            t7TrendExhaustionP80BearNy = (pol.trend_exhaustion_p80_bear_ny as number) ?? 13.97;
+            t7TrendExhaustionP90BearNy = (pol.trend_exhaustion_p90_bear_ny as number) ?? 21.51;
+            t7TrendExhaustionExtendedDisableZoneEntry = (pol.trend_exhaustion_extended_disable_zone_entry as boolean) ?? true;
+            t7TrendExhaustionVeryExtendedDisableZoneEntry = (pol.trend_exhaustion_very_extended_disable_zone_entry as boolean) ?? true;
+            t7TrendExhaustionExtendedMinTierPeriod = (pol.trend_exhaustion_extended_min_tier_period as number) ?? 21;
+            t7TrendExhaustionVeryExtendedMinTierPeriod = (pol.trend_exhaustion_very_extended_min_tier_period as number) ?? 29;
+            t7TrendExhaustionVeryExtendedTightenCaps = (pol.trend_exhaustion_very_extended_tighten_caps as boolean) ?? true;
+            t7TrendExhaustionVeryExtendedCapMultiplier = (pol.trend_exhaustion_very_extended_cap_multiplier as number) ?? 0.5;
+            t7TrendExhaustionVeryExtendedCapMin = (pol.trend_exhaustion_very_extended_cap_min as number) ?? 1;
+            t7TrendExhaustionAdaptiveTpEnabled = (pol.trend_exhaustion_adaptive_tp_enabled as boolean) ?? false;
+            t7TrendExhaustionTpExtendedOffsetPips = (pol.trend_exhaustion_tp_extended_offset_pips as number) ?? 1.0;
+            t7TrendExhaustionTpVeryExtendedOffsetPips = (pol.trend_exhaustion_tp_very_extended_offset_pips as number) ?? 2.0;
+            t7TrendExhaustionTpMinPips = (pol.trend_exhaustion_tp_min_pips as number) ?? 0.5;
+            t8UseDailyLevelFilter = (pol.use_daily_level_filter as boolean) ?? false;
+            t8DailyLevelBufferPips = (pol.daily_level_buffer_pips as number) ?? 3.0;
+            t8DailyLevelBreakoutCandlesRequired = (pol.daily_level_breakout_candles_required as number) ?? 2;
+            const es9 = (pol.exit_strategy as string) ?? 'tp1_be_trail';
+            t8ExitStrategy = (es9 === 'ema_scale_runner' || es9 === 'none') ? (es9 as 'ema_scale_runner' | 'none') : 'tp1_be_trail';
+            t8M1ExitEmaFast = (pol.m1_exit_ema_fast as number) ?? 9;
+            t8M1ExitEmaSlow = (pol.m1_exit_ema_slow as number) ?? 21;
+            t8ScaleOutPct = (pol.scale_out_pct as number) ?? 50;
+            t8InitialSlSpreadPlusPips = (pol.initial_sl_spread_plus_pips as number) ?? 5.0;
+            t8TrailAfterTp1 = (pol.trail_after_tp1 as boolean) ?? false;
+            t8Tp1Pips = (pol.tp1_pips as number) ?? 4.0;
+            t8Tp1ClosePct = (pol.tp1_close_pct as number) ?? 50;
+            t8BeSpreadPlusPips = (pol.be_spread_plus_pips as number) ?? 2.0;
+            t8TrailEmaPeriod = (pol.trail_ema_period as number) ?? 21;
+            // Trial #9 specific: NTZ + Kill Switch
+            t9NtzEnabled = (pol.ntz_enabled as boolean) ?? false;
+            t9NtzBufferPips = (pol.ntz_buffer_pips as number) ?? 5.0;
+            t9NtzUsePrevDayHl = (pol.ntz_use_prev_day_hl as boolean) ?? true;
+            t9NtzUseWeeklyHl = (pol.ntz_use_weekly_hl as boolean) ?? false;
+            t9NtzUseMonthlyHl = (pol.ntz_use_monthly_hl as boolean) ?? false;
+            t9KillSwitchEnabled = (pol.kill_switch_enabled as boolean) ?? false;
+            const ksAction = (pol.kill_switch_zone_entry_action as string) ?? 'hold';
+            t9KillSwitchZoneEntryAction = (ksAction === 'kill' || ksAction === 'hold') ? ksAction : 'hold';
+            t9Tp1Pips = (pol.tp1_pips as number) ?? 4.0;
+            t9Tp1ClosePct = (pol.tp1_close_pct as number) ?? 50;
+            t9BeSpreadPlusPips = (pol.be_spread_plus_pips as number) ?? 2.0;
+            t9TrailEmaPeriod = (pol.trail_ema_period as number) ?? 21;
+          }
           if (policyCooldown > 0 || policySlPips !== 20) break;
         }
       }
@@ -4519,6 +4637,18 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t8_be_spread_plus_pips: tempSettings?.t8_be_spread_plus_pips ?? t8BeSpreadPlusPips,
         t8_trail_ema_period: tempSettings?.t8_trail_ema_period ?? t8TrailEmaPeriod,
         t8_m1_zone_entry_price_ema_period: t8M1ZoneEntryPriceEmaPeriod,
+        // Trial #9: No-Trade Zones + Kill Switch + TP1/BE/Trail
+        t9_ntz_enabled: t9NtzEnabled,
+        t9_ntz_buffer_pips: t9NtzBufferPips,
+        t9_ntz_use_prev_day_hl: t9NtzUsePrevDayHl,
+        t9_ntz_use_weekly_hl: t9NtzUseWeeklyHl,
+        t9_ntz_use_monthly_hl: t9NtzUseMonthlyHl,
+        t9_kill_switch_enabled: t9KillSwitchEnabled,
+        t9_kill_switch_zone_entry_action: t9KillSwitchZoneEntryAction,
+        t9_tp1_pips: tempSettings?.t9_tp1_pips ?? t9Tp1Pips,
+        t9_tp1_close_pct: tempSettings?.t9_tp1_close_pct ?? t9Tp1ClosePct,
+        t9_be_spread_plus_pips: tempSettings?.t9_be_spread_plus_pips ?? t9BeSpreadPlusPips,
+        t9_trail_ema_period: tempSettings?.t9_trail_ema_period ?? t9TrailEmaPeriod,
         // Uncle Parsh H1 Breakout (major-extremes momentum breakout)
         up_major_extremes_only: tempSettings?.up_major_extremes_only ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.major_extremes_only as boolean ?? false),
         up_h1_lookback_hours: tempSettings?.up_h1_lookback_hours ?? ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.h1_lookback_hours as number ?? 48),
@@ -4843,6 +4973,89 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.be_spread_plus_pips = Math.max(0, editedSettings.t8_be_spread_plus_pips);
           updates.trail_ema_period = Math.max(5, Math.min(50, editedSettings.t8_trail_ema_period));
         }
+        // Update Trial #9 settings (T8 + NTZ + Kill Switch)
+        if (pol.type === 'kt_cg_trial_9') {
+          updates.m5_trend_ema_fast = Math.max(1, editedSettings.t7_m5_trend_ema_fast);
+          updates.m5_trend_ema_slow = Math.max(1, editedSettings.t7_m5_trend_ema_slow);
+          updates.m5_min_ema_distance_pips = Math.max(0, editedSettings.t7_m5_min_ema_distance_pips);
+          updates.zone_entry_mode = editedSettings.t7_zone_entry_mode;
+          updates.zone_entry_enabled = editedSettings.zone_entry_enabled;
+          if (editedSettings.m1_zone_entry_ema_fast != null) {
+            updates.m1_zone_entry_ema_fast = Math.max(1, Math.min(100, editedSettings.m1_zone_entry_ema_fast));
+          }
+          if (editedSettings.m1_zone_entry_ema_slow != null) {
+            updates.m1_zone_entry_ema_slow = Math.max(1, Math.min(100, editedSettings.m1_zone_entry_ema_slow));
+          }
+          updates.m1_zone_entry_price_ema_period = Math.max(2, Math.min(50, editedSettings.t8_m1_zone_entry_price_ema_period));
+          updates.tier_ema_periods = sanitizeTrial9TierPeriods(editedSettings.tier_ema_periods);
+          updates.spread_aware_be_enabled = editedSettings.spread_aware_be_enabled;
+          updates.spread_aware_be_trigger_mode = 'spread_relative';
+          updates.spread_aware_be_spread_buffer_pips = Math.max(0, editedSettings.spread_aware_be_spread_buffer_pips);
+          updates.spread_aware_be_apply_to_zone_entry = editedSettings.spread_aware_be_apply_to_zone_entry;
+          updates.spread_aware_be_apply_to_tiered_pullback = editedSettings.spread_aware_be_apply_to_tiered_pullback;
+          updates.max_open_trades_per_side = Math.max(1, editedSettings.max_open_trades_per_side);
+          updates.max_zone_entry_open = Math.max(1, editedSettings.max_zone_entry_open);
+          updates.max_tiered_pullback_open = Math.max(1, editedSettings.max_tiered_pullback_open);
+          updates.sl_pips = Math.max(0.1, editedSettings.policy_sl_pips);
+          updates.cooldown_minutes = Math.max(0, editedSettings.policy_cooldown_minutes);
+          updates.tp_pips = Math.max(0.1, editedSettings.target_pips);
+          updates.trend_exhaustion_enabled = editedSettings.t7_trend_exhaustion_enabled;
+          updates.trend_exhaustion_mode = editedSettings.t7_trend_exhaustion_mode;
+          updates.trend_exhaustion_use_current_price = editedSettings.t7_trend_exhaustion_use_current_price;
+          updates.trend_exhaustion_hysteresis_pips = Math.max(0, editedSettings.t7_trend_exhaustion_hysteresis_pips);
+          updates.trend_exhaustion_p80_global = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_global);
+          updates.trend_exhaustion_p90_global = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_global);
+          updates.trend_exhaustion_p80_tokyo = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_tokyo);
+          updates.trend_exhaustion_p90_tokyo = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_tokyo);
+          updates.trend_exhaustion_p80_london = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_london);
+          updates.trend_exhaustion_p90_london = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_london);
+          updates.trend_exhaustion_p80_ny = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_ny);
+          updates.trend_exhaustion_p90_ny = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_ny);
+          updates.trend_exhaustion_p80_bull_tokyo = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_bull_tokyo);
+          updates.trend_exhaustion_p90_bull_tokyo = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_bull_tokyo);
+          updates.trend_exhaustion_p80_bull_london = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_bull_london);
+          updates.trend_exhaustion_p90_bull_london = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_bull_london);
+          updates.trend_exhaustion_p80_bull_ny = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_bull_ny);
+          updates.trend_exhaustion_p90_bull_ny = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_bull_ny);
+          updates.trend_exhaustion_p80_bear_tokyo = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_bear_tokyo);
+          updates.trend_exhaustion_p90_bear_tokyo = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_bear_tokyo);
+          updates.trend_exhaustion_p80_bear_london = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_bear_london);
+          updates.trend_exhaustion_p90_bear_london = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_bear_london);
+          updates.trend_exhaustion_p80_bear_ny = Math.max(0.1, editedSettings.t7_trend_exhaustion_p80_bear_ny);
+          updates.trend_exhaustion_p90_bear_ny = Math.max(0.1, editedSettings.t7_trend_exhaustion_p90_bear_ny);
+          updates.trend_exhaustion_extended_disable_zone_entry = editedSettings.t7_trend_exhaustion_extended_disable_zone_entry;
+          updates.trend_exhaustion_very_extended_disable_zone_entry = editedSettings.t7_trend_exhaustion_very_extended_disable_zone_entry;
+          updates.trend_exhaustion_extended_min_tier_period = Math.max(1, editedSettings.t7_trend_exhaustion_extended_min_tier_period);
+          updates.trend_exhaustion_very_extended_min_tier_period = Math.max(1, editedSettings.t7_trend_exhaustion_very_extended_min_tier_period);
+          updates.trend_exhaustion_very_extended_tighten_caps = editedSettings.t7_trend_exhaustion_very_extended_tighten_caps;
+          updates.trend_exhaustion_very_extended_cap_multiplier = Math.max(0.05, editedSettings.t7_trend_exhaustion_very_extended_cap_multiplier);
+          updates.trend_exhaustion_very_extended_cap_min = Math.max(1, editedSettings.t7_trend_exhaustion_very_extended_cap_min);
+          updates.trend_exhaustion_adaptive_tp_enabled = editedSettings.t7_trend_exhaustion_adaptive_tp_enabled;
+          updates.trend_exhaustion_tp_extended_offset_pips = Math.max(0, editedSettings.t7_trend_exhaustion_tp_extended_offset_pips);
+          updates.trend_exhaustion_tp_very_extended_offset_pips = Math.max(0, editedSettings.t7_trend_exhaustion_tp_very_extended_offset_pips);
+          updates.trend_exhaustion_tp_min_pips = Math.max(0.1, editedSettings.t7_trend_exhaustion_tp_min_pips);
+          updates.use_daily_level_filter = editedSettings.t8_use_daily_level_filter;
+          updates.daily_level_buffer_pips = Math.max(0, editedSettings.t8_daily_level_buffer_pips);
+          updates.daily_level_breakout_candles_required = Math.max(1, editedSettings.t8_daily_level_breakout_candles_required);
+          updates.exit_strategy = editedSettings.t8_exit_strategy;
+          updates.m1_exit_ema_fast = Math.max(2, Math.min(50, editedSettings.t8_m1_exit_ema_fast));
+          updates.m1_exit_ema_slow = Math.max(3, Math.min(100, editedSettings.t8_m1_exit_ema_slow));
+          updates.scale_out_pct = Math.max(10, Math.min(90, editedSettings.t8_scale_out_pct));
+          updates.initial_sl_spread_plus_pips = Math.max(0, editedSettings.t8_initial_sl_spread_plus_pips);
+          updates.trail_after_tp1 = editedSettings.t8_trail_after_tp1;
+          updates.tp1_pips = Math.max(0.5, editedSettings.t9_tp1_pips);
+          updates.tp1_close_pct = Math.max(10, Math.min(100, editedSettings.t9_tp1_close_pct));
+          updates.be_spread_plus_pips = Math.max(0, editedSettings.t9_be_spread_plus_pips);
+          updates.trail_ema_period = Math.max(5, Math.min(50, editedSettings.t9_trail_ema_period));
+          // Trial #9 specific: NTZ + Kill Switch
+          updates.ntz_enabled = editedSettings.t9_ntz_enabled;
+          updates.ntz_buffer_pips = Math.max(0, editedSettings.t9_ntz_buffer_pips);
+          updates.ntz_use_prev_day_hl = editedSettings.t9_ntz_use_prev_day_hl;
+          updates.ntz_use_weekly_hl = editedSettings.t9_ntz_use_weekly_hl;
+          updates.ntz_use_monthly_hl = editedSettings.t9_ntz_use_monthly_hl;
+          updates.kill_switch_enabled = editedSettings.t9_kill_switch_enabled;
+          updates.kill_switch_zone_entry_action = editedSettings.t9_kill_switch_zone_entry_action;
+        }
         // Update Uncle Parsh H1 Breakout settings (Major Extremes Momentum Breakout)
         if (pol.type === 'uncle_parsh_h1_breakout') {
           updates.major_extremes_only = editedSettings.up_major_extremes_only;
@@ -4900,7 +5113,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         activePresetName = activePresetName ? `${activePresetName} (customized)` : 'custom (customized)';
       }
 
-      const hasTrial7 = policies.some((p: Record<string, unknown>) => p.type === 'kt_cg_trial_7' || p.type === 'kt_cg_trial_8');
+      const hasTrial7 = policies.some((p: Record<string, unknown>) => p.type === 'kt_cg_trial_7' || p.type === 'kt_cg_trial_8' || p.type === 'kt_cg_trial_9');
       const currentStrategy = currentProfile.strategy as Record<string, unknown> | undefined;
       const currentFilters = currentStrategy?.filters as Record<string, unknown> | undefined;
 
@@ -4932,7 +5145,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
       const hasKtCgTrial4 = policies.some(p => p.type === 'kt_cg_trial_4');
       const hasKtCgTrial5 = policies.some(p => p.type === 'kt_cg_trial_5');
       const hasTrial8 = policies.some(p => p.type === 'kt_cg_trial_8');
-      if (hasKtCgCtp || hasKtCgTrial4 || hasKtCgTrial5 || hasTrial8) {
+      const hasTrial9 = policies.some(p => p.type === 'kt_cg_trial_9');
+      if (hasKtCgCtp || hasKtCgTrial4 || hasKtCgTrial5 || hasTrial8 || hasTrial9) {
         const settings: any = {};
         if (hasKtCgCtp) {
           settings.m5_trend_ema_fast = editedSettings.m5_trend_ema_fast;
@@ -4956,6 +5170,17 @@ function PresetsPage({ profile }: { profile: Profile }) {
           settings.t8_tp1_close_pct = editedSettings.t8_tp1_close_pct;
           settings.t8_be_spread_plus_pips = editedSettings.t8_be_spread_plus_pips;
           settings.t8_trail_ema_period = editedSettings.t8_trail_ema_period;
+        }
+        if (hasTrial9) {
+          settings.t8_exit_strategy = editedSettings.t8_exit_strategy;
+          settings.t8_m1_exit_ema_fast = editedSettings.t8_m1_exit_ema_fast;
+          settings.t8_m1_exit_ema_slow = editedSettings.t8_m1_exit_ema_slow;
+          settings.t8_scale_out_pct = editedSettings.t8_scale_out_pct;
+          settings.t8_initial_sl_spread_plus_pips = editedSettings.t8_initial_sl_spread_plus_pips;
+          settings.t9_tp1_pips = editedSettings.t9_tp1_pips;
+          settings.t9_tp1_close_pct = editedSettings.t9_tp1_close_pct;
+          settings.t9_be_spread_plus_pips = editedSettings.t9_be_spread_plus_pips;
+          settings.t9_trail_ema_period = editedSettings.t9_trail_ema_period;
         }
         await api.updateTempSettings(profile.name, settings);
       }
@@ -5299,7 +5524,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                 </div>
               )}
               {/* Trial #4/#5/#7 shared settings block */}
-              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4' || pol.type === 'kt_cg_trial_5' || pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8') && (
+              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4' || pol.type === 'kt_cg_trial_5' || pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8' || pol.type === 'kt_cg_trial_9') && (
                 <>
                 {/* Rolling Danger Zone + RSI Divergence (Trial #4 only) */}
                 {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4') && (
@@ -5580,8 +5805,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     )}
                   </div>
                   )}
-                  {/* Daily Level Filter (Trial #8 only) */}
-                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8') && (
+                  {/* Daily Level Filter (Trial #8 / Trial #9) */}
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8' || pol.type === 'kt_cg_trial_9') && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                       Daily Level Filter (block trades near yesterday/today high/low until breakout confirmed)
@@ -5711,6 +5936,127 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       )}
                       </>
                       )}
+                    </div>
+                  </div>
+                  )}
+                  {/* No-Trade Zones (Trial #9 only) */}
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_9') && (
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Trial #9 No-Trade Zones (block entries near key price levels)
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={editedSettings.t9_ntz_enabled}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t9_ntz_enabled: e.target.checked })}
+                            style={{ width: 18, height: 18, cursor: 'pointer' }} />
+                          <span style={{ fontWeight: 600, color: editedSettings.t9_ntz_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                            {editedSettings.t9_ntz_enabled ? 'ON' : 'OFF'}
+                          </span>
+                        </label>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Buffer (pips)</div>
+                        <input type="number" step="0.5" min="0" value={editedSettings.t9_ntz_buffer_pips}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t9_ntz_buffer_pips: parseFloat(e.target.value) || 5 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Block within N pips of level</div>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 12 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={editedSettings.t9_ntz_use_prev_day_hl}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t9_ntz_use_prev_day_hl: e.target.checked })}
+                          style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: editedSettings.t9_ntz_use_prev_day_hl ? 'var(--success)' : 'var(--text-secondary)' }}>
+                          Prev Day H/L
+                        </span>
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={editedSettings.t9_ntz_use_weekly_hl}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t9_ntz_use_weekly_hl: e.target.checked })}
+                          style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: editedSettings.t9_ntz_use_weekly_hl ? 'var(--success)' : 'var(--text-secondary)' }}>
+                          Weekly H/L
+                        </span>
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={editedSettings.t9_ntz_use_monthly_hl}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t9_ntz_use_monthly_hl: e.target.checked })}
+                          style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: editedSettings.t9_ntz_use_monthly_hl ? 'var(--success)' : 'var(--text-secondary)' }}>
+                          Monthly H/L
+                        </span>
+                      </label>
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
+                      Blocks all entries within buffer pips of selected level types. Levels are fetched from OANDA daily/weekly/monthly candles.
+                    </div>
+                    {/* Trial #9: Kill Switch */}
+                    <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                        Trial #9 Kill Switch (M1-200 EMA exit for tiers 17/21/27)
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={editedSettings.t9_kill_switch_enabled}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, t9_kill_switch_enabled: e.target.checked })}
+                              style={{ width: 18, height: 18, cursor: 'pointer' }} />
+                            <span style={{ fontWeight: 600, color: editedSettings.t9_kill_switch_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                              {editedSettings.t9_kill_switch_enabled ? 'ON' : 'OFF'}
+                            </span>
+                          </label>
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Zone Entry Action</div>
+                          <select
+                            value={editedSettings.t9_kill_switch_zone_entry_action}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t9_kill_switch_zone_entry_action: e.target.value as 'kill' | 'hold' })}
+                            style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                          >
+                            <option value="kill">Kill (close zone entry trades)</option>
+                            <option value="hold">Hold (keep zone entry trades open)</option>
+                          </select>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Zone entry trade action when M1 close crosses 200 EMA</div>
+                        </div>
+                      </div>
+                    </div>
+                    {/* Trial #9: TP1 / BE / Trail */}
+                    <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                        Trial #9 TP1 / Breakeven / Trail
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>TP1 (pips)</div>
+                          <input type="number" step="0.5" min="0.5" value={editedSettings.t9_tp1_pips}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t9_tp1_pips: parseFloat(e.target.value) || 4 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>TP1 close %</div>
+                          <input type="number" step="5" min="10" max="100" value={editedSettings.t9_tp1_close_pct}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t9_tp1_close_pct: parseInt(e.target.value) || 50 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>BE: spread + pips</div>
+                          <input type="number" step="0.5" min="0" value={editedSettings.t9_be_spread_plus_pips}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t9_be_spread_plus_pips: parseFloat(e.target.value) || 2 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Trail EMA period</div>
+                          <input type="number" step="1" min="5" max="50" value={editedSettings.t9_trail_ema_period}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t9_trail_ema_period: parseInt(e.target.value) || 21 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        </div>
+                      </div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
+                        Close % at TP1, move SL to entry + spread + buffer; then trail runner on M1 EMA. Close runner when M1 close crosses to wrong side of EMA.
+                      </div>
                     </div>
                   </div>
                   )}
@@ -6644,20 +6990,22 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   </button>
                 </div>
               )}
-              {/* View Settings (for Trial #4 / Trial #5 / Trial #7) */}
-              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4' || pol.type === 'kt_cg_trial_5' || pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8') && (
+              {/* View Settings (for Trial #4 / Trial #5 / Trial #7 / Trial #8 / Trial #9) */}
+              {editedSettings && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_4' || pol.type === 'kt_cg_trial_5' || pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8' || pol.type === 'kt_cg_trial_9') && (
                 <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
                     {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7')
                       ? 'View Settings (Trial #7)'
-                      : ((execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8')
-                        ? 'View Settings (Trial #8)'
-                        : ((execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5')
-                          ? 'View Settings (Trial #5)'
-                          : 'EMA Override Settings (Trial #4)'))}
+                      : ((execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_9')
+                        ? 'View Settings (Trial #9)'
+                        : ((execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8')
+                          ? 'View Settings (Trial #8)'
+                          : ((execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5')
+                            ? 'View Settings (Trial #5)'
+                            : 'EMA Override Settings (Trial #4)')))}
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
-                    {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8') && (
+                    {!(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8' || pol.type === 'kt_cg_trial_9') && (
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                         M3 Trend – fast / slow EMAs (default 5 / 9)
@@ -6728,7 +7076,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
                         When OFF, only tiered pullback entries are active (zone entry trades are blocked).
                       </div>
-                      {((execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') || (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8')) && (
+                      {((execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') || (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8') || (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_9')) && (
                         <div style={{ marginTop: 10 }}>
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 6 }}>
                             Zone Entry Type
@@ -6746,7 +7094,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                               ? 'EMA Cross: Uses M1 EMA fast/slow relationship in M5 trend direction.'
                               : 'Price vs EMA: Uses live poll price relative to configurable M1 EMA in M5 trend direction.'}
                           </div>
-                          {editedSettings.t7_zone_entry_mode === 'price_vs_ema5' && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8') && (
+                          {editedSettings.t7_zone_entry_mode === 'price_vs_ema5' && (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8' || pol.type === 'kt_cg_trial_9') && (
                             <div style={{ marginTop: 8 }}>
                               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>M1 EMA period (price goes against)</div>
                               <input
@@ -6760,7 +7108,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                               />
                             </div>
                           )}
-                          {editedSettings.t7_zone_entry_mode === 'ema_cross' && ((execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') || (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8')) && (
+                          {editedSettings.t7_zone_entry_mode === 'ema_cross' && ((execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7') || (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8') || (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_9')) && (
                             <div style={{ marginTop: 8 }}>
                               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>M1 Zone Entry – fast / slow EMAs</div>
                               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -6800,13 +7148,13 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       )}
                     </div>
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                      {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8') ? (
+                      {((execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8') || (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_9')) ? (
                         <>
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                            Tiered Pullback — Trial #8 (17, 21, 27, 33, 50, 75, 100)
+                            Tiered Pullback — {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_9') ? 'Trial #9' : 'Trial #8'} (17, 21, 27, 33, 50, 75, 100)
                           </div>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                            {TRIAL8_DEFAULT_TIER_EMA_PERIODS.map(tier => (
+                            {((execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_9') ? TRIAL9_DEFAULT_TIER_EMA_PERIODS : TRIAL8_DEFAULT_TIER_EMA_PERIODS).map(tier => (
                               <label key={tier} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '2px 6px', background: editedSettings.tier_ema_periods.includes(tier) ? 'var(--success)' : 'var(--bg-secondary)', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600, color: editedSettings.tier_ema_periods.includes(tier) ? '#fff' : 'var(--text-secondary)' }}>
                                 <input
                                   type="checkbox"
@@ -6815,7 +7163,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                                     const periods = e.target.checked
                                       ? [...editedSettings.tier_ema_periods, tier].sort((a, b) => a - b)
                                       : editedSettings.tier_ema_periods.filter(t => t !== tier);
-                                    setEditedSettings({ ...editedSettings, tier_ema_periods: sanitizeTrial8TierPeriods(periods) });
+                                    setEditedSettings({ ...editedSettings, tier_ema_periods: (execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_9') ? sanitizeTrial9TierPeriods(periods) : sanitizeTrial8TierPeriods(periods) });
                                   }}
                                   style={{ width: 14, height: 14, cursor: 'pointer' }}
                                 />
@@ -6874,7 +7222,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         When price touches M1 EMA tiers, triggers entry. Each tier fires once per touch and resets when price moves away.
                       </div>
                     </div>
-                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5' || pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8') && (
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_5' || pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8' || pol.type === 'kt_cg_trial_9') && (
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                         Max Open Trades Per Side
@@ -6892,7 +7240,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       </div>
                     </div>
                     )}
-                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8') && (
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8' || pol.type === 'kt_cg_trial_9') && (
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                         Max Zone Entries Open
@@ -6907,7 +7255,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       />
                     </div>
                     )}
-                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8') && (
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8' || pol.type === 'kt_cg_trial_9') && (
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                         Max Tiered Pullback Open
@@ -6922,7 +7270,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       />
                     </div>
                     )}
-                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8') && (
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8' || pol.type === 'kt_cg_trial_9') && (
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                         M5 Trend EMAs (fast/slow)
@@ -7017,7 +7365,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       </div>
                     </div>
                     )}
-                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8') && (
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8' || pol.type === 'kt_cg_trial_9') && (
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                         M5 EMA9/21 Min Distance (pips)
@@ -7035,7 +7383,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       </div>
                     </div>
                     )}
-                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8') && (
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_7' || pol.type === 'kt_cg_trial_8' || pol.type === 'kt_cg_trial_9') && (
                     <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                       <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                         Session boundary block (Trial #7/8)

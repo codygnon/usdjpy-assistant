@@ -34,6 +34,8 @@ from core.dashboard_reporters import (
     report_open_trade_cap_by_entry_type,
     report_t8_exit_strategy,
     report_daily_level_filter,
+    report_ntz_status,
+    report_kill_switch_status,
     report_h1_levels,
     report_m5_trend_alignment,
     report_m5_power_close_status,
@@ -213,6 +215,7 @@ def build_dashboard_filters(
     adapter: Optional[Any] = None,
     temp_overrides: Optional[dict[str, int]] = None,
     daily_level_filter_snapshot: Optional[dict] = None,
+    ntz_filter_snapshot: Optional[dict] = None,
 ) -> list[FilterReport]:
     """Build the filter report list the same way the run loop does.
 
@@ -440,6 +443,77 @@ def build_dashboard_filters(
                         1 for t in open_trades
                         if ((dict(t) if hasattr(t, "keys") else t).get("entry_type") == "tiered_pullback")
                         and _trade_still_open_t8(dict(t) if hasattr(t, "keys") else t)
+                    )
+                    filters.append(report_open_trade_cap_by_entry_type("tiered_pullback", tier_open, tier_cap))
+            except Exception:
+                pass
+
+    elif policy_type == "kt_cg_trial_9" and policy is not None:
+        # NTZ status
+        filters.append(report_ntz_status(ntz_filter_snapshot, tick, pip_size))
+        # Kill Switch status
+        filters.append(report_kill_switch_status(policy, data_by_tf, tick, pip_size, side))
+        # M5 EMA distance gate (reuse T7/T8 reporter)
+        m5_df = data_by_tf.get("M5")
+        filters.append(report_trial7_m5_ema_distance_gate(policy, m5_df, pip_size))
+        # Trend exhaustion
+        if getattr(policy, "trend_exhaustion_enabled", False):
+            filters.append(report_trend_exhaustion(exhaustion_result))
+        filters.append(report_trial7_adaptive_tp(policy, exhaustion_result))
+        # Open trade caps
+        cap_multiplier = 1.0
+        cap_min = 1
+        if (
+            exhaustion_result
+            and str(exhaustion_result.get("zone", "")).lower() == "very_extended"
+            and bool(getattr(policy, "trend_exhaustion_very_extended_tighten_caps", True))
+        ):
+            cap_multiplier = max(0.05, float(getattr(policy, "trend_exhaustion_very_extended_cap_multiplier", 0.5)))
+            cap_min = max(1, int(getattr(policy, "trend_exhaustion_very_extended_cap_min", 1)))
+        max_per_side = getattr(policy, "max_open_trades_per_side", None)
+        if max_per_side is not None:
+            max_per_side = max(cap_min, int(round(float(max_per_side) * cap_multiplier)))
+        if (max_per_side is not None or getattr(profile.risk, "max_open_trades", None) is not None) and store is not None:
+            try:
+                side_counts, live_ok = _live_side_counts(profile, adapter)
+                if not live_ok:
+                    side_counts = _store_side_counts(store, profile.profile_name)
+                max_open_trades_total = getattr(profile.risk, "max_open_trades", None)
+                if max_open_trades_total is not None:
+                    total_open = side_counts.get("buy", 0) + side_counts.get("sell", 0)
+                    filters.append(report_max_trades(total_open, int(max_open_trades_total), side, side_counts))
+                if max_per_side is not None:
+                    filters.extend(report_max_trades_by_side(side_counts, max_per_side))
+                open_trades = store.list_open_trades(profile.profile_name)
+                live_ids = _live_position_ids(profile, adapter)
+
+                def _trade_still_open_t9(row: dict) -> bool:
+                    pid = row.get("mt5_position_id")
+                    if not live_ids:
+                        return True
+                    if pid is None:
+                        return False
+                    try:
+                        return int(pid) in live_ids
+                    except (TypeError, ValueError):
+                        return False
+
+                zone_cap = getattr(policy, "max_zone_entry_open", None)
+                if zone_cap is not None:
+                    zone_cap = max(cap_min, int(round(float(zone_cap) * cap_multiplier)))
+                    zone_open = sum(
+                        1 for t in open_trades
+                        if ((dict(t) if hasattr(t, "keys") else t).get("entry_type") == "zone_entry")
+                        and _trade_still_open_t9(dict(t) if hasattr(t, "keys") else t)
+                    )
+                    filters.append(report_open_trade_cap_by_entry_type("zone_entry", zone_open, zone_cap))
+                tier_cap = getattr(policy, "max_tiered_pullback_open", None)
+                if tier_cap is not None:
+                    tier_cap = max(cap_min, int(round(float(tier_cap) * cap_multiplier)))
+                    tier_open = sum(
+                        1 for t in open_trades
+                        if ((dict(t) if hasattr(t, "keys") else t).get("entry_type") == "tiered_pullback")
+                        and _trade_still_open_t9(dict(t) if hasattr(t, "keys") else t)
                     )
                     filters.append(report_open_trade_cap_by_entry_type("tiered_pullback", tier_open, tier_cap))
             except Exception:

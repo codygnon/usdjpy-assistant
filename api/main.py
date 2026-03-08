@@ -3042,7 +3042,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 if not getattr(pol, "enabled", True):
                     continue
                 pt = getattr(pol, "type", "") or ""
-                if pt in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6", "kt_cg_trial_7", "kt_cg_trial_8"):
+                if pt in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6", "kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9"):
                     _policy = pol
                     _policy_type = pt
                     break
@@ -3058,10 +3058,13 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                     data_by_tf["M1"] = _get_bars_cached(_adapter, profile.symbol, "M1", 3000)
                     if _policy_type in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6"):
                         data_by_tf["M3"] = _get_bars_cached(_adapter, profile.symbol, "M3", 3000)
-                    if _policy_type in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_8"):
+                    if _policy_type in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_8", "kt_cg_trial_9"):
                         data_by_tf["D"] = _get_bars_cached(_adapter, profile.symbol, "D", 2)
-                    if _policy_type in ("kt_cg_trial_7", "kt_cg_trial_8"):
+                    if _policy_type in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9"):
                         data_by_tf["M5"] = _get_bars_cached(_adapter, profile.symbol, "M5", 2000)
+                    if _policy_type == "kt_cg_trial_9":
+                        data_by_tf["W"] = _get_bars_cached(_adapter, profile.symbol, "W", 2)
+                        data_by_tf["MN"] = _get_bars_cached(_adapter, profile.symbol, "MN", 2)
                 except Exception:
                     pass
                 try:
@@ -3111,7 +3114,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                             exhaustion_result = _detect_trend_flip_and_compute_exhaustion(
                                 m3_df, mid, pip_size, exhaustion_state or {}, _policy
                             )
-                    if _policy_type in ("kt_cg_trial_7", "kt_cg_trial_8") and getattr(_policy, "trend_exhaustion_enabled", False):
+                    if _policy_type in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9") and getattr(_policy, "trend_exhaustion_enabled", False):
                         m5_df = data_by_tf.get("M5")
                         if m5_df is not None and not m5_df.empty:
                             from core.execution_engine import _compute_trial7_trend_exhaustion
@@ -3255,6 +3258,7 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
     is_trial_4 = pol_type == "kt_cg_trial_4"
     is_trial_7 = pol_type == "kt_cg_trial_7"
     is_trial_8 = pol_type == "kt_cg_trial_8"
+    is_trial_9 = pol_type == "kt_cg_trial_9"
 
     filters: dict[str, Any] = {}
 
@@ -3318,6 +3322,36 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
                 "buffer_pips": getattr(policy, "daily_level_buffer_pips", 3.0),
                 "breakout_candles_required": getattr(policy, "daily_level_breakout_candles_required", 2),
             }
+        elif is_trial_9:
+            zone_entry_mode = getattr(policy, "zone_entry_mode", "price_vs_ema5")
+            if zone_entry_mode not in ("ema_cross", "price_vs_ema5"):
+                zone_entry_mode = "price_vs_ema5"
+            price_ema_period = int(getattr(policy, "m1_zone_entry_price_ema_period", 5))
+            mode_description = (
+                "M5 trend + M1 EMA fast/slow cross"
+                if zone_entry_mode == "ema_cross"
+                else f"M5 trend + live price vs M1 EMA{price_ema_period}"
+            )
+            filters["zone_entry"] = {
+                "enabled": getattr(policy, "zone_entry_enabled", True),
+                "mode": zone_entry_mode,
+                "mode_description": mode_description,
+            }
+            filters["m5_ema_distance_gate"] = {
+                "enabled": True,
+                "min_gap_pips": getattr(policy, "m5_min_ema_distance_pips", 1.0),
+            }
+            filters["ntz"] = {
+                "enabled": getattr(policy, "ntz_enabled", True),
+                "buffer_pips": getattr(policy, "ntz_buffer_pips", 10.0),
+                "use_prev_day_hl": getattr(policy, "ntz_use_prev_day_hl", True),
+                "use_weekly_hl": getattr(policy, "ntz_use_weekly_hl", True),
+                "use_monthly_hl": getattr(policy, "ntz_use_monthly_hl", True),
+            }
+            filters["kill_switch"] = {
+                "enabled": getattr(policy, "kill_switch_enabled", True),
+                "zone_entry_action": getattr(policy, "kill_switch_zone_entry_action", "kill"),
+            }
         else:
             filters["ema_zone_filter"] = {
                 "enabled": getattr(policy, "ema_zone_filter_enabled", False),
@@ -3377,7 +3411,7 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
 
     # Trend Exhaustion
     if hasattr(policy, "trend_exhaustion_enabled"):
-        if is_trial_7 or is_trial_8:
+        if is_trial_7 or is_trial_8 or is_trial_9:
             filters["trend_exhaustion"] = {
                 "enabled": getattr(policy, "trend_exhaustion_enabled", False),
                 "mode": getattr(policy, "trend_exhaustion_mode", "session_and_side"),

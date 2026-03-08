@@ -221,7 +221,13 @@ DEFAULTS: dict[str, object] = {
     "v5_normalplus_slope_min": 0.45,
     "v5_skip_normal": False,
     "v5_entry_min_body_pips": 1.0,
+    "v5_queued_confirm_bars": 0,
     "v5_session_entry_cutoff_minutes": 45,
+    "v5_exhaustion_gate_enabled": False,
+    "v5_exhaustion_gate_window_minutes": 60,
+    "v5_exhaustion_gate_max_range_pips": 40.0,
+    "v5_exhaustion_gate_cooldown_minutes": 15,
+    "v5_adx_filter_enabled": False,
     "v5_trail_start_after_tp1_mult": 0.5,
     "v5_london_start_hour": 6.5,
     "v5_london_active_start": 7.5,
@@ -801,7 +807,13 @@ def _full_parser() -> argparse.ArgumentParser:
     p.add_argument("--v5-normalplus-slope-min", type=float)
     p.add_argument("--v5-skip-normal", type=parse_bool, nargs="?", const=True)
     p.add_argument("--v5-entry-min-body-pips", type=float)
+    p.add_argument("--v5-queued-confirm-bars", type=int)
     p.add_argument("--v5-session-entry-cutoff-minutes", type=int)
+    p.add_argument("--v5-exhaustion-gate-enabled", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-exhaustion-gate-window-minutes", type=int)
+    p.add_argument("--v5-exhaustion-gate-max-range-pips", type=float)
+    p.add_argument("--v5-exhaustion-gate-cooldown-minutes", type=int)
+    p.add_argument("--v5-adx-filter-enabled", type=parse_bool, nargs="?", const=True)
     p.add_argument("--v5-trail-start-after-tp1-mult", type=float)
     p.add_argument("--v5-london-start-hour", type=float)
     p.add_argument("--v5-london-active-start", type=float)
@@ -3390,6 +3402,24 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
     # Tokyo informational range filter state (per UTC day).
     tokyo_range_hilo_by_day: dict[str, dict[str, float]] = {}
     tokyo_range_pips_by_day: dict[str, float] = {}
+    # Optional queued pullback confirmation.
+    queued_confirm_bars = max(0, int(getattr(args, "v5_queued_confirm_bars", 0)))
+    queued_pending: Optional[dict[str, object]] = None
+    queued_stats = {
+        "signals_generated": 0,
+        "signals_confirmed": 0,
+        "signals_expired": 0,
+        "signals_replaced_opposite": 0,
+        "confirmation_delay_bars_sum": 0.0,
+    }
+    # Optional rolling exhaustion gate.
+    exhaustion_enabled = bool(getattr(args, "v5_exhaustion_gate_enabled", False))
+    exhaustion_window_minutes = max(5, int(getattr(args, "v5_exhaustion_gate_window_minutes", 60)))
+    exhaustion_max_range_pips = float(getattr(args, "v5_exhaustion_gate_max_range_pips", 40.0))
+    exhaustion_cooldown_minutes = max(1, int(getattr(args, "v5_exhaustion_gate_cooldown_minutes", 15)))
+    exhaustion_window: deque[tuple[pd.Timestamp, float, float]] = deque()
+    exhaustion_cooldown_until: Optional[pd.Timestamp] = None
+    exhaustion_session_key: Optional[str] = None
 
     regime_distribution = {"Trending": 0, "Flat": 0}
     def _parse_hour_token(tok: str) -> float:
@@ -4976,6 +5006,7 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         pullback_trigger = False
         pullback_reentry_trigger = False
         pullback_reentry_state_key: Optional[str] = None
+        queued_confirmed_trigger = False
         pullback_tp_mode = "v39"
         breakout_trigger = False
         range_fade_trigger = False
@@ -5116,7 +5147,8 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                     if m5_atr < float(args.v5_atr_min_entry_pips):
                         add_block("v5_atr_too_low")
                         continue
-                if float(getattr(args, "v5_adx_min", 0.0)) > 0 and p5 >= 0:
+                adx_filter_enabled = bool(getattr(args, "v5_adx_filter_enabled", False)) or float(getattr(args, "v5_adx_min", 0.0)) > 0
+                if adx_filter_enabled and p5 >= 0:
                     adx_val = float(m5.iloc[p5].get("adx14_v5", 0.0))
                     if adx_val < float(args.v5_adx_min):
                         add_block("v5_adx_too_low")
@@ -5196,6 +5228,27 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         if bool(sess_cfg["stopped"]):
             add_block("session_stopped")
             continue
+        if exhaustion_enabled:
+            ex_sess_key = f"{day_key}:{sess}"
+            if exhaustion_session_key != ex_sess_key:
+                exhaustion_session_key = ex_sess_key
+                exhaustion_window.clear()
+                exhaustion_cooldown_until = None
+            exhaustion_window.append((pd.Timestamp(ts), float(h), float(l)))
+            ex_cutoff = pd.Timestamp(ts) - pd.Timedelta(minutes=exhaustion_window_minutes)
+            while exhaustion_window and pd.Timestamp(exhaustion_window[0][0]) < ex_cutoff:
+                exhaustion_window.popleft()
+            if exhaustion_cooldown_until is not None and pd.Timestamp(ts) < pd.Timestamp(exhaustion_cooldown_until):
+                add_block("v5_exhaustion_cooldown")
+                continue
+            if exhaustion_window:
+                ex_high = max(x[1] for x in exhaustion_window)
+                ex_low = min(x[2] for x in exhaustion_window)
+                ex_range_pips = (float(ex_high) - float(ex_low)) / PIP_SIZE
+                if ex_range_pips > exhaustion_max_range_pips:
+                    exhaustion_cooldown_until = pd.Timestamp(ts) + pd.Timedelta(minutes=exhaustion_cooldown_minutes)
+                    add_block("v5_exhaustion_gate")
+                    continue
         if float(getattr(args, "v5_session_range_cap_pips", 0.0)) > 0 and session_high is not None and session_low is not None:
             session_range = (float(session_high) - float(session_low)) / PIP_SIZE
             if session_range > float(args.v5_session_range_cap_pips):
@@ -5257,12 +5310,38 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                 continue
             entry_signal_mode = "range_fade"
         elif not orb_trigger:
+            queued_session_key = f"{day_key}:{sess}"
+            if queued_confirm_bars > 0 and queued_pending is not None:
+                pending_session_key = str(queued_pending.get("session_key", ""))
+                if pending_session_key != queued_session_key:
+                    queued_pending = None
+                else:
+                    pending_deadline_i = int(queued_pending.get("deadline_i", -1))
+                    if i > pending_deadline_i:
+                        queued_stats["signals_expired"] += 1
+                        add_block("v5_queued_confirm_expired")
+                        queued_pending = None
+                    else:
+                        confirm_side = str(queued_pending.get("side", ""))
+                        min_body_q = float(getattr(args, "v5_entry_min_body_pips", 1.0))
+                        body_q = abs(float(c) - float(o)) / PIP_SIZE
+                        dir_ok_q = (float(c) > float(o)) if confirm_side == "buy" else (float(c) < float(o))
+                        if dir_ok_q and body_q >= min_body_q:
+                            pullback_trigger = True
+                            queued_confirmed_trigger = True
+                            entry_side = confirm_side
+                            queued_stats["signals_confirmed"] += 1
+                            delay_bars = max(0, int(i - int(queued_pending.get("signal_i", i))))
+                            queued_stats["confirmation_delay_bars_sum"] += float(delay_bars)
+                            add_block("v5_queued_confirmed")
+                            queued_pending = None
             ef1 = float(m1.iloc[i]["ema_fast_v5"])
             es1 = float(m1.iloc[i]["ema_slow_v5"])
-            if trend_side == "buy":
-                pullback_trigger = (ef1 > es1) and (c > ef1) and (c > o)
-            else:
-                pullback_trigger = (ef1 < es1) and (c < ef1) and (c < o)
+            if not queued_confirmed_trigger:
+                if trend_side == "buy":
+                    pullback_trigger = (ef1 > es1) and (c > ef1) and (c > o)
+                else:
+                    pullback_trigger = (ef1 < es1) and (c < ef1) and (c < o)
 
             # --- BREAKOUT ENTRY MODE ---
             # Fires on new M5 EMA cross bar with strong slope/body, no pullback requirement.
@@ -5355,7 +5434,35 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                         add_block("v5_pullback_entry")
                 if not pullback_reentry_trigger:
                     continue
-            entry_side = str(trend_side)
+            if pullback_trigger and (queued_confirm_bars > 0) and (not queued_confirmed_trigger) and (not pullback_reentry_trigger) and (not breakout_trigger):
+                candidate_side = str(trend_side) if trend_side in {"buy", "sell"} else ""
+                if candidate_side:
+                    if queued_pending is None:
+                        queued_pending = {
+                            "session_key": queued_session_key,
+                            "side": candidate_side,
+                            "signal_i": int(i),
+                            "deadline_i": int(i + queued_confirm_bars),
+                        }
+                        queued_stats["signals_generated"] += 1
+                        add_block("v5_queued_signal_created")
+                    else:
+                        existing_side = str(queued_pending.get("side", ""))
+                        if existing_side != candidate_side:
+                            queued_pending = {
+                                "session_key": queued_session_key,
+                                "side": candidate_side,
+                                "signal_i": int(i),
+                                "deadline_i": int(i + queued_confirm_bars),
+                            }
+                            queued_stats["signals_generated"] += 1
+                            queued_stats["signals_replaced_opposite"] += 1
+                            add_block("v5_queued_signal_replaced")
+                        else:
+                            add_block("v5_queued_signal_already_pending")
+                    continue
+            if not queued_confirmed_trigger:
+                entry_side = str(trend_side)
             if breakout_trigger and not pullback_trigger:
                 entry_signal_mode = "breakout"
             elif pullback_reentry_trigger:
@@ -5363,7 +5470,7 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             else:
                 entry_signal_mode = "pullback"
 
-        if pullback_trigger and not pullback_reentry_trigger:
+        if pullback_trigger and not pullback_reentry_trigger and not queued_confirmed_trigger:
             if sess == "london":
                 confirm_bars = int(args.v5_london_confirm_bars)
                 min_body_pips = float(args.v5_london_min_body_pips)
@@ -5702,6 +5809,20 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
         results["weekly_stop_counts"] = int(len(weekly_stop_keys))
         results["trail_delayed_count"] = int(trail_delayed_count)
         results["sl_cap_skipped_count"] = int(sl_cap_skipped_count)
+        avg_q_delay = (
+            float(queued_stats["confirmation_delay_bars_sum"]) / float(queued_stats["signals_confirmed"])
+            if int(queued_stats["signals_confirmed"]) > 0
+            else 0.0
+        )
+        results["queued_confirmation_stats"] = {
+            "enabled": bool(queued_confirm_bars > 0),
+            "queued_confirm_bars": int(queued_confirm_bars),
+            "signals_generated": int(queued_stats["signals_generated"]),
+            "signals_confirmed": int(queued_stats["signals_confirmed"]),
+            "signals_expired": int(queued_stats["signals_expired"]),
+            "signals_replaced_opposite": int(queued_stats["signals_replaced_opposite"]),
+            "avg_confirmation_delay_bars": float(avg_q_delay),
+        }
         results["exit_reason_counts"] = results.get("exit_reason_counts", {})
         results["exit_reason_counts"]["stale_exit"] = int(results["exit_reason_counts"].get("stale_exit", 0))
         results["exit_reason_counts"]["session_end_full_risk_london"] = 0
@@ -5811,6 +5932,20 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
     results["weekly_stop_counts"] = int(len(weekly_stop_keys))
     results["trail_delayed_count"] = int(trail_delayed_count)
     results["sl_cap_skipped_count"] = int(sl_cap_skipped_count)
+    avg_q_delay = (
+        float(queued_stats["confirmation_delay_bars_sum"]) / float(queued_stats["signals_confirmed"])
+        if int(queued_stats["signals_confirmed"]) > 0
+        else 0.0
+    )
+    results["queued_confirmation_stats"] = {
+        "enabled": bool(queued_confirm_bars > 0),
+        "queued_confirm_bars": int(queued_confirm_bars),
+        "signals_generated": int(queued_stats["signals_generated"]),
+        "signals_confirmed": int(queued_stats["signals_confirmed"]),
+        "signals_expired": int(queued_stats["signals_expired"]),
+        "signals_replaced_opposite": int(queued_stats["signals_replaced_opposite"]),
+        "avg_confirmation_delay_bars": float(avg_q_delay),
+    }
     return results
 
 

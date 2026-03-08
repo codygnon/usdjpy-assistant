@@ -1,0 +1,701 @@
+{
+  "experiment": "37",
+  "baseline_config": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_optimized_v15_config.json",
+  "calendar_used": "/Users/codygnon/Documents/usdjpy_assistant/research_out/v5_scheduled_events_utc_usdjpy_high.csv",
+  "notes": [
+    "Engine does not support currencies field directly; calendar was prefiltered to high-impact USD/JPY events only.",
+    "37F required engine support for news_filter.block_entire_session and session_proximity_hours and was implemented."
+  ],
+  "variants": {
+    "37A": {
+      "variant": "37A",
+      "description": "baseline_no_news",
+      "config_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37A_config.json",
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37A_1000k_report.json",
+      "trades_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37A_1000k_trades.csv",
+      "equity_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37A_1000k_equity.csv",
+      "metrics": {
+        "trades": 97,
+        "wr_pct": 76.28865979381443,
+        "pf": 2.354396938017809,
+        "net_usd": 18869.976348193803,
+        "maxdd_usd": 3320.7933628269675,
+        "maxdd_pct": 2.9416089769986793,
+        "net_over_maxdd": 5.682369929856137,
+        "sharpe": 3.5045477641305505,
+        "calmar": 6.414848640911791,
+        "blocked_margin_cap": 1,
+        "blocked_news_window_bars": 0,
+        "trades_removed_vs_37A": 0
+      },
+      "news_blocking": {
+        "sessions_blocked": 0,
+        "blocked_session_dates": [],
+        "blocked_event_type_counts": {},
+        "blocked_event_records_sample": []
+      },
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "session_close",
+          "count": 24,
+          "net_usd": -5151.445565610958
+        },
+        {
+          "exit_reason": "sl",
+          "count": 6,
+          "net_usd": -7460.390927796946
+        },
+        {
+          "exit_reason": "tp1_then_be_stop",
+          "count": 24,
+          "net_usd": 6923.951813476217
+        },
+        {
+          "exit_reason": "tp1_then_session_close",
+          "count": 7,
+          "net_usd": 3753.0866049305587
+        },
+        {
+          "exit_reason": "tp1_then_time_decay",
+          "count": 3,
+          "net_usd": 866.7504445889338
+        },
+        {
+          "exit_reason": "tp1_then_tp2",
+          "count": 4,
+          "net_usd": 3760.071946730712
+        },
+        {
+          "exit_reason": "tp1_then_trailing_stop",
+          "count": 29,
+          "net_usd": 16177.952031875284
+        }
+      ]
+    },
+    "37B": {
+      "variant": "37B",
+      "description": "60_before_120_after_high_only",
+      "config_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37B_config.json",
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37B_1000k_report.json",
+      "trades_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37B_1000k_trades.csv",
+      "equity_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37B_1000k_equity.csv",
+      "metrics": {
+        "trades": 97,
+        "wr_pct": 76.28865979381443,
+        "pf": 2.354396938017809,
+        "net_usd": 18869.976348193803,
+        "maxdd_usd": 3320.7933628269675,
+        "maxdd_pct": 2.9416089769986793,
+        "net_over_maxdd": 5.682369929856137,
+        "sharpe": 3.5045477641305505,
+        "calmar": 6.414848640911791,
+        "blocked_margin_cap": 1,
+        "blocked_news_window_bars": 0,
+        "trades_removed_vs_37A": 0
+      },
+      "news_blocking": {
+        "sessions_blocked": 0,
+        "blocked_session_dates": [],
+        "blocked_event_type_counts": {},
+        "blocked_event_records_sample": []
+      },
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "session_close",
+          "count": 24,
+          "net_usd": -5151.445565610958
+        },
+        {
+          "exit_reason": "sl",
+          "count": 6,
+          "net_usd": -7460.390927796946
+        },
+        {
+          "exit_reason": "tp1_then_be_stop",
+          "count": 24,
+          "net_usd": 6923.951813476217
+        },
+        {
+          "exit_reason": "tp1_then_session_close",
+          "count": 7,
+          "net_usd": 3753.0866049305587
+        },
+        {
+          "exit_reason": "tp1_then_time_decay",
+          "count": 3,
+          "net_usd": 866.7504445889338
+        },
+        {
+          "exit_reason": "tp1_then_tp2",
+          "count": 4,
+          "net_usd": 3760.071946730712
+        },
+        {
+          "exit_reason": "tp1_then_trailing_stop",
+          "count": 29,
+          "net_usd": 16177.952031875284
+        }
+      ]
+    },
+    "37C": {
+      "variant": "37C",
+      "description": "120_before_240_after_high_only",
+      "config_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37C_config.json",
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37C_1000k_report.json",
+      "trades_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37C_1000k_trades.csv",
+      "equity_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37C_1000k_equity.csv",
+      "metrics": {
+        "trades": 97,
+        "wr_pct": 76.28865979381443,
+        "pf": 2.354396938017809,
+        "net_usd": 18869.976348193803,
+        "maxdd_usd": 3320.7933628269675,
+        "maxdd_pct": 2.9416089769986793,
+        "net_over_maxdd": 5.682369929856137,
+        "sharpe": 3.5045477641305505,
+        "calmar": 6.414848640911791,
+        "blocked_margin_cap": 1,
+        "blocked_news_window_bars": 510,
+        "trades_removed_vs_37A": 0
+      },
+      "news_blocking": {
+        "sessions_blocked": 18,
+        "blocked_session_dates": [
+          "2024-11-02",
+          "2024-12-07",
+          "2025-01-11",
+          "2025-02-08",
+          "2025-03-08",
+          "2025-04-05",
+          "2025-05-03",
+          "2025-05-14",
+          "2025-06-07",
+          "2025-07-16",
+          "2025-08-02",
+          "2025-08-13",
+          "2025-09-06",
+          "2025-10-04",
+          "2025-11-08",
+          "2025-12-06",
+          "2026-01-10",
+          "2026-02-07"
+        ],
+        "blocked_event_type_counts": {
+          "us_cpi": 3,
+          "us_nfp": 15
+        },
+        "blocked_event_records_sample": [
+          {
+            "event_id": "us_nfp",
+            "event_ts": "2024-11-01 12:30:00+00:00",
+            "blocked_session_days": [
+              "2024-11-02"
+            ]
+          },
+          {
+            "event_id": "us_nfp",
+            "event_ts": "2024-12-06 13:30:00+00:00",
+            "blocked_session_days": [
+              "2024-12-07"
+            ]
+          },
+          {
+            "event_id": "us_nfp",
+            "event_ts": "2025-01-10 13:30:00+00:00",
+            "blocked_session_days": [
+              "2025-01-11"
+            ]
+          },
+          {
+            "event_id": "us_nfp",
+            "event_ts": "2025-02-07 13:30:00+00:00",
+            "blocked_session_days": [
+              "2025-02-08"
+            ]
+          },
+          {
+            "event_id": "us_nfp",
+            "event_ts": "2025-03-07 13:30:00+00:00",
+            "blocked_session_days": [
+              "2025-03-08"
+            ]
+          },
+          {
+            "event_id": "us_nfp",
+            "event_ts": "2025-04-04 12:30:00+00:00",
+            "blocked_session_days": [
+              "2025-04-05"
+            ]
+          },
+          {
+            "event_id": "us_nfp",
+            "event_ts": "2025-05-02 12:30:00+00:00",
+            "blocked_session_days": [
+              "2025-05-03"
+            ]
+          },
+          {
+            "event_id": "us_cpi",
+            "event_ts": "2025-05-13 12:30:00+00:00",
+            "blocked_session_days": [
+              "2025-05-14"
+            ]
+          },
+          {
+            "event_id": "us_nfp",
+            "event_ts": "2025-06-06 12:30:00+00:00",
+            "blocked_session_days": [
+              "2025-06-07"
+            ]
+          },
+          {
+            "event_id": "us_cpi",
+            "event_ts": "2025-07-15 12:30:00+00:00",
+            "blocked_session_days": [
+              "2025-07-16"
+            ]
+          },
+          {
+            "event_id": "us_nfp",
+            "event_ts": "2025-08-01 12:30:00+00:00",
+            "blocked_session_days": [
+              "2025-08-02"
+            ]
+          },
+          {
+            "event_id": "us_cpi",
+            "event_ts": "2025-08-12 12:30:00+00:00",
+            "blocked_session_days": [
+              "2025-08-13"
+            ]
+          },
+          {
+            "event_id": "us_nfp",
+            "event_ts": "2025-09-05 12:30:00+00:00",
+            "blocked_session_days": [
+              "2025-09-06"
+            ]
+          },
+          {
+            "event_id": "us_nfp",
+            "event_ts": "2025-10-03 12:30:00+00:00",
+            "blocked_session_days": [
+              "2025-10-04"
+            ]
+          },
+          {
+            "event_id": "us_nfp",
+            "event_ts": "2025-11-07 13:30:00+00:00",
+            "blocked_session_days": [
+              "2025-11-08"
+            ]
+          },
+          {
+            "event_id": "us_nfp",
+            "event_ts": "2025-12-05 13:30:00+00:00",
+            "blocked_session_days": [
+              "2025-12-06"
+            ]
+          },
+          {
+            "event_id": "us_nfp",
+            "event_ts": "2026-01-09 13:30:00+00:00",
+            "blocked_session_days": [
+              "2026-01-10"
+            ]
+          },
+          {
+            "event_id": "us_nfp",
+            "event_ts": "2026-02-06 13:30:00+00:00",
+            "blocked_session_days": [
+              "2026-02-07"
+            ]
+          }
+        ]
+      },
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "session_close",
+          "count": 24,
+          "net_usd": -5151.445565610958
+        },
+        {
+          "exit_reason": "sl",
+          "count": 6,
+          "net_usd": -7460.390927796946
+        },
+        {
+          "exit_reason": "tp1_then_be_stop",
+          "count": 24,
+          "net_usd": 6923.951813476217
+        },
+        {
+          "exit_reason": "tp1_then_session_close",
+          "count": 7,
+          "net_usd": 3753.0866049305587
+        },
+        {
+          "exit_reason": "tp1_then_time_decay",
+          "count": 3,
+          "net_usd": 866.7504445889338
+        },
+        {
+          "exit_reason": "tp1_then_tp2",
+          "count": 4,
+          "net_usd": 3760.071946730712
+        },
+        {
+          "exit_reason": "tp1_then_trailing_stop",
+          "count": 29,
+          "net_usd": 16177.952031875284
+        }
+      ]
+    },
+    "37D": {
+      "variant": "37D",
+      "description": "60_before_60_after_high_only",
+      "config_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37D_config.json",
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37D_1000k_report.json",
+      "trades_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37D_1000k_trades.csv",
+      "equity_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37D_1000k_equity.csv",
+      "metrics": {
+        "trades": 97,
+        "wr_pct": 76.28865979381443,
+        "pf": 2.354396938017809,
+        "net_usd": 18869.976348193803,
+        "maxdd_usd": 3320.7933628269675,
+        "maxdd_pct": 2.9416089769986793,
+        "net_over_maxdd": 5.682369929856137,
+        "sharpe": 3.5045477641305505,
+        "calmar": 6.414848640911791,
+        "blocked_margin_cap": 1,
+        "blocked_news_window_bars": 0,
+        "trades_removed_vs_37A": 0
+      },
+      "news_blocking": {
+        "sessions_blocked": 0,
+        "blocked_session_dates": [],
+        "blocked_event_type_counts": {},
+        "blocked_event_records_sample": []
+      },
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "session_close",
+          "count": 24,
+          "net_usd": -5151.445565610958
+        },
+        {
+          "exit_reason": "sl",
+          "count": 6,
+          "net_usd": -7460.390927796946
+        },
+        {
+          "exit_reason": "tp1_then_be_stop",
+          "count": 24,
+          "net_usd": 6923.951813476217
+        },
+        {
+          "exit_reason": "tp1_then_session_close",
+          "count": 7,
+          "net_usd": 3753.0866049305587
+        },
+        {
+          "exit_reason": "tp1_then_time_decay",
+          "count": 3,
+          "net_usd": 866.7504445889338
+        },
+        {
+          "exit_reason": "tp1_then_tp2",
+          "count": 4,
+          "net_usd": 3760.071946730712
+        },
+        {
+          "exit_reason": "tp1_then_trailing_stop",
+          "count": 29,
+          "net_usd": 16177.952031875284
+        }
+      ]
+    },
+    "37E": {
+      "variant": "37E",
+      "description": "120_before_120_after_high_only",
+      "config_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37E_config.json",
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37E_1000k_report.json",
+      "trades_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37E_1000k_trades.csv",
+      "equity_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37E_1000k_equity.csv",
+      "metrics": {
+        "trades": 97,
+        "wr_pct": 76.28865979381443,
+        "pf": 2.354396938017809,
+        "net_usd": 18869.976348193803,
+        "maxdd_usd": 3320.7933628269675,
+        "maxdd_pct": 2.9416089769986793,
+        "net_over_maxdd": 5.682369929856137,
+        "sharpe": 3.5045477641305505,
+        "calmar": 6.414848640911791,
+        "blocked_margin_cap": 1,
+        "blocked_news_window_bars": 0,
+        "trades_removed_vs_37A": 0
+      },
+      "news_blocking": {
+        "sessions_blocked": 0,
+        "blocked_session_dates": [],
+        "blocked_event_type_counts": {},
+        "blocked_event_records_sample": []
+      },
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "session_close",
+          "count": 24,
+          "net_usd": -5151.445565610958
+        },
+        {
+          "exit_reason": "sl",
+          "count": 6,
+          "net_usd": -7460.390927796946
+        },
+        {
+          "exit_reason": "tp1_then_be_stop",
+          "count": 24,
+          "net_usd": 6923.951813476217
+        },
+        {
+          "exit_reason": "tp1_then_session_close",
+          "count": 7,
+          "net_usd": 3753.0866049305587
+        },
+        {
+          "exit_reason": "tp1_then_time_decay",
+          "count": 3,
+          "net_usd": 866.7504445889338
+        },
+        {
+          "exit_reason": "tp1_then_tp2",
+          "count": 4,
+          "net_usd": 3760.071946730712
+        },
+        {
+          "exit_reason": "tp1_then_trailing_stop",
+          "count": 29,
+          "net_usd": 16177.952031875284
+        }
+      ]
+    },
+    "37F": {
+      "variant": "37F",
+      "description": "block_entire_session_if_event_within_4h",
+      "config_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37F_config.json",
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37F_1000k_report.json",
+      "trades_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37F_1000k_trades.csv",
+      "equity_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_exp37_37F_1000k_equity.csv",
+      "metrics": {
+        "trades": 94,
+        "wr_pct": 76.59574468085107,
+        "pf": 2.367682596514786,
+        "net_usd": 18493.76704859141,
+        "maxdd_usd": 3320.7933628269675,
+        "maxdd_pct": 2.9416089769986793,
+        "net_over_maxdd": 5.569080947827419,
+        "sharpe": 3.4657404724350895,
+        "calmar": 6.286956285896512,
+        "blocked_margin_cap": 1,
+        "blocked_news_window_bars": 4704,
+        "trades_removed_vs_37A": 3
+      },
+      "news_blocking": {
+        "sessions_blocked": 18,
+        "blocked_session_dates": [
+          "2024-11-02",
+          "2024-12-07",
+          "2025-01-11",
+          "2025-02-08",
+          "2025-03-08",
+          "2025-04-05",
+          "2025-05-03",
+          "2025-05-14",
+          "2025-06-07",
+          "2025-07-16",
+          "2025-08-02",
+          "2025-08-13",
+          "2025-09-06",
+          "2025-10-04",
+          "2025-11-08",
+          "2025-12-06",
+          "2026-01-10",
+          "2026-02-07"
+        ],
+        "blocked_event_type_counts": {
+          "us_cpi": 3,
+          "us_nfp": 15
+        },
+        "blocked_event_records_sample": [
+          {
+            "session_day_jst": "2024-11-02",
+            "event_id": "us_nfp",
+            "event_ts": "2024-11-01 12:30:00+00:00"
+          },
+          {
+            "session_day_jst": "2024-12-07",
+            "event_id": "us_nfp",
+            "event_ts": "2024-12-06 13:30:00+00:00"
+          },
+          {
+            "session_day_jst": "2025-01-11",
+            "event_id": "us_nfp",
+            "event_ts": "2025-01-10 13:30:00+00:00"
+          },
+          {
+            "session_day_jst": "2025-02-08",
+            "event_id": "us_nfp",
+            "event_ts": "2025-02-07 13:30:00+00:00"
+          },
+          {
+            "session_day_jst": "2025-03-08",
+            "event_id": "us_nfp",
+            "event_ts": "2025-03-07 13:30:00+00:00"
+          },
+          {
+            "session_day_jst": "2025-04-05",
+            "event_id": "us_nfp",
+            "event_ts": "2025-04-04 12:30:00+00:00"
+          },
+          {
+            "session_day_jst": "2025-05-03",
+            "event_id": "us_nfp",
+            "event_ts": "2025-05-02 12:30:00+00:00"
+          },
+          {
+            "session_day_jst": "2025-05-14",
+            "event_id": "us_cpi",
+            "event_ts": "2025-05-13 12:30:00+00:00"
+          },
+          {
+            "session_day_jst": "2025-06-07",
+            "event_id": "us_nfp",
+            "event_ts": "2025-06-06 12:30:00+00:00"
+          },
+          {
+            "session_day_jst": "2025-07-16",
+            "event_id": "us_cpi",
+            "event_ts": "2025-07-15 12:30:00+00:00"
+          },
+          {
+            "session_day_jst": "2025-08-02",
+            "event_id": "us_nfp",
+            "event_ts": "2025-08-01 12:30:00+00:00"
+          },
+          {
+            "session_day_jst": "2025-08-13",
+            "event_id": "us_cpi",
+            "event_ts": "2025-08-12 12:30:00+00:00"
+          },
+          {
+            "session_day_jst": "2025-09-06",
+            "event_id": "us_nfp",
+            "event_ts": "2025-09-05 12:30:00+00:00"
+          },
+          {
+            "session_day_jst": "2025-10-04",
+            "event_id": "us_nfp",
+            "event_ts": "2025-10-03 12:30:00+00:00"
+          },
+          {
+            "session_day_jst": "2025-11-08",
+            "event_id": "us_nfp",
+            "event_ts": "2025-11-07 13:30:00+00:00"
+          },
+          {
+            "session_day_jst": "2025-12-06",
+            "event_id": "us_nfp",
+            "event_ts": "2025-12-05 13:30:00+00:00"
+          },
+          {
+            "session_day_jst": "2026-01-10",
+            "event_id": "us_nfp",
+            "event_ts": "2026-01-09 13:30:00+00:00"
+          },
+          {
+            "session_day_jst": "2026-02-07",
+            "event_id": "us_nfp",
+            "event_ts": "2026-02-06 13:30:00+00:00"
+          }
+        ]
+      },
+      "exit_reason_breakdown": [
+        {
+          "exit_reason": "session_close",
+          "count": 23,
+          "net_usd": -4742.328738283391
+        },
+        {
+          "exit_reason": "sl",
+          "count": 6,
+          "net_usd": -7459.098074941952
+        },
+        {
+          "exit_reason": "tp1_then_be_stop",
+          "count": 23,
+          "net_usd": 6666.026339158016
+        },
+        {
+          "exit_reason": "tp1_then_session_close",
+          "count": 6,
+          "net_usd": 3231.5296202686186
+        },
+        {
+          "exit_reason": "tp1_then_time_decay",
+          "count": 3,
+          "net_usd": 866.0967923392463
+        },
+        {
+          "exit_reason": "tp1_then_tp2",
+          "count": 4,
+          "net_usd": 3760.071946730712
+        },
+        {
+          "exit_reason": "tp1_then_trailing_stop",
+          "count": 29,
+          "net_usd": 16171.469163320162
+        }
+      ]
+    }
+  },
+  "selection_criteria": {
+    "hard_gate": "trades >= 70",
+    "ranking": [
+      "pf_desc",
+      "net_usd_desc",
+      "maxdd_usd_asc",
+      "trades_desc"
+    ]
+  },
+  "winner": "37F",
+  "winner_reason": "Selected by PF, then Net USD, then MaxDD, then Trades among variants with trades>=70.",
+  "winning_config_saved_as": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_v15_news_config.json",
+  "winner_scaling": {
+    "250k": {
+      "trades": 16,
+      "wr_pct": 81.25,
+      "pf": 2.678158018521858,
+      "net_usd": 3771.5351282730253,
+      "maxdd_usd": 1005.7650727984001,
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_v15_news_winner_250k_report.json"
+    },
+    "500k": {
+      "trades": 36,
+      "wr_pct": 83.33333333333334,
+      "pf": 2.2774216763223496,
+      "net_usd": 6916.233754059226,
+      "maxdd_usd": 2614.401605517909,
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_v15_news_winner_500k_report.json"
+    },
+    "1000k": {
+      "trades": 94,
+      "wr_pct": 76.59574468085107,
+      "pf": 2.367682596514786,
+      "net_usd": 18493.76704859141,
+      "maxdd_usd": 3320.7933628269675,
+      "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_v15_news_winner_1000k_report.json"
+    }
+  }
+}

@@ -115,7 +115,7 @@ def _symbol_to_instrument(symbol: str) -> str:
 
 
 def _timeframe_to_granularity(tf: Timeframe) -> str:
-    m = {"M1": "M1", "M3": "M3", "M5": "M5", "M15": "M15", "M30": "M30", "H1": "H1", "H4": "H4", "D": "D"}
+    m = {"M1": "M1", "M3": "M3", "M5": "M5", "M15": "M15", "M30": "M30", "H1": "H1", "H4": "H4", "D": "D", "W": "W", "MN": "M"}
     if tf in m:
         return m[tf]
     raise ValueError(f"Unsupported timeframe: {tf}")

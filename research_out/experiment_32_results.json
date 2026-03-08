@@ -1,0 +1,203 @@
+{
+  "experiment": 32,
+  "type": "multi_split_walkforward_validation",
+  "splits": [
+    {
+      "split": "32A",
+      "label": "700k/300k",
+      "train": {
+        "trades": 100,
+        "wr": 71.0,
+        "pf": 1.8216614206691197,
+        "net_usd": 8900.238215835934,
+        "max_dd_usd": 3228.754947663532,
+        "max_dd_pct": 2.9675873808066147,
+        "net_over_maxdd": 2.7565542632080313,
+        "expectancy_per_trade": 89.00238215835934,
+        "sharpe": 2.332985605321233,
+        "calmar": 2.9991495021847765,
+        "blocked_margin_cap": 1,
+        "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32A_train_report.json",
+        "trades_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32A_train_trades.csv",
+        "equity_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32A_train_equity.csv"
+      },
+      "test": {
+        "trades": 41,
+        "wr": 73.17073170731707,
+        "pf": 1.49060516423291,
+        "net_usd": 2696.4831794912293,
+        "max_dd_usd": 1940.5421730262315,
+        "max_dd_pct": 1.9452649078976714,
+        "net_over_maxdd": 1.389551444422424,
+        "expectancy_per_trade": 65.76788242661534,
+        "sharpe": 1.0007351316380577,
+        "calmar": 1.3861778766190864,
+        "blocked_margin_cap": 0,
+        "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32A_test_report.json",
+        "trades_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32A_test_trades.csv",
+        "equity_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32A_test_equity.csv"
+      },
+      "pf_retention_pct": 81.82668564641344,
+      "retention_ge_60": true,
+      "split_files": {
+        "train_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_700k_split.csv",
+        "test_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_300k_split.csv"
+      },
+      "split_meta": {}
+    },
+    {
+      "split": "32B",
+      "label": "600k/400k",
+      "train": {
+        "trades": 91,
+        "wr": 69.23076923076923,
+        "pf": 1.7780369056776633,
+        "net_usd": 7628.691855722766,
+        "max_dd_usd": 3228.754947663532,
+        "max_dd_pct": 2.9675873808066147,
+        "net_over_maxdd": 2.3627348558128327,
+        "expectancy_per_trade": 83.83177863431611,
+        "sharpe": 2.1308632405464776,
+        "calmar": 2.5706713490772692,
+        "blocked_margin_cap": 1,
+        "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32B_train_report.json",
+        "trades_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32B_train_trades.csv",
+        "equity_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32B_train_equity.csv"
+      },
+      "test": {
+        "trades": 50,
+        "wr": 76.0,
+        "pf": 1.591236784113476,
+        "net_usd": 3824.2411298160287,
+        "max_dd_usd": 2614.545546052075,
+        "max_dd_pct": 2.574808683759698,
+        "net_over_maxdd": 1.462679101379808,
+        "expectancy_per_trade": 76.48482259632057,
+        "sharpe": 1.2878572487886042,
+        "calmar": 1.4852525369892557,
+        "blocked_margin_cap": 0,
+        "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32B_test_report.json",
+        "trades_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32B_test_trades.csv",
+        "equity_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32B_test_equity.csv"
+      },
+      "pf_retention_pct": 89.49402450715768,
+      "retention_ge_60": true,
+      "split_files": {
+        "train_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_600k_split.csv",
+        "test_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_400k_split.csv"
+      },
+      "split_meta": {
+        "source_rows": 1000000,
+        "train_rows": 600000,
+        "test_rows": 400000,
+        "train_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_600k_split.csv",
+        "test_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_400k_split.csv"
+      }
+    },
+    {
+      "split": "32C",
+      "label": "500k/500k",
+      "train": {
+        "trades": 80,
+        "wr": 67.5,
+        "pf": 1.779992919543237,
+        "net_usd": 6742.88847485834,
+        "max_dd_usd": 3228.754947663532,
+        "max_dd_pct": 2.9675873808066147,
+        "net_over_maxdd": 2.08838657134317,
+        "expectancy_per_trade": 84.28610593572924,
+        "sharpe": 2.004647979747979,
+        "calmar": 2.2721785779482615,
+        "blocked_margin_cap": 1,
+        "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32C_train_report.json",
+        "trades_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32C_train_trades.csv",
+        "equity_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32C_train_equity.csv"
+      },
+      "test": {
+        "trades": 61,
+        "wr": 78.68852459016394,
+        "pf": 1.8893354931215087,
+        "net_usd": 6006.451019399556,
+        "max_dd_usd": 2256.0354957195377,
+        "max_dd_pct": 2.1858272340944023,
+        "net_over_maxdd": 2.662392072640623,
+        "expectancy_per_trade": 98.46641015409108,
+        "sharpe": 1.9536043519115853,
+        "calmar": 2.7479074858759667,
+        "blocked_margin_cap": 0,
+        "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32C_test_report.json",
+        "trades_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32C_test_trades.csv",
+        "equity_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32C_test_equity.csv"
+      },
+      "pf_retention_pct": 106.14286564725943,
+      "retention_ge_60": true,
+      "split_files": {
+        "train_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_500k_train_from_1000k.csv",
+        "test_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_500k_test_from_1000k.csv"
+      },
+      "split_meta": {
+        "source_rows": 1000000,
+        "train_rows": 500000,
+        "test_rows": 500000,
+        "train_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_500k_train_from_1000k.csv",
+        "test_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_500k_test_from_1000k.csv"
+      }
+    },
+    {
+      "split": "32D",
+      "label": "800k/200k",
+      "train": {
+        "trades": 114,
+        "wr": 71.05263157894737,
+        "pf": 1.5799293839613961,
+        "net_usd": 7897.648882208534,
+        "max_dd_usd": 3228.754947663532,
+        "max_dd_pct": 2.9675873808066147,
+        "net_over_maxdd": 2.4460353945175113,
+        "expectancy_per_trade": 69.27762177375907,
+        "sharpe": 1.915937199737472,
+        "calmar": 2.66130289314747,
+        "blocked_margin_cap": 1,
+        "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32D_train_report.json",
+        "trades_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32D_train_trades.csv",
+        "equity_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32D_train_equity.csv"
+      },
+      "test": {
+        "trades": 27,
+        "wr": 74.07407407407408,
+        "pf": 2.2280314055829575,
+        "net_usd": 3624.9589187098322,
+        "max_dd_usd": 1068.2471605599276,
+        "max_dd_pct": 1.0704620433188154,
+        "net_over_maxdd": 3.393370984304597,
+        "expectancy_per_trade": 134.25773772999378,
+        "sharpe": 1.6575748701907316,
+        "calmar": 3.386349792909188,
+        "blocked_margin_cap": 0,
+        "report_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32D_test_report.json",
+        "trades_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32D_test_trades.csv",
+        "equity_path": "/Users/codygnon/Documents/usdjpy_assistant/research_out/round4_exp32_32D_test_equity.csv"
+      },
+      "pf_retention_pct": 141.02094867028546,
+      "retention_ge_60": true,
+      "split_files": {
+        "train_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_800k_split.csv",
+        "test_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_200k_split.csv"
+      },
+      "split_meta": {
+        "source_rows": 1000000,
+        "train_rows": 800000,
+        "test_rows": 200000,
+        "train_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_800k_split.csv",
+        "test_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_200k_split.csv"
+      }
+    }
+  ],
+  "average_pf_retention_pct": 104.621131117779,
+  "splits_ge_60_pct": 4,
+  "validation_rule": {
+    "avg_retention_gte": 55.0,
+    "min_splits_with_retention_ge_60": 2
+  },
+  "validation_pass": true
+}

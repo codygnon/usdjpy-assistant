@@ -1,0 +1,97 @@
+{
+  "account": {
+    "broker": "OANDA",
+    "account_type": "Demo",
+    "instrument": "USD_JPY",
+    "pip_value": 0.01,
+    "spread_mode": "realistic",
+    "spread_pips": 1.6,
+    "spread_min_pips": 1.0,
+    "spread_max_pips": 3.5,
+    "commission": 0.0,
+    "starting_balance_usd": 100000,
+    "leverage": 50
+  },
+  "execution": {
+    "margin_enabled": true
+  },
+  "session": {
+    "start_utc": "00:00",
+    "end_utc": "09:00",
+    "lunch_block_start_utc": "02:30",
+    "lunch_block_end_utc": "03:30",
+    "late_session_start_utc": "06:30",
+    "wind_down_start_utc": "08:00",
+    "force_close_utc": "08:45",
+    "allowed_days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+  },
+  "position_sizing": {
+    "risk_per_trade_pct": 0.50,
+    "max_position_units": 500000,
+    "max_concurrent_positions": 3
+  },
+  "exits": {
+    "default": {
+      "sl_pips": 8.0,
+      "trail_activate_pips": 5.0,
+      "trail_distance_pips": 4.0,
+      "partial_close_ratio": 0.60
+    },
+    "type2_retest": {
+      "sl_pips": 6.0,
+      "tp_pips": 8.0,
+      "trail_activate_pips": 5.0,
+      "trail_distance_pips": 3.0
+    },
+    "type3_failed_breakout": {
+      "sl_pips": 10.0,
+      "trail_activate_pips": 5.0,
+      "trail_distance_pips": 4.0
+    },
+    "late_session": {
+      "sl_pips": 6.0,
+      "tp_pips": 5.0,
+      "trail_activate_pips": 4.0,
+      "trail_distance_pips": 2.0
+    }
+  },
+  "trade_management": {
+    "min_time_between_entries_minutes": 5,
+    "no_reentry_same_direction_type1_after_sl_minutes": 60,
+    "type2_retest_delay_after_breakout_minutes": 25,
+    "no_reentry_same_direction_after_structural_stop_minutes": 45,
+    "consecutive_loss_pause": {
+      "loss_count": 2,
+      "pause_minutes": 15
+    },
+    "breakout_session_kill_pips": 50,
+    "max_entries_per_session_total": 8,
+    "max_entries_per_type": {
+      "1": 4,
+      "2": 2,
+      "3": 2,
+      "4": 2
+    }
+  },
+  "run_sequence": [
+    {
+      "label": "50k",
+      "input_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_50k.csv"
+    },
+    {
+      "label": "250k",
+      "input_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_250k.csv"
+    },
+    {
+      "label": "500k",
+      "input_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_500k.csv"
+    },
+    {
+      "label": "1000k",
+      "input_csv": "/Users/codygnon/Documents/usdjpy_assistant/research_out/USDJPY_M1_OANDA_1000k.csv"
+    }
+  ],
+  "outputs": {
+    "base_dir": "/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_tibs_v1"
+  }
+}

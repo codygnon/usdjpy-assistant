@@ -10,9 +10,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_left, bisect_right, insort
 import json
 import math
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -253,6 +254,12 @@ def add_indicators(m1: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     m5["bb_width"] = (m5["bb_upper"] - m5["bb_lower"]) / m5["bb_mid"].replace(0.0, np.nan)
     m5["bb_width_cutoff"] = m5["bb_width"].rolling(bb_pct_window, min_periods=bb_pct_window).quantile(bb_pct_cutoff)
     m5["bb_regime"] = np.where(m5["bb_width"] < m5["bb_width_cutoff"], "ranging", "trending")
+    # V2 regime mode: trending only when prior 3 BB-width values are strictly increasing.
+    m5["bb_width_expanding3"] = (
+        (m5["bb_width"].shift(1) > m5["bb_width"].shift(2))
+        & (m5["bb_width"].shift(2) > m5["bb_width"].shift(3))
+    )
+    m5["bb_regime_expanding3"] = np.where(m5["bb_width_expanding3"].fillna(False), "trending", "ranging")
     m5["bb_width_q_high"] = m5["bb_width"].rolling(bb_rank_lookback, min_periods=bb_rank_lookback).quantile(bb_high_q)
     m5["bb_width_q_low"] = m5["bb_width"].rolling(bb_rank_lookback, min_periods=bb_rank_lookback).quantile(bb_low_q)
 
@@ -359,7 +366,9 @@ def add_indicators(m1: pd.DataFrame, cfg: dict) -> pd.DataFrame:
         "rsi_m5",
         "bb_width",
         "bb_regime",
+        "bb_regime_expanding3",
         "bb_width_cutoff",
+        "bb_width_expanding3",
         "bb_width_q_high",
         "bb_width_q_low",
         "rej_bull_m5",
@@ -510,6 +519,14 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
     sf = cfg.get("session_filter", {})
     session_start_utc = str(sf.get("session_start_utc", "15:00"))
     session_end_utc = str(sf.get("session_end_utc", "00:00"))
+    entry_start_utc = str(sf.get("entry_start_utc", session_start_utc))
+    entry_end_utc = str(sf.get("entry_end_utc", session_end_utc))
+    block_new_entries_minutes_before_end = int(
+        sf.get("block_new_entries_minutes_before_end", sf.get("session_entry_cutoff_minutes", 0))
+    )
+    lunch_block_enabled = bool(sf.get("lunch_block_enabled", False))
+    lunch_block_start_utc = str(sf.get("lunch_block_start_utc", "02:30"))
+    lunch_block_end_utc = str(sf.get("lunch_block_end_utc", "03:30"))
     allowed_days = list(sf.get("allowed_trading_days", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]))
     allowed_days_set = set(allowed_days)
 
@@ -519,6 +536,26 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
 
     start_min = hhmm_to_minutes(session_start_utc)
     end_min = hhmm_to_minutes(session_end_utc)
+    entry_start_min = hhmm_to_minutes(entry_start_utc)
+    entry_end_min = hhmm_to_minutes(entry_end_utc)
+    lunch_start_min = hhmm_to_minutes(lunch_block_start_utc)
+    lunch_end_min = hhmm_to_minutes(lunch_block_end_utc)
+
+    def in_window(minute_of_day_utc: int, win_start: int, win_end: int) -> bool:
+        m = int(minute_of_day_utc)
+        if win_start < win_end:
+            return (m >= win_start) and (m < win_end)
+        return (m >= win_start) or (m < win_end)
+
+    def minutes_to_session_end(minute_of_day_utc: int) -> int:
+        m = int(minute_of_day_utc)
+        if start_min < end_min:
+            return max(0, end_min - m)
+        # Cross-midnight session.
+        if m >= start_min:
+            return (1440 - m) + end_min
+        return max(0, end_min - m)
+
     if start_min < end_min:
         df["in_tokyo_session"] = (df["minute_of_day_utc"] >= start_min) & (df["minute_of_day_utc"] < end_min)
     else:
@@ -528,6 +565,8 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
     starting_equity = float(cfg.get("starting_equity_usd", 50000.0))
     equity = starting_equity
     risk_pct = float(cfg["position_sizing"]["risk_per_trade_pct"]) / 100.0
+    day_risk_multipliers_cfg = cfg.get("position_sizing", {}).get("day_risk_multipliers", {})
+    day_risk_multipliers = {str(k): float(v) for k, v in day_risk_multipliers_cfg.items()}
     max_units = int(cfg["position_sizing"]["max_units"])
     max_open = int(cfg["position_sizing"]["max_concurrent_positions"])
     max_trades_session = int(cfg["trade_management"]["max_trades_per_session"])
@@ -540,7 +579,20 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
     rolling_window_minutes = int(cfg["trade_management"].get("rolling_window_minutes", 60))
     rolling_range_threshold_pips = float(cfg["trade_management"].get("rolling_range_threshold_pips", 40.0))
     breakout_cooldown_minutes = int(cfg["trade_management"].get("cooldown_minutes", 15))
+    consec_pause_cfg = cfg["trade_management"].get("consecutive_loss_pause", {})
+    consec_pause_enabled = bool(consec_pause_cfg.get("enabled", False))
+    consec_pause_losses = int(consec_pause_cfg.get("consecutive_losses", 2))
+    consec_pause_minutes = int(consec_pause_cfg.get("pause_minutes", 30))
     atr_max = float(cfg["indicators"]["atr"]["max_threshold_price_units"])
+    atr_gate_enabled = bool(cfg["indicators"]["atr"].get("use_as_hard_gate", True))
+    atr_pct_cfg = cfg["indicators"]["atr"].get("percentile_filter", {})
+    atr_pct_enabled = bool(atr_pct_cfg.get("enabled", False))
+    atr_pct_lookback = max(10, int(atr_pct_cfg.get("lookback_bars", 150)))
+    atr_pct_max = float(atr_pct_cfg.get("max_percentile", 0.67))
+    atr_pct_min_obs = max(20, int(atr_pct_cfg.get("min_observations", min(50, atr_pct_lookback))))
+    regime_filter_mode = str(cfg["indicators"].get("bb_width_regime_filter", {}).get("mode", "percentile")).strip().lower()
+    scoring_model = str(cfg.get("entry_rules", {}).get("scoring_model", "")).strip().lower()
+    tokyo_v2_scoring = scoring_model in {"tokyo_v2", "v2", "tokyo_actual_v2"}
     tol_pips = float(cfg["entry_rules"]["long"].get("price_zone", {}).get("tolerance_pips", 10.0))
     tol = tol_pips * PIP_SIZE
     min_tp_pips = 8.0
@@ -595,6 +647,10 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
     adx_filter_cfg = cfg.get("adx_filter", {})
     adx_filter_enabled = bool(adx_filter_cfg.get("enabled", False))
     adx_max_for_entry = float(adx_filter_cfg.get("max_adx_for_entry", 30.0))
+    adx_day_max_by_day = {str(k): float(v) for k, v in adx_filter_cfg.get("day_max_by_day", {}).items()}
+    # Backward/forward-compatible alias for per-day ADX caps.
+    adx_day_overrides = {str(k): float(v) for k, v in adx_filter_cfg.get("day_overrides", {}).items()}
+    adx_day_max_by_day.update(adx_day_overrides)
 
     combo_filter_cfg = cfg.get("confluence_combo_filter", {})
     combo_filter_enabled = bool(combo_filter_cfg.get("enabled", False))
@@ -621,6 +677,11 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
     ss_filter_cfg = cfg.get("signal_strength_filter", {})
     ss_filter_enabled = bool(ss_filter_cfg.get("enabled", False))
     ss_filter_min_score = int(ss_filter_cfg.get("min_score", 0))
+    ss_sizing_cfg = cfg.get("signal_strength_sizing", {})
+    ss_sizing_enabled = bool(ss_sizing_cfg.get("enabled", False))
+    ss_sizing_weak_mult = float(ss_sizing_cfg.get("weak_mult", 1.0))
+    ss_sizing_moderate_mult = float(ss_sizing_cfg.get("moderate_mult", 1.0))
+    ss_sizing_strong_mult = float(ss_sizing_cfg.get("strong_mult", 1.0))
 
     regime_switch_cfg = cfg.get("regime_switch", {})
     regime_switch_enabled = bool(regime_switch_cfg.get("enabled", False))
@@ -662,6 +723,8 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
     news_med_post = int(news_cfg.get("medium_impact_post_block_minutes", 15))
     news_low_pre = int(news_cfg.get("low_impact_pre_block_minutes", news_med_pre))
     news_low_post = int(news_cfg.get("low_impact_post_block_minutes", news_med_post))
+    news_block_entire_session = bool(news_cfg.get("block_entire_session", False))
+    news_session_proximity_hours = float(news_cfg.get("session_proximity_hours", 4.0))
     news_block_impacts = {str(x).lower() for x in news_cfg.get("block_impacts", ["high", "medium", "low"])}
     if not news_block_impacts:
         news_block_impacts = {"high", "medium", "low"}
@@ -678,6 +741,17 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
     early_exit_time_min = int(early_exit_cfg.get("time_threshold_minutes", 30))
     early_exit_loss_pips = float(early_exit_cfg.get("loss_threshold_pips", 5.0))
     early_exit_max_profit_seen = float(early_exit_cfg.get("max_profit_seen_pips", 2.0))
+    late_session_cfg = cfg.get("late_session_management", {})
+    late_session_enabled = bool(late_session_cfg.get("enabled", False))
+    late_session_minutes_before_end = int(late_session_cfg.get("minutes_before_end", 45))
+    late_session_close_if_no_tp1_and_pips_below = float(late_session_cfg.get("close_if_no_tp1_and_pips_below", -2.0))
+    late_session_tp1_hit_tighten_trail_pips = float(late_session_cfg.get("tp1_hit_tighten_trail_pips", 3.0))
+    late_session_hard_close_all_minutes_before_end = int(late_session_cfg.get("hard_close_all_minutes_before_end", 0))
+    late_session_be_or_close_minutes_before_end = int(late_session_cfg.get("be_or_close_minutes_before_end", 0))
+    late_session_be_min_profit_pips = float(late_session_cfg.get("be_min_profit_pips", 1.0))
+    late_session_be_offset_pips = float(late_session_cfg.get("be_offset_pips", 0.0))
+    late_session_profit_tighten_minutes_before_end = int(late_session_cfg.get("profit_tighten_minutes_before_end", 0))
+    late_session_profit_tighten_trail_mult = float(late_session_cfg.get("profit_tighten_trail_mult", 0.5))
 
     regime_gate = cfg.get("regime_gate", {})
     regime_enabled = bool(regime_gate.get("enabled", False))
@@ -688,6 +762,28 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
     favorable_min_score = int(regime_gate.get("favorable_min_score", 1))
     neutral_min_score = int(regime_gate.get("neutral_min_score", 0))
     neutral_size_mult = float(regime_gate.get("neutral_size_multiplier", 0.5))
+
+    # Optional adaptive ATR percentile gate (default OFF). Compute once for speed.
+    if atr_pct_enabled:
+        atr_vals = pd.to_numeric(df["atr_m15"], errors="coerce").to_numpy(dtype=float)
+        atr_pct_rank = np.full(len(atr_vals), np.nan, dtype=float)
+        atr_window: deque[float] = deque()
+        atr_sorted: list[float] = []
+        for idx, aval in enumerate(atr_vals):
+            if np.isfinite(aval):
+                aval_f = float(aval)
+                atr_window.append(aval_f)
+                insort(atr_sorted, aval_f)
+                if len(atr_window) > atr_pct_lookback:
+                    old = float(atr_window.popleft())
+                    rm_idx = bisect_left(atr_sorted, old)
+                    if 0 <= rm_idx < len(atr_sorted):
+                        atr_sorted.pop(rm_idx)
+                if len(atr_sorted) >= atr_pct_min_obs:
+                    atr_pct_rank[idx] = float(bisect_right(atr_sorted, aval_f) / len(atr_sorted))
+        df["atr_m15_percentile_rank"] = atr_pct_rank
+    else:
+        df["atr_m15_percentile_rank"] = np.nan
 
     cq = cfg.get("confluence_quality", {})
     cq_enabled = bool(cq.get("enabled", False))
@@ -750,6 +846,17 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
                 ws = evt - pd.Timedelta(minutes=max(0, int(pre_min)))
                 we = evt + pd.Timedelta(minutes=max(0, int(post_min)))
                 block_mask |= ((tcol >= ws) & (tcol <= we)).to_numpy()
+            if news_block_entire_session:
+                session_rows = df["in_tokyo_session"].to_numpy()
+                for day in sorted(df.loc[df["in_tokyo_session"], "session_day_jst"].unique()):
+                    day_mask = (df["session_day_jst"] == day).to_numpy() & session_rows
+                    if not day_mask.any():
+                        continue
+                    day_times = tcol[day_mask]
+                    day_start = day_times.min() - pd.Timedelta(hours=max(0.0, news_session_proximity_hours))
+                    day_end = day_times.max() + pd.Timedelta(hours=max(0.0, news_session_proximity_hours))
+                    if ((ev["event_ts"] >= day_start) & (ev["event_ts"] <= day_end)).any():
+                        block_mask |= day_mask
             df["news_blocked"] = block_mask
 
     last_trade_was_win = False
@@ -911,6 +1018,11 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
                 "daily_range_block_reason": None,
                 "regime_switch_allowed": True,
                 "trend_skip_allowed": True,
+                "loss_pause_until": None,
+                "signals_generated": 0,
+                "wins": 0,
+                "losses": 0,
+                "entry_confluence_scores": [],
             }
             if daily_range_enabled:
                 pdr = row.get("prior_day_range_pips", np.nan)
@@ -997,10 +1109,15 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
             sst["stopped"] = True
         if win:
             sst["consec_losses"] = 0
+            sst["wins"] = int(sst.get("wins", 0)) + 1
         else:
             sst["consec_losses"] = int(sst.get("consec_losses", 0)) + 1
+            sst["losses"] = int(sst.get("losses", 0)) + 1
             if stop_after_consecutive_losses > 0 and int(sst["consec_losses"]) >= stop_after_consecutive_losses:
                 sst["stopped"] = True
+            if consec_pause_enabled and consec_pause_losses > 0 and int(sst["consec_losses"]) >= consec_pause_losses:
+                sst["loss_pause_until"] = ts + pd.Timedelta(minutes=consec_pause_minutes)
+                sst["consec_losses"] = 0
             if "sl" in reason:
                 if pos.direction == "long":
                     sst["last_stop_time_long"] = ts
@@ -1022,11 +1139,14 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
                 "exit_reason": pos.exit_reason,
                 "pips": total_pips,
                 "usd": pos.realized_usd,
+                "pnl_usd": pos.realized_usd,
                 "confluence_score": pos.confluence_score,
                 "position_size_units": pos.units_initial,
+                "position_units": pos.units_initial,
                 "partial_tp_pips": float(pos.partial_tp_pips),
                 "initial_sl_pips": float(pos.initial_sl_pips),
                 "regime_label": pos.regime_label,
+                "regime": pos.regime_label,
                 "confluence_combo": pos.confluence_combo,
                 "quality_label": pos.quality_label,
                 "size_mult_total": float(pos.size_mult_total),
@@ -1063,11 +1183,16 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
                 "pivot_S2": pos.entry_indicators.get("pivot_S2"),
                 "bb_upper": pos.entry_indicators.get("bb_upper"),
                 "bb_mid": pos.entry_indicators.get("bb_mid"),
+                "bb_middle": pos.entry_indicators.get("bb_mid"),
                 "bb_lower": pos.entry_indicators.get("bb_lower"),
                 "sar_value": pos.entry_indicators.get("sar_value"),
                 "sar_direction": pos.entry_indicators.get("sar_direction"),
                 "rsi_m5": pos.entry_indicators.get("rsi_m5"),
+                "rsi_value": pos.entry_indicators.get("rsi_m5"),
                 "atr_m15": pos.entry_indicators.get("atr_m15"),
+                "atr_value": pos.entry_indicators.get("atr_m15"),
+                "hour_utc": pd.Timestamp(pos.entry_time).tz_convert("UTC").hour if pd.Timestamp(pos.entry_time).tzinfo is not None else pd.Timestamp(pos.entry_time).hour,
+                "day_of_week": pd.Timestamp(pos.entry_time).tz_convert("UTC").day_name() if pd.Timestamp(pos.entry_time).tzinfo is not None else pd.Timestamp(pos.entry_time).day_name(),
             }
         )
         equity_curve.append({"trade_number": len(closed_rows), "time": str(ts), "equity": equity})
@@ -1099,7 +1224,9 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
             st = preview_state[sday]
             blocked = False
             if breakout_mode == "from_open":
-                moved_from_open_pips = abs(float(row["close"]) - float(st["session_open_price"])) / PIP_SIZE
+                up = (float(row["high"]) - float(st["session_open_price"])) / PIP_SIZE
+                dn = (float(st["session_open_price"]) - float(row["low"])) / PIP_SIZE
+                moved_from_open_pips = max(up, dn)
                 blocked = moved_from_open_pips > breakout_disable_pips
             elif breakout_mode == "rolling":
                 rw = st["rolling_window"]
@@ -1181,6 +1308,9 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
         "signals_expired": 0,
         "confirmation_delays": [],
     }
+    near_miss_candidates: list[dict] = []
+    condition_hit_counts = Counter()
+    condition_check_counts = Counter()
 
     def used_margin_usd() -> float:
         if not margin_model_enabled:
@@ -1210,6 +1340,18 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
         if bool(sst.get("stopped", False)):
             diag["blocked_session_stopped"] += 1
             return False
+        minute_now = int(row.get("minute_of_day_utc", 0))
+        entry_window_ok = in_window(minute_now, entry_start_min, entry_end_min)
+        if block_new_entries_minutes_before_end > 0 and in_window(minute_now, start_min, end_min):
+            mins_to_end = minutes_to_session_end(minute_now)
+            if mins_to_end <= block_new_entries_minutes_before_end:
+                entry_window_ok = False
+        if not entry_window_ok:
+            diag["blocked_entry_window"] += 1
+            return False
+        if consec_pause_enabled and sst.get("loss_pause_until") is not None and ts < pd.Timestamp(sst["loss_pause_until"]):
+            diag["blocked_consecutive_loss_pause"] += 1
+            return False
         if stop_after_consecutive_losses > 0 and int(sst.get("consec_losses", 0)) >= stop_after_consecutive_losses:
             diag["blocked_consecutive_loss_stop"] += 1
             sst["stopped"] = True
@@ -1218,7 +1360,7 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
             diag["blocked_session_pnl_stop"] += 1
             sst["stopped"] = True
             return False
-        if int(sst["trades"]) >= max_trades_session:
+        if max_trades_session > 0 and int(sst["trades"]) >= max_trades_session:
             diag["blocked_max_trades_per_session"] += 1
             return False
         if len(open_positions) >= max_open:
@@ -1239,7 +1381,8 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
             if pd.isna(adx_now):
                 diag["blocked_missing_adx"] += 1
                 return False
-            if adx_now > adx_max_for_entry:
+            adx_cap_here = float(adx_day_max_by_day.get(str(row.get("utc_day_name", "")), adx_max_for_entry))
+            if adx_now > adx_cap_here:
                 adx_filter_stats["trades_blocked_by_adx"] += 1
                 adx_filter_stats["adx_blocked_values"].append(float(adx_now))
                 diag["blocked_adx_filter"] += 1
@@ -1295,6 +1438,15 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
                 tp2 = float(tp1)
                 local_tp_close_pct = 0.0
                 tp_source = "trail_only"
+            elif tp_mode == "pivot_v2":
+                if from_zone:
+                    tp1 = float(sig["S1"])
+                    tp1_pips = max(0.0, (tp1 - entry_price) / PIP_SIZE)
+                    local_tp_close_pct = partial_close_pct
+                else:
+                    tp1 = float(tp2)
+                    tp1_pips = max(0.0, (tp1 - entry_price) / PIP_SIZE)
+                    local_tp_close_pct = 1.0
             elif tp_mode == "single_pivot":
                 tp1 = float(tp2)
                 tp1_pips = max(0.0, (tp1 - entry_price) / PIP_SIZE)
@@ -1346,6 +1498,15 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
                 tp2 = float(tp1)
                 local_tp_close_pct = 0.0
                 tp_source = "trail_only"
+            elif tp_mode == "pivot_v2":
+                if from_zone:
+                    tp1 = float(sig["R1"])
+                    tp1_pips = max(0.0, (entry_price - tp1) / PIP_SIZE)
+                    local_tp_close_pct = partial_close_pct
+                else:
+                    tp1 = float(tp2)
+                    tp1_pips = max(0.0, (entry_price - tp1) / PIP_SIZE)
+                    local_tp_close_pct = 1.0
             elif tp_mode == "single_pivot":
                 tp1 = float(tp2)
                 tp1_pips = max(0.0, (entry_price - tp1) / PIP_SIZE)
@@ -1377,8 +1538,20 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
         hour_mult = 1.0
         if hp_enabled:
             hour_mult = float(hp_mults.get(str(int(row["hour_utc"])), 1.0))
+        ss_size_mult = 1.0
+        if ss_sizing_enabled:
+            ss_tier = str(sig.get("signal_strength_tier", "weak")).strip().lower()
+            if ss_tier == "strong":
+                ss_size_mult = ss_sizing_strong_mult
+            elif ss_tier == "moderate":
+                ss_size_mult = ss_sizing_moderate_mult
+            else:
+                ss_size_mult = ss_sizing_weak_mult
         total_size_mult = float(sig.get("regime_mult", 1.0)) * float(sig.get("quality_mult", 1.0)) * hour_mult * dd_mult
-        units = math.floor((equity * risk_pct) / (sl_pips * (PIP_SIZE / max(1e-9, entry_price))))
+        total_size_mult *= float(ss_size_mult)
+        day_name_here = str(row.get("utc_day_name", ""))
+        risk_pct_local = float(risk_pct) * float(day_risk_multipliers.get(day_name_here, 1.0))
+        units = math.floor((equity * risk_pct_local) / (sl_pips * (PIP_SIZE / max(1e-9, entry_price))))
         units = int(math.floor(units * max(0.0, total_size_mult)))
         units = int(max(0, min(max_units, units)))
         if units < 1:
@@ -1446,6 +1619,7 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
         open_positions.append(pos)
         sst["trades"] = int(sst["trades"]) + 1
         sst["last_entry_time"] = ts
+        sst.setdefault("entry_confluence_scores", []).append(int(sig["confluence_score"]))
         diag["entries_total"] += 1
         diag[f"entries_{sdir}"] += 1
         diag["bars_with_entry_triggered"] += 1
@@ -1494,6 +1668,7 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
         bid_high, ask_high = get_bid_ask(mid_high, spread_pips_now)
         bid_low, ask_low = get_bid_ask(mid_low, spread_pips_now)
         bid_close, ask_close = get_bid_ask(mid_close, spread_pips_now)
+        remaining_session_minutes = minutes_to_session_end(int(row["minute_of_day_utc"])) if in_session else None
 
         # Expire stale pending signals.
         for sig in list(pending_signals):
@@ -1570,6 +1745,62 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
                 bar_adv = (pos.entry_price - bid_low) / PIP_SIZE
                 pos.max_profit_seen_pips = max(float(pos.max_profit_seen_pips), float(bar_fav))
                 pos.max_adverse_seen_pips = max(float(pos.max_adverse_seen_pips), float(bar_adv))
+                if (
+                    in_session
+                    and remaining_session_minutes is not None
+                    and int(late_session_hard_close_all_minutes_before_end) > 0
+                    and int(remaining_session_minutes) <= int(late_session_hard_close_all_minutes_before_end)
+                ):
+                    diag["late_session_hard_close_all"] += 1
+                    close_position(pos, ts, bid_close, "late_session_hard_close" if not pos.tp1_hit else "tp1_then_late_session_hard_close")
+                    open_positions.remove(pos)
+                    continue
+                if (
+                    in_session
+                    and remaining_session_minutes is not None
+                    and int(late_session_be_or_close_minutes_before_end) > 0
+                    and int(remaining_session_minutes) <= int(late_session_be_or_close_minutes_before_end)
+                ):
+                    if current_pips >= float(late_session_be_min_profit_pips):
+                        be_px = pos.entry_price + float(late_session_be_offset_pips) * PIP_SIZE
+                        if be_px > float(pos.sl_price):
+                            pos.sl_price = be_px
+                            pos.moved_to_breakeven = True
+                            diag["late_session_be_set"] += 1
+                    elif current_pips < 0:
+                        diag["late_session_be_or_close_loss"] += 1
+                        close_position(pos, ts, bid_close, "late_session_be_or_close_loss")
+                        open_positions.remove(pos)
+                        continue
+                if (
+                    in_session
+                    and remaining_session_minutes is not None
+                    and int(late_session_profit_tighten_minutes_before_end) > 0
+                    and int(remaining_session_minutes) <= int(late_session_profit_tighten_minutes_before_end)
+                    and current_pips > 0
+                    and trail_enabled
+                ):
+                    tight_dist = max(0.1, float(trail_dist_pips) * float(late_session_profit_tighten_trail_mult))
+                    tight_trail = bid_close - tight_dist * PIP_SIZE
+                    pos.trail_active = True
+                    pos.trail_stop_price = tight_trail if pos.trail_stop_price is None else max(pos.trail_stop_price, tight_trail)
+                    diag["late_session_profit_trail_tighten"] += 1
+                if (
+                    late_session_enabled
+                    and in_session
+                    and remaining_session_minutes is not None
+                    and int(remaining_session_minutes) <= int(late_session_minutes_before_end)
+                ):
+                    if (not pos.tp1_hit) and (current_pips < float(late_session_close_if_no_tp1_and_pips_below)):
+                        diag["late_session_no_tp1_cut"] += 1
+                        close_position(pos, ts, bid_close, "late_session_no_tp1_cut")
+                        open_positions.remove(pos)
+                        continue
+                    if pos.tp1_hit and float(late_session_tp1_hit_tighten_trail_pips) > 0:
+                        tight_trail = bid_close - float(late_session_tp1_hit_tighten_trail_pips) * PIP_SIZE
+                        pos.trail_active = True
+                        pos.trail_stop_price = tight_trail if pos.trail_stop_price is None else max(pos.trail_stop_price, tight_trail)
+                        diag["late_session_tp1_trail_tighten"] += 1
                 hit_sl = bid_low <= pos.sl_price
                 hit_tp1 = (not pos.tp1_hit) and (bid_high >= pos.tp1_price)
                 hit_tp2 = bid_high >= pos.tp2_price
@@ -1630,6 +1861,62 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
                 bar_adv = (ask_high - pos.entry_price) / PIP_SIZE
                 pos.max_profit_seen_pips = max(float(pos.max_profit_seen_pips), float(bar_fav))
                 pos.max_adverse_seen_pips = max(float(pos.max_adverse_seen_pips), float(bar_adv))
+                if (
+                    in_session
+                    and remaining_session_minutes is not None
+                    and int(late_session_hard_close_all_minutes_before_end) > 0
+                    and int(remaining_session_minutes) <= int(late_session_hard_close_all_minutes_before_end)
+                ):
+                    diag["late_session_hard_close_all"] += 1
+                    close_position(pos, ts, ask_close, "late_session_hard_close" if not pos.tp1_hit else "tp1_then_late_session_hard_close")
+                    open_positions.remove(pos)
+                    continue
+                if (
+                    in_session
+                    and remaining_session_minutes is not None
+                    and int(late_session_be_or_close_minutes_before_end) > 0
+                    and int(remaining_session_minutes) <= int(late_session_be_or_close_minutes_before_end)
+                ):
+                    if current_pips >= float(late_session_be_min_profit_pips):
+                        be_px = pos.entry_price - float(late_session_be_offset_pips) * PIP_SIZE
+                        if be_px < float(pos.sl_price):
+                            pos.sl_price = be_px
+                            pos.moved_to_breakeven = True
+                            diag["late_session_be_set"] += 1
+                    elif current_pips < 0:
+                        diag["late_session_be_or_close_loss"] += 1
+                        close_position(pos, ts, ask_close, "late_session_be_or_close_loss")
+                        open_positions.remove(pos)
+                        continue
+                if (
+                    in_session
+                    and remaining_session_minutes is not None
+                    and int(late_session_profit_tighten_minutes_before_end) > 0
+                    and int(remaining_session_minutes) <= int(late_session_profit_tighten_minutes_before_end)
+                    and current_pips > 0
+                    and trail_enabled
+                ):
+                    tight_dist = max(0.1, float(trail_dist_pips) * float(late_session_profit_tighten_trail_mult))
+                    tight_trail = ask_close + tight_dist * PIP_SIZE
+                    pos.trail_active = True
+                    pos.trail_stop_price = tight_trail if pos.trail_stop_price is None else min(pos.trail_stop_price, tight_trail)
+                    diag["late_session_profit_trail_tighten"] += 1
+                if (
+                    late_session_enabled
+                    and in_session
+                    and remaining_session_minutes is not None
+                    and int(remaining_session_minutes) <= int(late_session_minutes_before_end)
+                ):
+                    if (not pos.tp1_hit) and (current_pips < float(late_session_close_if_no_tp1_and_pips_below)):
+                        diag["late_session_no_tp1_cut"] += 1
+                        close_position(pos, ts, ask_close, "late_session_no_tp1_cut")
+                        open_positions.remove(pos)
+                        continue
+                    if pos.tp1_hit and float(late_session_tp1_hit_tighten_trail_pips) > 0:
+                        tight_trail = ask_close + float(late_session_tp1_hit_tighten_trail_pips) * PIP_SIZE
+                        pos.trail_active = True
+                        pos.trail_stop_price = tight_trail if pos.trail_stop_price is None else min(pos.trail_stop_price, tight_trail)
+                        diag["late_session_tp1_trail_tighten"] += 1
                 hit_sl = ask_high >= pos.sl_price
                 hit_tp1 = (not pos.tp1_hit) and (ask_low <= pos.tp1_price)
                 hit_tp2 = ask_low <= pos.tp2_price
@@ -1706,6 +1993,11 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
         diag["bars_in_session"] += 1
         diag["bars_passed_session_filter"] += 1
         sst = ensure_session(session_day, row)
+        in_lunch_block = bool(lunch_block_enabled and in_window(int(row["minute_of_day_utc"]), lunch_start_min, lunch_end_min))
+        if in_lunch_block:
+            diag["blocked_lunch_deadzone"] += 1
+            continue
+        diag["bars_passed_lunch_filter"] += 1
         # V10: maintain developing session envelope (IR + running session range).
         sst["session_high"] = max(float(sst.get("session_high", mid_high)), float(mid_high))
         sst["session_low"] = min(float(sst.get("session_low", mid_low)), float(mid_low))
@@ -1758,7 +2050,9 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
         # Breakout detection gate.
         breakout_blocked = False
         if breakout_mode == "from_open":
-            moved_from_open_pips = abs(mid_close - float(sst["session_open_price"])) / PIP_SIZE
+            moved_up_pips = (float(sst["session_high"]) - float(sst["session_open_price"])) / PIP_SIZE
+            moved_dn_pips = (float(sst["session_open_price"]) - float(sst["session_low"])) / PIP_SIZE
+            moved_from_open_pips = max(moved_up_pips, moved_dn_pips)
             if moved_from_open_pips > breakout_disable_pips:
                 sst["stopped"] = True
                 diag["gate_breakout_disable_triggered"] += 1
@@ -1795,13 +2089,24 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
             continue
         diag["bars_passed_breakout_check"] += 1
 
-        if str(row["bb_regime"]) != "ranging":
+        regime_col = "bb_regime_expanding3" if regime_filter_mode in {"expanding3", "bb_width_expanding3"} else "bb_regime"
+        if str(row.get(regime_col, "trending")) != "ranging":
             diag["blocked_regime_not_ranging"] += 1
             continue
         diag["bars_passed_regime_filter"] += 1
-        if float(row["atr_m15"]) > atr_max:
-            diag["blocked_atr_above_max"] += 1
-            continue
+        if atr_gate_enabled:
+            if atr_pct_enabled:
+                atr_pct_rank_val = float(row.get("atr_m15_percentile_rank", np.nan))
+                if not np.isfinite(atr_pct_rank_val):
+                    diag["blocked_atr_percentile_insufficient"] += 1
+                    continue
+                if atr_pct_rank_val > atr_pct_max:
+                    diag["blocked_atr_above_percentile"] += 1
+                    continue
+            else:
+                if float(row["atr_m15"]) > atr_max:
+                    diag["blocked_atr_above_max"] += 1
+                    continue
         diag["bars_passed_atr_filter"] += 1
         diag["bars_after_global_filters"] += 1
         if news_enabled and bool(row.get("news_blocked", False)):
@@ -1871,72 +2176,163 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
         long_score = 0
         short_score = 0
         cond_long_zone = mid_close <= (S1 + tol)
+        cond_short_zone = mid_close >= (R1 - tol)
         cond_long_bb = (mid_close <= bb_l) or (mid_low <= bb_l)
+        cond_short_bb = (mid_close >= bb_u) or (mid_high >= bb_u)
         cond_long_sar = bool(row.get("sar_flip_bullish_recent", False))
+        cond_short_sar = bool(row.get("sar_flip_bearish_recent", False))
         cond_long_rsi_soft = rsi < long_rsi_soft_entry
+        cond_short_rsi_soft = rsi > short_rsi_soft_entry
+        cond_long_rsi_ext = rsi < long_rsi_bonus
+        cond_short_rsi_ext = rsi > short_rsi_bonus
+        cond_long_s2 = mid_close <= (S2 + tol)
+        cond_short_r2 = mid_close >= (R2 - tol)
+        cond_atr_low = float(row["atr_m15"]) <= atr_max
+
         if cond_long_zone:
             diag["bars_with_long_signal_zone"] += 1
+        if cond_short_zone:
+            diag["bars_with_short_signal_zone"] += 1
+        if cond_long_bb or cond_short_bb:
+            diag["bars_with_bb_touch"] += 1
+        if cond_long_sar or cond_short_sar:
+            diag["bars_with_sar_flip"] += 1
         diag["long_cond_zone_true"] += int(cond_long_zone)
         diag["long_cond_bb_true"] += int(cond_long_bb)
         diag["long_cond_sar_true"] += int(cond_long_sar)
         diag["long_cond_rsi_soft_true"] += int(cond_long_rsi_soft)
-        if cond_long_bb:
-            diag["bars_with_bb_touch"] += 1
-        if cond_long_sar:
-            diag["bars_with_sar_flip"] += 1
-        long_core_flags = []
-        if core_gate_use_zone:
-            long_core_flags.append(bool(cond_long_zone))
-        if core_gate_use_bb:
-            long_core_flags.append(bool(cond_long_bb))
-        if core_gate_use_sar:
-            long_core_flags.append(bool(cond_long_sar))
-        if core_gate_use_rsi:
-            long_core_flags.append(bool(cond_long_rsi_soft))
-        long_core_ok = (sum(1 for x in long_core_flags if x) >= max(1, min(core_gate_required, len(long_core_flags)))) if long_core_flags else True
-        if long_core_ok:
-            diag["long_all_core_conditions_true"] += 1
-            long_score += 1 if cond_long_zone else 0
-            long_score += 1 if cond_long_bb else 0
-            long_score += 1 if cond_long_sar else 0
-            long_score += 1 if rsi < long_rsi_bonus else 0
-            long_score += 1 if mid_close <= (S2 + tol) else 0
-            long_signal = long_score >= confluence_min_long
-            diag["long_confluence_min_met"] += int(long_signal)
-
-        cond_short_zone = mid_close >= (R1 - tol)
-        cond_short_bb = (mid_close >= bb_u) or (mid_high >= bb_u)
-        cond_short_sar = bool(row.get("sar_flip_bearish_recent", False))
-        cond_short_rsi_soft = rsi > short_rsi_soft_entry
-        if cond_short_zone:
-            diag["bars_with_short_signal_zone"] += 1
         diag["short_cond_zone_true"] += int(cond_short_zone)
         diag["short_cond_bb_true"] += int(cond_short_bb)
         diag["short_cond_sar_true"] += int(cond_short_sar)
         diag["short_cond_rsi_soft_true"] += int(cond_short_rsi_soft)
-        if cond_short_bb:
-            diag["bars_with_bb_touch"] += 1
-        if cond_short_sar:
-            diag["bars_with_sar_flip"] += 1
-        short_core_flags = []
-        if core_gate_use_zone:
-            short_core_flags.append(bool(cond_short_zone))
-        if core_gate_use_bb:
-            short_core_flags.append(bool(cond_short_bb))
-        if core_gate_use_sar:
-            short_core_flags.append(bool(cond_short_sar))
-        if core_gate_use_rsi:
-            short_core_flags.append(bool(cond_short_rsi_soft))
-        short_core_ok = (sum(1 for x in short_core_flags if x) >= max(1, min(core_gate_required, len(short_core_flags)))) if short_core_flags else True
-        if short_core_ok:
-            diag["short_all_core_conditions_true"] += 1
-            short_score += 1 if cond_short_zone else 0
-            short_score += 1 if cond_short_bb else 0
-            short_score += 1 if cond_short_sar else 0
-            short_score += 1 if rsi > short_rsi_bonus else 0
-            short_score += 1 if mid_close >= (R2 - tol) else 0
+
+        if tokyo_v2_scoring:
+            long_conditions = {
+                "pivot_S1": bool(cond_long_zone),
+                "pivot_S2": bool(cond_long_s2),
+                "bb_lower": bool(cond_long_bb),
+                "sar_flip": bool(cond_long_sar),
+                "rsi_oversold": bool(cond_long_rsi_soft),
+                "rsi_extreme": bool(cond_long_rsi_ext),
+                "atr_low": bool(cond_atr_low),
+            }
+            short_conditions = {
+                "pivot_R1": bool(cond_short_zone),
+                "pivot_R2": bool(cond_short_r2),
+                "bb_upper": bool(cond_short_bb),
+                "sar_flip": bool(cond_short_sar),
+                "rsi_overbought": bool(cond_short_rsi_soft),
+                "rsi_extreme": bool(cond_short_rsi_ext),
+                "atr_low": bool(cond_atr_low),
+            }
+
+            for k, v in long_conditions.items():
+                condition_check_counts[f"long_{k}"] += 1
+                condition_hit_counts[f"long_{k}"] += int(v)
+            for k, v in short_conditions.items():
+                condition_check_counts[f"short_{k}"] += 1
+                condition_hit_counts[f"short_{k}"] += int(v)
+
+            long_score = int(sum(1 for v in long_conditions.values() if v))
+            short_score = int(sum(1 for v in short_conditions.values() if v))
+            if long_score >= 1:
+                diag["signals_score_ge_1"] += 1
+                sst["signals_generated"] = int(sst.get("signals_generated", 0)) + 1
+            if short_score >= 1:
+                diag["signals_score_ge_1"] += 1
+                sst["signals_generated"] = int(sst.get("signals_generated", 0)) + 1
+            if long_score >= 2:
+                diag["signals_score_ge_2"] += 1
+            if short_score >= 2:
+                diag["signals_score_ge_2"] += 1
+            if long_score >= 3:
+                diag["signals_score_ge_3"] += 1
+            if short_score >= 3:
+                diag["signals_score_ge_3"] += 1
+
+            long_signal = long_score >= confluence_min_long
             short_signal = short_score >= confluence_min_short
+            diag["long_confluence_min_met"] += int(long_signal)
             diag["short_confluence_min_met"] += int(short_signal)
+
+            if long_score == max(0, confluence_min_long - 1):
+                near_miss_candidates.append(
+                    {
+                        "index": int(i),
+                        "datetime": str(ts),
+                        "direction": "long",
+                        "price": float(mid_close),
+                        "score": int(long_score),
+                        "met_conditions": [k for k, v in long_conditions.items() if v],
+                        "failed_conditions": [k for k, v in long_conditions.items() if not v],
+                    }
+                )
+            if short_score == max(0, confluence_min_short - 1):
+                near_miss_candidates.append(
+                    {
+                        "index": int(i),
+                        "datetime": str(ts),
+                        "direction": "short",
+                        "price": float(mid_close),
+                        "score": int(short_score),
+                        "met_conditions": [k for k, v in short_conditions.items() if v],
+                        "failed_conditions": [k for k, v in short_conditions.items() if not v],
+                    }
+                )
+        else:
+            long_core_flags = []
+            if core_gate_use_zone:
+                long_core_flags.append(bool(cond_long_zone))
+            if core_gate_use_bb:
+                long_core_flags.append(bool(cond_long_bb))
+            if core_gate_use_sar:
+                long_core_flags.append(bool(cond_long_sar))
+            if core_gate_use_rsi:
+                long_core_flags.append(bool(cond_long_rsi_soft))
+            long_core_ok = (sum(1 for x in long_core_flags if x) >= max(1, min(core_gate_required, len(long_core_flags)))) if long_core_flags else True
+            if long_core_ok:
+                diag["long_all_core_conditions_true"] += 1
+                long_score += 1 if cond_long_zone else 0
+                long_score += 1 if cond_long_bb else 0
+                long_score += 1 if cond_long_sar else 0
+                long_score += 1 if cond_long_rsi_ext else 0
+                long_score += 1 if cond_long_s2 else 0
+                long_signal = long_score >= confluence_min_long
+                diag["long_confluence_min_met"] += int(long_signal)
+
+            short_core_flags = []
+            if core_gate_use_zone:
+                short_core_flags.append(bool(cond_short_zone))
+            if core_gate_use_bb:
+                short_core_flags.append(bool(cond_short_bb))
+            if core_gate_use_sar:
+                short_core_flags.append(bool(cond_short_sar))
+            if core_gate_use_rsi:
+                short_core_flags.append(bool(cond_short_rsi_soft))
+            short_core_ok = (sum(1 for x in short_core_flags if x) >= max(1, min(core_gate_required, len(short_core_flags)))) if short_core_flags else True
+            if short_core_ok:
+                diag["short_all_core_conditions_true"] += 1
+                short_score += 1 if cond_short_zone else 0
+                short_score += 1 if cond_short_bb else 0
+                short_score += 1 if cond_short_sar else 0
+                short_score += 1 if cond_short_rsi_ext else 0
+                short_score += 1 if cond_short_r2 else 0
+                short_signal = short_score >= confluence_min_short
+                diag["short_confluence_min_met"] += int(short_signal)
+            if long_score >= 1:
+                diag["signals_score_ge_1"] += 1
+                sst["signals_generated"] = int(sst.get("signals_generated", 0)) + 1
+            if short_score >= 1:
+                diag["signals_score_ge_1"] += 1
+                sst["signals_generated"] = int(sst.get("signals_generated", 0)) + 1
+            if long_score >= 2:
+                diag["signals_score_ge_2"] += 1
+            if short_score >= 2:
+                diag["signals_score_ge_2"] += 1
+            if long_score >= 3:
+                diag["signals_score_ge_3"] += 1
+            if short_score >= 3:
+                diag["signals_score_ge_3"] += 1
         if long_signal or short_signal:
             diag["bars_with_confluence_met"] += 1
         if long_signal and short_signal:
@@ -2241,6 +2637,7 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
 
     required_diag_keys = [
         "bars_passed_session_filter",
+        "bars_passed_lunch_filter",
         "bars_passed_indicator_check",
         "bars_passed_breakout_check",
         "bars_passed_atr_filter",
@@ -2253,6 +2650,7 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
         "bars_with_confluence_met",
         "bars_with_entry_triggered",
         "blocked_consecutive_loss_stop",
+        "blocked_consecutive_loss_pause",
         "blocked_session_pnl_stop",
     ]
     for k in required_diag_keys:
@@ -2279,9 +2677,94 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
             f"breakout_from_open_pips={breakout_disable_pips}"
         )
 
+    # Near-miss diagnostics (score exactly one below threshold, capped to 200 evenly sampled).
+    near_miss_log: list[dict] = []
+    if near_miss_candidates:
+        max_nm = min(200, len(near_miss_candidates))
+        if len(near_miss_candidates) > max_nm:
+            idxs = np.linspace(0, len(near_miss_candidates) - 1, max_nm).astype(int).tolist()
+            sampled_nm = [near_miss_candidates[j] for j in idxs]
+        else:
+            sampled_nm = near_miss_candidates
+        for nm in sampled_nm:
+            i0 = int(nm.get("index", -1))
+            px = float(nm.get("price", np.nan))
+            future = df.iloc[i0 + 1 : min(len(df), i0 + 31)] if i0 >= 0 else pd.DataFrame()
+            if future.empty or not np.isfinite(px):
+                nm["next_30m_outcome"] = "insufficient_data"
+                nm["next_30m_favorable_move_pips"] = None
+                nm["next_30m_adverse_move_pips"] = None
+            else:
+                if str(nm.get("direction")) == "long":
+                    fav = (float(future["high"].max()) - px) / PIP_SIZE
+                    adv = (px - float(future["low"].min())) / PIP_SIZE
+                else:
+                    fav = (px - float(future["low"].min())) / PIP_SIZE
+                    adv = (float(future["high"].max()) - px) / PIP_SIZE
+                if fav > adv:
+                    outcome = "moved_in_would_be_direction"
+                elif adv > fav:
+                    outcome = "moved_against_would_be_direction"
+                else:
+                    outcome = "mixed_or_flat"
+                nm["next_30m_outcome"] = outcome
+                nm["next_30m_favorable_move_pips"] = float(fav)
+                nm["next_30m_adverse_move_pips"] = float(adv)
+            nm.pop("index", None)
+            near_miss_log.append(nm)
+
+    filter_hit_rates = {
+        "pivot_S1_or_R1": {
+            "true": int(condition_hit_counts["long_pivot_S1"] + condition_hit_counts["short_pivot_R1"]),
+            "checks": int(condition_check_counts["long_pivot_S1"] + condition_check_counts["short_pivot_R1"]),
+        },
+        "pivot_S2_or_R2": {
+            "true": int(condition_hit_counts["long_pivot_S2"] + condition_hit_counts["short_pivot_R2"]),
+            "checks": int(condition_check_counts["long_pivot_S2"] + condition_check_counts["short_pivot_R2"]),
+        },
+        "bb_lower_or_upper": {
+            "true": int(condition_hit_counts["long_bb_lower"] + condition_hit_counts["short_bb_upper"]),
+            "checks": int(condition_check_counts["long_bb_lower"] + condition_check_counts["short_bb_upper"]),
+        },
+        "sar_flip": {
+            "true": int(condition_hit_counts["long_sar_flip"] + condition_hit_counts["short_sar_flip"]),
+            "checks": int(condition_check_counts["long_sar_flip"] + condition_check_counts["short_sar_flip"]),
+        },
+        "rsi_oversold_or_overbought": {
+            "true": int(condition_hit_counts["long_rsi_oversold"] + condition_hit_counts["short_rsi_overbought"]),
+            "checks": int(condition_check_counts["long_rsi_oversold"] + condition_check_counts["short_rsi_overbought"]),
+        },
+        "rsi_extreme": {
+            "true": int(condition_hit_counts["long_rsi_extreme"] + condition_hit_counts["short_rsi_extreme"]),
+            "checks": int(condition_check_counts["long_rsi_extreme"] + condition_check_counts["short_rsi_extreme"]),
+        },
+        "atr_low": {
+            "true": int(condition_hit_counts["long_atr_low"] + condition_hit_counts["short_atr_low"]),
+            "checks": int(condition_check_counts["long_atr_low"] + condition_check_counts["short_atr_low"]),
+        },
+    }
+
     diagnostics = {
         "counts": dict(sorted(diag.items(), key=lambda kv: (-kv[1], kv[0]))),
         "top_15": dict(sorted(diag.items(), key=lambda kv: (-kv[1], kv[0]))[:15]),
+        "signal_funnel": {
+            "total_m1_candles": int(len(df)),
+            "candles_inside_session_window": int(diag["bars_passed_session_filter"]),
+            "candles_passing_regime_filter": int(diag["bars_passed_regime_filter"]),
+            "candles_passing_lunch_block_filter": int(diag["bars_passed_lunch_filter"]),
+            "total_signals_confluence_ge_1": int(diag["signals_score_ge_1"]),
+            "signals_confluence_ge_2": int(diag["signals_score_ge_2"]),
+            "signals_confluence_ge_3": int(diag["signals_score_ge_3"]),
+            "actual_entries_taken": int(diag["entries_total"]),
+            "entries_blocked_by_max_concurrent_positions": int(diag["blocked_max_open_cap"]),
+            "entries_blocked_by_min_time_between_entries": int(diag["blocked_min_entry_gap"]),
+            "entries_blocked_by_consecutive_loss_pause": int(diag["blocked_consecutive_loss_pause"]),
+            "entries_blocked_by_breakout_detection": int(
+                diag["blocked_breakout_from_open"] + diag["blocked_breakout_rolling_range"] + diag["blocked_breakout_cooldown_active"]
+            ),
+        },
+        "filter_hit_rates": filter_hit_rates,
+        "near_miss_log": near_miss_log,
         "verification": {
             "first_valid_indicator_bar": int(first_valid_idx),
             "total_in_session_bars": int(total_in_session),
@@ -2319,6 +2802,9 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
         delays = entry_confirmation_stats.get("confirmation_delays", [])
         session_pnls = [float(v.get("session_pnl_usd", 0.0)) for v in session_state.values()]
         avg_sess = float(np.mean(session_pnls)) if session_pnls else 0.0
+        session_hours_empty = sorted({int(h) for h in df.loc[df["in_tokyo_session"], "hour_utc"].dropna().astype(int).tolist()})
+        if not session_hours_empty:
+            session_hours_empty = list(range(0, 24))
         return {
             "strategy_id": cfg.get("strategy_id", "tokyo_mean_reversion_v1"),
             "run_label": run_cfg["label"],
@@ -2330,11 +2816,14 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
                 "average_win_usd": 0.0,
                 "average_loss_pips": 0.0,
                 "average_loss_usd": 0.0,
+                "largest_win_pips": 0.0,
+                "largest_loss_pips": 0.0,
                 "largest_win_usd": 0.0,
                 "largest_loss_usd": 0.0,
                 "profit_factor": 0.0,
                 "net_profit_usd": 0.0,
                 "net_profit_pips": 0.0,
+                "expectancy_per_trade_usd": 0.0,
                 "return_on_starting_equity_pct": 0.0,
                 "max_drawdown_usd": 0.0,
                 "max_drawdown_pct": 0.0,
@@ -2382,12 +2871,12 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
                 "best_session_pnl": float(max(session_pnls)) if session_pnls else 0.0,
                 "worst_session_pnl": float(min(session_pnls)) if session_pnls else 0.0,
             },
-            "day_of_week_detailed": {k: {"trades": 0, "wr": 0.0, "net_pnl": 0.0, "pf": 0.0} for k in ["Tuesday", "Wednesday", "Thursday", "Friday"]},
-            "hourly_detailed": {str(h): {"trades": 0, "wr": 0.0, "net_pnl": 0.0} for h in range(16, 23)},
+            "day_of_week_detailed": {k: {"trades": 0, "wr": 0.0, "net_pnl": 0.0, "pf": 0.0} for k in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]},
+            "hourly_detailed": {str(h): {"trades": 0, "wr": 0.0, "net_pnl": 0.0} for h in session_hours_empty},
             "regime_gate_stats": regime_gate_stats,
             "signal_quality_stats": signal_quality_stats,
             "drawdown_sizing_stats": drawdown_sizing_stats,
-            "hour_preference_stats": {str(h): {"trades": 0, "avg_size_mult": 0.0, "net_pnl": 0.0} for h in range(16, 23)},
+            "hour_preference_stats": {str(h): {"trades": 0, "avg_size_mult": 0.0, "net_pnl": 0.0} for h in session_hours_empty},
             "adx_filter_stats": {
                 "trades_allowed": int(adx_filter_stats["trades_allowed"]),
                 "trades_blocked_by_adx": int(adx_filter_stats["trades_blocked_by_adx"]),
@@ -2487,11 +2976,14 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
     profit_factor = float(gross_pos / gross_neg) if gross_neg > 0 else float("inf")
     net_usd = float(tdf["usd"].sum())
     net_pips = float(tdf["pips"].sum())
+    expectancy_per_trade_usd = float(net_usd / len(tdf)) if len(tdf) else 0.0
     win_rate = float((tdf["usd"] > 0).mean() * 100.0)
     avg_win_pips = float(wins["pips"].mean()) if len(wins) else 0.0
     avg_loss_pips = float(losses["pips"].mean()) if len(losses) else 0.0
     avg_win_usd = float(wins["usd"].mean()) if len(wins) else 0.0
     avg_loss_usd = float(losses["usd"].mean()) if len(losses) else 0.0
+    largest_win_pips = float(tdf["pips"].max()) if len(tdf) else 0.0
+    largest_loss_pips = float(tdf["pips"].min()) if len(tdf) else 0.0
     largest_win = float(tdf["usd"].max())
     largest_loss = float(tdf["usd"].min())
     ret_pct = (equity - starting_equity) / starting_equity * 100.0
@@ -2614,7 +3106,7 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
     tdf["entry_ts_utc"] = pd.to_datetime(tdf["entry_datetime"], utc=True, errors="coerce")
     tdf["entry_day_name"] = tdf["entry_ts_utc"].dt.day_name()
     day_of_week_detailed = {}
-    for day_name in ["Tuesday", "Wednesday", "Thursday", "Friday"]:
+    for day_name in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]:
         g = tdf[tdf["entry_day_name"] == day_name]
         gp = g[g["usd"] > 0]["usd"].sum()
         gl = abs(g[g["usd"] < 0]["usd"].sum())
@@ -2627,8 +3119,11 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
         }
 
     tdf["entry_hour_utc"] = tdf["entry_ts_utc"].dt.hour
+    session_hours = sorted({int(h) for h in df.loc[df["in_tokyo_session"], "hour_utc"].dropna().astype(int).tolist()})
+    if not session_hours:
+        session_hours = list(range(0, 24))
     hourly_detailed = {}
-    for h in range(16, 23):
+    for h in session_hours:
         g = tdf[tdf["entry_hour_utc"] == h]
         hourly_detailed[str(h)] = {
             "trades": int(len(g)),
@@ -2636,13 +3131,46 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
             "net_pnl": float(g["usd"].sum()) if len(g) else 0.0,
         }
     hour_preference_stats = {}
-    for h in range(16, 23):
+    for h in session_hours:
         g = tdf[tdf["entry_hour_utc"] == h]
         hour_preference_stats[str(h)] = {
             "trades": int(len(g)),
             "avg_size_mult": float(g["size_mult_hour"].mean()) if len(g) and "size_mult_hour" in g.columns else 0.0,
             "net_pnl": float(g["usd"].sum()) if len(g) else 0.0,
         }
+
+    session_summary_table = []
+    for sday in sorted(session_state.keys()):
+        sst = session_state[sday]
+        session_summary_table.append(
+            {
+                "date": str(sday),
+                "signals_generated": int(sst.get("signals_generated", 0)),
+                "entries_taken": int(sst.get("trades", 0)),
+                "trades_won": int(sst.get("wins", 0)),
+                "trades_lost": int(sst.get("losses", 0)),
+                "session_pnl_usd": float(sst.get("session_pnl_usd", 0.0)),
+                "entry_confluence_scores": list(sst.get("entry_confluence_scores", [])),
+            }
+        )
+
+    hour_of_session_breakdown = []
+    for h in range(0, 9):
+        g = tdf[tdf["entry_hour_utc"] == h]
+        hour_of_session_breakdown.append(
+            {
+                "hour_utc": int(h),
+                "entries": int(len(g)),
+                "wins": int((g["usd"] > 0).sum()) if len(g) else 0,
+                "losses": int((g["usd"] <= 0).sum()) if len(g) else 0,
+                "win_rate_pct": float((g["usd"] > 0).mean() * 100.0) if len(g) else 0.0,
+                "avg_pips": float(g["pips"].mean()) if len(g) else 0.0,
+                "net_pnl_usd": float(g["usd"].sum()) if len(g) else 0.0,
+                "avg_confluence_score": float(g["confluence_score"].mean()) if len(g) else 0.0,
+            }
+        )
+    diagnostics["session_summary_table"] = session_summary_table
+    diagnostics["hour_of_session_breakdown"] = hour_of_session_breakdown
 
     combo_distribution = {}
     for combo, g in tdf.groupby("confluence_combo", dropna=False):
@@ -2887,11 +3415,14 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
             "average_win_usd": float(avg_win_usd),
             "average_loss_pips": float(avg_loss_pips),
             "average_loss_usd": float(avg_loss_usd),
+            "largest_win_pips": float(largest_win_pips),
+            "largest_loss_pips": float(largest_loss_pips),
             "largest_win_usd": float(largest_win),
             "largest_loss_usd": float(largest_loss),
             "profit_factor": float(profit_factor),
             "net_profit_usd": float(net_usd),
             "net_profit_pips": float(net_pips),
+            "expectancy_per_trade_usd": float(expectancy_per_trade_usd),
             "return_on_starting_equity_pct": float(ret_pct),
             "max_drawdown_usd": float(max_dd),
             "max_drawdown_pct": float(max_dd_pct),

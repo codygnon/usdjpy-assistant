@@ -4813,7 +4813,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
     adapter,
     profile: ProfileV1,
     log_dir: Path,
-    policy,  # ExecutionPolicyKtCgTrial7 | ExecutionPolicyKtCgTrial8
+    policy,  # ExecutionPolicyKtCgTrial7 | ExecutionPolicyKtCgTrial8 | ExecutionPolicyKtCgTrial9
     context: MarketContext,
     data_by_tf: dict[Timeframe, pd.DataFrame],
     tick: Tick,
@@ -4824,6 +4824,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
     store=None,
     daily_level_filter: Optional[DailyLevelFilter] = None,
     daily_state: Optional[dict] = None,
+    ntz_filter=None,
 ) -> dict:
     """Evaluate and execute KT/CG Trial #7 or #8 (demo only). T8: no EMA zone/reversal risk; daily level filter optional."""
     candidate_side: Optional[str] = None
@@ -4856,8 +4857,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
     exhaustion_result = None
     tier_updates: dict[int, bool] = {}
     effective_tiers = _canonical_trial7_tier_periods(getattr(policy, "tier_ema_periods", tuple(range(9, 35))))
-    # Trial #8: only allow tiers 17, 21, 27, 33, 50, 75, 100 (never 9-16)
-    if policy_type == "kt_cg_trial_8":
+    # Trial #8 / #9: only allow tiers 17, 21, 27, 33, 50, 75, 100 (never 9-16)
+    if policy_type in ("kt_cg_trial_8", "kt_cg_trial_9"):
         _t8_allowed = {17, 21, 27, 33, 50, 75, 100}
         effective_tiers = sorted([t for t in effective_tiers if int(t) in _t8_allowed])
         if not effective_tiers:
@@ -4980,7 +4981,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
             return cooldown_reason or "zone_entry_cooldown"
 
         ema_zone_filter_enabled = getattr(policy, "ema_zone_filter_enabled", False)
-        if ema_zone_filter_enabled and policy_type != "kt_cg_trial_8":
+        if ema_zone_filter_enabled and policy_type not in ("kt_cg_trial_8", "kt_cg_trial_9"):
             m1_df_zone = data_by_tf.get("M1")
             if m1_df_zone is not None and not m1_df_zone.empty:
                 ok, reason, _details = _passes_ema_zone_slope_filter_trial_7(
@@ -5122,6 +5123,32 @@ def execute_kt_cg_trial_7_policy_demo_only(
             snap = daily_level_filter.get_state_snapshot()
             print(f"[{profile.profile_name}] kt_cg_trial_8 daily_level_filter state: {snap}")
 
+    # No-Trade Zone filter (Trial #9): applies to both zone_entry and tiered_pullback
+    if policy_type == "kt_cg_trial_9" and ntz_filter is not None:
+        current_price = (tick.bid + tick.ask) / 2.0
+        blocked, ntz_reason = ntz_filter.is_in_no_trade_zone(current_price)
+        if blocked:
+            print(f"[{profile.profile_name}] kt_cg_trial_9 {ntz_reason}")
+            if store is not None:
+                store.insert_execution(
+                    {
+                        "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                        "profile": profile.profile_name,
+                        "symbol": profile.symbol,
+                        "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                        "mode": mode,
+                        "attempted": 1,
+                        "placed": 0,
+                        "reason": ntz_reason,
+                        "mt5_retcode": None,
+                        "mt5_order_id": None,
+                        "mt5_deal_id": None,
+                    }
+                )
+            return _result_payload(
+                ExecutionDecision(attempted=True, placed=False, reason=ntz_reason),
+            )
+
     if trigger_type == "tiered_pullback" and tiered_pullback_tier:
         rule_id = f"{policy_type}:{policy.id}:tier_{tiered_pullback_tier}"
 
@@ -5165,7 +5192,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
                             trade_ext = pos.get("tradeClientExtensions")
                             if isinstance(trade_ext, dict):
                                 comment = str(trade_ext.get("comment") or "").strip()
-                        if comment and not (comment.startswith("kt_cg_trial_7:") or comment.startswith("kt_cg_trial_8:")):
+                        if comment and not (comment.startswith("kt_cg_trial_7:") or comment.startswith("kt_cg_trial_8:") or comment.startswith("kt_cg_trial_9:")):
                             continue
                         units = float(pos.get("currentUnits") or pos.get("initialUnits") or 0)
                         if units > 0:
@@ -5331,15 +5358,29 @@ def execute_kt_cg_trial_7_policy_demo_only(
         )
 
     entry_price = tick.ask if side == "buy" else tick.bid
+    # Trial #9: no broker SL, no broker TP (Kill Switch + bar-close trail handles exits)
+    if policy_type == "kt_cg_trial_9":
+        exit_strategy = ""  # single hardcoded exit flow
+
     # Trial #7 / Trial #8 ema_scale_runner: no broker TP, SL = spread + initial_sl_spread_plus_pips (H1 breakout style)
     # For Trial #7, default exit_strategy is tp_sl_be; for Trial #8, default is tp1_be_trail.
-    if policy_type in ("kt_cg_trial_7", "kt_cg_trial_8"):
+    elif policy_type in ("kt_cg_trial_7", "kt_cg_trial_8"):
         default_exit = "tp1_be_trail" if policy_type == "kt_cg_trial_8" else "tp_sl_be"
         exit_strategy = str(getattr(policy, "exit_strategy", default_exit) or default_exit)
     else:
         exit_strategy = ""
 
-    if policy_type in ("kt_cg_trial_7", "kt_cg_trial_8") and exit_strategy == "ema_scale_runner":
+    if policy_type == "kt_cg_trial_9":
+        # Trial #9: no SL, no TP — managed by Kill Switch + bar-close trail
+        candidate = TradeCandidate(
+            symbol=profile.symbol,
+            side=side,
+            entry_price=entry_price,
+            stop_price=None,
+            target_price=None,
+            size_lots=float(get_effective_risk(profile).max_lots),
+        )
+    elif policy_type in ("kt_cg_trial_7", "kt_cg_trial_8") and exit_strategy == "ema_scale_runner":
         pip = float(profile.pip_size)
         current_spread = tick.ask - tick.bid
         initial_sl_pips = float(getattr(policy, "initial_sl_spread_plus_pips", 5.0))
@@ -5509,6 +5550,42 @@ def execute_kt_cg_trial_8_policy_demo_only(
         store=store,
         daily_level_filter=daily_level_filter,
         daily_state=daily_state,
+    )
+
+
+def execute_kt_cg_trial_9_policy_demo_only(
+    *,
+    adapter,
+    profile: ProfileV1,
+    log_dir: Path,
+    policy,
+    context,
+    data_by_tf,
+    tick,
+    trades_df,
+    mode: str,
+    bar_time_utc: str,
+    tier_state: dict[int, bool],
+    store=None,
+    ntz_filter=None,
+) -> dict:
+    """Trial #9: delegates to Trial #7 flow with NTZ filter (no daily_level_filter, no fixed SL)."""
+    return execute_kt_cg_trial_7_policy_demo_only(
+        adapter=adapter,
+        profile=profile,
+        log_dir=log_dir,
+        policy=policy,
+        context=context,
+        data_by_tf=data_by_tf,
+        tick=tick,
+        trades_df=trades_df,
+        mode=mode,
+        bar_time_utc=bar_time_utc,
+        tier_state=tier_state,
+        store=store,
+        daily_level_filter=None,
+        daily_state=None,
+        ntz_filter=ntz_filter,
     )
 
 

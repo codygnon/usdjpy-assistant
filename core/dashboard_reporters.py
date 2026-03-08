@@ -779,6 +779,97 @@ def report_daily_level_filter(policy, tick, side: str, pip_size: float, snapshot
     )
 
 
+def report_ntz_status(ntz_snapshot: Optional[dict], tick, pip_size: float) -> FilterReport:
+    """Report Trial #9 No-Trade Zone status."""
+    if ntz_snapshot is None or not ntz_snapshot.get("enabled", False):
+        return FilterReport(
+            filter_id="ntz", display_name="No-Trade Zones",
+            enabled=False, is_clear=True,
+        )
+    levels = ntz_snapshot.get("levels", {})
+    buffer_pips = float(ntz_snapshot.get("buffer_pips", 10.0))
+    buffer = buffer_pips * pip_size
+    current_price = (tick.bid + tick.ask) / 2.0
+
+    blocked_label = None
+    closest_dist = None
+    level_parts = []
+    for label, val in levels.items():
+        if val is not None:
+            dist = abs(current_price - val)
+            dist_pips = dist / pip_size
+            in_zone = dist <= buffer
+            level_parts.append(f"{label}={val:.3f}({dist_pips:.1f}p{'*' if in_zone else ''})")
+            if in_zone and (closest_dist is None or dist < closest_dist):
+                closest_dist = dist
+                blocked_label = label
+
+    block_reason = None
+    if blocked_label is not None and closest_dist is not None:
+        block_reason = f"Price within {closest_dist / pip_size:.1f}p of {blocked_label} (buffer={buffer_pips}p)"
+
+    return FilterReport(
+        filter_id="ntz", display_name="No-Trade Zones",
+        enabled=True, is_clear=block_reason is None,
+        current_value=" | ".join(level_parts) if level_parts else "No levels",
+        threshold=f"Buffer: {buffer_pips}p",
+        block_reason=block_reason,
+    )
+
+
+def report_kill_switch_status(policy, data_by_tf: dict, tick, pip_size: float, side: str) -> FilterReport:
+    """Report Trial #9 Kill Switch (M1-200 EMA) status."""
+    enabled = getattr(policy, "kill_switch_enabled", True)
+    if not enabled:
+        return FilterReport(
+            filter_id="kill_switch", display_name="Kill Switch (M1-200)",
+            enabled=False, is_clear=True,
+        )
+
+    m1_df = data_by_tf.get("M1")
+    if m1_df is None or m1_df.empty or len(m1_df) < 202:
+        return FilterReport(
+            filter_id="kill_switch", display_name="Kill Switch (M1-200)",
+            enabled=True, is_clear=True,
+            current_value="Insufficient M1 data",
+        )
+
+    try:
+        from core.indicators import ema as ema_fn
+        close = m1_df["close"].astype(float)
+        ema200 = ema_fn(close, 200)
+        if ema200.empty or pd.isna(ema200.iloc[-1]):
+            return FilterReport(
+                filter_id="kill_switch", display_name="Kill Switch (M1-200)",
+                enabled=True, is_clear=True,
+                current_value="EMA200 not ready",
+            )
+        ema200_val = float(ema200.iloc[-1])
+        last_close = float(close.iloc[-1])
+        current_mid = (tick.bid + tick.ask) / 2.0
+        dist_pips = (current_mid - ema200_val) / pip_size
+
+        zone_action = str(getattr(policy, "kill_switch_zone_entry_action", "kill"))
+        active = False
+        if side == "buy" and last_close < ema200_val:
+            active = True
+        elif side == "sell" and last_close > ema200_val:
+            active = True
+
+        return FilterReport(
+            filter_id="kill_switch", display_name="Kill Switch (M1-200)",
+            enabled=True, is_clear=not active,
+            current_value=f"EMA200={ema200_val:.3f} ({dist_pips:+.1f}p) | ZoneEntry={zone_action}",
+            block_reason=f"Kill Switch ACTIVE: M1 close {last_close:.3f} crossed EMA200 {ema200_val:.3f}" if active else None,
+        )
+    except Exception:
+        return FilterReport(
+            filter_id="kill_switch", display_name="Kill Switch (M1-200)",
+            enabled=True, is_clear=True,
+            current_value="Error computing EMA200",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Context collectors
 # ---------------------------------------------------------------------------
