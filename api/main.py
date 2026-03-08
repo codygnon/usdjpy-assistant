@@ -3500,6 +3500,32 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
     return {"preset_name": profile.active_preset_name or "", "filters": filters}
 
 
+@app.get("/api/debug/disk")
+def debug_disk() -> dict[str, Any]:
+    """Temporary endpoint to check disk usage on Railway volume."""
+    import subprocess
+    result: dict[str, Any] = {}
+    try:
+        result["df"] = subprocess.check_output(["df", "-h"], text=True, timeout=5)
+    except Exception as e:
+        result["df"] = str(e)
+    try:
+        base = _DATA_BASE
+        result["volume_path"] = str(base)
+        du = subprocess.check_output(["du", "-sh"] + [str(p) for p in base.iterdir()], text=True, timeout=10)
+        result["du_top"] = du
+    except Exception as e:
+        result["du_top"] = str(e)
+    try:
+        logs_dir = _DATA_BASE / "logs"
+        if logs_dir.exists():
+            du2 = subprocess.check_output(["du", "-sh"] + [str(p) for p in logs_dir.iterdir()], text=True, timeout=10)
+            result["du_logs"] = du2
+    except Exception as e:
+        result["du_logs"] = str(e)
+    return result
+
+
 @app.get("/api/data/{profile_name}/dashboard")
 def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
     """Return dashboard state with lean run-loop-file-first behavior."""
