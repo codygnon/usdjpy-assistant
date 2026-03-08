@@ -3510,14 +3510,14 @@ def debug_disk() -> dict[str, Any]:
     except Exception as e:
         result["df"] = str(e)
     try:
-        base = _DATA_BASE
+        base = DATA_BASE
         result["volume_path"] = str(base)
         du = subprocess.check_output(["du", "-sh"] + [str(p) for p in base.iterdir()], text=True, timeout=10)
         result["du_top"] = du
     except Exception as e:
         result["du_top"] = str(e)
     try:
-        logs_dir = _DATA_BASE / "logs"
+        logs_dir = DATA_BASE / "logs"
         if logs_dir.exists():
             du2 = subprocess.check_output(["du", "-sh"] + [str(p) for p in logs_dir.iterdir()], text=True, timeout=10)
             result["du_logs"] = du2
