@@ -1410,7 +1410,7 @@ def main() -> None:
                         data_by_tf["M3"] = _get_bars_cached(profile.symbol, "M3", 3000)
                     # Fetch D1 data when needed by daily H/L filter (Trial #4/5/8/9).
                     if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_8 or has_kt_cg_trial_9:
-                        data_by_tf["D"] = _get_bars_cached(profile.symbol, "D", 2)
+                        data_by_tf["D"] = _get_bars_cached(profile.symbol, "D", 5)
                     # Fetch W and MN data for Trial #9 NTZ (non-fatal if unavailable).
                     if has_kt_cg_trial_9:
                         try:
@@ -2607,21 +2607,43 @@ def main() -> None:
                         if ntz_filter is not None:
                             _ntz_levels: dict = {}
                             try:
+                                def _prev_candle_hl(df, tf_label):
+                                    """Extract high/low from the previous completed candle (sort by time, skip today's forming candle)."""
+                                    if df is None or df.empty or len(df) < 2:
+                                        return None, None
+                                    d_sorted = df.copy()
+                                    d_sorted["_time"] = pd.to_datetime(d_sorted["time"], utc=True, errors="coerce")
+                                    d_sorted = d_sorted.dropna(subset=["_time"]).sort_values("_time")
+                                    if len(d_sorted) < 2:
+                                        return None, None
+                                    # Last candle may be forming/incomplete — use the one before it
+                                    prev_row = d_sorted.iloc[-2]
+                                    h = float(prev_row["high"])
+                                    l = float(prev_row["low"])
+                                    _log(f"NTZ {tf_label}: prev candle time={prev_row['_time']} H={h:.3f} L={l:.3f} (rows={len(d_sorted)})")
+                                    return h, l
+
                                 d_df = data_by_tf.get("D")
-                                if d_df is not None and len(d_df) >= 2:
-                                    _ntz_levels["prev_day_high"] = float(d_df["high"].iloc[-2])
-                                    _ntz_levels["prev_day_low"] = float(d_df["low"].iloc[-2])
+                                dh, dl = _prev_candle_hl(d_df, "D1")
+                                if dh is not None:
+                                    _ntz_levels["prev_day_high"] = dh
+                                    _ntz_levels["prev_day_low"] = dl
+
                                 w_df = data_by_tf.get("W")
-                                if w_df is not None and len(w_df) >= 2:
-                                    _ntz_levels["weekly_high"] = float(w_df["high"].iloc[-2])
-                                    _ntz_levels["weekly_low"] = float(w_df["low"].iloc[-2])
+                                wh, wl = _prev_candle_hl(w_df, "W")
+                                if wh is not None:
+                                    _ntz_levels["weekly_high"] = wh
+                                    _ntz_levels["weekly_low"] = wl
+
                                 mn_df = data_by_tf.get("MN")
-                                if mn_df is not None and len(mn_df) >= 2:
-                                    _ntz_levels["monthly_high"] = float(mn_df["high"].iloc[-2])
-                                    _ntz_levels["monthly_low"] = float(mn_df["low"].iloc[-2])
+                                mh, ml = _prev_candle_hl(mn_df, "MN")
+                                if mh is not None:
+                                    _ntz_levels["monthly_high"] = mh
+                                    _ntz_levels["monthly_low"] = ml
+
                                 ntz_filter.update_levels(**_ntz_levels)
                             except Exception as _ntz_err:
-                                print(f"[{profile.profile_name}] NTZ level update error: {_ntz_err}")
+                                _log(f"NTZ level update error: {_ntz_err}", "ERROR")
                         exec_result = execute_kt_cg_trial_9_policy_demo_only(
                             adapter=adapter,
                             profile=profile,
