@@ -144,6 +144,7 @@ def _insert_trade_for_policy(
     target_price: float | None = None,
     size_lots: float | None = None,
     entry_type: str | None = None,
+    entry_session: str | None = None,
 ) -> None:
     """Store a trade in DB when a policy places an order. Ensures preset and position_id for Performance by Preset."""
     try:
@@ -180,6 +181,8 @@ def _insert_trade_for_policy(
         row["tp1_partial_done"] = 0
         if entry_type:
             row["entry_type"] = entry_type
+        if entry_session:
+            row["entry_session"] = entry_session
         # Capture entry slippage if fill_price available
         if getattr(dec, 'fill_price', None) is not None:
             slippage = abs(dec.fill_price - entry_price) / float(profile.pip_size)
@@ -3169,7 +3172,11 @@ def main() -> None:
                     if not getattr(pol, "enabled", True) or pol_type != "phase3_integrated":
                         continue
 
-                    from core.phase3_integrated_engine import execute_phase3_integrated_policy_demo_only
+                    from core.phase3_integrated_engine import (
+                        execute_phase3_integrated_policy_demo_only,
+                        load_phase3_sizing_config,
+                    )
+                    phase3_sizing = load_phase3_sizing_config()
                     exec_result = execute_phase3_integrated_policy_demo_only(
                         adapter=adapter,
                         profile=profile,
@@ -3181,6 +3188,7 @@ def main() -> None:
                         mode=mode,
                         phase3_state=phase3_state,
                         store=store,
+                        sizing_config=phase3_sizing if phase3_sizing else None,
                     )
                     dec = exec_result["decision"]
                     p3_state_updates = exec_result.get("phase3_state_updates", {})
@@ -3203,6 +3211,14 @@ def main() -> None:
                             sl_price = exec_result.get("sl_price")
                             tp1_price = exec_result.get("tp1_price")
                             print(f"[{profile.profile_name}] TRADE PLACED: phase3_integrated:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
+                            _entry_session = None
+                            if strategy_tag:
+                                if "v14" in strategy_tag or "mean_reversion" in strategy_tag:
+                                    _entry_session = "tokyo"
+                                elif "london" in strategy_tag:
+                                    _entry_session = "london"
+                                elif "v44_ny" in strategy_tag:
+                                    _entry_session = "ny"
                             _insert_trade_for_policy(
                                 profile=profile,
                                 adapter=adapter,
@@ -3215,6 +3231,7 @@ def main() -> None:
                                 stop_price=sl_price,
                                 target_price=tp1_price,
                                 entry_type=strategy_tag,
+                                entry_session=_entry_session,
                             )
                             _append_trade_open_event(
                                 log_dir, f"phase3_integrated:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",

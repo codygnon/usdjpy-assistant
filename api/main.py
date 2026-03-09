@@ -1590,36 +1590,28 @@ def get_stats_by_preset(profile_name: str, profile_path: Optional[str] = None) -
     curr, rate = _get_display_currency(profile) if profile else ("USD", 1.0)
     presets_data: dict[str, Any] = {}
 
-    for preset_name, group in closed.groupby("preset_name"):
+    def _stats_for_group(group: pd.DataFrame) -> dict[str, Any]:
         pips = group["pips"]
         r_mult = group["r_multiple"]
         profit_use = group["_profit_use"]
         commission_col = group["_commission"]
-
         total_trades = len(group)
         is_win = group.apply(_is_win, axis=1)
         is_loss = group.apply(_is_loss, axis=1)
         wins = int(is_win.sum())
         losses = int(is_loss.sum())
-
         win_rate = round(wins / total_trades, 3) if total_trades > 0 else None
         total_pips = round(float(pips.sum()), 2) if pips.notna().any() else 0
         avg_pips = round(float(pips.mean()), 2) if pips.notna().any() else None
         avg_rr = round(float(r_mult.mean()), 2) if r_mult.notna().any() else None
-
-        total_profit = None
-        if profit_use.notna().any():
-            total_profit = round(float(profit_use.sum()), 2)
+        total_profit = round(float(profit_use.sum()), 2) if profit_use.notna().any() else None
         total_commission = round(float(commission_col.sum()), 2)
-
         best_trade = round(float(pips.max()), 2) if pips.notna().any() else None
         worst_trade = round(float(pips.min()), 2) if pips.notna().any() else None
-
         win_streak, loss_streak = 0, 0
         current_win_streak, current_loss_streak = 0, 0
         for _, row in group.iterrows():
-            w = _is_win(row)
-            l = _is_loss(row)
+            w, l = _is_win(row), _is_loss(row)
             if w:
                 current_win_streak += 1
                 current_loss_streak = 0
@@ -1629,9 +1621,7 @@ def get_stats_by_preset(profile_name: str, profile_path: Optional[str] = None) -
                 current_win_streak = 0
                 loss_streak = max(loss_streak, current_loss_streak)
             else:
-                current_win_streak = 0
-                current_loss_streak = 0
-
+                current_win_streak = current_loss_streak = 0
         if profit_use.notna().any():
             gross_profit = float(profit_use[profit_use > 0].sum()) if (profit_use > 0).any() else 0
             gross_loss = abs(float(profit_use[profit_use < 0].sum())) if (profit_use < 0).any() else 0
@@ -1639,13 +1629,11 @@ def get_stats_by_preset(profile_name: str, profile_path: Optional[str] = None) -
             gross_profit = float(pips[pips > 0].sum()) if (pips > 0).any() else 0
             gross_loss = abs(float(pips[pips < 0].sum())) if (pips < 0).any() else 0
         profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else None
-
         cumulative = pips.cumsum()
         running_max = cumulative.cummax()
         drawdown = running_max - cumulative
         max_drawdown = round(float(drawdown.max()), 2) if drawdown.notna().any() else 0
-
-        presets_data[str(preset_name)] = {
+        return {
             "total_trades": total_trades,
             "wins": wins,
             "losses": losses,
@@ -1662,6 +1650,22 @@ def get_stats_by_preset(profile_name: str, profile_path: Optional[str] = None) -
             "profit_factor": profit_factor,
             "max_drawdown": max_drawdown,
         }
+
+    for preset_name, group in closed.groupby("preset_name"):
+        presets_data[str(preset_name)] = _stats_for_group(group)
+
+    PHASE3_PRESET_ID = "phase3_integrated_usd_jpy"
+    if PHASE3_PRESET_ID in presets_data and "entry_session" in closed.columns:
+        phase3_closed = closed[closed["preset_name"] == PHASE3_PRESET_ID]
+        session_trades = phase3_closed[phase3_closed["entry_session"].isin(["tokyo", "london", "ny"])]
+        if not session_trades.empty:
+            by_session: dict[str, Any] = {}
+            for sess in ("tokyo", "london", "ny"):
+                grp = session_trades[session_trades["entry_session"] == sess]
+                if grp.empty:
+                    continue
+                by_session[sess] = _stats_for_group(grp)
+            presets_data[PHASE3_PRESET_ID]["by_session"] = by_session
 
     payload = {"presets": presets_data, "source": source, "display_currency": curr}
     _cache_set("stats_by_preset", cache_key, payload)

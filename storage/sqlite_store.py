@@ -186,6 +186,8 @@ class SqliteStore:
             self._ensure_column(conn, "trades", "policy_type", "TEXT")
             # v2.2: tier_number for breakdown analytics (which EMA tier triggered the trade)
             self._ensure_column(conn, "trades", "tier_number", "INTEGER")
+            # v2.3: entry_session for Phase 3 session-stratified stats (tokyo | london | ny)
+            self._ensure_column(conn, "trades", "entry_session", "TEXT")
             conn.commit()
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, col: str, col_type: str) -> None:

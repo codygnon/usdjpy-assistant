@@ -8,12 +8,14 @@ Single policy routes by UTC session:
 """
 from __future__ import annotations
 
+import json
 import math
 import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from pathlib import Path
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -32,9 +34,28 @@ except Exception:  # pragma: no cover - runtime fallback
         side: Optional[str] = None
         fill_price: Optional[float] = None
 
+
+def load_phase3_sizing_config(config_path: Optional[Path] = None) -> dict[str, Any]:
+    """Load Phase 3 sizing config from JSON. Returns {} if file missing or invalid."""
+    if config_path is None:
+        config_path = Path(__file__).resolve().parent.parent / "research_out" / "phase3_integrated_sizing_config.json"
+    if not config_path.exists():
+        return {}
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
 # ---------------------------------------------------------------------------
-# Session constants
+# Session constants (single source of truth; aligned with backtest)
 # ---------------------------------------------------------------------------
+# London V2: 08:00-12:00 UTC = 3:00-7:00 AM EST
+#   ARB: 08:00-09:30 UTC (3:00-4:30 AM EST)
+#   LMP: 09:30-12:00 UTC (4:30-7:00 AM EST)
+# V44 NY: 13:00-16:00 UTC with 5-min start delay = 8:05-11:00 AM EST
+# Tokyo V14: 16:00-22:00 UTC = 11:00 AM-5:00 PM EST
 TOKYO_START_UTC = 16  # 16:00 UTC
 TOKYO_END_UTC = 22    # 22:00 UTC
 TOKYO_ALLOWED_DAYS = {1, 2, 4}  # Tuesday=1, Wednesday=2, Friday=4  (weekday())
@@ -164,8 +185,9 @@ LDN_FORCE_CLOSE_AT_NY_OPEN = True
 V44_H1_EMA_FAST = 20
 V44_H1_EMA_SLOW = 50
 
-V44_LONDON_START = 8.5
-V44_LONDON_END = 11.0
+# Unused for Phase 3 session routing (we use LONDON_* / NY_* above)
+# V44_LONDON_START = 8.5
+# V44_LONDON_END = 11.0
 V44_NY_START = 13.0
 V44_NY_END = 16.0
 
@@ -522,7 +544,7 @@ def compute_v14_tp1(side: str, entry_price: float, atr_value: float, pip_size: f
 
 
 # ===================================================================
-#  Lot sizing
+#  Lot sizing (config-driven when sizing_config provided, else fallback constants)
 # ===================================================================
 
 def compute_v14_lot_size(
@@ -532,20 +554,42 @@ def compute_v14_lot_size(
     pip_size: float,
     leverage: float = LEVERAGE,
 ) -> int:
-    """Risk-based units, margin-aware.  Returns integer units."""
+    """Risk-based units, margin-aware.  Returns integer units. Legacy fallback."""
     if sl_pips <= 0 or current_price <= 0:
         return 0
-    # Risk amount in account currency (USD for OANDA USDJPY)
     risk_amount = equity * RISK_PCT
-    # For USDJPY: pip_value per unit = pip_size / current_price (USD per pip per unit)
     pip_value_per_unit = pip_size / current_price
     units = risk_amount / (sl_pips * pip_value_per_unit)
-    # Margin check: required margin = units * current_price / leverage
-    # (For JPY-denominated, OANDA uses quote_currency / leverage)
     max_margin_units = (equity * leverage) / current_price
     units = min(units, max_margin_units)
     units = min(units, MAX_UNITS)
     return int(math.floor(units))
+
+
+def compute_v14_units_from_config(
+    equity: float,
+    sl_pips: float,
+    current_price: float,
+    pip_size: float,
+    now_utc: datetime,
+    v14_config: dict[str, Any],
+) -> int:
+    """Config-driven V14 sizing: risk_pct, day_risk_multipliers, max_units, leverage."""
+    if sl_pips <= 0 or current_price <= 0:
+        return 0
+    risk_pct = float(v14_config.get("risk_per_trade_pct", 2.0)) / 100.0
+    max_units = int(v14_config.get("max_units", MAX_UNITS))
+    leverage = float(v14_config.get("leverage", LEVERAGE))
+    day_multipliers = v14_config.get("day_risk_multipliers") or {}
+    day_name = now_utc.strftime("%A")
+    day_mult = float(day_multipliers.get(day_name, 1.0)) if isinstance(day_multipliers.get(day_name), (int, float)) else 1.0
+    risk_amount = equity * risk_pct * day_mult
+    pip_value_per_unit = pip_size / current_price
+    units = risk_amount / (sl_pips * pip_value_per_unit)
+    max_margin_units = (equity * leverage) / current_price
+    units = min(units, max_margin_units)
+    units = min(units, float(max_units))
+    return int(math.floor(max(0.0, units)))
 
 
 def _compute_ema(series: pd.Series, period: int) -> pd.Series:
@@ -814,6 +858,7 @@ def execute_london_v2_entry(
     data_by_tf: dict,
     tick,
     phase3_state: dict,
+    sizing_config: Optional[dict[str, Any]] = None,
 ) -> dict:
     now_utc = datetime.now(timezone.utc)
     pip = float(profile.pip_size) if hasattr(profile, "pip_size") else PIP_SIZE
@@ -822,6 +867,13 @@ def execute_london_v2_entry(
         "phase3_state_updates": {},
         "strategy_tag": None,
     }
+
+    ldn_config = (sizing_config or {}).get("london_v2", {})
+    ldn_max_open = int(ldn_config.get("max_open_positions", LDN_MAX_OPEN))
+    ldn_risk_pct = float(ldn_config.get("risk_per_trade_pct", 0.01))
+    ldn_max_total_risk_pct = float(ldn_config.get("max_total_open_risk_pct", 0.05))
+    ldn_leverage = float(ldn_config.get("leverage", 50.0))
+    ldn_max_margin_frac = float(ldn_config.get("max_margin_usage_fraction_per_trade", 0.5))
 
     if (tick.ask - tick.bid) / pip > LDN_MAX_SPREAD_PIPS:
         no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="london_v2: spread veto", side=None)
@@ -852,8 +904,8 @@ def execute_london_v2_entry(
         return no_trade
 
     open_count = int(phase3_state.get("open_trade_count", 0))
-    if open_count >= LDN_MAX_OPEN:
-        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"london_v2: max open {open_count}/{LDN_MAX_OPEN}", side=None)
+    if open_count >= ldn_max_open:
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"london_v2: max open {open_count}/{ldn_max_open}", side=None)
         no_trade["phase3_state_updates"] = state_updates
         return no_trade
 
@@ -904,10 +956,31 @@ def execute_london_v2_entry(
     except Exception:
         equity = 100000.0
 
+    if (open_count + 1) * ldn_risk_pct > ldn_max_total_risk_pct:
+        no_trade["decision"] = ExecutionDecision(
+            attempted=False, placed=False,
+            reason=f"london_v2: open risk cap ({(open_count+1)*ldn_risk_pct:.2%} > {ldn_max_total_risk_pct:.0%})", side=None,
+        )
+        no_trade["phase3_state_updates"] = state_updates
+        return no_trade
+
     sl_pips = abs(entry_price - sl_price) / pip
-    units = _compute_risk_units(equity, LDN_RISK_PCT, sl_pips, entry_price, pip)
+    units = _compute_risk_units(equity, ldn_risk_pct, sl_pips, entry_price, pip, max_units=MAX_UNITS)
     if units <= 0:
         no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="london_v2: size=0", side=None)
+        no_trade["phase3_state_updates"] = state_updates
+        return no_trade
+
+    req_margin = (units * float(entry_price) * pip) / ldn_leverage
+    try:
+        margin_used = getattr(adapter.get_account_info(), "margin_used", 0.0) or 0.0
+        free_margin = max(0.0, equity - float(margin_used))
+    except Exception:
+        free_margin = equity * (1.0 - ldn_max_margin_frac)
+    if req_margin > ldn_max_margin_frac * free_margin:
+        no_trade["decision"] = ExecutionDecision(
+            attempted=False, placed=False, reason="london_v2: margin constraint", side=None,
+        )
         no_trade["phase3_state_updates"] = state_updates
         return no_trade
 
@@ -964,6 +1037,7 @@ def execute_v44_ny_entry(
     data_by_tf: dict,
     tick,
     phase3_state: dict,
+    sizing_config: Optional[dict[str, Any]] = None,
 ) -> dict:
     now_utc = datetime.now(timezone.utc)
     pip = float(profile.pip_size) if hasattr(profile, "pip_size") else PIP_SIZE
@@ -986,6 +1060,12 @@ def execute_v44_ny_entry(
         no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: missing H1/M5", side=None)
         return no_trade
 
+    v44_config = (sizing_config or {}).get("v44_ny", {})
+    v44_max_open = int(v44_config.get("max_open_positions", V44_MAX_OPEN))
+    v44_risk_pct = float(v44_config.get("risk_per_trade_pct", 0.5)) / 100.0
+    v44_rp_min_lot = float(v44_config.get("rp_min_lot", 1.0))
+    v44_rp_max_lot = float(v44_config.get("rp_max_lot", 20.0))
+
     today = now_utc.date().isoformat()
     session_key = f"session_ny_{today}"
     sdat = dict(phase3_state.get(session_key, {}))
@@ -995,8 +1075,8 @@ def execute_v44_ny_entry(
     sdat.setdefault("last_entry_time", None)
 
     open_count = int(phase3_state.get("open_trade_count", 0))
-    if open_count >= V44_MAX_OPEN:
-        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44_ny: max open {open_count}/{V44_MAX_OPEN}", side=None)
+    if open_count >= v44_max_open:
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44_ny: max open {open_count}/{v44_max_open}", side=None)
         return no_trade
 
     side, strength, reason = evaluate_v44_entry(h1_df, m5_df, tick, pip, "ny", sdat)
@@ -1014,7 +1094,15 @@ def execute_v44_ny_entry(
         equity = float(acct.equity)
     except Exception:
         equity = 100000.0
-    units = _compute_risk_units(equity, V44_RISK_PCT, sl_pips, entry_price, pip)
+
+    risk_usd = equity * v44_risk_pct
+    pip_value_per_lot = (pip / entry_price) * 100000.0
+    if sl_pips <= 0 or pip_value_per_lot <= 0:
+        units = 0
+    else:
+        lot = risk_usd / (sl_pips * pip_value_per_lot)
+        lot = max(v44_rp_min_lot, min(v44_rp_max_lot, lot))
+        units = int(lot * 100000.0)
     if units <= 0:
         no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: size=0", side=None)
         return no_trade
@@ -1077,6 +1165,7 @@ def execute_phase3_integrated_policy_demo_only(
     mode: str,
     phase3_state: dict,
     store=None,
+    sizing_config: Optional[dict[str, Any]] = None,
 ) -> dict:
     """
     Main Phase 3 entry point.  Returns dict with:
@@ -1102,6 +1191,7 @@ def execute_phase3_integrated_policy_demo_only(
             data_by_tf=data_by_tf,
             tick=tick,
             phase3_state=phase3_state,
+            sizing_config=sizing_config,
         )
     if session == "ny":
         return execute_v44_ny_entry(
@@ -1111,6 +1201,7 @@ def execute_phase3_integrated_policy_demo_only(
             data_by_tf=data_by_tf,
             tick=tick,
             phase3_state=phase3_state,
+            sizing_config=sizing_config,
         )
     if session != "tokyo":
         no_trade["decision"] = ExecutionDecision(
@@ -1240,22 +1331,28 @@ def execute_phase3_integrated_policy_demo_only(
         no_trade["phase3_state_updates"] = state_updates
         return no_trade
 
-    # 9) Session management: concurrent positions, trade count, cooldown, consecutive losses
+    # 9) Session management: concurrent positions, trade count, cooldown, consecutive losses (config-driven)
+    v14_config = (sizing_config or {}).get("v14", {})
+    max_trades_session = int(v14_config.get("max_trades_per_session", MAX_TRADES_PER_SESSION))
+    stop_consec_losses = int(v14_config.get("stop_after_consecutive_losses", STOP_AFTER_CONSECUTIVE_LOSSES))
+    cooldown_min = int(v14_config.get("cooldown_minutes", COOLDOWN_MINUTES))
+    max_concurrent = int(v14_config.get("max_concurrent_positions", MAX_CONCURRENT))
+
     session_key = f"session_tokyo_{today_str}"
     session_data = phase3_state.get(session_key, {})
     trade_count = session_data.get("trade_count", 0)
     consecutive_losses = session_data.get("consecutive_losses", 0)
     last_entry_time = session_data.get("last_entry_time")
 
-    if trade_count >= MAX_TRADES_PER_SESSION:
+    if trade_count >= max_trades_session:
         no_trade["decision"] = ExecutionDecision(
             attempted=False, placed=False,
-            reason=f"phase3: max trades/session ({trade_count}/{MAX_TRADES_PER_SESSION})", side=None,
+            reason=f"phase3: max trades/session ({trade_count}/{max_trades_session})", side=None,
         )
         no_trade["phase3_state_updates"] = state_updates
         return no_trade
 
-    if consecutive_losses >= STOP_AFTER_CONSECUTIVE_LOSSES:
+    if consecutive_losses >= stop_consec_losses:
         no_trade["decision"] = ExecutionDecision(
             attempted=False, placed=False,
             reason=f"phase3: stopped after {consecutive_losses} consecutive losses", side=None,
@@ -1263,23 +1360,21 @@ def execute_phase3_integrated_policy_demo_only(
         no_trade["phase3_state_updates"] = state_updates
         return no_trade
 
-    # Cooldown
     if last_entry_time is not None:
         elapsed = (now_utc - datetime.fromisoformat(last_entry_time)).total_seconds() / 60.0
-        if elapsed < COOLDOWN_MINUTES:
+        if elapsed < cooldown_min:
             no_trade["decision"] = ExecutionDecision(
                 attempted=False, placed=False,
-                reason=f"phase3: cooldown ({elapsed:.1f}/{COOLDOWN_MINUTES}min)", side=None,
+                reason=f"phase3: cooldown ({elapsed:.1f}/{cooldown_min}min)", side=None,
             )
             no_trade["phase3_state_updates"] = state_updates
             return no_trade
 
-    # Count concurrent positions (Phase 3 trades)
     concurrent = phase3_state.get("open_trade_count", 0)
-    if concurrent >= MAX_CONCURRENT:
+    if concurrent >= max_concurrent:
         no_trade["decision"] = ExecutionDecision(
             attempted=False, placed=False,
-            reason=f"phase3: max concurrent ({concurrent}/{MAX_CONCURRENT})", side=None,
+            reason=f"phase3: max concurrent ({concurrent}/{max_concurrent})", side=None,
         )
         no_trade["phase3_state_updates"] = state_updates
         return no_trade
@@ -1314,14 +1409,18 @@ def execute_phase3_integrated_policy_demo_only(
     sl_pips = abs(entry_price - sl_price) / pip
     tp1_price = compute_v14_tp1(best_side, entry_price, atr_val, pip)
 
-    # Get equity from adapter
     try:
         acct = adapter.get_account_info()
         equity = float(acct.equity)
     except Exception:
         equity = 100_000.0  # fallback
 
-    units = compute_v14_lot_size(equity, sl_pips, entry_price, pip, LEVERAGE)
+    if v14_config:
+        units = compute_v14_units_from_config(
+            equity, sl_pips, entry_price, pip, now_utc, v14_config,
+        )
+    else:
+        units = compute_v14_lot_size(equity, sl_pips, entry_price, pip, LEVERAGE)
     if units <= 0:
         no_trade["decision"] = ExecutionDecision(
             attempted=False, placed=False,

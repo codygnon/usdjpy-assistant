@@ -364,6 +364,8 @@ export interface PresetStats {
   loss_streak: number;
   profit_factor: number | null;
   max_drawdown: number;
+  /** Phase 3 Integrated only: stats per session (tokyo, london, ny) */
+  by_session?: Record<string, PresetStats>;
 }
 
 export interface StatsByPreset {

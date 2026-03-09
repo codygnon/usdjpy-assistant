@@ -8772,6 +8772,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
   const [totalProfitCurrency, setTotalProfitCurrency] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [presetFilter, setPresetFilter] = useState('all');
+  const [sessionFilter, setSessionFilter] = useState<'all' | 'tokyo' | 'london' | 'ny'>('all');
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     mae_mfe: false,
     rolling: false,
@@ -8808,7 +8809,14 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
 
   const safeTrades = Array.isArray(trades) ? trades : [];
   const presets = Array.from(new Set(safeTrades.map(t => t.preset_name).filter(Boolean))) as string[];
-  const filtered = presetFilter === 'all' ? safeTrades : safeTrades.filter(t => t.preset_name === presetFilter);
+  const filtered = (() => {
+    let f = presetFilter === 'all' ? safeTrades : safeTrades.filter(t => t.preset_name === presetFilter);
+    if (presetFilter === 'phase3_integrated_usd_jpy' && sessionFilter !== 'all') {
+      f = f.filter(t => (t as { entry_session?: string }).entry_session === sessionFilter);
+    }
+    return f;
+  })();
+  const isPhase3Preset = presetFilter === 'phase3_integrated_usd_jpy';
 
   // --- Section data (memoized) - must run every render to satisfy Rules of Hooks ---
   const maeTradesAll = useMemo(() => filtered.filter(t => t.max_adverse_pips != null && t.pips != null), [filtered]);
@@ -9146,7 +9154,7 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
         {presets.length > 1 && (
           <select
             value={presetFilter}
-            onChange={e => setPresetFilter(e.target.value)}
+            onChange={e => { setPresetFilter(e.target.value); if (e.target.value !== 'phase3_integrated_usd_jpy') setSessionFilter('all'); }}
             style={{
               background: 'var(--bg-tertiary)', color: 'var(--text-primary)',
               border: '1px solid var(--border)', borderRadius: 4, padding: '4px 8px',
@@ -9155,6 +9163,22 @@ function AdvancedAnalytics({ profileName, profilePath }: { profileName: string; 
           >
             <option value="all">All Presets</option>
             {presets.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        )}
+        {isPhase3Preset && (
+          <select
+            value={sessionFilter}
+            onChange={e => setSessionFilter(e.target.value as 'all' | 'tokyo' | 'london' | 'ny')}
+            style={{
+              background: 'var(--bg-tertiary)', color: 'var(--text-primary)',
+              border: '1px solid var(--border)', borderRadius: 4, padding: '4px 8px',
+              fontSize: '0.8rem',
+            }}
+          >
+            <option value="all">All Sessions</option>
+            <option value="tokyo">Tokyo (V14)</option>
+            <option value="london">London (V2)</option>
+            <option value="ny">NY (V44)</option>
           </select>
         )}
       </div>
@@ -10252,6 +10276,32 @@ function LogsPage({ profile }: { profile: Profile }) {
                             </div>
                           </div>
                         </div>
+                        {pStats.by_session && Object.keys(pStats.by_session).length > 0 && (
+                          <div style={{ marginTop: 20 }}>
+                            <h4 style={{ fontSize: '0.9rem', marginBottom: 12, color: 'var(--text-secondary)' }}>By session</h4>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                              {(['tokyo', 'london', 'ny'] as const).map((sess) => {
+                                const s = pStats.by_session![sess];
+                                if (!s) return null;
+                                const label = sess === 'tokyo' ? 'Tokyo (V14)' : sess === 'london' ? 'London (V2)' : 'NY (V44)';
+                                return (
+                                  <div key={sess} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, background: 'var(--bg-tertiary)' }}>
+                                    <div style={{ fontWeight: 600, marginBottom: 8 }}>{label}</div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8 }}>
+                                      <div><span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Trades</span><div style={{ fontWeight: 700 }}>{s.total_trades}</div></div>
+                                      <div><span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>W/L</span><div style={{ fontWeight: 700 }}><span style={{ color: 'var(--success)' }}>{s.wins}</span> / <span style={{ color: 'var(--danger)' }}>{s.losses}</span></div></div>
+                                      <div><span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Win %</span><div style={{ fontWeight: 700 }}>{s.win_rate != null ? `${(s.win_rate * 100).toFixed(0)}%` : '-'}</div></div>
+                                      <div><span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Pips</span><div style={{ fontWeight: 700, color: (s.total_pips || 0) >= 0 ? 'var(--success)' : 'var(--danger)' }}>{(s.total_pips || 0) >= 0 ? '+' : ''}{s.total_pips?.toFixed(1) ?? 0}</div></div>
+                                      {s.total_profit != null && <div><span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Profit</span><div style={{ fontWeight: 700, color: s.total_profit >= 0 ? 'var(--success)' : 'var(--danger)' }}>{s.total_profit >= 0 ? '+' : ''}{s.total_profit.toFixed(2)} {presetStats.display_currency || 'USD'}</div></div>}
+                                      <div><span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>PF</span><div style={{ fontWeight: 700 }}>{s.profit_factor?.toFixed(2) ?? '-'}</div></div>
+                                      <div><span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Max DD</span><div style={{ fontWeight: 700 }}>{s.max_drawdown?.toFixed(1) ?? 0} pips</div></div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

@@ -2037,16 +2037,15 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
     },
 
     PresetId.PHASE3_INTEGRATED_USD_JPY: {
-        "name": "Phase 3 Integrated (Tokyo V14 Mean Reversion)",
-        "description": "Multi-session integrated engine. Tokyo: V14 Fibonacci-pivot mean reversion with BB regime filter, PSAR confluence, RSI, ADX/ATR gates. London V2 and NY V5 stubbed for follow-up.",
+        "name": "Phase 3 Integrated USD/JPY",
+        "description": "Multi-session integrated engine with shared equity. Tokyo (16:00–22:00 UTC): V14 mean reversion. London (08:00–12:00 UTC): V2 ARB + LMP. NY (13:00–16:00 UTC, 5-min delay): V44 session momentum. Session times and sizing aligned with integrated backtest.",
         "pros": [
-            "Research-grade V14 parameters hardcoded from walk-forward optimization",
-            "Partial TP at ATR*0.5, trailing stop, time decay, session-end force close",
-            "Risk-based sizing from OANDA equity, max 3 concurrent positions",
+            "All three sessions active; sizing from research_out/phase3_integrated_sizing_config.json",
+            "Session-stratified stats (Tokyo / London / NY) on Logs page",
+            "Risk-based sizing per strategy; max open risk and margin caps for London; min/max lot for V44 NY",
         ],
         "cons": [
-            "Tokyo session only (Tue/Wed/Fri 16:00-22:00 UTC) in this increment",
-            "No configurable UI — all parameters hardcoded in engine",
+            "No configurable UI for Phase 3 — sizing and session params in config/engine",
         ],
         "risk": {
             "max_lots": 5.0,
