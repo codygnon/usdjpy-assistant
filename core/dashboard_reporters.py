@@ -1275,6 +1275,122 @@ def collect_uncle_parsh_context(
     return items
 
 
+def collect_phase3_context(
+    policy: Any,
+    data_by_tf: dict,
+    tick: Any,
+    eval_result: Optional[dict],
+    phase3_state: dict,
+    pip_size: float,
+) -> list[ContextItem]:
+    """Collect context items for Phase 3 Integrated dashboard; varies by active session."""
+    from datetime import datetime, timezone
+    from core.phase3_integrated_engine import (
+        classify_session,
+        _compute_session_windows,
+        compute_bb_width_regime,
+        _compute_adx,
+        _compute_atr,
+        compute_asian_range,
+        compute_v44_h1_trend,
+        compute_v44_m5_slope,
+        compute_v44_atr_pct_filter,
+        compute_lmp_impulse,
+        ADX_PERIOD,
+        ATR_PERIOD,
+        LONDON_START_UTC,
+        LDN_LMP_IMPULSE_MINUTES,
+    )
+
+    items: list[ContextItem] = []
+    now_utc = datetime.now(timezone.utc)
+    session = classify_session(now_utc)
+
+    # Common: time and session
+    items.append(ContextItem("UTC", now_utc.strftime("%H:%M"), "session"))
+    items.append(ContextItem("Day", now_utc.strftime("%A"), "session"))
+    if session is None:
+        items.append(ContextItem("Active Session", "None", "session"))
+        items.append(ContextItem("Next", "London 08:00 / NY 13:05 / Tokyo 16:00 UTC", "session"))
+        items.append(ContextItem("Bid", f"{tick.bid:.3f}", "price"))
+        items.append(ContextItem("Ask", f"{tick.ask:.3f}", "price"))
+        items.append(ContextItem("Spread", f"{(tick.ask - tick.bid) / pip_size:.1f}p", "price"))
+        dec = eval_result.get("decision") if eval_result else None
+        if dec is not None and getattr(dec, "reason", None):
+            items.append(ContextItem("Last decision", str(dec.reason), "decision"))
+        return items
+
+    items.append(ContextItem("Active Session", session, "session"))
+    open_count = int(phase3_state.get("open_trade_count", 0))
+    items.append(ContextItem("Phase 3 open", str(open_count), "session"))
+
+    if session == "tokyo":
+        items.append(ContextItem("Strategy", "V14 Mean Reversion", "session"))
+        m5_df = data_by_tf.get("M5")
+        if m5_df is not None and not m5_df.empty and len(m5_df) >= 130:
+            regime = compute_bb_width_regime(m5_df)
+            items.append(ContextItem("Regime", regime, "v14"))
+        m15_df = data_by_tf.get("M15")
+        if m15_df is not None and not m15_df.empty and len(m15_df) >= ADX_PERIOD + 2:
+            adx_val = _compute_adx(m15_df, ADX_PERIOD)
+            items.append(ContextItem("ADX", f"{adx_val:.1f}", "v14"))
+            atr_series = _compute_atr(m15_df, ATR_PERIOD)
+            atr_val = float(atr_series.iloc[-1]) if pd.notna(atr_series.iloc[-1]) else 0.0
+            items.append(ContextItem("ATR (pips)", f"{atr_val / pip_size:.1f}", "v14"))
+        today_str = now_utc.strftime("%Y-%m-%d")
+        sk = f"session_tokyo_{today_str}"
+        sd = phase3_state.get(sk, {})
+        items.append(ContextItem("Trades this session", str(sd.get("trade_count", 0)), "v14"))
+        items.append(ContextItem("Consecutive losses", str(sd.get("consecutive_losses", 0)), "v14"))
+
+    elif session == "london":
+        items.append(ContextItem("Strategy", "London V2 (ARB + LMP)", "session"))
+        windows = _compute_session_windows(now_utc)
+        if now_utc < windows["london_arb_end"]:
+            items.append(ContextItem("Window", "ARB (08:00–09:30 UTC)", "london"))
+        else:
+            items.append(ContextItem("Window", "LMP (09:30–12:00 UTC)", "london"))
+        m1_df = data_by_tf.get("M1")
+        if m1_df is not None and not m1_df.empty:
+            a_hi, a_lo, a_pips, a_ok = compute_asian_range(m1_df, LONDON_START_UTC)
+            items.append(ContextItem("Asian range (pips)", f"{a_pips:.1f}", "london"))
+            items.append(ContextItem("Asian H/L", f"{a_hi:.3f} / {a_lo:.3f}", "london"))
+            if now_utc >= windows["lmp_impulse_end"]:
+                imp_h, imp_l, imp_dir = compute_lmp_impulse(m1_df, windows["london_open"], LDN_LMP_IMPULSE_MINUTES)
+                items.append(ContextItem("LMP direction", imp_dir or "—", "london"))
+        today = now_utc.date().isoformat()
+        sk = f"session_london_{today}"
+        sd = phase3_state.get(sk, {})
+        items.append(ContextItem("ARB trades", str(sd.get("arb_trades", 0)), "london"))
+        items.append(ContextItem("LMP trades", str(sd.get("lmp_trades", 0)), "london"))
+
+    elif session == "ny":
+        items.append(ContextItem("Strategy", "V44 NY Momentum", "session"))
+        h1_df = data_by_tf.get("H1")
+        trend = compute_v44_h1_trend(h1_df) if h1_df is not None and not h1_df.empty else None
+        items.append(ContextItem("H1 Trend", trend or "—", "v44"))
+        m5_df = data_by_tf.get("M5")
+        if m5_df is not None and not m5_df.empty:
+            slope = compute_v44_m5_slope(m5_df, 4)
+            items.append(ContextItem("M5 Slope (p/bar)", f"{slope:.2f}", "v44"))
+            atr_ok = compute_v44_atr_pct_filter(m5_df)
+            items.append(ContextItem("ATR % filter", "pass" if atr_ok else "block", "v44"))
+        today = now_utc.date().isoformat()
+        sk = f"session_ny_{today}"
+        sd = phase3_state.get(sk, {})
+        items.append(ContextItem("Trades this session", str(sd.get("trade_count", 0)), "v44"))
+        items.append(ContextItem("Session stop losses", str(sd.get("consecutive_losses", 0)), "v44"))
+
+    # Last decision and price
+    dec = eval_result.get("decision") if eval_result else None
+    if dec is not None and getattr(dec, "reason", None):
+        items.append(ContextItem("Last decision", str(dec.reason), "decision"))
+    items.append(ContextItem("Bid", f"{tick.bid:.3f}", "price"))
+    items.append(ContextItem("Ask", f"{tick.ask:.3f}", "price"))
+    items.append(ContextItem("Spread", f"{(tick.ask - tick.bid) / pip_size:.1f}p", "price"))
+    return items
+
+
 def collect_trial_6_context(
     policy, data_by_tf: dict, tick, tier_state: dict,
     eval_result: Optional[dict], pip_size: float,

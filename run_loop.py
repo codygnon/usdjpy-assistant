@@ -936,6 +936,7 @@ def _build_and_write_dashboard(
     temp_overrides: dict | None = None,
     daily_level_filter=None,
     ntz_filter=None,
+    phase3_state: dict | None = None,
 ) -> None:
     """Assemble and write dashboard state JSON for the current poll cycle."""
     from datetime import datetime, timezone
@@ -962,6 +963,7 @@ def _build_and_write_dashboard(
             temp_overrides=temp_overrides,
             daily_level_filter_snapshot=(daily_level_filter.get_state_snapshot() if daily_level_filter is not None else None),
             ntz_filter_snapshot=(ntz_filter.get_levels_snapshot() if ntz_filter is not None else None),
+            phase3_state=phase3_state,
         )
 
         # --- Context items (use effective policy when Apply Temporary Settings active) ---
@@ -1004,6 +1006,16 @@ def _build_and_write_dashboard(
             context_items = collect_uncle_parsh_context(
                 policy_for_context, data_by_tf, tick, pip_size,
                 eval_result=eval_result,
+            )
+        elif policy_type == "phase3_integrated":
+            from core.dashboard_reporters import collect_phase3_context
+            context_items = collect_phase3_context(
+                policy_for_context or policy,
+                data_by_tf,
+                tick,
+                eval_result,
+                phase3_state or {},
+                pip_size,
             )
 
         candidate_side = None
@@ -3247,6 +3259,7 @@ def main() -> None:
                         data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
                         policy_type="phase3_integrated",
                         eval_result=exec_result,
+                        phase3_state=phase3_state,
                     )
 
             # Catch-all dashboard write for profiles not using KT/CG policy types.

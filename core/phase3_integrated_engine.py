@@ -1914,3 +1914,136 @@ def report_phase3_ny_atr_filter(ok: bool) -> dict:
         "ok": bool(ok),
         "detail": f"cap P{int(V44_ATR_PCT_CAP*100)} lookback={V44_ATR_PCT_LOOKBACK}",
     }
+
+
+def report_phase3_last_decision(eval_result: Optional[dict]) -> dict:
+    """Report last decision reason so user sees why trade was/wasn't taken."""
+    reason = ""
+    if eval_result and isinstance(eval_result, dict):
+        dec = eval_result.get("decision")
+        if dec is not None and getattr(dec, "reason", None):
+            reason = str(dec.reason)
+    return {
+        "name": "Last decision",
+        "value": reason or "—",
+        "ok": True,
+        "detail": "Reason from this poll",
+    }
+
+
+def report_phase3_tokyo_caps(phase3_state: dict, now_utc: datetime) -> list[dict]:
+    """Tokyo session caps: trade count, cooldown, consecutive losses, max concurrent."""
+    reports = []
+    today_str = now_utc.strftime("%Y-%m-%d")
+    session_key = f"session_tokyo_{today_str}"
+    session_data = phase3_state.get(session_key, {})
+    trade_count = session_data.get("trade_count", 0)
+    consecutive_losses = session_data.get("consecutive_losses", 0)
+    last_entry = session_data.get("last_entry_time")
+    open_count = int(phase3_state.get("open_trade_count", 0))
+
+    reports.append({
+        "name": "V14 Trades this session",
+        "value": f"{trade_count}/{MAX_TRADES_PER_SESSION}",
+        "ok": trade_count < MAX_TRADES_PER_SESSION,
+        "detail": f"max {MAX_TRADES_PER_SESSION}",
+    })
+    reports.append({
+        "name": "V14 Consecutive losses",
+        "value": f"{consecutive_losses}/{STOP_AFTER_CONSECUTIVE_LOSSES}",
+        "ok": consecutive_losses < STOP_AFTER_CONSECUTIVE_LOSSES,
+        "detail": f"stop after {STOP_AFTER_CONSECUTIVE_LOSSES}",
+    })
+    reports.append({
+        "name": "V14 Max concurrent",
+        "value": f"{open_count}/{MAX_CONCURRENT}",
+        "ok": open_count < MAX_CONCURRENT,
+        "detail": "Phase 3 open positions",
+    })
+    cooldown_ok = True
+    if last_entry:
+        try:
+            from datetime import datetime as dt
+            t = dt.fromisoformat(last_entry)
+            if t.tzinfo is None:
+                import pandas as pd
+                t = pd.Timestamp(t).tz_localize("UTC").to_pydatetime()
+            elapsed = (now_utc - t).total_seconds() / 60.0
+            cooldown_ok = elapsed >= COOLDOWN_MINUTES
+        except Exception:
+            pass
+    reports.append({
+        "name": "V14 Cooldown",
+        "value": "clear" if cooldown_ok else "active",
+        "ok": cooldown_ok,
+        "detail": f"{COOLDOWN_MINUTES} min between entries",
+    })
+    return reports
+
+
+def report_phase3_london_window(now_utc: datetime) -> dict:
+    """Report which London sub-window we're in (ARB vs LMP)."""
+    windows = _compute_session_windows(now_utc)
+    if now_utc < windows["london_open"]:
+        return {"name": "London Window", "value": "pre-open", "ok": False, "detail": "Before 08:00 UTC"}
+    if now_utc < windows["london_arb_end"]:
+        return {"name": "London Window", "value": "ARB (08:00–09:30 UTC)", "ok": True, "detail": "Asian range breakout"}
+    if now_utc < windows["london_end"]:
+        return {"name": "London Window", "value": "LMP (09:30–12:00 UTC)", "ok": True, "detail": "LMP impulse"}
+    return {"name": "London Window", "value": "closed", "ok": False, "detail": "After 12:00 UTC"}
+
+
+def report_phase3_london_caps(phase3_state: dict) -> list[dict]:
+    """London session caps: max open, ARB/LMP trade counts."""
+    reports = []
+    today = datetime.now(timezone.utc).date().isoformat()
+    session_key = f"session_london_{today}"
+    sdat = phase3_state.get(session_key, {})
+    arb = int(sdat.get("arb_trades", 0))
+    lmp = int(sdat.get("lmp_trades", 0))
+    open_count = int(phase3_state.get("open_trade_count", 0))
+
+    reports.append({
+        "name": "London Max open",
+        "value": f"{open_count}/{LDN_MAX_OPEN}",
+        "ok": open_count < LDN_MAX_OPEN,
+        "detail": "Phase 3 open positions",
+    })
+    reports.append({
+        "name": "London ARB trades",
+        "value": f"{arb}/{LDN_ARB_MAX_TRADES}",
+        "ok": arb < LDN_ARB_MAX_TRADES,
+        "detail": "Asian range breakout",
+    })
+    reports.append({
+        "name": "London LMP trades",
+        "value": f"{lmp}/{LDN_LMP_MAX_TRADES}",
+        "ok": lmp < LDN_LMP_MAX_TRADES,
+        "detail": "LMP impulse",
+    })
+    return reports
+
+
+def report_phase3_ny_caps(phase3_state: dict, now_utc: datetime) -> list[dict]:
+    """NY session caps: max open, session stop losses, cooldown."""
+    reports = []
+    today = now_utc.date().isoformat()
+    session_key = f"session_ny_{today}"
+    sdat = phase3_state.get(session_key, {})
+    trade_count = int(sdat.get("trade_count", 0))
+    consecutive_losses = int(sdat.get("consecutive_losses", 0))
+    open_count = int(phase3_state.get("open_trade_count", 0))
+
+    reports.append({
+        "name": "NY Max open",
+        "value": f"{open_count}/{V44_MAX_OPEN}",
+        "ok": open_count < V44_MAX_OPEN,
+        "detail": "Phase 3 open positions",
+    })
+    reports.append({
+        "name": "NY Session stop losses",
+        "value": f"{consecutive_losses}/{V44_SESSION_STOP_LOSSES}",
+        "ok": consecutive_losses < V44_SESSION_STOP_LOSSES,
+        "detail": f"stop after {V44_SESSION_STOP_LOSSES}",
+    })
+    return reports
