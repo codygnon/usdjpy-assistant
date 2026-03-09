@@ -196,7 +196,7 @@ def _insert_trade_for_policy(
 MIN_CLOSE_LOTS = 0.01
 
 
-def _run_trade_management(profile, adapter, store, tick) -> None:
+def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | None = None) -> None:
     """Apply breakeven and TP1 partial close for open positions we manage. Order: breakeven first, then TP1."""
     tm = getattr(profile, "trade_management", None)
     if tm is None:
@@ -849,7 +849,7 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                     trade_row=trade_row,
                     position=pos,
                     data_by_tf={},  # not available in _run_trade_management; engine uses adapter.get_bars internally if needed
-                    phase3_state=phase3_state if 'phase3_state' in dir() else {},
+                    phase3_state=phase3_state or {},
                 )
                 if p3_exit.get("action") not in ("none", None):
                     print(f"[{profile.profile_name}] Phase3 exit: pos {position_id} -> {p3_exit.get('action')}: {p3_exit.get('reason', '')}")
@@ -1544,7 +1544,7 @@ def main() -> None:
                 continue
 
             # Trade management: breakeven and TP1 partial close (only for positions we opened)
-            _run_trade_management(profile, adapter, store, tick)
+            _run_trade_management(profile, adapter, store, tick, phase3_state=phase3_state if has_phase3_integrated else None)
 
             m1_df = data_by_tf["M1"]
             m1_last_time = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
@@ -3201,6 +3201,7 @@ def main() -> None:
                         phase3_state=phase3_state,
                         store=store,
                         sizing_config=phase3_sizing if phase3_sizing else None,
+                        is_new_m1=(is_new or args.once),
                     )
                     dec = exec_result["decision"]
                     p3_state_updates = exec_result.get("phase3_state_updates", {})
@@ -3219,7 +3220,8 @@ def main() -> None:
                     if dec.attempted:
                         if dec.placed:
                             side = dec.side or "buy"
-                            entry_price = tick.ask if side == "buy" else tick.bid
+                            fill_price = getattr(dec, "fill_price", None)
+                            entry_price = float(fill_price) if fill_price is not None else (tick.ask if side == "buy" else tick.bid)
                             sl_price = exec_result.get("sl_price")
                             tp1_price = exec_result.get("tp1_price")
                             print(f"[{profile.profile_name}] TRADE PLACED: phase3_integrated:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")

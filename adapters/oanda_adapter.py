@@ -280,6 +280,8 @@ class OandaAdapter:
             raise RuntimeError(f"OANDA: no candles for {symbol} {tf}")
         rows = []
         for c in candles:
+            if c.get("complete") is False:
+                continue
             mid = c.get("mid", {})
             t = c.get("time", "")
             try:
@@ -310,6 +312,8 @@ class OandaAdapter:
         candles = data.get("candles", [])
         rows = []
         for c in candles:
+            if c.get("complete") is False:
+                continue
             mid = c.get("mid", {})
             t = c.get("time", "")
             try:

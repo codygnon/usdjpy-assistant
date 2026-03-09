@@ -3056,6 +3056,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
             divergence_state: Optional[dict] = None
             exhaustion_result: Optional[dict] = None
             temp_overrides_api: Optional[dict] = None
+            phase3_state_for_filters: Optional[dict] = None
             if _policy is not None:
                 try:
                     _adapter = _get_dashboard_adapter(profile)
@@ -3114,6 +3115,15 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         temp_overrides_api["m1_pullback_cross_ema_slow"] = _state.temp_m1_pullback_cross_ema_slow
                     if not temp_overrides_api:
                         temp_overrides_api = None
+                    if _policy_type == "phase3_integrated":
+                        try:
+                            _raw_state_path = _runtime_state_path(profile_name)
+                            _raw_state = json.loads(_raw_state_path.read_text(encoding="utf-8")) if _raw_state_path.exists() else {}
+                            _raw_phase3 = _raw_state.get("phase3_state")
+                            if isinstance(_raw_phase3, dict):
+                                phase3_state_for_filters = _raw_phase3
+                        except Exception:
+                            phase3_state_for_filters = None
                     if _policy_type == "kt_cg_trial_5" and getattr(_policy, "trend_exhaustion_enabled", False):
                         m3_df = data_by_tf.get("M3")
                         if m3_df is not None and not m3_df.empty:
@@ -3168,6 +3178,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 store=store,
                 adapter=_adapter if '_adapter' in locals() else None,
                 temp_overrides=temp_overrides_api,
+                phase3_state=phase3_state_for_filters,
             )
             filters.extend(asdict(f) for f in filter_reports)
     except Exception as e:

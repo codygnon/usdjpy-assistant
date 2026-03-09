@@ -1295,11 +1295,9 @@ def collect_phase3_context(
         compute_v44_h1_trend,
         compute_v44_m5_slope,
         compute_v44_atr_pct_filter,
-        compute_lmp_impulse,
         ADX_PERIOD,
         ATR_PERIOD,
         LONDON_START_UTC,
-        LDN_LMP_IMPULSE_MINUTES,
     )
 
     items: list[ContextItem] = []
@@ -1344,25 +1342,23 @@ def collect_phase3_context(
         items.append(ContextItem("Consecutive losses", str(sd.get("consecutive_losses", 0)), "v14"))
 
     elif session == "london":
-        items.append(ContextItem("Strategy", "London V2 (ARB + LMP)", "session"))
+        items.append(ContextItem("Strategy", "London V2 (A + D)", "session"))
         windows = _compute_session_windows(now_utc)
         if now_utc < windows["london_arb_end"]:
-            items.append(ContextItem("Window", "ARB (08:00–09:30 UTC)", "london"))
+            items.append(ContextItem("Window", "Setup A (08:00–09:30 UTC)", "london"))
         else:
-            items.append(ContextItem("Window", "LMP (09:30–12:00 UTC)", "london"))
+            items.append(ContextItem("Window", "Setup D (08:15–10:00 UTC active)", "london"))
         m1_df = data_by_tf.get("M1")
         if m1_df is not None and not m1_df.empty:
             a_hi, a_lo, a_pips, a_ok = compute_asian_range(m1_df, LONDON_START_UTC)
             items.append(ContextItem("Asian range (pips)", f"{a_pips:.1f}", "london"))
             items.append(ContextItem("Asian H/L", f"{a_hi:.3f} / {a_lo:.3f}", "london"))
-            if now_utc >= windows["lmp_impulse_end"]:
-                imp_h, imp_l, imp_dir = compute_lmp_impulse(m1_df, windows["london_open"], LDN_LMP_IMPULSE_MINUTES)
-                items.append(ContextItem("LMP direction", imp_dir or "—", "london"))
         today = now_utc.date().isoformat()
         sk = f"session_london_{today}"
         sd = phase3_state.get(sk, {})
         items.append(ContextItem("ARB trades", str(sd.get("arb_trades", 0)), "london"))
-        items.append(ContextItem("LMP trades", str(sd.get("lmp_trades", 0)), "london"))
+        items.append(ContextItem("D trades", str(sd.get("d_trades", 0)), "london"))
+        items.append(ContextItem("Total trades", str(sd.get("total_trades", 0)), "london"))
 
     elif session == "ny":
         items.append(ContextItem("Strategy", "V44 NY Momentum", "session"))
