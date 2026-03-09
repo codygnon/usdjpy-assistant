@@ -5804,8 +5804,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     )}
                   </div>
                   )}
-                  {/* Daily Level Filter (Trial #8 / Trial #9) */}
-                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8' || pol.type === 'kt_cg_trial_9') && (
+                  {/* Daily Level Filter and Exit Strategy (Trial #8 only; Trial #9 uses NTZ and has no exit_strategy) */}
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_8') && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                       Daily Level Filter (block trades near yesterday/today high/low until breakout confirmed)

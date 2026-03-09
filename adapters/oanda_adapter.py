@@ -394,9 +394,17 @@ class OandaAdapter:
         fill = data.get("orderFillTransaction")
         create = data.get("orderCreateTransaction")
         if fill:
-            trade_id = fill.get("tradeOpened", {}).get("tradeID") or fill.get("tradeOpened", {}).get("tradeID")
-            if trade_id:
-                trade_id = int(trade_id)
+            trade_opened = fill.get("tradeOpened")
+            trade_id = (
+                (trade_opened.get("tradeID") or trade_opened.get("trade_id"))
+                if isinstance(trade_opened, dict)
+                else None
+            )
+            if trade_id is not None:
+                try:
+                    trade_id = int(trade_id)
+                except (TypeError, ValueError):
+                    trade_id = None
             else:
                 trade_id = None
             fp = None

@@ -152,6 +152,9 @@ def _insert_trade_for_policy(
             position_id = adapter.get_position_id_from_deal(dec.deal_id)
         if position_id is None and dec.order_id:
             position_id = adapter.get_position_id_from_order(dec.order_id)
+        if position_id is None and dec.order_id:
+            time.sleep(1)
+            position_id = adapter.get_position_id_from_order(dec.order_id)
         trade_id = f"{policy_type}:{policy_id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}"
         row = {
             "trade_id": trade_id,
@@ -290,11 +293,14 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
         return
     # sqlite3.Row doesn't support .get(); convert to dicts for safe access
     our_trades = [dict(r) for r in store.list_open_trades(profile.profile_name)]
-    position_to_trade = {
-        row["mt5_position_id"]: row
-        for row in our_trades
-        if row.get("mt5_position_id") is not None
-    }
+    position_to_trade = {}
+    for row in our_trades:
+        pid = row.get("mt5_position_id")
+        if pid is not None:
+            try:
+                position_to_trade[int(pid)] = row
+            except (TypeError, ValueError):
+                pass
     pip = float(profile.pip_size)
     mid = (tick.bid + tick.ask) / 2.0
     current_spread = tick.ask - tick.bid
@@ -309,6 +315,7 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
             continue
         trade_row = position_to_trade.get(position_id)
         if trade_row is None:
+            print(f"[{profile.profile_name}] position {position_id}: no DB trade matched (mt5_position_id missing or mismatch)")
             continue
         trade_id = str(trade_row["trade_id"])
         entry = float(trade_row["entry_price"])
@@ -675,20 +682,21 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                             volume=close_lots,
                             position_type=position_type,
                         )
-                        # Set BE (no broker SL modification for T9 — just track in DB)
+                        # Set BE and push SL to broker so it appears on OANDA
                         _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 2.0))
                         be_offset = current_spread + _t9_be_pips * pip
                         if side == "buy":
                             be_sl = entry + be_offset
                         else:
                             be_sl = entry - be_offset
+                        adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
                         store.update_trade(trade_id, {"tp1_partial_done": 1, "breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
-                        print(f"[{profile.profile_name}] T9 TP1 partial close + BE: pos {position_id} ({t9_tp1_pct}%) BE->{be_sl:.3f}")
+                        print(f"[{profile.profile_name}] T9 TP1 partial close + BE: pos {position_id} ({t9_tp1_pct}%) SL->{be_sl:.3f}")
                     except Exception as e:
                         print(f"[{profile.profile_name}] T9 TP1/BE error pos {position_id}: {e}")
 
             elif tp1_done:
-                # Bar-close-only trailing on M1 21 EMA — only close on completed bar close crossing EMA
+                # Bar-close-only trailing on M1 EMA: update broker SL when trail moves, close on completed bar close crossing EMA
                 try:
                     _t9_trail_period = int(getattr(t9_policy, "trail_ema_period", 21))
                     m1_df_trail = adapter.get_bars(profile.symbol, "M1", 100)
@@ -700,6 +708,27 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                             # Use completed bar (iloc[-2]) for bar-close-only trailing
                             ema_val = float(trail_ema.iloc[-2])
                             last_m1_close = float(m1_close_trail.iloc[-2])
+                            # Push trailing SL to broker (same idea as T8) so SL is visible on OANDA
+                            prev_be_sl = trade_row.get("breakeven_sl_price")
+                            if prev_be_sl is not None:
+                                prev_be_sl = float(prev_be_sl)
+                            if side == "buy":
+                                new_trail_sl = ema_val - (1.0 * pip)
+                                if prev_be_sl is not None:
+                                    new_trail_sl = max(new_trail_sl, prev_be_sl)
+                            else:
+                                new_trail_sl = ema_val + (1.0 * pip)
+                                if prev_be_sl is not None:
+                                    new_trail_sl = min(new_trail_sl, prev_be_sl)
+                            if prev_be_sl is None or abs(new_trail_sl - prev_be_sl) > pip * 0.1:
+                                should_update = False
+                                if side == "buy" and (prev_be_sl is None or new_trail_sl > prev_be_sl):
+                                    should_update = True
+                                elif side == "sell" and (prev_be_sl is None or new_trail_sl < prev_be_sl):
+                                    should_update = True
+                                if should_update:
+                                    adapter.update_position_stop_loss(position_id, profile.symbol, round(new_trail_sl, 3))
+                                    store.update_trade(trade_id, {"breakeven_sl_price": round(new_trail_sl, 5)})
                             if side == "buy" and last_m1_close < ema_val:
                                 position_type = 0
                                 if isinstance(pos, dict):
