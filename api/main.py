@@ -3042,7 +3042,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 if not getattr(pol, "enabled", True):
                     continue
                 pt = getattr(pol, "type", "") or ""
-                if pt in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6", "kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9"):
+                if pt in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6", "kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9", "phase3_integrated"):
                     _policy = pol
                     _policy_type = pt
                     break
@@ -3060,8 +3060,11 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         data_by_tf["M3"] = _get_bars_cached(_adapter, profile.symbol, "M3", 3000)
                     if _policy_type in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_8", "kt_cg_trial_9"):
                         data_by_tf["D"] = _get_bars_cached(_adapter, profile.symbol, "D", 2)
-                    if _policy_type in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9"):
+                    if _policy_type in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9", "phase3_integrated"):
                         data_by_tf["M5"] = _get_bars_cached(_adapter, profile.symbol, "M5", 2000)
+                    if _policy_type == "phase3_integrated":
+                        data_by_tf["M15"] = _get_bars_cached(_adapter, profile.symbol, "M15", 2000)
+                        data_by_tf["D"] = _get_bars_cached(_adapter, profile.symbol, "D", 5)
                     if _policy_type == "kt_cg_trial_9":
                         data_by_tf["W"] = _get_bars_cached(_adapter, profile.symbol, "W", 2)
                         data_by_tf["MN"] = _get_bars_cached(_adapter, profile.symbol, "MN", 2)

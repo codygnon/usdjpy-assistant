@@ -519,6 +519,39 @@ def build_dashboard_filters(
             except Exception:
                 pass
 
+    elif policy_type == "phase3_integrated" and policy is not None:
+        from core.phase3_integrated_engine import (
+            classify_session, compute_bb_width_regime, _compute_adx, _compute_atr,
+            report_phase3_session, report_phase3_strategy, report_phase3_regime,
+            report_phase3_adx, report_phase3_atr,
+            ADX_PERIOD, ATR_PERIOD, ATR_MAX, MAX_ENTRY_SPREAD_PIPS,
+        )
+        from datetime import datetime, timezone as tz
+        now_utc = datetime.now(tz.utc)
+        session = classify_session(now_utc)
+        filters.append(report_phase3_session(now_utc))
+        filters.append(report_phase3_strategy(session))
+        # Spread check
+        spread_ok = (tick.ask - tick.bid) / pip_size <= MAX_ENTRY_SPREAD_PIPS
+        filters.append({
+            "name": "Allowed to Trade",
+            "value": "yes" if (session is not None and spread_ok) else "no",
+            "ok": session is not None and spread_ok,
+            "detail": f"session={'yes' if session else 'no'}, spread={'ok' if spread_ok else 'wide'}",
+        })
+        m5_df = data_by_tf.get("M5")
+        if m5_df is not None and not m5_df.empty and len(m5_df) >= 130:
+            regime = compute_bb_width_regime(m5_df)
+            filters.append(report_phase3_regime(regime))
+        m15_df = data_by_tf.get("M15")
+        if m15_df is not None and not m15_df.empty and len(m15_df) >= ADX_PERIOD + 2:
+            adx_val = _compute_adx(m15_df, ADX_PERIOD)
+            filters.append(report_phase3_adx(adx_val))
+            atr_series = _compute_atr(m15_df, ATR_PERIOD)
+            import pandas as _pd
+            atr_val = float(atr_series.iloc[-1]) if _pd.notna(atr_series.iloc[-1]) else 0.0
+            filters.append(report_phase3_atr(atr_val))
+
     elif policy_type == "uncle_parsh_h1_breakout" and policy is not None:
         level_state = eval_result.get("level_updates", []) if eval_result else []
         filters.append(report_h1_levels(policy, data_by_tf, level_state))

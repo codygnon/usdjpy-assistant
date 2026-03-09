@@ -44,6 +44,7 @@ class PresetId(str, Enum):
     KT_CG_TRIAL_9 = "kt_cg_trial_9"
     M5_M1_EMA_CROSS_9_21 = "m5_m1_ema_cross_9_21"
     UNCLE_PARSH_H1_BREAKOUT = "uncle_parsh_h1_breakout"
+    PHASE3_INTEGRATED_USD_JPY = "phase3_integrated_usd_jpy"
 
 
 # ---------------------------------------------------------------------------
@@ -2030,6 +2031,54 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "scale_out_pct": 50.0,
                     "initial_sl_spread_plus_pips": 5.0,
                     "max_spread_pips": 3.0,
+                },
+            ],
+        },
+    },
+
+    PresetId.PHASE3_INTEGRATED_USD_JPY: {
+        "name": "Phase 3 Integrated (Tokyo V14 Mean Reversion)",
+        "description": "Multi-session integrated engine. Tokyo: V14 Fibonacci-pivot mean reversion with BB regime filter, PSAR confluence, RSI, ADX/ATR gates. London V2 and NY V5 stubbed for follow-up.",
+        "pros": [
+            "Research-grade V14 parameters hardcoded from walk-forward optimization",
+            "Partial TP at ATR*0.5, trailing stop, time decay, session-end force close",
+            "Risk-based sizing from OANDA equity, max 3 concurrent positions",
+        ],
+        "cons": [
+            "Tokyo session only (Tue/Wed/Fri 16:00-22:00 UTC) in this increment",
+            "No configurable UI — all parameters hardcoded in engine",
+        ],
+        "risk": {
+            "max_lots": 5.0,
+            "require_stop": True,
+            "min_stop_pips": 12,
+            "max_spread_pips": 5,
+            "max_trades_per_day": 20,
+            "max_open_trades": 6,
+            "cooldown_minutes_after_loss": 0,
+        },
+        "strategy": {
+            "filters": {
+                "alignment": {"enabled": False},
+                "ema_stack_filter": {"enabled": False},
+                "atr_filter": {"enabled": False},
+                "session_filter": {"enabled": False},
+            },
+            "setups": {},
+        },
+        "trade_management": {
+            "target": {"mode": "fixed_pips", "pips_default": 8.0},
+            "stop_loss": None,
+            "breakeven": {"enabled": False},
+        },
+        "execution": {
+            "loop_poll_seconds": 5.0,
+            "loop_poll_seconds_fast": 2.0,
+            "policies": [
+                {
+                    "type": "phase3_integrated",
+                    "id": "phase3_integrated_v14",
+                    "enabled": True,
                 },
             ],
         },

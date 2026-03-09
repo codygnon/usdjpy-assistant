@@ -494,8 +494,9 @@ class OandaAdapter:
         comment: str = "",
     ) -> OrderResult:
         aid = self._get_account_id()
-        # OANDA: ticket is trade_id; close by units (all = close full)
-        units = str(int(round(volume * 100_000)))
+        # OANDA: ticket is trade_id; close by units. Min 1000 units (0.01 lots) for forex.
+        raw_units = int(round(volume * 100_000))
+        units = str(max(1000, raw_units)) if raw_units > 0 else "1000"
         if position_type == 1:  # SELL position
             units = "-" + units
         data = self._req("PUT", f"/v3/accounts/{aid}/trades/{ticket}/close", json={"units": units})

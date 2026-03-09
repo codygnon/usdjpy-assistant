@@ -1136,6 +1136,14 @@ class ExecutionPolicyUncleParshH1Breakout(BaseModel):
     max_spread_pips: float = 3.0
 
 
+class ExecutionPolicyPhase3Integrated(BaseModel):
+    """Phase 3 Integrated multi-session engine (all params hardcoded in engine code)."""
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["phase3_integrated"] = "phase3_integrated"
+    id: str = "phase3_integrated_default"
+    enabled: bool = False
+
+
 ExecutionPolicy = Annotated[
     Union[
         ExecutionPolicyConfirmedCross,
@@ -1157,6 +1165,7 @@ ExecutionPolicy = Annotated[
         ExecutionPolicyKtCgTrial9,
         ExecutionPolicyKtCgTrial6,
         ExecutionPolicyUncleParshH1Breakout,
+        ExecutionPolicyPhase3Integrated,
     ],
     Field(discriminator="type"),
 ]

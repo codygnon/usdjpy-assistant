@@ -189,6 +189,10 @@ def _insert_trade_for_policy(
         pass
 
 
+# Minimum partial-close size (lots). OANDA typically requires >= 1000 units = 0.01 lots.
+MIN_CLOSE_LOTS = 0.01
+
+
 def _run_trade_management(profile, adapter, store, tick) -> None:
     """Apply breakeven and TP1 partial close for open positions we manage. Order: breakeven first, then TP1."""
     tm = getattr(profile, "trade_management", None)
@@ -587,6 +591,9 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                     else:
                         current_lots = float(getattr(pos, "volume", 0) or 0)
                     close_lots = current_lots * (float(t8_tp1_pct) / 100.0)
+                    close_lots = max(MIN_CLOSE_LOTS, min(close_lots, current_lots))
+                    if close_lots < 1e-6:
+                        close_lots = min(MIN_CLOSE_LOTS, current_lots)
                     position_type = 1 if side == "sell" else 0
                     try:
                         adapter.close_position(
@@ -595,17 +602,21 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                             volume=close_lots,
                             position_type=position_type,
                         )
-                        _ov_be_pips = t8_tm_overrides.get("be_spread_plus_pips", t8_policy.be_spread_plus_pips)
-                        be_offset = current_spread + _ov_be_pips * pip
-                        if side == "buy":
-                            be_sl = entry + be_offset
-                        else:
-                            be_sl = entry - be_offset
+                        print(f"[{profile.profile_name}] T8 TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t8_tp1_pct}%)")
+                    except Exception as e:
+                        print(f"[{profile.profile_name}] T8 TP1 partial close error pos {position_id}: {e}")
+                    _ov_be_pips = t8_tm_overrides.get("be_spread_plus_pips", t8_policy.be_spread_plus_pips)
+                    be_offset = current_spread + _ov_be_pips * pip
+                    if side == "buy":
+                        be_sl = entry + be_offset
+                    else:
+                        be_sl = entry - be_offset
+                    try:
                         adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
                         store.update_trade(trade_id, {"tp1_partial_done": 1, "breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
-                        print(f"[{profile.profile_name}] T8 TP1 partial close + BE: pos {position_id} ({t8_tp1_pct}%) SL->{be_sl:.3f}")
+                        print(f"[{profile.profile_name}] T8 BE: pos {position_id} SL->{be_sl:.3f}")
                     except Exception as e:
-                        print(f"[{profile.profile_name}] T8 TP1/BE error pos {position_id}: {e}")
+                        print(f"[{profile.profile_name}] T8 BE error pos {position_id}: {e}")
 
             elif tp1_done:
                 try:
@@ -674,6 +685,9 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                     else:
                         current_lots = float(getattr(pos, "volume", 0) or 0)
                     close_lots = current_lots * (t9_tp1_pct / 100.0)
+                    close_lots = max(MIN_CLOSE_LOTS, min(close_lots, current_lots))
+                    if close_lots < 1e-6:
+                        close_lots = min(MIN_CLOSE_LOTS, current_lots)
                     position_type = 1 if side == "sell" else 0
                     try:
                         adapter.close_position(
@@ -682,18 +696,22 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                             volume=close_lots,
                             position_type=position_type,
                         )
-                        # Set BE and push SL to broker so it appears on OANDA
-                        _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 2.0))
-                        be_offset = current_spread + _t9_be_pips * pip
-                        if side == "buy":
-                            be_sl = entry + be_offset
-                        else:
-                            be_sl = entry - be_offset
+                        print(f"[{profile.profile_name}] T9 TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t9_tp1_pct}%)")
+                    except Exception as e:
+                        print(f"[{profile.profile_name}] T9 TP1 partial close error pos {position_id}: {e}")
+                    # Always set BE and push SL to broker when TP1 level is reached (so SL appears on OANDA even if partial close failed)
+                    _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 2.0))
+                    be_offset = current_spread + _t9_be_pips * pip
+                    if side == "buy":
+                        be_sl = entry + be_offset
+                    else:
+                        be_sl = entry - be_offset
+                    try:
                         adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
                         store.update_trade(trade_id, {"tp1_partial_done": 1, "breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
-                        print(f"[{profile.profile_name}] T9 TP1 partial close + BE: pos {position_id} ({t9_tp1_pct}%) SL->{be_sl:.3f}")
+                        print(f"[{profile.profile_name}] T9 BE: pos {position_id} SL->{be_sl:.3f}")
                     except Exception as e:
-                        print(f"[{profile.profile_name}] T9 TP1/BE error pos {position_id}: {e}")
+                        print(f"[{profile.profile_name}] T9 BE error pos {position_id}: {e}")
 
             elif tp1_done:
                 # Bar-close-only trailing on M1 EMA: update broker SL when trail moves, close on completed bar close crossing EMA
@@ -811,6 +829,25 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
                                         print(f"[{profile.profile_name}] T9 Kill Switch: closed {label} pos {position_id} (M1 close {last_m1_close_ks:.3f} vs EMA200 {last_ema200:.3f})")
                 except Exception as e:
                     print(f"[{profile.profile_name}] T9 Kill Switch error pos {position_id}: {e}")
+
+        # 2d) Phase 3 Integrated trade management
+        elif entry_type is not None and str(entry_type).startswith("phase3:"):
+            try:
+                from core.phase3_integrated_engine import manage_phase3_exit
+                p3_exit = manage_phase3_exit(
+                    adapter=adapter,
+                    profile=profile,
+                    store=store,
+                    tick=tick,
+                    trade_row=trade_row,
+                    position=pos,
+                    data_by_tf={},  # not available in _run_trade_management; engine uses adapter.get_bars internally if needed
+                    phase3_state=phase3_state if 'phase3_state' in dir() else {},
+                )
+                if p3_exit.get("action") not in ("none", None):
+                    print(f"[{profile.profile_name}] Phase3 exit: pos {position_id} -> {p3_exit.get('action')}: {p3_exit.get('reason', '')}")
+            except Exception as e:
+                print(f"[{profile.profile_name}] Phase3 exit error pos {position_id}: {e}")
 
         # 2) TP1 partial close (for non-uncle_parsh policies)
         elif target and getattr(target, "mode", None) == "scaled":
@@ -1297,6 +1334,10 @@ def main() -> None:
             getattr(p, "type", None) == "kt_cg_trial_9" and getattr(p, "enabled", True)
             for p in profile.execution.policies
         )
+        has_phase3_integrated = any(
+            getattr(p, "type", None) == "phase3_integrated" and getattr(p, "enabled", True)
+            for p in profile.execution.policies
+        )
         # Confirmed-cross setups can now use M5; detect if any do so we fetch M5 bars.
         m5_cross_setup_ids = {
             sid
@@ -1377,6 +1418,15 @@ def main() -> None:
                     use_monthly_hl=bool(getattr(t9_policy, "ntz_use_monthly_hl", True)),
                 )
 
+        # Phase 3 Integrated state (pivots, session counters, open trade tracking)
+        phase3_state: dict = {}
+        if has_phase3_integrated:
+            try:
+                _p3_init = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                phase3_state = _p3_init.get("phase3_state", {})
+            except Exception:
+                phase3_state = {}
+
         def _get_bars_cached(symbol: str, tf: str, count: int) -> pd.DataFrame:
             """Fetch bars with caching to reduce API calls at fast poll rates."""
             now = time.time()
@@ -1432,13 +1482,13 @@ def main() -> None:
                         "M1": _get_bars_cached(profile.symbol, "M1", 3000),
                     }
                     # Fetch M5 data when needed by ema_pullback, kt_cg_ctp, kt_cg_hybrid, M5 confirmed-cross, or uncle_parsh.
-                    if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_uncle_parsh:
+                    if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_uncle_parsh or has_phase3_integrated:
                         data_by_tf["M5"] = _get_bars_cached(profile.symbol, "M5", 2000)
                     # Fetch M3 data when needed by kt_cg_trial_4/5/6 (trend detection).
                     if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6:
                         data_by_tf["M3"] = _get_bars_cached(profile.symbol, "M3", 3000)
                     # Fetch D1 data when needed by daily H/L filter (Trial #4/5/8/9).
-                    if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_8 or has_kt_cg_trial_9:
+                    if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_phase3_integrated:
                         data_by_tf["D"] = _get_bars_cached(profile.symbol, "D", 5)
                     # Fetch W and MN data for Trial #9 NTZ (non-fatal if unavailable).
                     if has_kt_cg_trial_9:
@@ -3087,9 +3137,100 @@ def main() -> None:
                 # Update M5 time tracker
                 _run_trade_management._last_m5_time_up = m5_last_time_up
 
+            # Phase 3 Integrated execution
+            if has_phase3_integrated:
+                p3_mkt = mkt
+                if p3_mkt is None:
+                    spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
+                    p3_mkt = MarketContext(spread_pips=float(spread_pips), alignment_score=0)
+
+                # Count open Phase 3 trades from broker positions
+                try:
+                    p3_open_positions = adapter.get_open_positions(profile.symbol)
+                    p3_open_count = 0
+                    for _p3pos in (p3_open_positions or []):
+                        _p3_comment = ""
+                        if isinstance(_p3pos, dict):
+                            _p3_ce = _p3pos.get("clientExtensions") or _p3pos.get("tradeClientExtensions")
+                            if isinstance(_p3_ce, dict):
+                                _p3_comment = str(_p3_ce.get("comment") or "")
+                        if "phase3_integrated" in _p3_comment:
+                            p3_open_count += 1
+                    phase3_state["open_trade_count"] = p3_open_count
+                except Exception:
+                    pass
+
+                for pol in profile.execution.policies:
+                    pol_type = getattr(pol, "type", None)
+                    if not getattr(pol, "enabled", True) or pol_type != "phase3_integrated":
+                        continue
+
+                    from core.phase3_integrated_engine import execute_phase3_integrated_policy_demo_only
+                    exec_result = execute_phase3_integrated_policy_demo_only(
+                        adapter=adapter,
+                        profile=profile,
+                        log_dir=log_dir,
+                        policy=pol,
+                        context=p3_mkt,
+                        data_by_tf=data_by_tf,
+                        tick=tick,
+                        mode=mode,
+                        phase3_state=phase3_state,
+                        store=store,
+                    )
+                    dec = exec_result["decision"]
+                    p3_state_updates = exec_result.get("phase3_state_updates", {})
+                    strategy_tag = exec_result.get("strategy_tag")
+
+                    # Persist state updates
+                    if p3_state_updates:
+                        phase3_state.update(p3_state_updates)
+                        try:
+                            current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                            current_state_data["phase3_state"] = phase3_state
+                            state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
+                        except Exception as e:
+                            print(f"[{profile.profile_name}] Failed to persist phase3_state: {e}")
+
+                    if dec.attempted:
+                        if dec.placed:
+                            side = dec.side or "buy"
+                            entry_price = tick.ask if side == "buy" else tick.bid
+                            sl_price = exec_result.get("sl_price")
+                            tp1_price = exec_result.get("tp1_price")
+                            print(f"[{profile.profile_name}] TRADE PLACED: phase3_integrated:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
+                            _insert_trade_for_policy(
+                                profile=profile,
+                                adapter=adapter,
+                                store=store,
+                                policy_type="phase3_integrated",
+                                policy_id=pol.id,
+                                side=side,
+                                entry_price=entry_price,
+                                dec=dec,
+                                stop_price=sl_price,
+                                target_price=tp1_price,
+                                entry_type=strategy_tag,
+                            )
+                            _append_trade_open_event(
+                                log_dir, f"phase3_integrated:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
+                                side, entry_price,
+                                trigger_type=strategy_tag or "",
+                                entry_type=strategy_tag or "",
+                            )
+                        else:
+                            print(f"[{profile.profile_name}] phase3 {pol.id} mode={mode} -> {dec.reason}")
+
+                    _build_and_write_dashboard(
+                        profile=profile, store=store, log_dir=log_dir, tick=tick,
+                        data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
+                        policy_type="phase3_integrated",
+                        eval_result=exec_result,
+                    )
+
             # Catch-all dashboard write for profiles not using KT/CG policy types.
             # Runs every poll cycle so positions + prices are always fresh.
-            if not (has_kt_cg_hybrid or has_kt_cg_ctp or has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6 or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_uncle_parsh):
+            if not (has_kt_cg_hybrid or has_kt_cg_ctp or has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6 or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_uncle_parsh or has_phase3_integrated):
                 if tick is not None and data_by_tf is not None:
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,
