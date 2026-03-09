@@ -4988,11 +4988,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
           }
           updates.m1_zone_entry_price_ema_period = Math.max(2, Math.min(50, editedSettings.t8_m1_zone_entry_price_ema_period));
           updates.tier_ema_periods = sanitizeTrial9TierPeriods(editedSettings.tier_ema_periods);
-          updates.spread_aware_be_enabled = editedSettings.spread_aware_be_enabled;
-          updates.spread_aware_be_trigger_mode = 'spread_relative';
-          updates.spread_aware_be_spread_buffer_pips = Math.max(0, editedSettings.spread_aware_be_spread_buffer_pips);
-          updates.spread_aware_be_apply_to_zone_entry = editedSettings.spread_aware_be_apply_to_zone_entry;
-          updates.spread_aware_be_apply_to_tiered_pullback = editedSettings.spread_aware_be_apply_to_tiered_pullback;
+          // Trial #9 has one exit system only: TP1 partial + BE + trailing SL (no spread-aware BE)
           updates.max_open_trades_per_side = Math.max(1, editedSettings.max_open_trades_per_side);
           updates.max_zone_entry_open = Math.max(1, editedSettings.max_zone_entry_open);
           updates.max_tiered_pullback_open = Math.max(1, editedSettings.max_tiered_pullback_open);
@@ -5094,7 +5090,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         let out = Object.keys(updates).length > 0 ? { ...pol, ...updates } : pol;
         // Trial #9 schema forbids extra fields: ensure we never send sl_pips or use_daily_level_filter (or T8-only exit fields)
         if (out.type === 'kt_cg_trial_9') {
-          const disallowed = ['sl_pips', 'use_daily_level_filter', 'daily_level_buffer_pips', 'daily_level_breakout_candles_required', 'exit_strategy', 'm1_exit_ema_fast', 'm1_exit_ema_slow', 'scale_out_pct', 'initial_sl_spread_plus_pips'];
+          const disallowed = ['sl_pips', 'use_daily_level_filter', 'daily_level_buffer_pips', 'daily_level_breakout_candles_required', 'exit_strategy', 'm1_exit_ema_fast', 'm1_exit_ema_slow', 'scale_out_pct', 'initial_sl_spread_plus_pips', 'spread_aware_be_enabled', 'spread_aware_be_trigger_mode', 'spread_aware_be_spread_buffer_pips', 'spread_aware_be_apply_to_zone_entry', 'spread_aware_be_apply_to_tiered_pullback'];
           disallowed.forEach(k => delete (out as Record<string, unknown>)[k]);
         }
         return out;
@@ -6815,7 +6811,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     </div>
                   </div>
                   )}
-                  {/* Spread-Aware Breakeven */}
+                  {/* Spread-Aware Breakeven (Trial #4/5/6/7/8 only; Trial #9 has single exit: TP1 + BE + trail) */}
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => ['kt_cg_trial_4', 'kt_cg_trial_5', 'kt_cg_trial_6', 'kt_cg_trial_7', 'kt_cg_trial_8'].includes((pol.type as string) || '')) && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                       Spread-Aware Breakeven Stop Loss
@@ -6900,6 +6897,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       SL = entry ± current spread. Ratchets favorably (never moves back toward entry).
                     </div>
                   </div>
+                  )}
                 </>
               )}
               {/* EMA Override Settings (for kt_cg_counter_trend_pullback / Trial #3) */}
@@ -7500,8 +7498,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     </div>
                   </div>
 
-                  {/* Section 6: Spread-Aware BE + Risk */}
+                  {/* Section 6: Spread-Aware BE (T4/5/6/7/8 only) + Risk */}
                   <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                    {(execution?.policies as Record<string, unknown>[])?.some(pol => ['kt_cg_trial_4', 'kt_cg_trial_5', 'kt_cg_trial_6', 'kt_cg_trial_7', 'kt_cg_trial_8'].includes((pol.type as string) || '')) && (
+                    <>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, fontWeight: 600 }}>Spread-Aware Breakeven</div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 8 }}>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
@@ -7521,6 +7521,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         Apply to EMA Tier
                       </label>
                     </div>
+                    </>
+                    )}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max Open Trades Per Side</div>

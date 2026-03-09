@@ -1,19 +1,36 @@
 """
-Phase 3 Integrated Engine – Tokyo V14 Mean Reversion.
+Phase 3 Integrated Engine.
 
-All parameters from research_out/tokyo_optimized_v14_realism_maxopen3_walkforward_config.json
-are hardcoded as module-level constants.  London V2 and NY V5 are stubbed.
+Single policy routes by UTC session:
+- Tokyo: V14 mean reversion
+- London: London V2 (ARB + LMP)
+- NY: V44 session momentum
 """
 from __future__ import annotations
 
 import math
 import re
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
 import pandas as pd
+
+try:
+    from core.execution_engine import ExecutionDecision
+except Exception:  # pragma: no cover - runtime fallback
+    @dataclass(frozen=True)
+    class ExecutionDecision:  # type: ignore[no-redef]
+        attempted: bool
+        placed: bool
+        reason: str
+        order_retcode: Optional[int] = None
+        order_id: Optional[int] = None
+        deal_id: Optional[int] = None
+        side: Optional[str] = None
+        fill_price: Optional[float] = None
 
 # ---------------------------------------------------------------------------
 # Session constants
@@ -21,6 +38,14 @@ import pandas as pd
 TOKYO_START_UTC = 16  # 16:00 UTC
 TOKYO_END_UTC = 22    # 22:00 UTC
 TOKYO_ALLOWED_DAYS = {1, 2, 4}  # Tuesday=1, Wednesday=2, Friday=4  (weekday())
+
+LONDON_START_UTC = 8
+LONDON_END_UTC = 12
+LONDON_ALLOWED_DAYS = {1, 2, 3}  # Tue/Wed/Thu
+
+NY_START_UTC = 13
+NY_END_UTC = 16
+NY_ALLOWED_DAYS = {0, 1, 2, 3, 4}  # Mon-Fri
 
 # ---------------------------------------------------------------------------
 # Indicator constants
@@ -101,6 +126,80 @@ MAX_ENTRY_SPREAD_PIPS = 3.0
 
 PIP_SIZE = 0.01  # USDJPY
 
+# ---------------------------------------------------------------------------
+# London V2 constants (ARB + LMP)
+# ---------------------------------------------------------------------------
+LDN_ARB_BREAKOUT_BUFFER_PIPS = 7.0
+LDN_ARB_SL_BUFFER_PIPS = 3.0
+LDN_ARB_RANGE_MIN_PIPS = 25.0
+LDN_ARB_RANGE_MAX_PIPS = 65.0
+LDN_ARB_SL_MIN_PIPS = 15.0
+LDN_ARB_SL_MAX_PIPS = 40.0
+LDN_ARB_TP1_R = 1.0
+LDN_ARB_TP2_R = 2.0
+LDN_ARB_TP1_CLOSE_PCT = 0.5
+LDN_ARB_BE_OFFSET_PIPS = 1.0
+LDN_ARB_MAX_TRADES = 1
+
+LDN_LMP_IMPULSE_MINUTES = 90
+LDN_LMP_IMPULSE_MIN_PIPS = 20.0
+LDN_LMP_ZONE_FIB = 0.5
+LDN_LMP_SL_BUFFER_PIPS = 5.0
+LDN_LMP_SL_MIN_PIPS = 12.0
+LDN_LMP_SL_MAX_PIPS = 30.0
+LDN_LMP_TP2_EXTENSION = 0.618
+LDN_LMP_TP1_CLOSE_PCT = 0.5
+LDN_LMP_BE_OFFSET_PIPS = 1.0
+LDN_LMP_EMA_M15_PERIOD = 20
+LDN_LMP_MAX_TRADES = 1
+
+LDN_RISK_PCT = 0.0075
+LDN_MAX_OPEN = 2
+LDN_MAX_SPREAD_PIPS = 3.5
+LDN_FORCE_CLOSE_AT_NY_OPEN = True
+
+# ---------------------------------------------------------------------------
+# V44 NY constants
+# ---------------------------------------------------------------------------
+V44_H1_EMA_FAST = 20
+V44_H1_EMA_SLOW = 50
+
+V44_LONDON_START = 8.5
+V44_LONDON_END = 11.0
+V44_NY_START = 13.0
+V44_NY_END = 16.0
+
+V44_M5_EMA_FAST = 9
+V44_M5_EMA_SLOW = 21
+V44_SLOPE_BARS = 4
+V44_STRONG_SLOPE = 0.5
+V44_LONDON_STRONG_SLOPE = 0.6
+V44_MIN_BODY_PIPS = 1.5
+
+V44_SL_LOOKBACK = 6
+V44_SL_BUFFER_PIPS = 1.5
+V44_SL_FLOOR_PIPS = 7.0
+V44_SL_CAP_PIPS = 9.0
+
+V44_STRONG_TP1_PIPS = 2.0
+V44_STRONG_TP2_PIPS = 5.0
+V44_STRONG_TP1_CLOSE_PCT = 0.3
+V44_STRONG_TRAIL_BUFFER = 4.0
+V44_LONDON_TP1_PIPS = 1.2
+V44_LONDON_TRAIL_BUFFER = 2.0
+
+V44_RISK_PCT = 0.005
+V44_MAX_OPEN = 3
+V44_MAX_ENTRIES_DAY = 7
+V44_COOLDOWN_WIN = 1
+V44_COOLDOWN_LOSS = 1
+V44_SESSION_STOP_LOSSES = 3
+V44_BE_OFFSET_PIPS = 0.5
+V44_MAX_ENTRY_SPREAD = 3.0
+
+V44_ATR_PCT_CAP = 0.67
+V44_ATR_PCT_LOOKBACK = 200
+
 
 # ===================================================================
 #  Session classifier
@@ -109,10 +208,16 @@ PIP_SIZE = 0.01  # USDJPY
 def classify_session(now_utc: datetime) -> Optional[str]:
     """Return 'tokyo', 'london', 'ny', or None."""
     hour = now_utc.hour
+    minute = now_utc.minute
     weekday = now_utc.weekday()
+    hour_frac = hour + minute / 60.0
+
     if TOKYO_START_UTC <= hour < TOKYO_END_UTC and weekday in TOKYO_ALLOWED_DAYS:
         return "tokyo"
-    # London / NY stubs — not active this increment
+    if LONDON_START_UTC <= hour_frac < LONDON_END_UTC and weekday in LONDON_ALLOWED_DAYS:
+        return "london"
+    if NY_START_UTC <= hour_frac < NY_END_UTC and weekday in NY_ALLOWED_DAYS:
+        return "ny"
     return None
 
 
@@ -443,6 +548,519 @@ def compute_v14_lot_size(
     return int(math.floor(units))
 
 
+def _compute_ema(series: pd.Series, period: int) -> pd.Series:
+    return series.astype(float).ewm(span=period, adjust=False).mean()
+
+
+def _compute_session_windows(now_utc: datetime) -> dict[str, datetime]:
+    d0 = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+    return {
+        "day_start": d0,
+        "london_open": d0.replace(hour=LONDON_START_UTC, minute=0),
+        "london_arb_end": d0.replace(hour=LONDON_START_UTC, minute=0) + pd.Timedelta(minutes=90),
+        "lmp_impulse_end": d0.replace(hour=LONDON_START_UTC, minute=0) + pd.Timedelta(minutes=LDN_LMP_IMPULSE_MINUTES),
+        "london_end": d0.replace(hour=LONDON_END_UTC, minute=0),
+        "ny_open": d0.replace(hour=NY_START_UTC, minute=0),
+        "ny_end": d0.replace(hour=NY_END_UTC, minute=0),
+    }
+
+
+def compute_asian_range(m1_df: pd.DataFrame, london_open_utc_hour: int) -> tuple[float, float, float, bool]:
+    """Return (high, low, range_pips, is_valid)."""
+    if m1_df is None or m1_df.empty:
+        return np.nan, np.nan, 0.0, False
+    d = m1_df.copy()
+    d["time"] = pd.to_datetime(d["time"], utc=True, errors="coerce")
+    d = d.dropna(subset=["time"])
+    if d.empty:
+        return np.nan, np.nan, 0.0, False
+    now = pd.Timestamp(d["time"].iloc[-1])
+    if now.tzinfo is None:
+        now = now.tz_localize("UTC")
+    else:
+        now = now.tz_convert("UTC")
+    day_start = now.floor("D")
+    london_open = day_start + pd.Timedelta(hours=london_open_utc_hour)
+    w = d[(d["time"] >= day_start) & (d["time"] < london_open)]
+    if w.empty:
+        return np.nan, np.nan, 0.0, False
+    high = float(w["high"].max())
+    low = float(w["low"].min())
+    pips = (high - low) / PIP_SIZE
+    is_valid = LDN_ARB_RANGE_MIN_PIPS <= pips <= LDN_ARB_RANGE_MAX_PIPS
+    return high, low, pips, bool(is_valid)
+
+
+def compute_lmp_impulse(
+    m1_df: pd.DataFrame,
+    session_start_utc: datetime,
+    impulse_minutes: int,
+) -> tuple[float, float, Optional[str]]:
+    """Return (impulse_high, impulse_low, direction). direction in {'up','down',None}."""
+    if m1_df is None or m1_df.empty:
+        return np.nan, np.nan, None
+    d = m1_df.copy()
+    d["time"] = pd.to_datetime(d["time"], utc=True, errors="coerce")
+    d = d.dropna(subset=["time"]).sort_values("time")
+    sess_start = pd.Timestamp(session_start_utc)
+    if sess_start.tzinfo is None:
+        sess_start = sess_start.tz_localize("UTC")
+    else:
+        sess_start = sess_start.tz_convert("UTC")
+    end = sess_start + pd.Timedelta(minutes=impulse_minutes)
+    w = d[(d["time"] >= sess_start) & (d["time"] < end)]
+    if w.empty:
+        return np.nan, np.nan, None
+    impulse_high = float(w["high"].max())
+    impulse_low = float(w["low"].min())
+    impulse_pips = (impulse_high - impulse_low) / PIP_SIZE
+    if impulse_pips < LDN_LMP_IMPULSE_MIN_PIPS:
+        return impulse_high, impulse_low, None
+    sub_open = float(w["open"].iloc[0])
+    sub_close = float(w["close"].iloc[-1])
+    t_h = pd.Timestamp(w.loc[w["high"].idxmax(), "time"])
+    t_l = pd.Timestamp(w.loc[w["low"].idxmin(), "time"])
+    bull = sub_close > sub_open and t_l < t_h
+    bear = sub_close < sub_open and t_h < t_l
+    direction = "up" if bull else "down" if bear else None
+    return impulse_high, impulse_low, direction
+
+
+def compute_lmp_zone(impulse_high: float, impulse_low: float, direction: str | None, fib_ratio: float) -> tuple[float, float]:
+    if direction == "up":
+        fib50 = impulse_low + (impulse_high - impulse_low) * fib_ratio
+    elif direction == "down":
+        fib50 = impulse_high - (impulse_high - impulse_low) * fib_ratio
+    else:
+        return np.nan, np.nan
+    zone_top = max(fib50, fib50)
+    zone_bottom = min(fib50, fib50)
+    return float(zone_top), float(zone_bottom)
+
+
+def _compute_risk_units(equity: float, risk_pct: float, sl_pips: float, entry_price: float, pip_size: float, max_units: int = MAX_UNITS) -> int:
+    if equity <= 0 or risk_pct <= 0 or sl_pips <= 0 or entry_price <= 0:
+        return 0
+    pip_value_per_unit = pip_size / entry_price
+    units = (equity * risk_pct) / (sl_pips * pip_value_per_unit)
+    units = min(units, float(max_units))
+    return int(math.floor(max(0.0, units)))
+
+
+def evaluate_london_v2_arb(
+    m1_df: pd.DataFrame,
+    tick,
+    asian_high: float,
+    asian_low: float,
+    pip_size: float,
+    session_state: dict,
+) -> tuple[Optional[str], str]:
+    if m1_df is None or len(m1_df) < 2:
+        return None, "london_arb: insufficient M1"
+    if int(session_state.get("arb_trades", 0)) >= LDN_ARB_MAX_TRADES:
+        return None, "london_arb: max trades reached"
+    row = m1_df.iloc[-1]
+    close = float(row["close"])
+    if close > asian_high + LDN_ARB_BREAKOUT_BUFFER_PIPS * pip_size:
+        return "buy", "london_arb: breakout above asian high"
+    if close < asian_low - LDN_ARB_BREAKOUT_BUFFER_PIPS * pip_size:
+        return "sell", "london_arb: breakout below asian low"
+    return None, "london_arb: no breakout"
+
+
+def evaluate_london_v2_lmp(
+    m1_df: pd.DataFrame,
+    m15_df: pd.DataFrame,
+    tick,
+    impulse_direction: str | None,
+    zone_top: float,
+    zone_bottom: float,
+    pip_size: float,
+    session_state: dict,
+) -> tuple[Optional[str], str]:
+    if m1_df is None or len(m1_df) < 2 or m15_df is None or len(m15_df) < LDN_LMP_EMA_M15_PERIOD + 2:
+        return None, "london_lmp: insufficient data"
+    if impulse_direction is None:
+        return None, "london_lmp: no valid impulse"
+    if int(session_state.get("lmp_trades", 0)) >= LDN_LMP_MAX_TRADES:
+        return None, "london_lmp: max trades reached"
+
+    m15_close = m15_df["close"].astype(float)
+    ema20 = float(_compute_ema(m15_close, LDN_LMP_EMA_M15_PERIOD).iloc[-1])
+
+    row = m1_df.iloc[-1]
+    hi = float(row["high"])
+    lo = float(row["low"])
+    close = float(row["close"])
+    if impulse_direction == "up":
+        touched = lo <= zone_top + 0.1 * pip_size
+        if touched and close > zone_top and close > ema20:
+            return "buy", "london_lmp: bullish pullback confirmation"
+    elif impulse_direction == "down":
+        touched = hi >= zone_bottom - 0.1 * pip_size
+        if touched and close < zone_bottom and close < ema20:
+            return "sell", "london_lmp: bearish pullback confirmation"
+    return None, "london_lmp: no pullback signal"
+
+
+def compute_v44_h1_trend(h1_df: pd.DataFrame) -> str | None:
+    if h1_df is None or len(h1_df) < max(V44_H1_EMA_FAST, V44_H1_EMA_SLOW) + 2:
+        return None
+    close = h1_df["close"].astype(float)
+    ema_fast = _compute_ema(close, V44_H1_EMA_FAST)
+    ema_slow = _compute_ema(close, V44_H1_EMA_SLOW)
+    if float(ema_fast.iloc[-1]) > float(ema_slow.iloc[-1]):
+        return "up"
+    if float(ema_fast.iloc[-1]) < float(ema_slow.iloc[-1]):
+        return "down"
+    return None
+
+
+def compute_v44_m5_slope(m5_df: pd.DataFrame, slope_bars: int) -> float:
+    if m5_df is None or len(m5_df) < max(V44_M5_EMA_FAST, V44_M5_EMA_SLOW) + slope_bars + 2:
+        return 0.0
+    ema_fast = _compute_ema(m5_df["close"].astype(float), V44_M5_EMA_FAST)
+    now = float(ema_fast.iloc[-1])
+    prev = float(ema_fast.iloc[-1 - slope_bars])
+    return (now - prev) / PIP_SIZE / max(1, slope_bars)
+
+
+def classify_v44_strength(slope: float, is_london: bool) -> str:
+    threshold = V44_LONDON_STRONG_SLOPE if is_london else V44_STRONG_SLOPE
+    return "strong" if abs(slope) >= threshold else "normal"
+
+
+def compute_v44_atr_pct_filter(m5_df: pd.DataFrame) -> bool:
+    if m5_df is None or len(m5_df) < V44_ATR_PCT_LOOKBACK:
+        return True
+    atr = _compute_atr(m5_df, ATR_PERIOD).dropna()
+    if len(atr) < 20:
+        return True
+    current = float(atr.iloc[-1])
+    look = atr.iloc[-V44_ATR_PCT_LOOKBACK:]
+    cutoff = float(np.quantile(look, V44_ATR_PCT_CAP))
+    return current <= cutoff
+
+
+def compute_v44_sl(side: str, m5_df: pd.DataFrame, entry_price: float, pip_size: float) -> float:
+    if m5_df is None or len(m5_df) < V44_SL_LOOKBACK + 1:
+        raw_pips = V44_SL_FLOOR_PIPS
+    else:
+        w = m5_df.tail(V44_SL_LOOKBACK)
+        if side == "buy":
+            raw_sl = float(w["low"].min()) - V44_SL_BUFFER_PIPS * pip_size
+            raw_pips = (entry_price - raw_sl) / pip_size
+        else:
+            raw_sl = float(w["high"].max()) + V44_SL_BUFFER_PIPS * pip_size
+            raw_pips = (raw_sl - entry_price) / pip_size
+    sl_pips = max(V44_SL_FLOOR_PIPS, min(V44_SL_CAP_PIPS, raw_pips))
+    return entry_price - sl_pips * pip_size if side == "buy" else entry_price + sl_pips * pip_size
+
+
+def evaluate_v44_entry(
+    h1_df: pd.DataFrame,
+    m5_df: pd.DataFrame,
+    tick,
+    pip_size: float,
+    session: str,
+    session_state: dict,
+) -> tuple[Optional[str], str, str]:
+    if int(session_state.get("trade_count", 0)) >= V44_MAX_ENTRIES_DAY:
+        return None, "normal", "v44: max entries/day reached"
+    if int(session_state.get("consecutive_losses", 0)) >= V44_SESSION_STOP_LOSSES:
+        return None, "normal", "v44: consecutive loss stop"
+
+    cooldown_until = session_state.get("cooldown_until")
+    if cooldown_until:
+        try:
+            if datetime.now(timezone.utc) < datetime.fromisoformat(str(cooldown_until)):
+                return None, "normal", "v44: cooldown active"
+        except Exception:
+            pass
+
+    trend = compute_v44_h1_trend(h1_df)
+    if trend is None:
+        return None, "normal", "v44: no H1 trend"
+    if not compute_v44_atr_pct_filter(m5_df):
+        return None, "normal", "v44: ATR percentile block"
+    if m5_df is None or len(m5_df) < max(V44_M5_EMA_FAST, V44_M5_EMA_SLOW) + 4:
+        return None, "normal", "v44: insufficient M5"
+
+    close = m5_df["close"].astype(float)
+    open_ = m5_df["open"].astype(float)
+    ema_fast = _compute_ema(close, V44_M5_EMA_FAST)
+    ema_slow = _compute_ema(close, V44_M5_EMA_SLOW)
+    body_pips = abs(float(close.iloc[-1]) - float(open_.iloc[-1])) / pip_size
+    slope = compute_v44_m5_slope(m5_df, V44_SLOPE_BARS)
+    strength = classify_v44_strength(slope, is_london=False)
+    if strength != "strong":
+        return None, strength, "v44: not strong"
+
+    bullish_bar = float(close.iloc[-1]) > float(open_.iloc[-1]) and body_pips >= V44_MIN_BODY_PIPS
+    bearish_bar = float(close.iloc[-1]) < float(open_.iloc[-1]) and body_pips >= V44_MIN_BODY_PIPS
+
+    if trend == "up" and float(ema_fast.iloc[-1]) > float(ema_slow.iloc[-1]) and bullish_bar:
+        return "buy", strength, "v44: H1 up + M5 strong bullish momentum"
+    if trend == "down" and float(ema_fast.iloc[-1]) < float(ema_slow.iloc[-1]) and bearish_bar:
+        return "sell", strength, "v44: H1 down + M5 strong bearish momentum"
+    return None, strength, "v44: directional conditions not met"
+
+
+def execute_london_v2_entry(
+    *,
+    adapter,
+    profile,
+    policy,
+    data_by_tf: dict,
+    tick,
+    phase3_state: dict,
+) -> dict:
+    now_utc = datetime.now(timezone.utc)
+    pip = float(profile.pip_size) if hasattr(profile, "pip_size") else PIP_SIZE
+    no_trade = {
+        "decision": ExecutionDecision(attempted=False, placed=False, reason="", side=None),
+        "phase3_state_updates": {},
+        "strategy_tag": None,
+    }
+
+    if (tick.ask - tick.bid) / pip > LDN_MAX_SPREAD_PIPS:
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="london_v2: spread veto", side=None)
+        return no_trade
+
+    m1_df = data_by_tf.get("M1")
+    m15_df = data_by_tf.get("M15")
+    if m1_df is None or m1_df.empty or m15_df is None or m15_df.empty:
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="london_v2: missing M1/M15", side=None)
+        return no_trade
+
+    windows = _compute_session_windows(now_utc)
+    today = now_utc.date().isoformat()
+    session_key = f"session_london_{today}"
+    sdat = dict(phase3_state.get(session_key, {}))
+    sdat.setdefault("arb_trades", 0)
+    sdat.setdefault("lmp_trades", 0)
+    sdat.setdefault("consecutive_losses", 0)
+    sdat.setdefault("last_entry_time", None)
+
+    high, low, range_pips, range_ok = compute_asian_range(m1_df, LONDON_START_UTC)
+    state_updates = {
+        "london_asian_range": {"date": today, "high": high, "low": low, "pips": range_pips, "is_valid": range_ok},
+    }
+    if not range_ok:
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"london_v2: asian range invalid ({range_pips:.1f}p)", side=None)
+        no_trade["phase3_state_updates"] = state_updates
+        return no_trade
+
+    open_count = int(phase3_state.get("open_trade_count", 0))
+    if open_count >= LDN_MAX_OPEN:
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"london_v2: max open {open_count}/{LDN_MAX_OPEN}", side=None)
+        no_trade["phase3_state_updates"] = state_updates
+        return no_trade
+
+    strategy_tag = None
+    side = None
+    reason = ""
+    entry_price = 0.0
+    sl_price = None
+    tp1_price = None
+
+    if windows["london_open"] <= now_utc < windows["london_arb_end"]:
+        side, reason = evaluate_london_v2_arb(m1_df, tick, high, low, pip, sdat)
+        if side:
+            entry_price = tick.ask if side == "buy" else tick.bid
+            raw_sl = low - LDN_ARB_SL_BUFFER_PIPS * pip if side == "buy" else high + LDN_ARB_SL_BUFFER_PIPS * pip
+            sl_pips = abs(entry_price - raw_sl) / pip
+            sl_pips = max(LDN_ARB_SL_MIN_PIPS, min(LDN_ARB_SL_MAX_PIPS, sl_pips))
+            sl_price = entry_price - sl_pips * pip if side == "buy" else entry_price + sl_pips * pip
+            tp1_price = entry_price + (LDN_ARB_TP1_R * sl_pips * pip if side == "buy" else -LDN_ARB_TP1_R * sl_pips * pip)
+            strategy_tag = "phase3:london_v2_arb"
+    elif windows["lmp_impulse_end"] <= now_utc < windows["london_end"]:
+        imp_h, imp_l, imp_dir = compute_lmp_impulse(m1_df, windows["london_open"], LDN_LMP_IMPULSE_MINUTES)
+        state_updates["london_lmp_impulse"] = {"date": today, "direction": imp_dir, "high": imp_h, "low": imp_l}
+        zone_top, zone_bottom = compute_lmp_zone(imp_h, imp_l, imp_dir, LDN_LMP_ZONE_FIB)
+        side, reason = evaluate_london_v2_lmp(m1_df, m15_df, tick, imp_dir, zone_top, zone_bottom, pip, sdat)
+        if side:
+            entry_price = tick.ask if side == "buy" else tick.bid
+            signal_row = m1_df.iloc[-1]
+            raw_sl = float(signal_row["low"]) - LDN_LMP_SL_BUFFER_PIPS * pip if side == "buy" else float(signal_row["high"]) + LDN_LMP_SL_BUFFER_PIPS * pip
+            sl_pips = abs(entry_price - raw_sl) / pip
+            sl_pips = max(LDN_LMP_SL_MIN_PIPS, min(LDN_LMP_SL_MAX_PIPS, sl_pips))
+            sl_price = entry_price - sl_pips * pip if side == "buy" else entry_price + sl_pips * pip
+            tp1_price = entry_price + (1.0 * sl_pips * pip if side == "buy" else -1.0 * sl_pips * pip)
+            strategy_tag = "phase3:london_v2_lmp"
+    else:
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="london_v2: outside setup windows", side=None)
+        no_trade["phase3_state_updates"] = state_updates
+        return no_trade
+
+    if side is None or sl_price is None or tp1_price is None:
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=reason or "london_v2: no setup", side=None)
+        no_trade["phase3_state_updates"] = state_updates
+        return no_trade
+
+    try:
+        acct = adapter.get_account_info()
+        equity = float(acct.equity)
+    except Exception:
+        equity = 100000.0
+
+    sl_pips = abs(entry_price - sl_price) / pip
+    units = _compute_risk_units(equity, LDN_RISK_PCT, sl_pips, entry_price, pip)
+    if units <= 0:
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="london_v2: size=0", side=None)
+        no_trade["phase3_state_updates"] = state_updates
+        return no_trade
+
+    comment = f"phase3_integrated:{policy.id}:{strategy_tag.replace('phase3:','')}"
+    try:
+        dec = adapter.place_order(
+            symbol=profile.symbol,
+            side=side,
+            lots=units / 100000.0,
+            stop_price=round(float(sl_price), 3),
+            target_price=round(float(tp1_price), 3),
+            comment=comment,
+        )
+    except Exception as e:
+        return {
+            "decision": ExecutionDecision(attempted=True, placed=False, reason=f"london_v2 order error: {e}", side=side),
+            "phase3_state_updates": state_updates,
+            "strategy_tag": strategy_tag,
+        }
+
+    if strategy_tag.endswith("_arb"):
+        sdat["arb_trades"] = int(sdat.get("arb_trades", 0)) + 1
+    else:
+        sdat["lmp_trades"] = int(sdat.get("lmp_trades", 0)) + 1
+    sdat["last_entry_time"] = now_utc.isoformat()
+    state_updates[session_key] = sdat
+
+    return {
+        "decision": ExecutionDecision(
+            attempted=True,
+            placed=True,
+            reason=f"{reason} | SL={sl_pips:.1f}p units={units}",
+            side=side,
+            order_retcode=getattr(dec, "order_retcode", None),
+            order_id=getattr(dec, "order_id", None),
+            deal_id=getattr(dec, "deal_id", None),
+            fill_price=getattr(dec, "fill_price", None),
+        ),
+        "phase3_state_updates": state_updates,
+        "strategy_tag": strategy_tag,
+        "sl_price": float(sl_price),
+        "tp1_price": float(tp1_price),
+        "units": int(units),
+        "entry_price": float(entry_price),
+        "sl_pips": float(sl_pips),
+    }
+
+
+def execute_v44_ny_entry(
+    *,
+    adapter,
+    profile,
+    policy,
+    data_by_tf: dict,
+    tick,
+    phase3_state: dict,
+) -> dict:
+    now_utc = datetime.now(timezone.utc)
+    pip = float(profile.pip_size) if hasattr(profile, "pip_size") else PIP_SIZE
+    no_trade = {
+        "decision": ExecutionDecision(attempted=False, placed=False, reason="", side=None),
+        "phase3_state_updates": {},
+        "strategy_tag": None,
+    }
+
+    if now_utc < now_utc.replace(hour=NY_START_UTC, minute=5, second=0, microsecond=0):
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: start delay active", side=None)
+        return no_trade
+    if (tick.ask - tick.bid) / pip > V44_MAX_ENTRY_SPREAD:
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: spread veto", side=None)
+        return no_trade
+
+    h1_df = data_by_tf.get("H1")
+    m5_df = data_by_tf.get("M5")
+    if h1_df is None or h1_df.empty or m5_df is None or m5_df.empty:
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: missing H1/M5", side=None)
+        return no_trade
+
+    today = now_utc.date().isoformat()
+    session_key = f"session_ny_{today}"
+    sdat = dict(phase3_state.get(session_key, {}))
+    sdat.setdefault("trade_count", 0)
+    sdat.setdefault("consecutive_losses", 0)
+    sdat.setdefault("cooldown_until", None)
+    sdat.setdefault("last_entry_time", None)
+
+    open_count = int(phase3_state.get("open_trade_count", 0))
+    if open_count >= V44_MAX_OPEN:
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44_ny: max open {open_count}/{V44_MAX_OPEN}", side=None)
+        return no_trade
+
+    side, strength, reason = evaluate_v44_entry(h1_df, m5_df, tick, pip, "ny", sdat)
+    if side is None:
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=reason, side=None)
+        return no_trade
+
+    entry_price = tick.ask if side == "buy" else tick.bid
+    sl_price = compute_v44_sl(side, m5_df, entry_price, pip)
+    sl_pips = abs(entry_price - sl_price) / pip
+    tp1_price = entry_price + (V44_STRONG_TP1_PIPS * pip if side == "buy" else -V44_STRONG_TP1_PIPS * pip)
+
+    try:
+        acct = adapter.get_account_info()
+        equity = float(acct.equity)
+    except Exception:
+        equity = 100000.0
+    units = _compute_risk_units(equity, V44_RISK_PCT, sl_pips, entry_price, pip)
+    if units <= 0:
+        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: size=0", side=None)
+        return no_trade
+
+    strategy_tag = "phase3:v44_ny"
+    comment = f"phase3_integrated:{policy.id}:v44_ny"
+    try:
+        dec = adapter.place_order(
+            symbol=profile.symbol,
+            side=side,
+            lots=units / 100000.0,
+            stop_price=round(float(sl_price), 3),
+            target_price=round(float(tp1_price), 3),
+            comment=comment,
+        )
+    except Exception as e:
+        return {
+            "decision": ExecutionDecision(attempted=True, placed=False, reason=f"v44_ny order error: {e}", side=side),
+            "phase3_state_updates": {},
+            "strategy_tag": strategy_tag,
+        }
+
+    sdat["trade_count"] = int(sdat.get("trade_count", 0)) + 1
+    sdat["last_entry_time"] = now_utc.isoformat()
+
+    return {
+        "decision": ExecutionDecision(
+            attempted=True,
+            placed=True,
+            reason=f"{reason} | strength={strength} SL={sl_pips:.1f}p units={units}",
+            side=side,
+            order_retcode=getattr(dec, "order_retcode", None),
+            order_id=getattr(dec, "order_id", None),
+            deal_id=getattr(dec, "deal_id", None),
+            fill_price=getattr(dec, "fill_price", None),
+        ),
+        "phase3_state_updates": {session_key: sdat},
+        "strategy_tag": strategy_tag,
+        "sl_price": float(sl_price),
+        "tp1_price": float(tp1_price),
+        "units": int(units),
+        "entry_price": float(entry_price),
+        "sl_pips": float(sl_pips),
+    }
+
+
 # ===================================================================
 #  Main execute function
 # ===================================================================
@@ -466,8 +1084,6 @@ def execute_phase3_integrated_policy_demo_only(
       phase3_state_updates: dict to merge into phase3_state
       strategy_tag: str | None  (e.g. "phase3:v14")
     """
-    from core.execution_engine import ExecutionDecision
-
     now_utc = datetime.now(timezone.utc)
     pip = float(profile.pip_size) if hasattr(profile, "pip_size") else PIP_SIZE
     no_trade = {
@@ -476,8 +1092,26 @@ def execute_phase3_integrated_policy_demo_only(
         "strategy_tag": None,
     }
 
-    # 1) Session gate
+    # 1) Session routing
     session = classify_session(now_utc)
+    if session == "london":
+        return execute_london_v2_entry(
+            adapter=adapter,
+            profile=profile,
+            policy=policy,
+            data_by_tf=data_by_tf,
+            tick=tick,
+            phase3_state=phase3_state,
+        )
+    if session == "ny":
+        return execute_v44_ny_entry(
+            adapter=adapter,
+            profile=profile,
+            policy=policy,
+            data_by_tf=data_by_tf,
+            tick=tick,
+            phase3_state=phase3_state,
+        )
     if session != "tokyo":
         no_trade["decision"] = ExecutionDecision(
             attempted=False, placed=False,
@@ -607,7 +1241,7 @@ def execute_phase3_integrated_policy_demo_only(
         return no_trade
 
     # 9) Session management: concurrent positions, trade count, cooldown, consecutive losses
-    session_key = f"session_{today_str}"
+    session_key = f"session_tokyo_{today_str}"
     session_data = phase3_state.get(session_key, {})
     trade_count = session_data.get("trade_count", 0)
     consecutive_losses = session_data.get("consecutive_losses", 0)
@@ -697,7 +1331,7 @@ def execute_phase3_integrated_policy_demo_only(
         return no_trade
 
     # 12) Place order
-    strategy_tag = "phase3:v14"
+    strategy_tag = "phase3:v14_mean_reversion"
     comment = f"phase3_integrated:{policy.id}:v14_mean_reversion"
 
     try:
@@ -748,6 +1382,143 @@ def execute_phase3_integrated_policy_demo_only(
 #  Exit management
 # ===================================================================
 
+def _phase3_position_meta(position, side: str) -> tuple[Optional[int], float, int]:
+    if isinstance(position, dict):
+        position_id = position.get("id")
+        current_units = abs(int(position.get("currentUnits") or 0))
+        current_lots = current_units / 100_000.0
+    else:
+        position_id = getattr(position, "ticket", None)
+        current_lots = float(getattr(position, "volume", 0) or 0)
+        current_units = int(current_lots * 100_000)
+    return position_id, current_lots, current_units
+
+
+def _close_full(adapter, profile, position_id, current_lots: float, side: str) -> None:
+    position_type = 1 if side == "sell" else 0
+    adapter.close_position(
+        ticket=position_id,
+        symbol=profile.symbol,
+        volume=current_lots,
+        position_type=position_type,
+    )
+
+
+def _manage_london_v2_exit(*, adapter, profile, store, tick, trade_row: dict, position) -> dict:
+    pip = float(profile.pip_size) if hasattr(profile, "pip_size") else PIP_SIZE
+    side = str(trade_row["side"]).lower()
+    entry = float(trade_row["entry_price"])
+    trade_id = str(trade_row["trade_id"])
+    now_utc = datetime.now(timezone.utc)
+    position_id, current_lots, _ = _phase3_position_meta(position, side)
+    if current_lots <= 0:
+        return {"action": "none", "reason": "no units"}
+
+    day_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+    ny_open = day_start + pd.Timedelta(hours=NY_START_UTC)
+    mid = (tick.bid + tick.ask) / 2.0
+
+    if LDN_FORCE_CLOSE_AT_NY_OPEN and now_utc >= ny_open:
+        try:
+            _close_full(adapter, profile, position_id, current_lots, side)
+            return {"action": "session_end_close", "reason": "london_v2 hard close at NY open"}
+        except Exception as e:
+            return {"action": "error", "reason": f"london_v2 hard close error: {e}"}
+
+    stop_price = trade_row.get("stop_price")
+    if stop_price is None:
+        return {"action": "none", "reason": "no stop in trade row"}
+    stop_price = float(stop_price)
+    r_pips = abs(entry - stop_price) / pip
+    tp1_price = entry + (LDN_ARB_TP1_R * r_pips * pip if side == "buy" else -LDN_ARB_TP1_R * r_pips * pip)
+    tp2_price = entry + (LDN_ARB_TP2_R * r_pips * pip if side == "buy" else -LDN_ARB_TP2_R * r_pips * pip)
+
+    tp1_done = int(trade_row.get("tp1_partial_done") or 0) == 1
+    reached_tp1 = (side == "buy" and mid >= tp1_price) or (side == "sell" and mid <= tp1_price)
+    reached_tp2 = (side == "buy" and mid >= tp2_price) or (side == "sell" and mid <= tp2_price)
+
+    if (not tp1_done) and reached_tp1:
+        try:
+            position_type = 1 if side == "sell" else 0
+            close_lots = current_lots * LDN_ARB_TP1_CLOSE_PCT
+            adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=close_lots, position_type=position_type)
+            be_sl = entry + (LDN_ARB_BE_OFFSET_PIPS * pip if side == "buy" else -LDN_ARB_BE_OFFSET_PIPS * pip)
+            adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
+            store.update_trade(trade_id, {"tp1_partial_done": 1, "breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
+            return {"action": "tp1_partial", "reason": f"london_v2 TP1 partial + BE ({be_sl:.3f})"}
+        except Exception as e:
+            return {"action": "error", "reason": f"london_v2 TP1 error: {e}"}
+
+    if tp1_done and reached_tp2:
+        try:
+            _close_full(adapter, profile, position_id, current_lots, side)
+            return {"action": "tp2_full", "reason": "london_v2 TP2 runner close"}
+        except Exception as e:
+            return {"action": "error", "reason": f"london_v2 TP2 close error: {e}"}
+
+    return {"action": "none", "reason": "no london_v2 exit condition met"}
+
+
+def _manage_v44_exit(*, adapter, profile, store, tick, trade_row: dict, position) -> dict:
+    pip = float(profile.pip_size) if hasattr(profile, "pip_size") else PIP_SIZE
+    side = str(trade_row["side"]).lower()
+    entry = float(trade_row["entry_price"])
+    trade_id = str(trade_row["trade_id"])
+    now_utc = datetime.now(timezone.utc)
+    position_id, current_lots, _ = _phase3_position_meta(position, side)
+    if current_lots <= 0:
+        return {"action": "none", "reason": "no units"}
+
+    day_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+    ny_end = day_start + pd.Timedelta(hours=NY_END_UTC)
+    mid = (tick.bid + tick.ask) / 2.0
+
+    if now_utc >= ny_end:
+        try:
+            _close_full(adapter, profile, position_id, current_lots, side)
+            return {"action": "session_end_close", "reason": "v44_ny hard close at session end"}
+        except Exception as e:
+            return {"action": "error", "reason": f"v44_ny hard close error: {e}"}
+
+    tp1_done = int(trade_row.get("tp1_partial_done") or 0) == 1
+    tp1_price = entry + (V44_STRONG_TP1_PIPS * pip if side == "buy" else -V44_STRONG_TP1_PIPS * pip)
+    reached_tp1 = (side == "buy" and mid >= tp1_price) or (side == "sell" and mid <= tp1_price)
+
+    if (not tp1_done) and reached_tp1:
+        try:
+            position_type = 1 if side == "sell" else 0
+            close_lots = current_lots * V44_STRONG_TP1_CLOSE_PCT
+            adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=close_lots, position_type=position_type)
+            be_sl = entry + (V44_BE_OFFSET_PIPS * pip if side == "buy" else -V44_BE_OFFSET_PIPS * pip)
+            adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
+            store.update_trade(trade_id, {"tp1_partial_done": 1, "breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
+            return {"action": "tp1_partial", "reason": f"v44_ny TP1 partial + BE ({be_sl:.3f})"}
+        except Exception as e:
+            return {"action": "error", "reason": f"v44_ny TP1 error: {e}"}
+
+    if tp1_done:
+        prev_trail = trade_row.get("breakeven_sl_price")
+        prev_trail = float(prev_trail) if prev_trail is not None else None
+        if side == "buy":
+            new_trail = mid - V44_STRONG_TRAIL_BUFFER * pip
+            if prev_trail is not None:
+                new_trail = max(new_trail, prev_trail)
+            should_update = prev_trail is None or new_trail > prev_trail
+        else:
+            new_trail = mid + V44_STRONG_TRAIL_BUFFER * pip
+            if prev_trail is not None:
+                new_trail = min(new_trail, prev_trail)
+            should_update = prev_trail is None or new_trail < prev_trail
+        if should_update:
+            try:
+                adapter.update_position_stop_loss(position_id, profile.symbol, round(new_trail, 3))
+                store.update_trade(trade_id, {"breakeven_sl_price": round(new_trail, 5)})
+                return {"action": "trail_update", "reason": f"v44_ny trail -> {new_trail:.3f}"}
+            except Exception as e:
+                return {"action": "error", "reason": f"v44_ny trail error: {e}"}
+
+    return {"action": "none", "reason": "no v44_ny exit condition met"}
+
 def manage_phase3_exit(
     *,
     adapter,
@@ -762,17 +1533,39 @@ def manage_phase3_exit(
     """
     Exit management for Phase 3 trades.
 
-    Routes by strategy tag in entry_type/comment.  Currently only V14.
+    Routes by strategy tag in entry_type/comment:
+    - phase3:v14*
+    - phase3:london_v2*
+    - phase3:v44*
     Returns dict with action taken info.
     """
     pip = float(profile.pip_size) if hasattr(profile, "pip_size") else PIP_SIZE
     entry = float(trade_row["entry_price"])
     side = str(trade_row["side"]).lower()
     trade_id = str(trade_row["trade_id"])
-    entry_type = trade_row.get("entry_type", "")
+    entry_type = str(trade_row.get("entry_type", "") or "")
     now_utc = datetime.now(timezone.utc)
     mid = (tick.bid + tick.ask) / 2.0
     current_spread = tick.ask - tick.bid
+
+    if entry_type.startswith("phase3:london_v2"):
+        return _manage_london_v2_exit(
+            adapter=adapter,
+            profile=profile,
+            store=store,
+            tick=tick,
+            trade_row=trade_row,
+            position=position,
+        )
+    if entry_type.startswith("phase3:v44"):
+        return _manage_v44_exit(
+            adapter=adapter,
+            profile=profile,
+            store=store,
+            tick=tick,
+            trade_row=trade_row,
+            position=position,
+        )
 
     if isinstance(position, dict):
         position_id = position.get("id")
@@ -942,9 +1735,9 @@ def report_phase3_strategy(session: str | None) -> dict:
     if session == "tokyo":
         return {"name": "Active Strategy", "value": "V14 Mean Reversion", "ok": True, "detail": "Tokyo session"}
     elif session == "london":
-        return {"name": "Active Strategy", "value": "London V2 (stub)", "ok": False, "detail": "Not implemented"}
+        return {"name": "Active Strategy", "value": "London V2 (ARB+LMP)", "ok": True, "detail": "London session"}
     elif session == "ny":
-        return {"name": "Active Strategy", "value": "NY V5 (stub)", "ok": False, "detail": "Not implemented"}
+        return {"name": "Active Strategy", "value": "V44 NY Momentum", "ok": True, "detail": "NY session"}
     return {"name": "Active Strategy", "value": "none", "ok": False, "detail": "No session"}
 
 
@@ -976,4 +1769,49 @@ def report_phase3_atr(atr_val: float) -> dict:
         "value": f"{atr_pips:.1f}p",
         "ok": atr_val < ATR_MAX,
         "detail": f"max {ATR_MAX/PIP_SIZE:.0f}p",
+    }
+
+
+def report_phase3_london_range(asian_pips: float, is_valid: bool) -> dict:
+    return {
+        "name": "London Asian Range",
+        "value": f"{asian_pips:.1f}p",
+        "ok": bool(is_valid),
+        "detail": f"valid={LDN_ARB_RANGE_MIN_PIPS:.0f}-{LDN_ARB_RANGE_MAX_PIPS:.0f}p",
+    }
+
+
+def report_phase3_london_levels(asian_high: float, asian_low: float) -> dict:
+    return {
+        "name": "London ARB Levels",
+        "value": f"H:{asian_high:.3f} / L:{asian_low:.3f}" if np.isfinite(asian_high) and np.isfinite(asian_low) else "n/a",
+        "ok": np.isfinite(asian_high) and np.isfinite(asian_low),
+        "detail": f"buffers ±{LDN_ARB_BREAKOUT_BUFFER_PIPS:.1f}p",
+    }
+
+
+def report_phase3_ny_trend(trend: str | None) -> dict:
+    return {
+        "name": "NY H1 Trend",
+        "value": trend or "none",
+        "ok": trend in {"up", "down"},
+        "detail": f"EMA{V44_H1_EMA_FAST}/{V44_H1_EMA_SLOW}",
+    }
+
+
+def report_phase3_ny_slope(slope_pips_per_bar: float) -> dict:
+    return {
+        "name": "NY M5 Slope",
+        "value": f"{slope_pips_per_bar:.2f} p/bar",
+        "ok": abs(slope_pips_per_bar) >= V44_STRONG_SLOPE,
+        "detail": f"strong>={V44_STRONG_SLOPE:.2f}",
+    }
+
+
+def report_phase3_ny_atr_filter(ok: bool) -> dict:
+    return {
+        "name": "NY ATR PCT Filter",
+        "value": "pass" if ok else "blocked",
+        "ok": bool(ok),
+        "detail": f"cap P{int(V44_ATR_PCT_CAP*100)} lookback={V44_ATR_PCT_LOOKBACK}",
     }

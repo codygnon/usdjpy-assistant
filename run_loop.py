@@ -287,7 +287,11 @@ def _run_trade_management(profile, adapter, store, tick) -> None:
     has_t8_trail = t8_policy is not None
     has_t9_trail = t9_policy is not None
     has_t7_ema = t7_ema_policy is not None
-    if not has_simple_be and not has_scaled and t4_spread_be is None and up_policy is None and not has_t7_ema and not has_t8_trail and not has_t9_trail:
+    has_phase3_trail = any(
+        getattr(p, "type", None) == "phase3_integrated" and getattr(p, "enabled", True)
+        for p in profile.execution.policies
+    )
+    if not has_simple_be and not has_scaled and t4_spread_be is None and up_policy is None and not has_t7_ema and not has_t8_trail and not has_t9_trail and not has_phase3_trail:
         return
     try:
         open_positions = adapter.get_open_positions(profile.symbol)
@@ -1503,8 +1507,8 @@ def main() -> None:
                         except Exception as _mn_err:
                             _log(f"MN candle fetch failed: {_mn_err}", "WARN")
 
-                    # Fetch H1 data when needed by Uncle Parsh H1 Breakout.
-                    if has_uncle_parsh:
+                    # Fetch H1 data when needed by Uncle Parsh or Phase3 integrated NY branch.
+                    if has_uncle_parsh or has_phase3_integrated:
                         data_by_tf["H1"] = _get_bars_cached(profile.symbol, "H1", 200)
                     # Tick always fetched fresh for live price detection
                     tick = adapter.get_tick(profile.symbol)

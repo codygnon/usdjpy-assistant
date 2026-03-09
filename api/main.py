@@ -3065,6 +3065,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                     if _policy_type == "phase3_integrated":
                         data_by_tf["M15"] = _get_bars_cached(_adapter, profile.symbol, "M15", 2000)
                         data_by_tf["D"] = _get_bars_cached(_adapter, profile.symbol, "D", 5)
+                        data_by_tf["H1"] = _get_bars_cached(_adapter, profile.symbol, "H1", 200)
                     if _policy_type == "kt_cg_trial_9":
                         data_by_tf["W"] = _get_bars_cached(_adapter, profile.symbol, "W", 2)
                         data_by_tf["MN"] = _get_bars_cached(_adapter, profile.symbol, "MN", 2)

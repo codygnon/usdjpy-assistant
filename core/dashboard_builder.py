@@ -524,10 +524,12 @@ def build_dashboard_filters(
             classify_session, compute_bb_width_regime, _compute_adx, _compute_atr,
             report_phase3_session, report_phase3_strategy, report_phase3_regime,
             report_phase3_adx, report_phase3_atr,
+            compute_asian_range, compute_v44_h1_trend, compute_v44_m5_slope, compute_v44_atr_pct_filter,
+            report_phase3_london_range, report_phase3_london_levels,
+            report_phase3_ny_trend, report_phase3_ny_slope, report_phase3_ny_atr_filter,
             ADX_PERIOD, ATR_PERIOD, ATR_MAX, MAX_ENTRY_SPREAD_PIPS,
         )
-        from datetime import datetime, timezone as tz
-        now_utc = datetime.now(tz.utc)
+        now_utc = datetime.now(timezone.utc)
         session = classify_session(now_utc)
         filters.append(report_phase3_session(now_utc))
         filters.append(report_phase3_strategy(session))
@@ -551,6 +553,22 @@ def build_dashboard_filters(
             import pandas as _pd
             atr_val = float(atr_series.iloc[-1]) if _pd.notna(atr_series.iloc[-1]) else 0.0
             filters.append(report_phase3_atr(atr_val))
+        if session == "london":
+            m1_df = data_by_tf.get("M1")
+            if m1_df is not None and not m1_df.empty:
+                a_hi, a_lo, a_pips, a_ok = compute_asian_range(m1_df, 8)
+                filters.append(report_phase3_london_range(a_pips, a_ok))
+                filters.append(report_phase3_london_levels(a_hi, a_lo))
+        elif session == "ny":
+            h1_df = data_by_tf.get("H1")
+            m5_df = data_by_tf.get("M5")
+            trend = compute_v44_h1_trend(h1_df) if h1_df is not None and not h1_df.empty else None
+            filters.append(report_phase3_ny_trend(trend))
+            if m5_df is not None and not m5_df.empty:
+                slope = compute_v44_m5_slope(m5_df, 4)
+                filters.append(report_phase3_ny_slope(slope))
+                atr_ok = compute_v44_atr_pct_filter(m5_df)
+                filters.append(report_phase3_ny_atr_filter(atr_ok))
 
     elif policy_type == "uncle_parsh_h1_breakout" and policy is not None:
         level_state = eval_result.get("level_updates", []) if eval_result else []
