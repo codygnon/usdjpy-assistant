@@ -4973,7 +4973,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.be_spread_plus_pips = Math.max(0, editedSettings.t8_be_spread_plus_pips);
           updates.trail_ema_period = Math.max(5, Math.min(50, editedSettings.t8_trail_ema_period));
         }
-        // Update Trial #9 settings (T8 + NTZ + Kill Switch)
+        // Update Trial #9 settings (T8 entry + NTZ + Kill Switch; no sl_pips or use_daily_level_filter — schema forbids extras)
         if (pol.type === 'kt_cg_trial_9') {
           updates.m5_trend_ema_fast = Math.max(1, editedSettings.t7_m5_trend_ema_fast);
           updates.m5_trend_ema_slow = Math.max(1, editedSettings.t7_m5_trend_ema_slow);
@@ -4996,7 +4996,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.max_open_trades_per_side = Math.max(1, editedSettings.max_open_trades_per_side);
           updates.max_zone_entry_open = Math.max(1, editedSettings.max_zone_entry_open);
           updates.max_tiered_pullback_open = Math.max(1, editedSettings.max_tiered_pullback_open);
-          updates.sl_pips = Math.max(0.1, editedSettings.policy_sl_pips);
+          // Trial #9 has no sl_pips (uses tp1/BE/trail); do not set sl_pips
           updates.cooldown_minutes = Math.max(0, editedSettings.policy_cooldown_minutes);
           updates.tp_pips = Math.max(0.1, editedSettings.target_pips);
           updates.trend_exhaustion_enabled = editedSettings.t7_trend_exhaustion_enabled;
@@ -5034,14 +5034,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.trend_exhaustion_tp_extended_offset_pips = Math.max(0, editedSettings.t7_trend_exhaustion_tp_extended_offset_pips);
           updates.trend_exhaustion_tp_very_extended_offset_pips = Math.max(0, editedSettings.t7_trend_exhaustion_tp_very_extended_offset_pips);
           updates.trend_exhaustion_tp_min_pips = Math.max(0.1, editedSettings.t7_trend_exhaustion_tp_min_pips);
-          updates.use_daily_level_filter = editedSettings.t8_use_daily_level_filter;
-          updates.daily_level_buffer_pips = Math.max(0, editedSettings.t8_daily_level_buffer_pips);
-          updates.daily_level_breakout_candles_required = Math.max(1, editedSettings.t8_daily_level_breakout_candles_required);
-          updates.exit_strategy = editedSettings.t8_exit_strategy;
-          updates.m1_exit_ema_fast = Math.max(2, Math.min(50, editedSettings.t8_m1_exit_ema_fast));
-          updates.m1_exit_ema_slow = Math.max(3, Math.min(100, editedSettings.t8_m1_exit_ema_slow));
-          updates.scale_out_pct = Math.max(10, Math.min(90, editedSettings.t8_scale_out_pct));
-          updates.initial_sl_spread_plus_pips = Math.max(0, editedSettings.t8_initial_sl_spread_plus_pips);
+          // Trial #9 uses NTZ, not use_daily_level_filter; no exit_strategy / m1_exit_ema_* / scale_out_pct / initial_sl_spread_plus_pips
           updates.trail_after_tp1 = editedSettings.t8_trail_after_tp1;
           updates.tp1_pips = Math.max(0.5, editedSettings.t9_tp1_pips);
           updates.tp1_close_pct = Math.max(10, Math.min(100, editedSettings.t9_tp1_close_pct));
@@ -5098,7 +5091,13 @@ function PresetsPage({ profile }: { profile: Profile }) {
           // Risk
           updates.max_open_trades_per_side = Math.max(1, editedSettings.max_open_trades_per_side);
         }
-        return Object.keys(updates).length > 0 ? { ...pol, ...updates } : pol;
+        let out = Object.keys(updates).length > 0 ? { ...pol, ...updates } : pol;
+        // Trial #9 schema forbids extra fields: ensure we never send sl_pips or use_daily_level_filter (or T8-only exit fields)
+        if (out.type === 'kt_cg_trial_9') {
+          const disallowed = ['sl_pips', 'use_daily_level_filter', 'daily_level_buffer_pips', 'daily_level_breakout_candles_required', 'exit_strategy', 'm1_exit_ema_fast', 'm1_exit_ema_slow', 'scale_out_pct', 'initial_sl_spread_plus_pips'];
+          disallowed.forEach(k => delete (out as Record<string, unknown>)[k]);
+        }
+        return out;
       }) || [];
 
       const newExecution = {
