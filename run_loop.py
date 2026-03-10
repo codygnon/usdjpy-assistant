@@ -2820,26 +2820,27 @@ def main() -> None:
                             try:
                                 def _prev_candle_hl(df, tf_label):
                                     """Extract high/low from the previous completed candle (sort by time, check if last is today)."""
-                                    if df is None or df.empty or len(df) < 2:
+                                    if df is None or df.empty:
                                         return None, None
                                     d_sorted = df.copy()
                                     d_sorted["_time"] = pd.to_datetime(d_sorted["time"], utc=True, errors="coerce")
                                     d_sorted = d_sorted.dropna(subset=["_time"]).sort_values("_time")
-                                    if len(d_sorted) < 2:
+                                    if len(d_sorted) < 1:
                                         return None, None
-                                    # W/MN: last row is the current (forming) week/month; bar time is period open
-                                    # (e.g. Monday or 1st), so last_date rarely equals today — using iloc[-1] would
-                                    # use an incomplete period. Always use iloc[-2] as previous completed W/MN.
+                                    # OANDA adapter drops incomplete candles, so W/MN often arrives with ONLY completed candles.
+                                    # In that case the last row is already the latest completed period, even if len==1.
                                     if tf_label in ("W", "MN"):
-                                        prev_row = d_sorted.iloc[-2]
+                                        prev_row = d_sorted.iloc[-1]
                                         h = float(prev_row["high"])
                                         l = float(prev_row["low"])
-                                        _log(f"NTZ {tf_label}: using prior completed candle iloc[-2] time={prev_row['_time']} H={h:.3f} L={l:.3f}")
+                                        _log(f"NTZ {tf_label}: using latest completed candle iloc[-1] time={prev_row['_time']} H={h:.3f} L={l:.3f}")
                                         return h, l
                                     now_date = pd.Timestamp.now(tz="UTC").date().isoformat()
                                     last_date = d_sorted.iloc[-1]["_time"].date().isoformat()
                                     if last_date == now_date:
                                         # Last candle is today's forming candle — use the one before
+                                        if len(d_sorted) < 2:
+                                            return None, None
                                         prev_row = d_sorted.iloc[-2]
                                         _log(f"NTZ {tf_label}: last candle is today ({now_date}), using iloc[-2]")
                                     else:
