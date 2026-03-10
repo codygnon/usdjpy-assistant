@@ -157,6 +157,16 @@ def _insert_trade_for_policy(
         if position_id is None and dec.order_id:
             time.sleep(1)
             position_id = adapter.get_position_id_from_order(dec.order_id)
+        # OANDA: tradeID can appear slightly after order creation; retry a few times.
+        if position_id is None and dec.order_id and getattr(profile, "broker_type", None) == "oanda":
+            for _ in range(3):
+                try:
+                    time.sleep(0.5)
+                    position_id = adapter.get_position_id_from_order(dec.order_id)
+                    if position_id is not None:
+                        break
+                except Exception:
+                    position_id = None
         trade_id = f"{policy_type}:{policy_id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}"
         row = {
             "trade_id": trade_id,
@@ -1473,6 +1483,8 @@ def main() -> None:
         last_sync_loop = 0
         SYNC_INTERVAL_LOOPS = 12  # Sync every ~60 seconds (assuming 5s poll)
         _MAX_FETCH_RETRIES = 3  # Retry broker fetch this many times before sleeping and continuing
+        _last_oanda_tradeid_backfill_time: float = 0.0
+        _OANDA_TRADEID_BACKFILL_INTERVAL_S: float = 30.0
 
         # Candle cache: {tf: (timestamp_fetched, DataFrame)}
         # TTLs in seconds: M1=28 so new bar is seen soon after minute close (fast poll); M3=175, M5=295, ...
@@ -1545,7 +1557,7 @@ def main() -> None:
             except Exception:
                 phase3_state = {}
 
-        def _get_bars_cached(symbol: str, tf: str, count: int) -> pd.DataFrame:
+        def _get_bars_cached(symbol: str, tf: str, count: int, *, include_incomplete: bool = False) -> pd.DataFrame:
             """Fetch bars with caching to reduce API calls at fast poll rates."""
             now = time.time()
             cached = _candle_cache.get(tf)
@@ -1554,7 +1566,11 @@ def main() -> None:
                 cached_time, cached_df = cached
                 if now - cached_time < ttl:
                     return cached_df
-            df = adapter.get_bars(symbol, tf, count)
+            try:
+                df = adapter.get_bars(symbol, tf, count, include_incomplete=include_incomplete)
+            except TypeError:
+                # Backward compat: adapters that don't support include_incomplete
+                df = adapter.get_bars(symbol, tf, count)
             _candle_cache[tf] = (now, df)
             return df
 
@@ -1581,6 +1597,48 @@ def main() -> None:
                     except Exception:
                         pass
                 last_sync_loop = loop_count
+
+            # OANDA-only: backfill broker trade IDs (stored in trades.mt5_position_id) for older rows.
+            # This is critical for correct dashboard classification + zone/tier cap accounting.
+            try:
+                if getattr(profile, "broker_type", None) == "oanda":
+                    _now_bf = time.time()
+                    if _now_bf - _last_oanda_tradeid_backfill_time >= _OANDA_TRADEID_BACKFILL_INTERVAL_S:
+                        missing = store.get_trades_missing_position_id(profile.profile_name)
+                        updated = 0
+                        # Throttle: at most N updates per cycle to avoid API spam.
+                        for r in missing[:25]:
+                            d = dict(r)
+                            if d.get("exit_price") is not None:
+                                continue  # closed trade; skip
+                            trade_id = str(d.get("trade_id") or "")
+                            if not trade_id:
+                                continue
+                            # If mt5_deal_id already contains the OANDA tradeID (newer behavior), use it directly.
+                            deal_id = d.get("mt5_deal_id")
+                            order_id = d.get("mt5_order_id")
+                            pos_id = None
+                            if deal_id is not None:
+                                try:
+                                    pos_id = adapter.get_position_id_from_deal(int(deal_id))
+                                except Exception:
+                                    pos_id = None
+                            if pos_id is None and order_id is not None:
+                                try:
+                                    pos_id = adapter.get_position_id_from_order(int(order_id))
+                                except Exception:
+                                    pos_id = None
+                            if pos_id is not None:
+                                try:
+                                    store.update_trade(trade_id, {"mt5_position_id": int(pos_id)})
+                                    updated += 1
+                                except Exception:
+                                    pass
+                        if updated:
+                            _log(f"OANDA tradeID backfill updated {updated} open trade(s)")
+                        _last_oanda_tradeid_backfill_time = _now_bf
+            except Exception:
+                pass
 
             state = load_state(state_path)
             if state.kill_switch:
@@ -1611,12 +1669,12 @@ def main() -> None:
                     # Fetch W and MN data for Trial #9 NTZ (non-fatal if unavailable).
                     if has_kt_cg_trial_9:
                         try:
-                            data_by_tf["W"] = _get_bars_cached(profile.symbol, "W", 2)
+                            data_by_tf["W"] = _get_bars_cached(profile.symbol, "W", 2, include_incomplete=True)
                             _log("W candle fetch OK")
                         except Exception as _w_err:
                             _log(f"W candle fetch failed: {_w_err}", "WARN")
                         try:
-                            data_by_tf["MN"] = _get_bars_cached(profile.symbol, "MN", 2)
+                            data_by_tf["MN"] = _get_bars_cached(profile.symbol, "MN", 2, include_incomplete=True)
                             _log("MN candle fetch OK")
                         except Exception as _mn_err:
                             _log(f"MN candle fetch failed: {_mn_err}", "WARN")
@@ -2827,13 +2885,12 @@ def main() -> None:
                                     d_sorted = d_sorted.dropna(subset=["_time"]).sort_values("_time")
                                     if len(d_sorted) < 1:
                                         return None, None
-                                    # OANDA adapter drops incomplete candles, so W/MN often arrives with ONLY completed candles.
-                                    # In that case the last row is already the latest completed period, even if len==1.
+                                    # W/MN: use CURRENT candle HL (forming week/month). We fetch with include_incomplete=True.
                                     if tf_label in ("W", "MN"):
-                                        prev_row = d_sorted.iloc[-1]
-                                        h = float(prev_row["high"])
-                                        l = float(prev_row["low"])
-                                        _log(f"NTZ {tf_label}: using latest completed candle iloc[-1] time={prev_row['_time']} H={h:.3f} L={l:.3f}")
+                                        cur_row = d_sorted.iloc[-1]
+                                        h = float(cur_row["high"])
+                                        l = float(cur_row["low"])
+                                        _log(f"NTZ {tf_label}: using CURRENT candle iloc[-1] time={cur_row['_time']} H={h:.3f} L={l:.3f}")
                                         return h, l
                                     now_date = pd.Timestamp.now(tz="UTC").date().isoformat()
                                     last_date = d_sorted.iloc[-1]["_time"].date().isoformat()

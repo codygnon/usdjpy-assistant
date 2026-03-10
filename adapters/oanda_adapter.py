@@ -271,7 +271,7 @@ class OandaAdapter:
             time_int = 0
         return Tick(time=time_int, bid=bid, ask=ask)
 
-    def get_bars(self, symbol: str, tf: Timeframe, count: int) -> pd.DataFrame:
+    def get_bars(self, symbol: str, tf: Timeframe, count: int, *, include_incomplete: bool = False) -> pd.DataFrame:
         inst = _symbol_to_instrument(symbol)
         gran = _timeframe_to_granularity(tf)
         data = self._req("GET", f"/v3/instruments/{inst}/candles?granularity={gran}&count={count}&price=M")
@@ -280,7 +280,7 @@ class OandaAdapter:
             raise RuntimeError(f"OANDA: no candles for {symbol} {tf}")
         rows = []
         for c in candles:
-            if c.get("complete") is False:
+            if not include_incomplete and c.get("complete") is False:
                 continue
             mid = c.get("mid", {})
             t = c.get("time", "")
