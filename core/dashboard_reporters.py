@@ -1320,6 +1320,7 @@ def collect_phase3_context(
         compute_v44_h1_trend,
         compute_v44_m5_slope,
         compute_v44_atr_pct_filter,
+        classify_v44_strength,
         ADX_PERIOD,
         ATR_PERIOD,
         LONDON_START_UTC,
@@ -1327,7 +1328,13 @@ def collect_phase3_context(
 
     items: list[ContextItem] = []
     now_utc = datetime.now(timezone.utc)
-    session = classify_session(now_utc)
+    # Load sizing config for session classification (matches engine's classify_session call)
+    try:
+        from core.phase3_integrated_engine import load_phase3_sizing_config as _lp3cfg
+        _p3_sizing = _lp3cfg() or {}
+    except Exception:
+        _p3_sizing = {}
+    session = classify_session(now_utc, _p3_sizing)
 
     # Common: time and session
     items.append(ContextItem("UTC", now_utc.strftime("%H:%M"), "session"))
@@ -1350,6 +1357,12 @@ def collect_phase3_context(
             items.append(ContextItem("Last decision", str(dec.reason), "decision"))
         return items
 
+    from core.phase3_integrated_engine import (
+        ADX_MAX, COOLDOWN_MINUTES, STOP_AFTER_CONSECUTIVE_LOSSES,
+        MAX_TRADES_PER_SESSION, V44_SESSION_STOP_LOSSES, V44_MAX_ENTRIES_DAY,
+        V44_COOLDOWN_WIN, V44_COOLDOWN_LOSS,
+    )
+
     items.append(ContextItem("Active Session", session, "session"))
     open_count = int(phase3_state.get("open_trade_count", 0))
     items.append(ContextItem("Phase 3 open", str(open_count), "session"))
@@ -1359,19 +1372,94 @@ def collect_phase3_context(
         m5_df = data_by_tf.get("M5")
         if m5_df is not None and not m5_df.empty and len(m5_df) >= 130:
             regime = compute_bb_width_regime(m5_df)
-            items.append(ContextItem("Regime", regime, "v14"))
+            items.append(ContextItem("Regime", f"{regime} ({'OK' if regime == 'ranging' else 'BLOCK'})", "v14"))
         m15_df = data_by_tf.get("M15")
         if m15_df is not None and not m15_df.empty and len(m15_df) >= ADX_PERIOD + 2:
             adx_val = _compute_adx(m15_df, ADX_PERIOD)
-            items.append(ContextItem("ADX", f"{adx_val:.1f}", "v14"))
+            items.append(ContextItem("ADX", f"{adx_val:.1f} ({'OK' if adx_val < ADX_MAX else 'BLOCK'})", "v14"))
             atr_series = _compute_atr(m15_df, ATR_PERIOD)
             atr_val = float(atr_series.iloc[-1]) if pd.notna(atr_series.iloc[-1]) else 0.0
             items.append(ContextItem("ATR (pips)", f"{atr_val / pip_size:.1f}", "v14"))
         today_str = now_utc.strftime("%Y-%m-%d")
         sk = f"session_tokyo_{today_str}"
         sd = phase3_state.get(sk, {})
-        items.append(ContextItem("Trades this session", str(sd.get("trade_count", 0)), "v14"))
-        items.append(ContextItem("Consecutive losses", str(sd.get("consecutive_losses", 0)), "v14"))
+        trade_count = int(sd.get("trade_count", 0))
+        consec_losses = int(sd.get("consecutive_losses", 0))
+        items.append(ContextItem("Trades", f"{trade_count}/{MAX_TRADES_PER_SESSION}", "v14"))
+        items.append(ContextItem("Consec losses", f"{consec_losses}/{STOP_AFTER_CONSECUTIVE_LOSSES} ({'STOP' if consec_losses >= STOP_AFTER_CONSECUTIVE_LOSSES else 'OK'})", "v14"))
+        items.append(ContextItem("Wins closed", str(sd.get("wins_closed", 0)), "v14"))
+        items.append(ContextItem("Win streak", str(sd.get("win_streak", 0)), "v14"))
+        # Cooldown: time since last entry vs threshold
+        last_entry = sd.get("last_entry_time")
+        if last_entry:
+            try:
+                from datetime import timezone as _tz
+                _lt = pd.Timestamp(last_entry)
+                if _lt.tzinfo is None:
+                    _lt = _lt.tz_localize("UTC")
+                elapsed_min = (pd.Timestamp(now_utc) - _lt).total_seconds() / 60.0
+                cd_ok = elapsed_min >= COOLDOWN_MINUTES
+                items.append(ContextItem("Cooldown", f"{elapsed_min:.0f}m ago (min {COOLDOWN_MINUTES}m) — {'OK' if cd_ok else 'WAIT'}", "v14"))
+            except Exception:
+                pass
+        # Breakout block
+        if sd.get("breakout_blocked"):
+            reason = sd.get("breakout_blocked_reason", "active")
+            items.append(ContextItem("Breakout block", f"ACTIVE ({reason})", "v14"))
+        else:
+            items.append(ContextItem("Breakout block", "clear", "v14"))
+        # Signal Strength Tracking (SST)
+        try:
+            from core.phase3_integrated_engine import load_phase3_sizing_config as _lpc
+            _v14_cfg = (_lpc() or {}).get("v14", {})
+            _sst_cfg = _v14_cfg.get("signal_strength_tracking", {}) if isinstance(_v14_cfg.get("signal_strength_tracking"), dict) else {}
+            _sst_enabled = bool(_sst_cfg.get("enabled", False))
+            if _sst_enabled:
+                _sst_filter = bool(_sst_cfg.get("filter_on_it", False))
+                _sst_min = int(_sst_cfg.get("min_strength_score", 0))
+                # SST info is stored in phase3_state["last_v14_signal_strength"] by the engine,
+                # not at the top level of eval_result.
+                _last_sst = phase3_state.get("last_v14_signal_strength") or {}
+                _sst_score = _last_sst.get("signal_strength_score")
+                _sst_bucket = str(_last_sst.get("signal_strength_bucket") or "—")
+                _sst_mult = _last_sst.get("signal_strength_mult")
+                if _sst_score is not None:
+                    _sst_str = f"{_sst_score} ({_sst_bucket}) ×{_sst_mult:.2f}"
+                    if _sst_filter and _sst_min > 0 and _sst_score < _sst_min:
+                        _sst_str += f" BLOCK (<{_sst_min})"
+                    elif _sst_filter and _sst_min > 0:
+                        _sst_str += f" OK (≥{_sst_min})"
+                    items.append(ContextItem("SST Score", _sst_str, "v14"))
+                else:
+                    items.append(ContextItem("SST", "enabled — no eval yet", "v14"))
+            else:
+                items.append(ContextItem("SST", "disabled", "v14"))
+        except Exception:
+            pass
+        # No-reentry timer (after stopout): show if either direction is blocked
+        try:
+            from core.phase3_integrated_engine import load_phase3_sizing_config
+            _v14_cfg = (load_phase3_sizing_config() or {}).get("v14", {})
+            _no_reentry_min = int(_v14_cfg.get("no_reentry_same_direction_after_stop_minutes", 0))
+            if _no_reentry_min > 0:
+                for _dir in ("buy", "sell"):
+                    _stop_key = f"last_stopout_time_{_dir}"
+                    _last_stop = sd.get(_stop_key)
+                    if _last_stop:
+                        try:
+                            _st = pd.Timestamp(_last_stop)
+                            if _st.tzinfo is None:
+                                _st = _st.tz_localize("UTC")
+                            _elapsed = (pd.Timestamp(now_utc) - _st).total_seconds() / 60.0
+                            if _elapsed < _no_reentry_min:
+                                _remaining = _no_reentry_min - _elapsed
+                                items.append(ContextItem(f"No-reentry {_dir}", f"BLOCK {_remaining:.0f}m left (after SL)", "v14"))
+                            else:
+                                items.append(ContextItem(f"No-reentry {_dir}", "clear", "v14"))
+                        except Exception:
+                            pass
+        except Exception:
+            pass
 
     elif session == "london":
         items.append(ContextItem("Strategy", "London V2 (A + D)", "session"))
@@ -1390,7 +1478,7 @@ def collect_phase3_context(
         m1_df = data_by_tf.get("M1")
         if m1_df is not None and not m1_df.empty:
             a_hi, a_lo, a_pips, a_ok = compute_asian_range(m1_df, int(windows["london_open"].hour))
-            items.append(ContextItem("Asian range (pips)", f"{a_pips:.1f}", "london"))
+            items.append(ContextItem("Asian range (pips)", f"{a_pips:.1f} ({'OK' if a_ok else 'BLOCK'})", "london"))
             items.append(ContextItem("Asian H/L", f"{a_hi:.3f} / {a_lo:.3f}", "london"))
         today = now_utc.date().isoformat()
         sk = f"session_london_{today}"
@@ -1398,6 +1486,13 @@ def collect_phase3_context(
         items.append(ContextItem("ARB trades", str(sd.get("arb_trades", 0)), "london"))
         items.append(ContextItem("D trades", str(sd.get("d_trades", 0)), "london"))
         items.append(ContextItem("Total trades", str(sd.get("total_trades", 0)), "london"))
+        items.append(ContextItem("Consec losses", str(sd.get("consecutive_losses", 0)), "london"))
+        items.append(ContextItem("Wins closed", str(sd.get("wins_closed", 0)), "london"))
+        # Channel states: ARMED = ready, FIRED = used, WAITING_RESET = needs retouch
+        channels = sd.get("channels", {})
+        for ch_key, ch_label in [("A_long", "A↑"), ("A_short", "A↓"), ("D_long", "D↑"), ("D_short", "D↓")]:
+            state = channels.get(ch_key, "ARMED")
+            items.append(ContextItem(f"Ch {ch_label}", state, "london"))
 
     elif session == "ny":
         items.append(ContextItem("Strategy", "V44 NY Momentum", "session"))
@@ -1410,11 +1505,79 @@ def collect_phase3_context(
             items.append(ContextItem("M5 Slope (p/bar)", f"{slope:.2f}", "v44"))
             atr_ok = compute_v44_atr_pct_filter(m5_df)
             items.append(ContextItem("ATR % filter", "pass" if atr_ok else "block", "v44"))
+            # Signal strength from H1 trend + M5 slope (backtest parity: ny_strength_allow filter)
+            _v44_strength = classify_v44_strength(slope, is_london=False)
+            try:
+                from core.phase3_integrated_engine import load_phase3_sizing_config
+                _v44_cfg2 = (load_phase3_sizing_config() or {}).get("v44_ny", {})
+                _strength_allow = str(_v44_cfg2.get("ny_strength_allow", "strong_normal")).lower()
+                _allow_map = {
+                    "strong_only": {"strong"},
+                    "strong_normal": {"strong", "normal"},
+                    "all": {"strong", "normal", "weak"},
+                }
+                _allowed = _allow_map.get(_strength_allow, {"strong", "normal"})
+                _strength_ok = _v44_strength in _allowed
+                items.append(ContextItem("Signal strength", f"{_v44_strength} ({'OK' if _strength_ok else 'BLOCK'})", "v44"))
+            except Exception:
+                items.append(ContextItem("Signal strength", _v44_strength, "v44"))
+        # H4 ADX gate (backtest parity: v5_h4_adx_min)
+        h4_df = data_by_tf.get("H4")
+        if h4_df is not None and not h4_df.empty and len(h4_df) >= 16:
+            try:
+                from core.phase3_integrated_engine import load_phase3_sizing_config
+                _v44_cfg3 = (load_phase3_sizing_config() or {}).get("v44_ny", {})
+                _h4_adx_min = float(_v44_cfg3.get("h4_adx_min", 0.0))
+                if _h4_adx_min > 0:
+                    _h4_adx = _compute_adx(h4_df, 14)
+                    _h4_ok = _h4_adx >= _h4_adx_min
+                    items.append(ContextItem("H4 ADX", f"{_h4_adx:.1f} ({'OK' if _h4_ok else 'BLOCK'} ≥{_h4_adx_min:.0f})", "v44"))
+            except Exception:
+                pass
         today = now_utc.date().isoformat()
         sk = f"session_ny_{today}"
         sd = phase3_state.get(sk, {})
-        items.append(ContextItem("Trades this session", str(sd.get("trade_count", 0)), "v44"))
-        items.append(ContextItem("Session stop losses", str(sd.get("consecutive_losses", 0)), "v44"))
+        trade_count = int(sd.get("trade_count", 0))
+        consec_losses = int(sd.get("consecutive_losses", 0))
+        wins_closed = int(sd.get("wins_closed", 0))
+        win_streak = int(sd.get("win_streak", 0))
+        items.append(ContextItem("Trades", f"{trade_count}/{V44_MAX_ENTRIES_DAY}", "v44"))
+        items.append(ContextItem("Consec losses", f"{consec_losses}/{V44_SESSION_STOP_LOSSES} ({'STOP' if consec_losses >= V44_SESSION_STOP_LOSSES else 'OK'})", "v44"))
+        items.append(ContextItem("Wins closed", str(wins_closed), "v44"))
+        items.append(ContextItem("Win streak", str(win_streak), "v44"))
+        # GL (Golden Lion) mode
+        try:
+            from core.phase3_integrated_engine import load_phase3_sizing_config
+            _v44_cfg = (load_phase3_sizing_config() or {}).get("v44_ny", {})
+            _gl_enabled = bool(_v44_cfg.get("gl_enabled", False))
+            _gl_min_wins = max(1, int(_v44_cfg.get("gl_min_wins", 1)))
+            _gl_extra = int(_v44_cfg.get("gl_extra_entries", 0))
+            if _gl_enabled:
+                _gl_active = wins_closed >= _gl_min_wins
+                if _gl_active:
+                    items.append(ContextItem("GL Mode", f"ACTIVE ({wins_closed}/{_gl_min_wins} wins, +{_gl_extra} entries)", "v44"))
+                else:
+                    items.append(ContextItem("GL Mode", f"inactive ({wins_closed}/{_gl_min_wins} wins needed)", "v44"))
+            else:
+                items.append(ContextItem("GL Mode", "disabled", "v44"))
+        except Exception:
+            pass
+        # Cooldown
+        cooldown_until = sd.get("cooldown_until")
+        if cooldown_until:
+            try:
+                _cd = pd.Timestamp(cooldown_until)
+                if _cd.tzinfo is None:
+                    _cd = _cd.tz_localize("UTC")
+                remaining = (_cd - pd.Timestamp(now_utc)).total_seconds() / 60.0
+                if remaining > 0:
+                    items.append(ContextItem("Cooldown", f"WAIT {remaining:.0f}m remaining", "v44"))
+                else:
+                    items.append(ContextItem("Cooldown", "clear", "v44"))
+            except Exception:
+                pass
+        else:
+            items.append(ContextItem("Cooldown", "clear", "v44"))
 
     # Last decision and price
     dec = eval_result.get("decision") if eval_result else None

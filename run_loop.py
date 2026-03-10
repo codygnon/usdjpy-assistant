@@ -927,15 +927,26 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                             if entry_session == "tokyo":
                                 k = f"session_tokyo_{key_date}"
                                 sd = dict(phase3_state.get(k, {}))
-                                sd["consecutive_losses"] = int(sd.get("consecutive_losses", 0)) + 1 if is_loss else 0
-                                if action == "hard_sl":
-                                    sd[f"last_stopout_time_{side}"] = now_utc.isoformat()
+                                if is_loss:
+                                    sd["consecutive_losses"] = int(sd.get("consecutive_losses", 0)) + 1
+                                    sd["win_streak"] = 0
+                                    if action == "hard_sl":
+                                        sd[f"last_stopout_time_{side}"] = now_utc.isoformat()
+                                else:
+                                    sd["consecutive_losses"] = 0
+                                    sd["wins_closed"] = int(sd.get("wins_closed", 0)) + 1
+                                    sd["win_streak"] = int(sd.get("win_streak", 0)) + 1
                                 phase3_state[k] = sd
                             elif entry_session == "london":
                                 k = f"session_london_{key_date}"
                                 sd = dict(phase3_state.get(k, {}))
-                                sd["consecutive_losses"] = int(sd.get("consecutive_losses", 0)) + 1 if is_loss else 0
-                                sd["wins_closed"] = int(sd.get("wins_closed", 0)) + (0 if is_loss else 1)
+                                if is_loss:
+                                    sd["consecutive_losses"] = int(sd.get("consecutive_losses", 0)) + 1
+                                    sd["win_streak"] = 0
+                                else:
+                                    sd["consecutive_losses"] = 0
+                                    sd["wins_closed"] = int(sd.get("wins_closed", 0)) + 1
+                                    sd["win_streak"] = int(sd.get("win_streak", 0)) + 1
                                 _ldn_cfg = phase3_sizing_cfg.get("london_v2", {})
                                 _disable_reset = bool(_ldn_cfg.get("disable_channel_reset_after_exit", False))
                                 if not _disable_reset:
@@ -962,6 +973,26 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                                 if cd_minutes > 0:
                                     sd["cooldown_until"] = (now_utc + pd.Timedelta(minutes=cd_minutes)).isoformat()
                                 phase3_state[k] = sd
+                            # Immediately write estimated exit data to DB so that V14 session_loss_stop
+                            # and V44 daily/weekly loss limits see the closed trade on the next loop poll
+                            # (rather than waiting for sync_closed_trades which runs every ~12 loops).
+                            try:
+                                _p3_exit_px = float(tick.bid if side == "buy" else tick.ask)
+                                _p3_size_lots = float(trade_row.get("size_lots") or 0)
+                                # Profit estimate: pips × pip_size × units / mid_rate (USDJPY convention)
+                                _p3_profit_est = (
+                                    (pips_eval * pip * 100_000.0 * _p3_size_lots / mid)
+                                    if mid > 0 and _p3_size_lots > 0 else None
+                                )
+                                store.close_trade(trade_id=trade_id, updates={
+                                    "exit_price": _p3_exit_px,
+                                    "exit_timestamp_utc": now_utc.isoformat(),
+                                    "exit_reason": action,
+                                    "pips": pips_eval,
+                                    "profit": round(_p3_profit_est, 4) if _p3_profit_est is not None else None,
+                                })
+                            except Exception as _db_e:
+                                print(f"[{profile.profile_name}] Phase3 exit DB immediate-write error: {_db_e}")
             except Exception as e:
                 print(f"[{profile.profile_name}] Phase3 exit error pos {position_id}: {e}")
 
@@ -3398,6 +3429,8 @@ def main() -> None:
                             sl_price = exec_result.get("sl_price")
                             tp1_price = exec_result.get("tp1_price")
                             risk_usd_planned = exec_result.get("risk_usd_planned")
+                            _p3_units = exec_result.get("units")
+                            _p3_size_lots = (float(_p3_units) / 100_000.0) if _p3_units is not None and int(_p3_units) > 0 else None
                             print(f"[{profile.profile_name}] TRADE PLACED: phase3_integrated:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _entry_session = None
                             if strategy_tag:
@@ -3418,6 +3451,7 @@ def main() -> None:
                                 dec=dec,
                                 stop_price=sl_price,
                                 target_price=tp1_price,
+                                size_lots=_p3_size_lots,
                                 entry_type=strategy_tag,
                                 entry_session=_entry_session,
                                 risk_usd_planned=risk_usd_planned,

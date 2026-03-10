@@ -3750,7 +3750,7 @@ def manage_phase3_exit(
     tp1_done = int(trade_row.get("tp1_partial_done") or 0)
 
     # 2) Time decay check (backtest parity: only after TP1 and only for small positive profit)
-    opened_at = trade_row.get("opened_at")
+    opened_at = trade_row.get("opened_at") or trade_row.get("timestamp_utc")
     if tp1_done and opened_at is not None:
         try:
             if isinstance(opened_at, str):
