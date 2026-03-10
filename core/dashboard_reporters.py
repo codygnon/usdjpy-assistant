@@ -818,18 +818,23 @@ def report_ntz_status(ntz_snapshot: Optional[dict], tick, pip_size: float) -> Fi
 
 
 def report_kill_switch_status(policy, data_by_tf: dict, tick, pip_size: float, side: str) -> FilterReport:
-    """Report Trial #9 Kill Switch (M1-200 EMA) status."""
+    """Report Trial #9 Kill Switch status: M5 trend + M1-200 EMA cross.
+
+    Active when M5 Bull + M1 completed bar close < EMA200, or M5 Bear + M1 close > EMA200.
+    Blocks both exits and new entries until M1 closes back on the trend side or M5 trend changes.
+    """
     enabled = getattr(policy, "kill_switch_enabled", True)
     if not enabled:
         return FilterReport(
-            filter_id="kill_switch", display_name="Kill Switch (M1-200)",
+            filter_id="kill_switch", display_name="Kill Switch (M5+M1-200)",
             enabled=False, is_clear=True,
         )
 
     m1_df = data_by_tf.get("M1")
+    m5_df = data_by_tf.get("M5")
     if m1_df is None or m1_df.empty or len(m1_df) < 202:
         return FilterReport(
-            filter_id="kill_switch", display_name="Kill Switch (M1-200)",
+            filter_id="kill_switch", display_name="Kill Switch (M5+M1-200)",
             enabled=True, is_clear=True,
             current_value="Insufficient M1 data",
         )
@@ -838,35 +843,55 @@ def report_kill_switch_status(policy, data_by_tf: dict, tick, pip_size: float, s
         from core.indicators import ema as ema_fn
         close = m1_df["close"].astype(float)
         ema200 = ema_fn(close, 200)
-        if ema200.empty or pd.isna(ema200.iloc[-1]):
+        if ema200.empty or pd.isna(ema200.iloc[-2]):
             return FilterReport(
-                filter_id="kill_switch", display_name="Kill Switch (M1-200)",
+                filter_id="kill_switch", display_name="Kill Switch (M5+M1-200)",
                 enabled=True, is_clear=True,
                 current_value="EMA200 not ready",
             )
-        ema200_val = float(ema200.iloc[-1])
-        last_close = float(close.iloc[-1])
+        ema200_val = float(ema200.iloc[-2])   # completed bar (same as exit logic)
+        last_close = float(close.iloc[-2])     # completed bar
         current_mid = (tick.bid + tick.ask) / 2.0
         dist_pips = (current_mid - ema200_val) / pip_size
 
+        # M5 trend
+        m5_trend_str = "unknown"
+        m5_is_bull = None
+        if m5_df is not None and not m5_df.empty and len(m5_df) >= 22:
+            m5_close = m5_df["close"].astype(float)
+            _fast_p = int(getattr(policy, "m5_trend_ema_fast", 9))
+            _slow_p = int(getattr(policy, "m5_trend_ema_slow", 21))
+            _m5_fast = m5_close.ewm(span=_fast_p, adjust=False).mean()
+            _m5_slow = m5_close.ewm(span=_slow_p, adjust=False).mean()
+            m5_is_bull = float(_m5_fast.iloc[-1]) > float(_m5_slow.iloc[-1])
+            m5_trend_str = "Bull" if m5_is_bull else "Bear"
+
         zone_action = str(getattr(policy, "kill_switch_zone_entry_action", "kill"))
         active = False
-        if side == "buy" and last_close < ema200_val:
+        if m5_is_bull is True and last_close < ema200_val:
             active = True
-        elif side == "sell" and last_close > ema200_val:
+        elif m5_is_bull is False and last_close > ema200_val:
             active = True
 
+        block_reason = None
+        if active:
+            cmp = "<" if m5_is_bull else ">"
+            block_reason = (
+                f"Kill Switch ACTIVE: M5={m5_trend_str}, M1 close {last_close:.3f} "
+                f"{cmp} EMA200 {ema200_val:.3f} — exits+entries blocked"
+            )
+
         return FilterReport(
-            filter_id="kill_switch", display_name="Kill Switch (M1-200)",
+            filter_id="kill_switch", display_name="Kill Switch (M5+M1-200)",
             enabled=True, is_clear=not active,
-            current_value=f"EMA200={ema200_val:.3f} ({dist_pips:+.1f}p) | ZoneEntry={zone_action}",
-            block_reason=f"Kill Switch ACTIVE: M1 close {last_close:.3f} crossed EMA200 {ema200_val:.3f}" if active else None,
+            current_value=f"M5={m5_trend_str} | EMA200={ema200_val:.3f} ({dist_pips:+.1f}p) | ZoneEntry={zone_action}",
+            block_reason=block_reason,
         )
     except Exception:
         return FilterReport(
-            filter_id="kill_switch", display_name="Kill Switch (M1-200)",
+            filter_id="kill_switch", display_name="Kill Switch (M5+M1-200)",
             enabled=True, is_clear=True,
-            current_value="Error computing EMA200",
+            current_value="Error computing kill switch status",
         )
 
 
@@ -1307,9 +1332,16 @@ def collect_phase3_context(
     # Common: time and session
     items.append(ContextItem("UTC", now_utc.strftime("%H:%M"), "session"))
     items.append(ContextItem("Day", now_utc.strftime("%A"), "session"))
+    windows = _compute_session_windows(now_utc)
+    d_start = windows["london_open"] + pd.Timedelta(minutes=15)
+    ny_start_delayed = windows["ny_open"] + pd.Timedelta(minutes=5)
     if session is None:
         items.append(ContextItem("Active Session", "None", "session"))
-        items.append(ContextItem("Next", "London 08:00 / NY 13:05 / Tokyo 16:00 UTC", "session"))
+        items.append(ContextItem(
+            "Next",
+            f"London {windows['london_open'].strftime('%H:%M')} / NY {ny_start_delayed.strftime('%H:%M')} / Tokyo 16:00 UTC",
+            "session",
+        ))
         items.append(ContextItem("Bid", f"{tick.bid:.3f}", "price"))
         items.append(ContextItem("Ask", f"{tick.ask:.3f}", "price"))
         items.append(ContextItem("Spread", f"{(tick.ask - tick.bid) / pip_size:.1f}p", "price"))
@@ -1343,14 +1375,21 @@ def collect_phase3_context(
 
     elif session == "london":
         items.append(ContextItem("Strategy", "London V2 (A + D)", "session"))
-        windows = _compute_session_windows(now_utc)
         if now_utc < windows["london_arb_end"]:
-            items.append(ContextItem("Window", "Setup A (08:00–09:30 UTC)", "london"))
+            items.append(ContextItem(
+                "Window",
+                f"Setup A ({windows['london_open'].strftime('%H:%M')}–{windows['london_arb_end'].strftime('%H:%M')} UTC)",
+                "london",
+            ))
         else:
-            items.append(ContextItem("Window", "Setup D (08:15–10:00 UTC active)", "london"))
+            items.append(ContextItem(
+                "Window",
+                f"Setup D ({d_start.strftime('%H:%M')}–{(windows['london_open'] + pd.Timedelta(minutes=120)).strftime('%H:%M')} UTC active)",
+                "london",
+            ))
         m1_df = data_by_tf.get("M1")
         if m1_df is not None and not m1_df.empty:
-            a_hi, a_lo, a_pips, a_ok = compute_asian_range(m1_df, LONDON_START_UTC)
+            a_hi, a_lo, a_pips, a_ok = compute_asian_range(m1_df, int(windows["london_open"].hour))
             items.append(ContextItem("Asian range (pips)", f"{a_pips:.1f}", "london"))
             items.append(ContextItem("Asian H/L", f"{a_hi:.3f} / {a_lo:.3f}", "london"))
         today = now_utc.date().isoformat()

@@ -145,6 +145,7 @@ def _insert_trade_for_policy(
     size_lots: float | None = None,
     entry_type: str | None = None,
     entry_session: str | None = None,
+    risk_usd_planned: float | None = None,
 ) -> None:
     """Store a trade in DB when a policy places an order. Ensures preset and position_id for Performance by Preset."""
     try:
@@ -183,6 +184,8 @@ def _insert_trade_for_policy(
             row["entry_type"] = entry_type
         if entry_session:
             row["entry_session"] = entry_session
+        if risk_usd_planned is not None:
+            row["risk_usd_planned"] = float(risk_usd_planned)
         # Capture entry slippage if fill_price available
         if getattr(dec, 'fill_price', None) is not None:
             slippage = abs(dec.fill_price - entry_price) / float(profile.pip_size)
@@ -775,7 +778,9 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                 except Exception as e:
                     print(f"[{profile.profile_name}] T9 trailing EMA error pos {position_id}: {e}")
 
-            # Kill Switch (M1-200 EMA): check on every poll, act on completed M1 bar close
+            # Kill Switch (M5 trend + M1-200 EMA): check on every poll, act on completed M1 bar close
+            # Fires when M5 is Bull AND M1 bar close < EMA200 (BUY), or M5 is Bear AND M1 bar close > EMA200 (SELL)
+            # Closes ALL T9 trades (both tiered pullback and zone entry when kill_switch_zone_entry_action="kill")
             if t9_policy is not None and getattr(t9_policy, "kill_switch_enabled", True):
                 try:
                     m1_df_ks = adapter.get_bars(profile.symbol, "M1", 250)
@@ -786,7 +791,17 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                         if not ema200.empty and pd.notna(ema200.iloc[-2]):
                             last_ema200 = float(ema200.iloc[-2])
                             last_m1_close_ks = float(m1_close_ks.iloc[-2])
-                            # Extract tier from comment
+                            # M5 trend check
+                            m5_df_ks = adapter.get_bars(profile.symbol, "M5", 50)
+                            m5_is_bull_ks = None
+                            if m5_df_ks is not None and not m5_df_ks.empty and len(m5_df_ks) >= 22:
+                                m5_close_ks = m5_df_ks["close"].astype(float)
+                                _ks_fast_p = int(getattr(t9_policy, "m5_trend_ema_fast", 9))
+                                _ks_slow_p = int(getattr(t9_policy, "m5_trend_ema_slow", 21))
+                                _ks_m5_fast = m5_close_ks.ewm(span=_ks_fast_p, adjust=False).mean()
+                                _ks_m5_slow = m5_close_ks.ewm(span=_ks_slow_p, adjust=False).mean()
+                                m5_is_bull_ks = float(_ks_m5_fast.iloc[-1]) > float(_ks_m5_slow.iloc[-1])
+                            # Extract trade comment
                             comment = ""
                             if isinstance(pos, dict):
                                 ce = pos.get("clientExtensions")
@@ -799,30 +814,32 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                             if "kt_cg_trial_9" not in comment:
                                 pass  # Not a T9 trade
                             else:
-                                kill_tiers = {17, 21, 27}
-                                # hold_tiers = {33, 50, 75, 100}
-                                tier_num = None
                                 is_zone_entry = "zone_entry" in comment
-                                if not is_zone_entry:
-                                    # Extract tier number from "tier_N"
-                                    import re
-                                    m = re.search(r"tier_(\d+)", comment)
-                                    if m:
-                                        tier_num = int(m.group(1))
+                                import re
+                                _tier_m = re.search(r"tier_(\d+)", comment)
+                                tier_num = int(_tier_m.group(1)) if _tier_m else None
+                                if is_zone_entry:
+                                    label = "zone_entry"
+                                elif tier_num is not None:
+                                    label = f"tier_{tier_num}"
+                                else:
+                                    label = "unknown"
 
                                 should_kill = False
-                                if side == "buy" and last_m1_close_ks < last_ema200:
+                                # Kill when M5 trend is Bull and M1 completed bar close < EMA200
+                                if side == "buy" and m5_is_bull_ks is True and last_m1_close_ks < last_ema200:
                                     if is_zone_entry:
                                         if str(getattr(t9_policy, "kill_switch_zone_entry_action", "kill")) == "kill":
                                             should_kill = True
-                                    elif tier_num is not None and tier_num in kill_tiers:
-                                        should_kill = True
-                                elif side == "sell" and last_m1_close_ks > last_ema200:
+                                    else:
+                                        should_kill = True  # All tiered pullback tiers killed
+                                # Kill when M5 trend is Bear and M1 completed bar close > EMA200
+                                elif side == "sell" and m5_is_bull_ks is False and last_m1_close_ks > last_ema200:
                                     if is_zone_entry:
                                         if str(getattr(t9_policy, "kill_switch_zone_entry_action", "kill")) == "kill":
                                             should_kill = True
-                                    elif tier_num is not None and tier_num in kill_tiers:
-                                        should_kill = True
+                                    else:
+                                        should_kill = True  # All tiered pullback tiers killed
 
                                 if should_kill:
                                     position_type = 1 if side == "sell" else 0
@@ -832,15 +849,21 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                                         vol = float(getattr(pos, "volume", 0) or 0)
                                     if vol > 0:
                                         adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
-                                        label = f"tier_{tier_num}" if tier_num else "zone_entry"
-                                        print(f"[{profile.profile_name}] T9 Kill Switch: closed {label} pos {position_id} (M1 close {last_m1_close_ks:.3f} vs EMA200 {last_ema200:.3f})")
+                                        m5_trend_str = "Bull" if m5_is_bull_ks else "Bear"
+                                        print(f"[{profile.profile_name}] T9 Kill Switch: closed {label} pos {position_id} (M5={m5_trend_str}, M1 close {last_m1_close_ks:.3f} vs EMA200 {last_ema200:.3f})")
                 except Exception as e:
                     print(f"[{profile.profile_name}] T9 Kill Switch error pos {position_id}: {e}")
 
         # 2d) Phase 3 Integrated trade management
         elif entry_type is not None and str(entry_type).startswith("phase3:"):
             try:
-                from core.phase3_integrated_engine import manage_phase3_exit
+                from core.phase3_integrated_engine import (
+                    manage_phase3_exit,
+                    load_phase3_sizing_config,
+                    V44_COOLDOWN_WIN,
+                    V44_COOLDOWN_LOSS,
+                )
+                phase3_sizing_cfg = load_phase3_sizing_config() or {}
                 p3_exit = manage_phase3_exit(
                     adapter=adapter,
                     profile=profile,
@@ -850,9 +873,85 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                     position=pos,
                     data_by_tf={},  # not available in _run_trade_management; engine uses adapter.get_bars internally if needed
                     phase3_state=phase3_state or {},
+                    sizing_config=phase3_sizing_cfg,
                 )
                 if p3_exit.get("action") not in ("none", None):
                     print(f"[{profile.profile_name}] Phase3 exit: pos {position_id} -> {p3_exit.get('action')}: {p3_exit.get('reason', '')}")
+                    # Keep Phase 3 runtime caps/cooldowns in sync with recent close outcomes.
+                    if isinstance(phase3_state, dict):
+                        action = str(p3_exit.get("action") or "")
+                        full_close_actions = {"session_end_close", "time_decay_close", "hard_sl", "tp2_full", "tp1_full"}
+                        if action in full_close_actions:
+                            now_utc = pd.Timestamp.now(tz="UTC")
+                            key_date = now_utc.date().isoformat()
+                            try:
+                                _ts = pd.Timestamp(trade_row.get("timestamp_utc"))
+                                if _ts.tzinfo is None:
+                                    _ts = _ts.tz_localize("UTC")
+                                else:
+                                    _ts = _ts.tz_convert("UTC")
+                                key_date = _ts.date().isoformat()
+                            except Exception:
+                                pass
+                            closed_pips_est = p3_exit.get("closed_pips_est")
+                            if closed_pips_est is None:
+                                _stored_pips = trade_row.get("pips")
+                                if _stored_pips is not None:
+                                    closed_pips_est = _stored_pips
+                                else:
+                                    closed_pips_est = ((mid - entry) / pip) if side == "buy" else ((entry - mid) / pip)
+                            try:
+                                pips_eval = float(closed_pips_est)
+                            except Exception:
+                                pips_eval = 0.0
+                            is_loss = True if action == "hard_sl" else (pips_eval < 0.0)
+                            _et = str(entry_type or "")
+                            entry_session = str(trade_row.get("entry_session") or "").lower()
+                            if entry_session not in {"tokyo", "london", "ny"}:
+                                if _et.startswith("phase3:v14"):
+                                    entry_session = "tokyo"
+                                elif _et.startswith("phase3:london_v2"):
+                                    entry_session = "london"
+                                elif _et.startswith("phase3:v44"):
+                                    entry_session = "ny"
+                            if entry_session == "tokyo":
+                                k = f"session_tokyo_{key_date}"
+                                sd = dict(phase3_state.get(k, {}))
+                                sd["consecutive_losses"] = int(sd.get("consecutive_losses", 0)) + 1 if is_loss else 0
+                                if action == "hard_sl":
+                                    sd[f"last_stopout_time_{side}"] = now_utc.isoformat()
+                                phase3_state[k] = sd
+                            elif entry_session == "london":
+                                k = f"session_london_{key_date}"
+                                sd = dict(phase3_state.get(k, {}))
+                                sd["consecutive_losses"] = int(sd.get("consecutive_losses", 0)) + 1 if is_loss else 0
+                                sd["wins_closed"] = int(sd.get("wins_closed", 0)) + (0 if is_loss else 1)
+                                _ldn_cfg = phase3_sizing_cfg.get("london_v2", {})
+                                _disable_reset = bool(_ldn_cfg.get("disable_channel_reset_after_exit", False))
+                                if not _disable_reset:
+                                    _channels = dict(sd.get("channels", {}))
+                                    if _et.startswith("phase3:london_v2_arb"):
+                                        _channels["A_long" if side == "buy" else "A_short"] = "WAITING_RESET"
+                                    elif _et.startswith("phase3:london_v2_d"):
+                                        _channels["D_long" if side == "buy" else "D_short"] = "WAITING_RESET"
+                                    sd["channels"] = _channels
+                                phase3_state[k] = sd
+                            elif entry_session == "ny":
+                                k = f"session_ny_{key_date}"
+                                sd = dict(phase3_state.get(k, {}))
+                                sd["consecutive_losses"] = int(sd.get("consecutive_losses", 0)) + 1 if is_loss else 0
+                                sd["wins_closed"] = int(sd.get("wins_closed", 0)) + (0 if is_loss else 1)
+                                sd["win_streak"] = 0 if is_loss else (int(sd.get("win_streak", 0)) + 1)
+                                v44_cfg = phase3_sizing_cfg.get("v44_ny", {})
+                                _scope = str(v44_cfg.get("win_streak_scope", "session")).lower()
+                                if _scope != "session":
+                                    phase3_state["v44_win_streak_global"] = 0 if is_loss else (int(phase3_state.get("v44_win_streak_global", 0)) + 1)
+                                cd_win_bars = int(v44_cfg.get("cooldown_win_bars", V44_COOLDOWN_WIN))
+                                cd_loss_bars = int(v44_cfg.get("cooldown_loss_bars", V44_COOLDOWN_LOSS))
+                                cd_minutes = max(0, (cd_loss_bars if is_loss else cd_win_bars) * 5)
+                                if cd_minutes > 0:
+                                    sd["cooldown_until"] = (now_utc + pd.Timedelta(minutes=cd_minutes)).isoformat()
+                                phase3_state[k] = sd
             except Exception as e:
                 print(f"[{profile.profile_name}] Phase3 exit error pos {position_id}: {e}")
 
@@ -1545,6 +1644,13 @@ def main() -> None:
 
             # Trade management: breakeven and TP1 partial close (only for positions we opened)
             _run_trade_management(profile, adapter, store, tick, phase3_state=phase3_state if has_phase3_integrated else None)
+            if has_phase3_integrated:
+                try:
+                    current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                    current_state_data["phase3_state"] = phase3_state
+                    state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
+                except Exception as e:
+                    print(f"[{profile.profile_name}] Failed to persist phase3_state after trade management: {e}")
 
             m1_df = data_by_tf["M1"]
             m1_last_time = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
@@ -2721,6 +2827,15 @@ def main() -> None:
                                     d_sorted = d_sorted.dropna(subset=["_time"]).sort_values("_time")
                                     if len(d_sorted) < 2:
                                         return None, None
+                                    # W/MN: last row is the current (forming) week/month; bar time is period open
+                                    # (e.g. Monday or 1st), so last_date rarely equals today — using iloc[-1] would
+                                    # use an incomplete period. Always use iloc[-2] as previous completed W/MN.
+                                    if tf_label in ("W", "MN"):
+                                        prev_row = d_sorted.iloc[-2]
+                                        h = float(prev_row["high"])
+                                        l = float(prev_row["low"])
+                                        _log(f"NTZ {tf_label}: using prior completed candle iloc[-2] time={prev_row['_time']} H={h:.3f} L={l:.3f}")
+                                        return h, l
                                     now_date = pd.Timestamp.now(tz="UTC").date().isoformat()
                                     last_date = d_sorted.iloc[-1]["_time"].date().isoformat()
                                     if last_date == now_date:
@@ -3224,6 +3339,7 @@ def main() -> None:
                             entry_price = float(fill_price) if fill_price is not None else (tick.ask if side == "buy" else tick.bid)
                             sl_price = exec_result.get("sl_price")
                             tp1_price = exec_result.get("tp1_price")
+                            risk_usd_planned = exec_result.get("risk_usd_planned")
                             print(f"[{profile.profile_name}] TRADE PLACED: phase3_integrated:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _entry_session = None
                             if strategy_tag:
@@ -3246,6 +3362,7 @@ def main() -> None:
                                 target_price=tp1_price,
                                 entry_type=strategy_tag,
                                 entry_session=_entry_session,
+                                risk_usd_planned=risk_usd_planned,
                             )
                             _append_trade_open_event(
                                 log_dir, f"phase3_integrated:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",

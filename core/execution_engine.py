@@ -5149,6 +5149,68 @@ def execute_kt_cg_trial_7_policy_demo_only(
                 ExecutionDecision(attempted=True, placed=False, reason=ntz_reason),
             )
 
+    # Kill Switch entry block (Trial #9): block new entries when M5 trend opposes M1 EMA200 position.
+    # M5 Bull + M1 completed bar close < EMA200 → block (price broke below EMA200 in bull trend).
+    # M5 Bear + M1 completed bar close > EMA200 → block (price broke above EMA200 in bear trend).
+    # Entries are allowed again when M1 closes back on the trend side OR M5 trend changes.
+    if policy_type == "kt_cg_trial_9" and getattr(policy, "kill_switch_enabled", True):
+        m1_df_ks = data_by_tf.get("M1")
+        m5_df_ks = data_by_tf.get("M5")
+        if (
+            m1_df_ks is not None and not m1_df_ks.empty and len(m1_df_ks) >= 202
+            and m5_df_ks is not None and not m5_df_ks.empty
+        ):
+            from core.indicators import ema as ema_fn
+            _ks_m1_close = m1_df_ks["close"].astype(float)
+            _ks_ema200 = ema_fn(_ks_m1_close, 200)
+            if not _ks_ema200.empty and pd.notna(_ks_ema200.iloc[-2]):
+                _ks_last_ema200 = float(_ks_ema200.iloc[-2])
+                _ks_last_m1_close = float(_ks_m1_close.iloc[-2])
+                # M5 trend
+                _ks_m5_local = drop_incomplete_last_bar(m5_df_ks.copy(), "M5")
+                if len(_ks_m5_local) >= 22:
+                    _ks_m5_close = _ks_m5_local["close"].astype(float)
+                    _ks_fast_p = int(getattr(policy, "m5_trend_ema_fast", 9))
+                    _ks_slow_p = int(getattr(policy, "m5_trend_ema_slow", 21))
+                    _ks_m5_fast = _ks_m5_close.ewm(span=_ks_fast_p, adjust=False).mean()
+                    _ks_m5_slow = _ks_m5_close.ewm(span=_ks_slow_p, adjust=False).mean()
+                    _ks_m5_is_bull = float(_ks_m5_fast.iloc[-1]) > float(_ks_m5_slow.iloc[-1])
+                    ks_entry_blocked = False
+                    ks_entry_reason = None
+                    if _ks_m5_is_bull and _ks_last_m1_close < _ks_last_ema200:
+                        ks_entry_blocked = True
+                        ks_entry_reason = (
+                            f"kill_switch_entry_block: M5 Bull but M1 close {_ks_last_m1_close:.3f} "
+                            f"< EMA200 {_ks_last_ema200:.3f} — blocked until M1 closes above or M5 trend changes"
+                        )
+                    elif not _ks_m5_is_bull and _ks_last_m1_close > _ks_last_ema200:
+                        ks_entry_blocked = True
+                        ks_entry_reason = (
+                            f"kill_switch_entry_block: M5 Bear but M1 close {_ks_last_m1_close:.3f} "
+                            f"> EMA200 {_ks_last_ema200:.3f} — blocked until M1 closes below or M5 trend changes"
+                        )
+                    if ks_entry_blocked and ks_entry_reason:
+                        print(f"[{profile.profile_name}] kt_cg_trial_9 {ks_entry_reason}")
+                        if store is not None:
+                            store.insert_execution(
+                                {
+                                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                                    "profile": profile.profile_name,
+                                    "symbol": profile.symbol,
+                                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                                    "mode": mode,
+                                    "attempted": 1,
+                                    "placed": 0,
+                                    "reason": ks_entry_reason,
+                                    "mt5_retcode": None,
+                                    "mt5_order_id": None,
+                                    "mt5_deal_id": None,
+                                }
+                            )
+                        return _result_payload(
+                            ExecutionDecision(attempted=True, placed=False, reason=ks_entry_reason),
+                        )
+
     if trigger_type == "tiered_pullback" and tiered_pullback_tier:
         rule_id = f"{policy_type}:{policy.id}:tier_{tiered_pullback_tier}"
 

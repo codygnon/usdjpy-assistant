@@ -188,6 +188,8 @@ class SqliteStore:
             self._ensure_column(conn, "trades", "tier_number", "INTEGER")
             # v2.3: entry_session for Phase 3 session-stratified stats (tokyo | london | ny)
             self._ensure_column(conn, "trades", "entry_session", "TEXT")
+            # v2.4: planned USD risk at entry (for exact open-risk ledger parity)
+            self._ensure_column(conn, "trades", "risk_usd_planned", "REAL")
             conn.commit()
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, col: str, col_type: str) -> None:
@@ -331,6 +333,15 @@ class SqliteStore:
         with self.connect() as conn:
             cur = conn.execute(
                 "SELECT * FROM trades WHERE profile=? AND exit_price IS NOT NULL AND timestamp_utc LIKE ? ORDER BY timestamp_utc",
+                [profile, f"{date_str}%"],
+            )
+            return cur.fetchall()
+
+    def get_closed_trades_for_exit_date(self, profile: str, date_str: str) -> list[sqlite3.Row]:
+        """Get closed trades by exit date (YYYY-MM-DD), using exit_timestamp_utc."""
+        with self.connect() as conn:
+            cur = conn.execute(
+                "SELECT * FROM trades WHERE profile=? AND exit_price IS NOT NULL AND exit_timestamp_utc LIKE ? ORDER BY exit_timestamp_utc",
                 [profile, f"{date_str}%"],
             )
             return cur.fetchall()
