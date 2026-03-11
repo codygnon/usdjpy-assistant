@@ -1827,8 +1827,14 @@ def main() -> None:
                 except Exception:
                     pass
 
+            # OANDA: run Trial 7/8/9 intrabar (tick-driven), not only on new M1 candles.
+            intrabar_t78 = (
+                getattr(profile, "broker_type", None) == "oanda"
+                and (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9)
+            )
+
             # Log when we skip Trial 7/8 due to no new M1 bar (so execution log shows why no evaluation)
-            if (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9) and not is_new and not args.once:
+            if (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9) and not is_new and not args.once and not intrabar_t78:
                 try:
                     store.insert_execution(
                         {
@@ -1847,6 +1853,158 @@ def main() -> None:
                     )
                 except Exception:
                     pass
+
+            # Trial 7/8/9 intrabar execution (OANDA): evaluate every poll so zone-entry can fire within seconds.
+            if intrabar_t78 and not args.once:
+                t7_mkt = None
+                spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
+                t7_mkt = MarketContext(spread_pips=float(spread_pips), alignment_score=0)
+                trades_df = store.read_trades_df(profile.profile_name)
+                tier_state: dict[int, bool] = {}
+                try:
+                    state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                    tier_fired_raw = state_data.get("tier_fired")
+                    if isinstance(tier_fired_raw, dict):
+                        tier_state = {int(k): bool(v) for k, v in tier_fired_raw.items()}
+                    else:
+                        tier_state = {}
+                        for key, val in state_data.items():
+                            if key.startswith("tier_") and key.endswith("_fired") and key != "tier_fired":
+                                try:
+                                    period = int(key.replace("tier_", "").replace("_fired", ""))
+                                    tier_state[period] = bool(val)
+                                except ValueError:
+                                    pass
+                except Exception:
+                    tier_state = {}
+
+                for pol in profile.execution.policies:
+                    pol_type = getattr(pol, "type", None)
+                    if not getattr(pol, "enabled", True) or pol_type not in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9"):
+                        continue
+                    # Use poll time for bar_time_utc so multiple evaluations within a minute are distinct.
+                    bar_time_utc = now_utc.isoformat()
+                    if pol_type == "kt_cg_trial_9":
+                        exec_result = execute_kt_cg_trial_9_policy_demo_only(
+                            adapter=adapter,
+                            profile=profile,
+                            log_dir=log_dir,
+                            policy=pol,
+                            context=t7_mkt,
+                            data_by_tf=data_by_tf,
+                            tick=tick,
+                            trades_df=trades_df,
+                            mode=mode,
+                            bar_time_utc=bar_time_utc,
+                            tier_state=tier_state,
+                            store=store,
+                            ntz_filter=ntz_filter,
+                        )
+                    elif pol_type == "kt_cg_trial_8":
+                        exec_result = execute_kt_cg_trial_8_policy_demo_only(
+                            adapter=adapter,
+                            profile=profile,
+                            log_dir=log_dir,
+                            policy=pol,
+                            context=t7_mkt,
+                            data_by_tf=data_by_tf,
+                            tick=tick,
+                            trades_df=trades_df,
+                            mode=mode,
+                            bar_time_utc=bar_time_utc,
+                            tier_state=tier_state,
+                            store=store,
+                            daily_level_filter=daily_level_filter,
+                            daily_state=trial7_daily_state,
+                        )
+                    else:
+                        exec_result = execute_kt_cg_trial_7_policy_demo_only(
+                            adapter=adapter,
+                            profile=profile,
+                            log_dir=log_dir,
+                            policy=pol,
+                            context=t7_mkt,
+                            data_by_tf=data_by_tf,
+                            tick=tick,
+                            trades_df=trades_df,
+                            mode=mode,
+                            bar_time_utc=bar_time_utc,
+                            tier_state=tier_state,
+                            store=store,
+                            daily_level_filter=None,
+                            daily_state=None,
+                        )
+
+                    dec = exec_result["decision"]
+                    tier_updates = exec_result.get("tier_updates", {})
+                    t7_trigger_type = exec_result.get("trigger_type")
+
+                    if tier_updates:
+                        try:
+                            current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                            tf_dict = current_state_data.get("tier_fired", {})
+                            if not isinstance(tf_dict, dict):
+                                tf_dict = {}
+                            for tier, new_state in tier_updates.items():
+                                tf_dict[str(tier)] = new_state
+                                tier_state[tier] = new_state
+                            current_state_data["tier_fired"] = tf_dict
+                            state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
+                        except Exception as e:
+                            print(f"[{profile.profile_name}] Failed to persist Trial #7 tier state: {e}")
+
+                    if dec.attempted:
+                        if dec.placed:
+                            side = dec.side or "buy"
+                            entry_price = tick.ask if side == "buy" else tick.bid
+                            pip = float(profile.pip_size)
+                            if pol_type == "kt_cg_trial_9":
+                                sl_price = None
+                                tp_price = None
+                            else:
+                                sl_pips = getattr(pol, "sl_pips", None)
+                                if sl_pips is None:
+                                    sl_pips = float(get_effective_risk(profile).min_stop_pips)
+                                if side == "buy":
+                                    tp_price = entry_price + pol.tp_pips * pip
+                                    sl_price = entry_price - sl_pips * pip
+                                else:
+                                    tp_price = entry_price - pol.tp_pips * pip
+                                    sl_price = entry_price + sl_pips * pip
+                                if pol_type == "kt_cg_trial_8" and getattr(pol, "trail_after_tp1", False):
+                                    tp_price = None
+                            print(f"[{profile.profile_name}] TRADE PLACED: {pol_type}:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
+                            _insert_trade_for_policy(
+                                profile=profile,
+                                adapter=adapter,
+                                store=store,
+                                policy_type=pol_type,
+                                policy_id=pol.id,
+                                side=side,
+                                entry_price=entry_price,
+                                dec=dec,
+                                stop_price=sl_price,
+                                target_price=tp_price,
+                                entry_type=t7_trigger_type,
+                            )
+                            _append_trade_open_event(
+                                log_dir, f"{pol_type}:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
+                                side, entry_price,
+                                trigger_type=_event_trigger_label(t7_trigger_type, dec.reason),
+                                entry_type=t7_trigger_type or "",
+                            )
+                        else:
+                            print(f"[{profile.profile_name}] {pol_type} {pol.id} mode={mode} -> {dec.reason}")
+
+                    _build_and_write_dashboard(
+                        profile=profile, store=store, log_dir=log_dir, tick=tick,
+                        data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
+                        policy_type=pol_type, tier_state=tier_state,
+                        eval_result=exec_result,
+                        exhaustion_result=exec_result.get("exhaustion_result"),
+                        daily_level_filter=daily_level_filter if pol_type == "kt_cg_trial_8" else None,
+                        ntz_filter=ntz_filter if pol_type == "kt_cg_trial_9" else None,
+                    )
 
             mkt = None
             if is_new or args.once:
@@ -2888,7 +3046,7 @@ def main() -> None:
                     )
 
             # Trial #7 / Trial #8 execution — M5 Trend + Tiered Pullback (+ Daily Level Filter for T8)
-            if has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9:
+            if (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9) and not intrabar_t78:
                 t7_mkt = mkt
                 if t7_mkt is None:
                     spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
