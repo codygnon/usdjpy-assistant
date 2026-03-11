@@ -2041,8 +2041,8 @@ def main() -> None:
                     if exec_dec.attempted:
                         print(f"[{profile.profile_name}] {setup_name} {sig.side} {sig.confirm_time} mode={mode} -> {exec_dec.reason}")
 
-                if not used_clock_fallback:
-                    last_seen_m1_time = m1_last_time
+                # Always mark bar as seen so we don't re-run every poll for same bar (even when clock fallback was used).
+                last_seen_m1_time = m1_last_time
 
             if has_price_level and mkt is None:
                 mkt = _compute_mkt(profile, tick, data_by_tf)
@@ -3083,9 +3083,9 @@ def main() -> None:
                         daily_level_filter=daily_level_filter if pol_type == "kt_cg_trial_8" else None,
                         ntz_filter=ntz_filter if pol_type == "kt_cg_trial_9" else None,
                     )
-                # After Trial 7/8/9 block: mark this bar as seen so we don't re-run every poll for same bar
-                if not used_clock_fallback:
-                    last_seen_m1_time = m1_last_time
+                # After Trial 7/8/9 block: mark this bar as seen so we don't re-run every poll for same bar.
+                # Always update (even when clock fallback was used) so we don't re-evaluate the same bar every poll.
+                last_seen_m1_time = m1_last_time
 
             # Trial #6 execution — BB Slope Trend + EMA Tier Pullback + BB Reversal
             if has_kt_cg_trial_6:
