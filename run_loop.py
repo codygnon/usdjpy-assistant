@@ -1525,6 +1525,9 @@ def main() -> None:
             "H1": 3595.0, "H4": 14395.0, "D": 300.0,
             "W": 3600.0, "MN": 3600.0,
         }
+        # OANDA candles can lag; keep M1 refresh frequent so loop sees the latest candle time quickly.
+        if getattr(profile, "broker_type", None) == "oanda":
+            _CANDLE_TTL["M1"] = 2.0
 
         # Logging state for Trial #5 — reduce log spam
         _last_exhaustion_zone: str | None = None
@@ -1588,15 +1591,16 @@ def main() -> None:
             except Exception:
                 phase3_state = {}
 
-        def _get_bars_cached(symbol: str, tf: str, count: int, *, include_incomplete: bool = False) -> pd.DataFrame:
+        def _get_bars_cached(symbol: str, tf: str, count: int, *, include_incomplete: bool = False, force_refresh: bool = False) -> pd.DataFrame:
             """Fetch bars with caching to reduce API calls at fast poll rates."""
             now = time.time()
-            cached = _candle_cache.get(tf)
-            ttl = _CANDLE_TTL.get(tf, 55.0)
-            if cached is not None:
-                cached_time, cached_df = cached
-                if now - cached_time < ttl:
-                    return cached_df
+            if not force_refresh:
+                cached = _candle_cache.get(tf)
+                ttl = _CANDLE_TTL.get(tf, 55.0)
+                if cached is not None:
+                    cached_time, cached_df = cached
+                    if now - cached_time < ttl:
+                        return cached_df
             try:
                 df = adapter.get_bars(symbol, tf, count, include_incomplete=include_incomplete)
             except TypeError:
@@ -1686,7 +1690,14 @@ def main() -> None:
                     data_by_tf = {
                         "H4": _get_bars_cached(profile.symbol, "H4", 800),
                         "M15": _get_bars_cached(profile.symbol, "M15", 2000),
-                        "M1": _get_bars_cached(profile.symbol, "M1", 3000),
+                        # OANDA: request fewer bars (faster) and include forming candle for fresher timestamps.
+                        "M1": _get_bars_cached(
+                            profile.symbol,
+                            "M1",
+                            800 if getattr(profile, "broker_type", None) == "oanda" else 3000,
+                            include_incomplete=(getattr(profile, "broker_type", None) == "oanda"),
+                            force_refresh=(getattr(profile, "broker_type", None) == "oanda"),
+                        ),
                     }
                     # Fetch M5 data when needed by ema_pullback, kt_cg_ctp, kt_cg_hybrid, M5 confirmed-cross, or uncle_parsh.
                     if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_uncle_parsh or has_phase3_integrated:
@@ -1743,6 +1754,15 @@ def main() -> None:
 
             m1_df = data_by_tf["M1"]
             m1_last_time = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
+            now_utc = pd.Timestamp.now(tz="UTC")
+            last_bar_dt = pd.to_datetime(m1_last_time, utc=True, errors="coerce")
+            bar_lag_sec: float | None = None
+            # Keep for diagnostics (dashboard can show how far behind candle timestamps are).
+            if pd.notna(last_bar_dt):
+                try:
+                    bar_lag_sec = max(0.0, float((now_utc - last_bar_dt).total_seconds()))
+                except Exception:
+                    bar_lag_sec = None
             if last_seen_m1_time is None:
                 last_seen_m1_time = m1_last_time
 
@@ -1752,9 +1772,7 @@ def main() -> None:
             # treat current UTC minute as new once we're a few seconds in, so Trial 7/8 still runs.
             if not is_new and (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9):
                 try:
-                    now_utc = pd.Timestamp.now(tz="UTC")
                     current_minute_iso = now_utc.floor("min").isoformat()
-                    last_bar_dt = pd.to_datetime(m1_last_time, utc=True)
                     last_bar_minute_iso = last_bar_dt.floor("min").isoformat()
                     if now_utc.second >= 5 and current_minute_iso > last_bar_minute_iso and last_seen_m1_time != current_minute_iso:
                         is_new = True

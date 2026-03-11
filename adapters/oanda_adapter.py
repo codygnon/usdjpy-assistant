@@ -284,10 +284,9 @@ class OandaAdapter:
                 continue
             mid = c.get("mid", {})
             t = c.get("time", "")
-            try:
-                dt = pd.Timestamp(t).tz_convert("UTC")
-            except Exception:
-                dt = pd.Timestamp.now(tz="UTC")
+            dt = pd.to_datetime(t, utc=True, errors="coerce")
+            if pd.isna(dt):
+                continue
             rows.append({
                 "time": dt,
                 "open": float(mid.get("o", 0)),
@@ -297,8 +296,8 @@ class OandaAdapter:
                 "tick_volume": int(c.get("volume", 0)),
             })
         df = pd.DataFrame(rows)
-        if "time" not in df.columns and len(rows):
-            df["time"] = [r["time"] for r in rows]
+        if not df.empty and "time" in df.columns:
+            df = df.sort_values("time").reset_index(drop=True)
         return df
 
     def get_bars_from_time(self, symbol: str, tf: Timeframe, from_time_utc: str, count: int = 30) -> pd.DataFrame:
