@@ -1389,6 +1389,7 @@ def _event_trigger_label(trigger_type: str | None, decision_reason: str | None) 
 def _append_phase3_minute_diagnostics(
     log_dir: Path,
     profile: Any,
+    store: Any,
     tick: Any,
     data_by_tf: dict,
     policy: Any,
@@ -1396,6 +1397,7 @@ def _append_phase3_minute_diagnostics(
     phase3_state: dict,
     m1_bar_time: str,
     is_new: bool,
+    mode: str,
 ) -> None:
     """Log one line per closed M1 bar: session/strategy, is_new, placed, filter blocks, and decision reason."""
     try:
@@ -1424,6 +1426,11 @@ def _append_phase3_minute_diagnostics(
             f"{getattr(f, 'display_name', getattr(f, 'filter_id', 'unknown_filter'))}:{getattr(f, 'block_reason', '') or getattr(f, 'current_value', '')}"
             for f in blocking
         ]
+        blocking_ids = [
+            str(getattr(f, "filter_id", "") or "").strip()
+            for f in blocking
+            if str(getattr(f, "filter_id", "") or "").strip()
+        ]
         dec = exec_result.get("decision")
         reason = getattr(dec, "reason", "") if dec else ""
         placed = getattr(dec, "placed", False) if dec else False
@@ -1437,6 +1444,34 @@ def _append_phase3_minute_diagnostics(
         diag_path = log_dir / "phase3_minute_diagnostics.log"
         with open(diag_path, "a", encoding="utf-8") as f:
             f.write(line)
+
+        # Persist one row per closed M1 bar so UI can load many days and group by blockers.
+        # Store the blocking filter_ids as an encoded suffix in reason for fast grouping without schema changes.
+        try:
+            signal_id = f"eval:phase3_integrated:{getattr(policy, 'id', 'policy')}:{m1_bar_time}"
+            rule_id = signal_id
+            blocks_csv = ",".join(blocking_ids)
+            reason_store = str(reason or "")
+            if blocks_csv:
+                reason_store = f"{reason_store} | blocks={blocks_csv}"
+            store.insert_execution(
+                {
+                    "timestamp_utc": ts,
+                    "profile": getattr(profile, "profile_name", "") or getattr(profile, "name", ""),
+                    "symbol": getattr(profile, "symbol", ""),
+                    "signal_id": signal_id,
+                    "rule_id": rule_id,
+                    "mode": str(mode or ""),
+                    "attempted": int(getattr(dec, "attempted", False) if dec else 0),
+                    "placed": int(bool(placed)),
+                    "reason": reason_store,
+                    "mt5_retcode": getattr(dec, "order_retcode", None) if dec else None,
+                    "mt5_order_id": getattr(dec, "order_id", None) if dec else None,
+                    "mt5_deal_id": getattr(dec, "deal_id", None) if dec else None,
+                }
+            )
+        except Exception:
+            pass
     except Exception as e:
         try:
             diag_path = log_dir / "phase3_minute_diagnostics.log"
@@ -3714,6 +3749,7 @@ def main() -> None:
                         _append_phase3_minute_diagnostics(
                             log_dir=log_dir,
                             profile=profile,
+                            store=store,
                             tick=tick,
                             data_by_tf=data_by_tf,
                             policy=pol,
@@ -3721,6 +3757,7 @@ def main() -> None:
                             phase3_state=phase3_state,
                             m1_bar_time=m1_last_time,
                             is_new=is_new,
+                            mode=mode,
                         )
 
                 # Bar-close parity for Phase 3: mark the current M1 bar as seen after evaluation

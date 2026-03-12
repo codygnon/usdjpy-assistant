@@ -1274,6 +1274,77 @@ def get_rejection_breakdown(profile_name: str, limit: int = 200) -> dict[str, in
     return breakdown.to_dict()
 
 
+@app.get("/api/data/{profile_name}/phase3-decisions")
+def get_phase3_decisions(profile_name: str, days: int = 3, limit: int = 5000) -> list[dict[str, Any]]:
+    """Return Phase 3 per-closed-M1 decision rows (stored in executions).
+
+    Rows are written by run_loop as signal_id like:
+      eval:phase3_integrated:<policy_id>:<m1_bar_time>
+    """
+    from datetime import datetime, timezone, timedelta
+
+    days = max(1, min(int(days), 60))
+    limit = max(100, min(int(limit), 20000))
+
+    store = _store_for(profile_name)
+    df = store.read_executions_df(profile_name)
+    if df.empty:
+        return []
+    df = df.where(pd.notna(df), None)
+    if "signal_id" not in df.columns:
+        return []
+
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    df = df[df["timestamp_utc"] >= since]
+    df = df[df["signal_id"].astype(str).str.startswith("eval:phase3_integrated:")]
+    df = df.tail(limit)
+    return df.to_dict(orient="records")
+
+
+@app.get("/api/data/{profile_name}/phase3-blockers-breakdown")
+def get_phase3_blockers_breakdown(profile_name: str, days: int = 7, limit: int = 20000) -> dict[str, int]:
+    """Aggregate Phase 3 blocking filters from stored execution reasons.
+
+    run_loop encodes blockers as:  "... | blocks=filter_id_a,filter_id_b"
+    """
+    from datetime import datetime, timezone, timedelta
+
+    days = max(1, min(int(days), 60))
+    limit = max(100, min(int(limit), 50000))
+
+    store = _store_for(profile_name)
+    df = store.read_executions_df(profile_name)
+    if df.empty or "reason" not in df.columns or "signal_id" not in df.columns:
+        return {}
+
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    df = df[df["timestamp_utc"] >= since]
+    df = df[df["signal_id"].astype(str).str.startswith("eval:phase3_integrated:")].tail(limit)
+    if df.empty:
+        return {}
+
+    counts: dict[str, int] = {}
+    for r in df["reason"].tolist():
+        if r is None:
+            continue
+        s = str(r)
+        if "blocks=" not in s:
+            continue
+        try:
+            blocks_part = s.split("blocks=", 1)[1].strip()
+            # stop at next separator if present
+            for stop in (" | ", "\t", "\n"):
+                if stop in blocks_part:
+                    blocks_part = blocks_part.split(stop, 1)[0]
+            for bid in [b.strip() for b in blocks_part.split(",") if b.strip()]:
+                counts[bid] = int(counts.get(bid, 0)) + 1
+        except Exception:
+            continue
+
+    # Sort by count desc for stable output
+    return dict(sorted(counts.items(), key=lambda kv: kv[1], reverse=True))
+
+
 @app.get("/api/data/{profile_name}/stats")
 def get_quick_stats(profile_name: str, profile_path: Optional[str] = None, sync: bool = False) -> dict[str, Any]:
     """Get quick stats (win rate, avg pips, total profit).

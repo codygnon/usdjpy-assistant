@@ -9709,6 +9709,10 @@ function LogsPage({ profile }: { profile: Profile }) {
   const [trades, setTrades] = useState<Record<string, unknown>[]>([]);
   const [tradesDisplayCurrency, setTradesDisplayCurrency] = useState<string | undefined>(undefined);
   const [executions, setExecutions] = useState<Record<string, unknown>[]>([]);
+  const [phase3Days, setPhase3Days] = useState(7);
+  const [phase3Decisions, setPhase3Decisions] = useState<Record<string, unknown>[]>([]);
+  const [phase3Blockers, setPhase3Blockers] = useState<Record<string, number>>({});
+  const [phase3Loading, setPhase3Loading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [closingTrade, setClosingTrade] = useState<string | null>(null);
@@ -9756,7 +9760,26 @@ function LogsPage({ profile }: { profile: Profile }) {
     setVisibleTradeCount(50);
     setSyncMessage(null);
     setConfirmClose(null);
+    setPhase3Decisions([]);
+    setPhase3Blockers({});
+    setPhase3Loading(false);
   }, [profile.name, profile.path]);
+
+  const loadPhase3Diagnostics = useCallback(async () => {
+    setPhase3Loading(true);
+    try {
+      const [rows, blockers] = await Promise.all([
+        api.getPhase3Decisions(profile.name, phase3Days, 20000),
+        api.getPhase3BlockersBreakdown(profile.name, phase3Days, 50000),
+      ]);
+      setPhase3Decisions(rows);
+      setPhase3Blockers(blockers);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setPhase3Loading(false);
+    }
+  }, [phase3Days, profile.name]);
 
   const handleSync = async () => {
     setSyncing(true);
@@ -10329,6 +10352,91 @@ function LogsPage({ profile }: { profile: Profile }) {
               </div>
             </div>
           ))
+        )}
+      </div>
+
+      {/* Phase 3 Candle Decisions (per closed M1 bar) */}
+      <div className="card mb-4">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <h3 className="card-title" style={{ marginBottom: 0 }}>Phase 3 Candle Decisions</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Range</span>
+            <select
+              value={phase3Days}
+              onChange={(e) => setPhase3Days(Number(e.target.value))}
+              style={{ padding: '6px 10px', borderRadius: 8 }}
+            >
+              <option value={1}>Last 1 day</option>
+              <option value={3}>Last 3 days</option>
+              <option value={7}>Last 7 days</option>
+              <option value={14}>Last 14 days</option>
+              <option value={30}>Last 30 days</option>
+            </select>
+            <button className="btn" onClick={loadPhase3Diagnostics} disabled={phase3Loading}>
+              {phase3Loading ? 'Loading…' : 'Load'}
+            </button>
+          </div>
+        </div>
+
+        {Object.keys(phase3Blockers).length === 0 && phase3Decisions.length === 0 ? (
+          <p style={{ color: 'var(--text-secondary)', marginTop: 10 }}>
+            Click Load to fetch per-minute Phase 3 decisions from the server (stored in the executions table).
+          </p>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 1fr) 2fr', gap: 16, marginTop: 12 }}>
+            <div>
+              <div style={{ fontWeight: 700, marginBottom: 8 }}>Top blocking filters</div>
+              {Object.entries(phase3Blockers).length === 0 ? (
+                <div style={{ color: 'var(--text-secondary)' }}>No blocker data in range.</div>
+              ) : (
+                <div style={{ display: 'grid', gap: 6 }}>
+                  {Object.entries(phase3Blockers).slice(0, 20).map(([k, v]) => (
+                    <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                      <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace', fontSize: '0.8rem' }}>{k}</span>
+                      <span style={{ color: 'var(--text-secondary)' }}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <div style={{ fontWeight: 700, marginBottom: 8 }}>Recent decisions (sample)</div>
+              <div className="table-container" style={{ maxHeight: 320, overflow: 'auto' }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Placed</th>
+                      <th>Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {phase3Decisions.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>
+                          No Phase 3 decision rows in range.
+                        </td>
+                      </tr>
+                    ) : (
+                      phase3Decisions.slice(-200).reverse().map((e, i) => (
+                        <tr key={i}>
+                          <td>{String(e.timestamp_utc || '').slice(0, 19)}</td>
+                          <td>{e.placed ? 'Yes' : 'No'}</td>
+                          <td style={{ maxWidth: 520, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {String(e.reason || '')}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                Showing the most recent 200 rows from the selected range.
+              </div>
+            </div>
+          </div>
         )}
       </div>
 

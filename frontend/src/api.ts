@@ -338,6 +338,24 @@ export async function getRejectionBreakdown(profileName: string): Promise<Record
   return fetchJson<Record<string, number>>(`${API_BASE}/data/${profileName}/rejection-breakdown`);
 }
 
+export async function getPhase3Decisions(
+  profileName: string,
+  days = 3,
+  limit = 5000
+): Promise<Record<string, unknown>[]> {
+  const params = new URLSearchParams({ days: String(days), limit: String(limit) });
+  return fetchJson<Record<string, unknown>[]>(`${API_BASE}/data/${profileName}/phase3-decisions?${params}`);
+}
+
+export async function getPhase3BlockersBreakdown(
+  profileName: string,
+  days = 7,
+  limit = 20000
+): Promise<Record<string, number>> {
+  const params = new URLSearchParams({ days: String(days), limit: String(limit) });
+  return fetchJson<Record<string, number>>(`${API_BASE}/data/${profileName}/phase3-blockers-breakdown?${params}`);
+}
+
 export async function getQuickStats(profileName: string, profilePath?: string, sync = false): Promise<QuickStats> {
   const params = new URLSearchParams();
   if (profilePath) params.set('profile_path', profilePath);
