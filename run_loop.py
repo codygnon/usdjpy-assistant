@@ -9,6 +9,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
+from typing import Any
 
 # Ensure project root is on path (fixes ModuleNotFoundError when started as subprocess)
 _PROJECT_ROOT = Path(__file__).resolve().parent
@@ -1383,6 +1384,56 @@ def _event_trigger_label(trigger_type: str | None, decision_reason: str | None) 
     if m:
         return f"tiered_pullback_ema{m.group(1)}"
     return base
+
+
+def _append_phase3_minute_diagnostics(
+    log_dir: Path,
+    profile: Any,
+    tick: Any,
+    data_by_tf: dict,
+    policy: Any,
+    exec_result: dict,
+    phase3_state: dict,
+    m1_bar_time: str,
+    is_new: bool,
+) -> None:
+    """Log one line per closed M1 bar: bar time, is_new, placed, blocking filter count/reasons, decision reason."""
+    try:
+        from core.dashboard_builder import build_dashboard_filters
+        filters = build_dashboard_filters(
+            profile=profile,
+            tick=tick,
+            data_by_tf=data_by_tf,
+            policy=policy,
+            policy_type="phase3_integrated",
+            eval_result=exec_result,
+            phase3_state=phase3_state,
+        )
+        blocking = [f for f in filters if not getattr(f, "is_clear", True)]
+        blocking_count = len(blocking)
+        blocking_details = [
+            f"{getattr(f, 'display_name', f.filter_id)}:{getattr(f, 'block_reason', '') or getattr(f, 'current_value', '')}"
+            for f in blocking
+        ]
+        dec = exec_result.get("decision")
+        reason = getattr(dec, "reason", "") if dec else ""
+        placed = getattr(dec, "placed", False) if dec else False
+        ts = pd.Timestamp.now(tz="UTC").isoformat()
+        line = (
+            f"{ts}\tbar={m1_bar_time}\tis_new={int(is_new)}\tplaced={int(placed)}\t"
+            f"blocking={blocking_count}\t"
+            f"filters=[{'; '.join(blocking_details)}]\treason={reason!r}\n"
+        )
+        diag_path = log_dir / "phase3_minute_diagnostics.log"
+        with open(diag_path, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception as e:
+        try:
+            diag_path = log_dir / "phase3_minute_diagnostics.log"
+            with open(diag_path, "a", encoding="utf-8") as f:
+                f.write(f"{pd.Timestamp.now(tz='UTC').isoformat()}\tbar=?\tis_new=?\tplaced=?\tblocking=?\tfilters=[]\treason=diagnostics_error:{e!r}\n")
+        except Exception:
+            pass
 
 
 def main() -> None:
@@ -3648,6 +3699,23 @@ def main() -> None:
                         eval_result=exec_result,
                         phase3_state=phase3_state,
                     )
+                    # Per-minute diagnostics: bar time, is_new, placed, blocking filter count/reasons, decision reason
+                    if is_new or args.once:
+                        _append_phase3_minute_diagnostics(
+                            log_dir=log_dir,
+                            profile=profile,
+                            tick=tick,
+                            data_by_tf=data_by_tf,
+                            policy=pol,
+                            exec_result=exec_result,
+                            phase3_state=phase3_state,
+                            m1_bar_time=m1_last_time,
+                            is_new=is_new,
+                        )
+
+                # Bar-close parity for Phase 3: mark the current M1 bar as seen after evaluation
+                # so entries are evaluated once per newly closed M1 candle.
+                last_seen_m1_time = m1_last_time
 
             # Catch-all dashboard write for profiles not using KT/CG policy types.
             # Runs every poll cycle so positions + prices are always fresh.
