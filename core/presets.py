@@ -2038,7 +2038,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
 
     PresetId.PHASE3_INTEGRATED_USD_JPY: {
         "name": "Phase 3 Integrated USD/JPY",
-        "description": "Multi-session integrated engine with shared equity. Tokyo (16:00–22:00 UTC): V14 mean reversion. London (08:00–12:00 UTC): V2 ARB + LMP. NY (13:00–16:00 UTC, 5-min delay): V44 session momentum. Session times and sizing aligned with integrated backtest.",
+        "description": "Multi-session integrated engine with shared equity. Tokyo (16:00–22:00 UTC): V14 mean reversion. London (UK-DST aware 07:00/08:00 open, 4h window): V2 ARB + LMP. NY (US-DST aware 12:00/13:00 open, 3h window, +5m delay): V44 session momentum.",
         "pros": [
             "All three sessions active; sizing from research_out/phase3_integrated_sizing_config.json",
             "Session-stratified stats (Tokyo / London / NY) on Logs page",

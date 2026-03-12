@@ -1397,9 +1397,13 @@ def _append_phase3_minute_diagnostics(
     m1_bar_time: str,
     is_new: bool,
 ) -> None:
-    """Log one line per closed M1 bar: bar time, is_new, placed, blocking filter count/reasons, decision reason."""
+    """Log one line per closed M1 bar: session/strategy, is_new, placed, filter blocks, and decision reason."""
     try:
+        from core.phase3_integrated_engine import classify_session, load_phase3_sizing_config
         from core.dashboard_builder import build_dashboard_filters
+        cfg = load_phase3_sizing_config()
+        session = classify_session(pd.Timestamp.now(tz="UTC").to_pydatetime(), cfg)
+        strategy_tag = exec_result.get("strategy_tag")
         filters = build_dashboard_filters(
             profile=profile,
             tick=tick,
@@ -1412,7 +1416,7 @@ def _append_phase3_minute_diagnostics(
         blocking = [f for f in filters if not getattr(f, "is_clear", True)]
         blocking_count = len(blocking)
         blocking_details = [
-            f"{getattr(f, 'display_name', f.filter_id)}:{getattr(f, 'block_reason', '') or getattr(f, 'current_value', '')}"
+            f"{getattr(f, 'display_name', getattr(f, 'filter_id', 'unknown_filter'))}:{getattr(f, 'block_reason', '') or getattr(f, 'current_value', '')}"
             for f in blocking
         ]
         dec = exec_result.get("decision")
@@ -1421,6 +1425,7 @@ def _append_phase3_minute_diagnostics(
         ts = pd.Timestamp.now(tz="UTC").isoformat()
         line = (
             f"{ts}\tbar={m1_bar_time}\tis_new={int(is_new)}\tplaced={int(placed)}\t"
+            f"session={session or 'none'}\tstrategy={strategy_tag or ''}\t"
             f"blocking={blocking_count}\t"
             f"filters=[{'; '.join(blocking_details)}]\treason={reason!r}\n"
         )

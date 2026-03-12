@@ -185,6 +185,8 @@ def _normalize_london_source(v2_src: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_v44_source(v44_src: dict[str, Any]) -> dict[str, Any]:
+    ny_start_raw = v44_src.get("ny_start", v44_src.get("v5_ny_start"))
+    ny_end_raw = v44_src.get("ny_end", v44_src.get("v5_ny_end"))
     return {
         "risk_per_trade_pct": float(v44_src.get("v5_risk_per_trade_pct", V44_RISK_PCT) or V44_RISK_PCT),
         "rp_min_lot": float(v44_src.get("v5_rp_min_lot", 1.0)),
@@ -288,8 +290,10 @@ def _normalize_v44_source(v44_src: dict[str, Any]) -> dict[str, Any]:
         "gl_normal_atr_cap": float(v44_src.get("v5_gl_normal_atr_cap", 0.67)),
         "gl_slope_relax": float(v44_src.get("v5_gl_slope_relax", 0.0)),
         "gl_max_open": int(v44_src.get("v5_gl_max_open", 0)),
-        "ny_start_hour": float(v44_src.get("ny_start", NY_START_UTC)),
-        "ny_end_hour": float(v44_src.get("ny_end", NY_END_UTC)),
+        "ny_window_mode": str(v44_src.get("ny_window_mode", "dst_auto")).lower(),
+        "ny_start_hour": float(ny_start_raw) if ny_start_raw is not None else None,
+        "ny_end_hour": float(ny_end_raw) if ny_end_raw is not None else None,
+        "ny_duration_hours": float(v44_src.get("ny_duration_hours", 3.0)),
     }
 
 
@@ -342,11 +346,12 @@ def load_phase3_sizing_config(
 # ---------------------------------------------------------------------------
 # Session constants (single source of truth; aligned with backtest)
 # ---------------------------------------------------------------------------
-# London V2: 08:00-12:00 UTC = 3:00-7:00 AM EST
-#   ARB: 08:00-09:30 UTC (3:00-4:30 AM EST)
-#   LMP: 09:30-12:00 UTC (4:30-7:00 AM EST)
-# V44 NY: 13:00-16:00 UTC with 5-min start delay = 8:05-11:00 AM EST
-# Tokyo V14: 16:00-22:00 UTC = 11:00 AM-5:00 PM EST
+# London V2: UK-DST aware (07:00-11:00 UTC summer, 08:00-12:00 UTC winter)
+#   ARB: London open -> +90m
+#   Setup D: per config minutes after London open
+# V44 NY: US-DST aware by default (12:00-15:00 UTC summer, 13:00-16:00 UTC winter)
+#   plus configurable start delay (default +5m)
+# Tokyo V14: fixed 16:00-22:00 UTC
 TOKYO_START_UTC = 16  # 16:00 UTC
 TOKYO_END_UTC = 22    # 22:00 UTC
 TOKYO_ALLOWED_DAYS = {1, 2, 4}  # Tuesday=1, Wednesday=2, Friday=4  (weekday())
@@ -572,6 +577,24 @@ def _in_hour_window(hour_frac: float, start_h: float, end_h: float) -> bool:
     return hour_frac >= start_h or hour_frac < end_h
 
 
+def _resolve_ny_window_hours(now_utc: datetime, v44_cfg: Optional[dict[str, Any]] = None) -> tuple[float, float]:
+    """Resolve NY start/end hours in UTC. Default is DST-aware unless fixed_utc is requested."""
+    cfg = v44_cfg if isinstance(v44_cfg, dict) else {}
+    mode = str(cfg.get("ny_window_mode", "dst_auto")).strip().lower()
+    if mode == "fixed_utc":
+        raw_start = cfg.get("ny_start_hour", NY_START_UTC)
+        raw_end = cfg.get("ny_end_hour", NY_END_UTC)
+        ny_start = float(NY_START_UTC if raw_start is None else raw_start)
+        ny_end = float(NY_END_UTC if raw_end is None else raw_end)
+        if ny_end <= ny_start:
+            ny_end = ny_start + max(1.0, float(cfg.get("ny_duration_hours", 3.0)))
+        return ny_start, ny_end
+    ny_start = float(us_ny_open_utc(pd.Timestamp(now_utc)))
+    ny_duration = max(1.0, float(cfg.get("ny_duration_hours", 3.0)))
+    ny_end = ny_start + ny_duration
+    return ny_start, ny_end
+
+
 def classify_session(now_utc: datetime, effective_config: Optional[dict[str, Any]] = None) -> Optional[str]:
     """Return 'tokyo', 'london', 'ny', or None using effective config if provided."""
     hour_frac = now_utc.hour + now_utc.minute / 60.0
@@ -580,11 +603,12 @@ def classify_session(now_utc: datetime, effective_config: Optional[dict[str, Any
     if not isinstance(effective_config, dict):
         london_open_utc = float(uk_london_open_utc(pd.Timestamp(now_utc)))
         london_end_utc = london_open_utc + 4.0
+        ny_start_utc, ny_end_utc = _resolve_ny_window_hours(now_utc, {})
         if _in_hour_window(hour_frac, float(TOKYO_START_UTC), float(TOKYO_END_UTC)) and weekday in TOKYO_ALLOWED_DAYS:
             return "tokyo"
         if _in_hour_window(hour_frac, london_open_utc, london_end_utc) and weekday in LONDON_ALLOWED_DAYS:
             return "london"
-        if _in_hour_window(hour_frac, float(NY_START_UTC), float(NY_END_UTC)) and weekday in NY_ALLOWED_DAYS:
+        if _in_hour_window(hour_frac, ny_start_utc, ny_end_utc) and weekday in NY_ALLOWED_DAYS:
             return "ny"
         return None
 
@@ -602,8 +626,7 @@ def classify_session(now_utc: datetime, effective_config: Optional[dict[str, Any
     london_end = london_open + (max(240, a_end, d_end) / 60.0)
     london_days = _weekday_set_from_names(ldn_cfg.get("active_days_utc"), LONDON_ALLOWED_DAYS)
 
-    ny_start = float(v44_cfg.get("ny_start_hour", NY_START_UTC))
-    ny_end = float(v44_cfg.get("ny_end_hour", NY_END_UTC))
+    ny_start, ny_end = _resolve_ny_window_hours(now_utc, v44_cfg)
     ny_days = NY_ALLOWED_DAYS
 
     if _in_hour_window(hour_frac, tokyo_start, tokyo_end) and weekday in tokyo_days:
@@ -1118,7 +1141,7 @@ def _compute_session_windows(now_utc: datetime) -> dict[str, datetime]:
         "lmp_impulse_end": london_open_dt + pd.Timedelta(minutes=LDN_LMP_IMPULSE_MINUTES),
         "london_end": london_open_dt + pd.Timedelta(hours=4),
         "ny_open": ny_open_dt,
-        "ny_end": d0.replace(hour=NY_END_UTC, minute=0),
+        "ny_end": ny_open_dt + pd.Timedelta(hours=3),
     }
 
 
@@ -1946,8 +1969,7 @@ def execute_v44_ny_entry(
     v44_config = (sizing_config or {}).get("v44_ny", {})
     v44_start_delay_min = int(v44_config.get("start_delay_minutes", 5))
     v44_max_entry_spread = float(v44_config.get("max_entry_spread_pips", V44_MAX_ENTRY_SPREAD))
-    v44_ny_start_hour = float(v44_config.get("ny_start_hour", NY_START_UTC))
-    v44_ny_end_hour = float(v44_config.get("ny_end_hour", NY_END_UTC))
+    v44_ny_start_hour, v44_ny_end_hour = _resolve_ny_window_hours(now_utc, v44_config)
 
     _ts_now = pd.Timestamp(now_utc)
     if _ts_now.tzinfo is None:
@@ -3549,7 +3571,7 @@ def _manage_v44_exit(
 
     day_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
     cfg = v44_config or {}
-    ny_end_hour = float(cfg.get("ny_end_hour", NY_END_UTC))
+    _ny_start_hour, ny_end_hour = _resolve_ny_window_hours(now_utc, cfg)
     ny_end = day_start + pd.Timedelta(hours=ny_end_hour)
     tp_check_price = tick.bid if side == "buy" else tick.ask
     trail_mark_price = tick.bid if side == "buy" else tick.ask
