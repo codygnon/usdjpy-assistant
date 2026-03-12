@@ -1402,7 +1402,12 @@ def _append_phase3_minute_diagnostics(
         from core.phase3_integrated_engine import classify_session, load_phase3_sizing_config
         from core.dashboard_builder import build_dashboard_filters
         cfg = load_phase3_sizing_config()
-        session = classify_session(pd.Timestamp.now(tz="UTC").to_pydatetime(), cfg)
+        bar_ts = pd.Timestamp(m1_bar_time)
+        if bar_ts.tzinfo is None:
+            bar_ts = bar_ts.tz_localize("UTC")
+        else:
+            bar_ts = bar_ts.tz_convert("UTC")
+        session = classify_session(bar_ts.to_pydatetime(), cfg)
         strategy_tag = exec_result.get("strategy_tag")
         filters = build_dashboard_filters(
             profile=profile,

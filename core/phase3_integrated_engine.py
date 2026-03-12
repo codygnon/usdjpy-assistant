@@ -60,6 +60,7 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 def _normalize_v14_source(v14_src: dict[str, Any]) -> dict[str, Any]:
     ps = v14_src.get("position_sizing", {}) if isinstance(v14_src.get("position_sizing"), dict) else {}
     tm = v14_src.get("trade_management", {}) if isinstance(v14_src.get("trade_management"), dict) else {}
+    exec_model = v14_src.get("execution_model", {}) if isinstance(v14_src.get("execution_model"), dict) else {}
     ind = v14_src.get("indicators", {}) if isinstance(v14_src.get("indicators"), dict) else {}
     atr_i = ind.get("atr", {}) if isinstance(ind.get("atr"), dict) else {}
     adx_i = v14_src.get("adx_filter", {}) if isinstance(v14_src.get("adx_filter"), dict) else {}
@@ -133,12 +134,15 @@ def _normalize_v14_source(v14_src: dict[str, Any]) -> dict[str, Any]:
         "session_start_utc": str(sf.get("session_start_utc", "16:00")),
         "session_end_utc": str(sf.get("session_end_utc", "22:00")),
         "allowed_trading_days": list(allowed_days) if isinstance(allowed_days, list) else ["Tuesday", "Wednesday", "Friday"],
+        # Backtest parity: Tokyo backtest defaults to 10.0 when this key is absent.
+        "max_entry_spread_pips": float(exec_model.get("max_entry_spread_pips", 10.0)),
     }
 
 
 def _normalize_london_source(v2_src: dict[str, Any]) -> dict[str, Any]:
     account = v2_src.get("account", {}) if isinstance(v2_src.get("account"), dict) else {}
     session = v2_src.get("session", {}) if isinstance(v2_src.get("session"), dict) else {}
+    execution_model = v2_src.get("execution_model", {}) if isinstance(v2_src.get("execution_model"), dict) else {}
     risk = v2_src.get("risk", {}) if isinstance(v2_src.get("risk"), dict) else {}
     limits = v2_src.get("entry_limits", {}) if isinstance(v2_src.get("entry_limits"), dict) else {}
     levels = v2_src.get("levels", {}) if isinstance(v2_src.get("levels"), dict) else {}
@@ -181,6 +185,7 @@ def _normalize_london_source(v2_src: dict[str, Any]) -> dict[str, Any]:
         "a_entry_end_min_after_london": int(sa.get("entry_end_min_after_london", 90)),
         "a_reset_mode": str(sa.get("reset_mode", "touch_level")),
         "d_reset_mode": str(sd.get("reset_mode", "touch_level")),
+        "max_entry_spread_pips": float(execution_model.get("spread_max_pips", LDN_MAX_SPREAD_PIPS)),
     }
 
 
@@ -1661,8 +1666,14 @@ def execute_london_v2_entry(
     ldn_active_days = set(str(d) for d in ldn_active_days) if isinstance(ldn_active_days, (list, tuple, set)) else {"Tuesday", "Wednesday"}
     ldn_disable_channel_reset = bool(ldn_config.get("disable_channel_reset_after_exit", False))
 
-    if (tick.ask - tick.bid) / pip > LDN_MAX_SPREAD_PIPS:
-        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="london_v2: spread veto", side=None)
+    ldn_max_entry_spread = float(ldn_config.get("max_entry_spread_pips", LDN_MAX_SPREAD_PIPS))
+    if (tick.ask - tick.bid) / pip > ldn_max_entry_spread:
+        no_trade["decision"] = ExecutionDecision(
+            attempted=False,
+            placed=False,
+            reason=f"london_v2: spread veto ({(tick.ask - tick.bid) / pip:.1f}p > {ldn_max_entry_spread:.1f}p)",
+            side=None,
+        )
         return no_trade
 
     m1_df = _drop_incomplete_tf(data_by_tf.get("M1"), "M1")
@@ -2825,10 +2836,12 @@ def execute_phase3_integrated_policy_demo_only(
 
     # 3) Spread gate
     spread_pips = (tick.ask - tick.bid) / pip
-    if spread_pips > MAX_ENTRY_SPREAD_PIPS:
+    v14_cfg_for_spread = (effective_cfg or {}).get("v14", {})
+    v14_max_entry_spread = float(v14_cfg_for_spread.get("max_entry_spread_pips", MAX_ENTRY_SPREAD_PIPS))
+    if spread_pips > v14_max_entry_spread:
         no_trade["decision"] = ExecutionDecision(
             attempted=False, placed=False,
-            reason=f"phase3: spread {spread_pips:.1f}p > max {MAX_ENTRY_SPREAD_PIPS}p", side=None,
+            reason=f"phase3: spread {spread_pips:.1f}p > max {v14_max_entry_spread:.1f}p", side=None,
         )
         return no_trade
 
