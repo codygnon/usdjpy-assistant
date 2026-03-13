@@ -1839,10 +1839,11 @@ def main() -> None:
                     synced = sync_closed_trades(profile, store, log_dir=log_dir)
                     if synced > 0:
                         print(f"[{profile.profile_name}] synced {synced} externally closed trade(s)")
-                    # Import closed trades from broker history (OANDA activity / MT5 history) every sync
-                    imported = import_mt5_history(profile, store, days_back=90)
-                    if imported > 0:
-                        print(f"[{profile.profile_name}] imported {imported} trade(s) from broker history")
+                    # Import from broker history (MT5 only — OANDA places all trades via bot, already in DB)
+                    if getattr(profile, "broker_type", None) != "oanda":
+                        imported = import_mt5_history(profile, store, days_back=90)
+                        if imported > 0:
+                            print(f"[{profile.profile_name}] imported {imported} trade(s) from broker history")
                 except Exception as e:
                     print(f"[{profile.profile_name}] sync error: {e}")
                     try:

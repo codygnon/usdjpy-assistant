@@ -132,7 +132,21 @@ def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore", log_dir=None)
     pip_size = profile.pip_size
     is_oanda = getattr(profile, "broker_type", None) == "oanda"
     oanda_closed_map: dict[int, Any] | None = None
-    
+
+    # OANDA: eagerly build closed-position map once (avoids per-trade 30-day history scans)
+    if is_oanda and open_trades:
+        try:
+            closed_positions = adapter.get_closed_positions_from_history(
+                days_back=7, symbol=profile.symbol, pip_size=float(profile.pip_size)
+            )
+            oanda_closed_map = {
+                int(getattr(pos, "position_id")): pos
+                for pos in (closed_positions or [])
+                if getattr(pos, "position_id", None) is not None
+            }
+        except Exception:
+            oanda_closed_map = {}
+
     for trade_row in open_trades:
         trade_id = trade_row["trade_id"]
         
@@ -168,23 +182,11 @@ def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore", log_dir=None)
             continue
         
         # Position is not open - check if it was closed
-        close_info = adapter.get_position_close_info(position_ticket)
+        # OANDA: skip per-trade history scan; use the pre-built map from eager fetch above
+        close_info = None if is_oanda else adapter.get_position_close_info(position_ticket)
 
         if close_info is None:
-            # OANDA fallback: query recent closed positions once and match by trade/position id.
             if is_oanda:
-                if oanda_closed_map is None:
-                    try:
-                        closed_positions = adapter.get_closed_positions_from_history(
-                            days_back=30, symbol=profile.symbol, pip_size=float(profile.pip_size)
-                        )
-                        oanda_closed_map = {
-                            int(getattr(pos, "position_id")): pos
-                            for pos in (closed_positions or [])
-                            if getattr(pos, "position_id", None) is not None
-                        }
-                    except Exception:
-                        oanda_closed_map = {}
                 matched = (oanda_closed_map or {}).get(int(position_ticket))
                 if matched is not None:
                     close_info = SimpleNamespace(
