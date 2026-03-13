@@ -79,13 +79,19 @@ def effective_policy_for_dashboard(policy: Any, temp_overrides: Optional[dict]) 
     return _EffectivePolicy(policy, overrides_clean)
 
 
-def _live_side_counts(profile: Any, adapter: Optional[Any]) -> tuple[dict[str, int], bool]:
+def _live_side_counts(
+    profile: Any,
+    adapter: Optional[Any],
+    live_positions_snapshot: Optional[list[Any]] = None,
+) -> tuple[dict[str, int], bool]:
     """Count live broker positions by side (buy/sell). Returns (counts, ok)."""
     side_counts: dict[str, int] = {"buy": 0, "sell": 0}
-    if adapter is None:
+    if live_positions_snapshot is None and adapter is None:
         return side_counts, False
     try:
-        open_positions = adapter.get_open_positions(profile.symbol)
+        open_positions = live_positions_snapshot
+        if open_positions is None:
+            open_positions = adapter.get_open_positions(profile.symbol)
         if not open_positions:
             return side_counts, True
         for pos in open_positions:
@@ -123,13 +129,19 @@ def _store_side_counts(store: Optional[Any], profile_name: str) -> dict[str, int
     return side_counts
 
 
-def _live_position_ids(profile: Any, adapter: Optional[Any]) -> set[int]:
+def _live_position_ids(
+    profile: Any,
+    adapter: Optional[Any],
+    live_positions_snapshot: Optional[list[Any]] = None,
+) -> set[int]:
     """Return set of broker position ids that are currently open (for cap counts)."""
     ids: set[int] = set()
-    if adapter is None:
+    if live_positions_snapshot is None and adapter is None:
         return ids
     try:
-        positions = adapter.get_open_positions(profile.symbol)
+        positions = live_positions_snapshot
+        if positions is None:
+            positions = adapter.get_open_positions(profile.symbol)
         if not positions:
             return ids
         for pos in positions:
@@ -229,6 +241,7 @@ def build_dashboard_filters(
     exhaustion_result: Optional[dict] = None,
     store: Optional[Any] = None,
     adapter: Optional[Any] = None,
+    live_positions_snapshot: Optional[list[Any]] = None,
     temp_overrides: Optional[dict[str, int]] = None,
     daily_level_filter_snapshot: Optional[dict] = None,
     ntz_filter_snapshot: Optional[dict] = None,
@@ -305,7 +318,7 @@ def build_dashboard_filters(
         max_per_side = getattr(policy, "max_open_trades_per_side", None)
         if max_per_side is not None:
             try:
-                side_counts, live_ok = _live_side_counts(profile, adapter)
+                side_counts, live_ok = _live_side_counts(profile, adapter, live_positions_snapshot)
                 if not live_ok:
                     side_counts = _store_side_counts(store, profile.profile_name)
                 filters.extend(report_max_trades_by_side(side_counts, max_per_side))
@@ -320,7 +333,7 @@ def build_dashboard_filters(
         max_per_side = getattr(policy, "max_open_trades_per_side", None)
         if max_per_side is not None:
             try:
-                side_counts, live_ok = _live_side_counts(profile, adapter)
+                side_counts, live_ok = _live_side_counts(profile, adapter, live_positions_snapshot)
                 if not live_ok:
                     side_counts = _store_side_counts(store, profile.profile_name)
                 filters.extend(report_max_trades_by_side(side_counts, max_per_side))
@@ -352,7 +365,7 @@ def build_dashboard_filters(
             max_per_side = max(cap_min, int(round(float(max_per_side) * cap_multiplier)))
         if (max_per_side is not None or getattr(profile.risk, "max_open_trades", None) is not None) and store is not None:
             try:
-                side_counts, live_ok = _live_side_counts(profile, adapter)
+                side_counts, live_ok = _live_side_counts(profile, adapter, live_positions_snapshot)
                 if not live_ok:
                     side_counts = _store_side_counts(store, profile.profile_name)
                 max_open_trades_total = getattr(profile.risk, "max_open_trades", None)
@@ -363,7 +376,7 @@ def build_dashboard_filters(
                     filters.extend(report_max_trades_by_side(side_counts, max_per_side))
                 open_trades = store.list_open_trades(profile.profile_name)
                 # Prefer live broker position ids so cap reflects actually open positions (not stale DB rows)
-                live_ids = _live_position_ids(profile, adapter)
+                live_ids = _live_position_ids(profile, adapter, live_positions_snapshot)
 
                 def _trade_still_open(row: dict) -> bool:
                     pid = row.get("mt5_position_id")
@@ -421,7 +434,7 @@ def build_dashboard_filters(
             max_per_side = max(cap_min, int(round(float(max_per_side) * cap_multiplier)))
         if (max_per_side is not None or getattr(profile.risk, "max_open_trades", None) is not None) and store is not None:
             try:
-                side_counts, live_ok = _live_side_counts(profile, adapter)
+                side_counts, live_ok = _live_side_counts(profile, adapter, live_positions_snapshot)
                 if not live_ok:
                     side_counts = _store_side_counts(store, profile.profile_name)
                 max_open_trades_total = getattr(profile.risk, "max_open_trades", None)
@@ -431,7 +444,7 @@ def build_dashboard_filters(
                 if max_per_side is not None:
                     filters.extend(report_max_trades_by_side(side_counts, max_per_side))
                 open_trades = store.list_open_trades(profile.profile_name)
-                live_ids = _live_position_ids(profile, adapter)
+                live_ids = _live_position_ids(profile, adapter, live_positions_snapshot)
                 db_live_ids: set[int] = set()
                 try:
                     for _t in open_trades:
@@ -513,7 +526,7 @@ def build_dashboard_filters(
             max_per_side = max(cap_min, int(round(float(max_per_side) * cap_multiplier)))
         if (max_per_side is not None or getattr(profile.risk, "max_open_trades", None) is not None) and store is not None:
             try:
-                side_counts, live_ok = _live_side_counts(profile, adapter)
+                side_counts, live_ok = _live_side_counts(profile, adapter, live_positions_snapshot)
                 if not live_ok:
                     side_counts = _store_side_counts(store, profile.profile_name)
                 max_open_trades_total = getattr(profile.risk, "max_open_trades", None)
@@ -523,7 +536,7 @@ def build_dashboard_filters(
                 if max_per_side is not None:
                     filters.extend(report_max_trades_by_side(side_counts, max_per_side))
                 open_trades = store.list_open_trades(profile.profile_name)
-                live_ids = _live_position_ids(profile, adapter)
+                live_ids = _live_position_ids(profile, adapter, live_positions_snapshot)
                 db_live_ids: set[int] = set()
                 try:
                     for _t in open_trades:
