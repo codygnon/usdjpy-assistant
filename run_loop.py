@@ -1080,6 +1080,7 @@ def _build_and_write_dashboard(
     daily_level_filter=None,
     ntz_filter=None,
     phase3_state: dict | None = None,
+    open_positions_snapshot: list | None = None,
 ) -> None:
     """Assemble and write dashboard state JSON for the current poll cycle."""
     from datetime import datetime, timezone
@@ -1196,76 +1197,77 @@ def _build_and_write_dashboard(
 
         # Prefer live broker positions for dashboard accuracy.
         try:
-            if adapter is not None:
+            live_trades = open_positions_snapshot
+            if live_trades is None and adapter is not None:
                 live_trades = adapter.get_open_positions(profile.symbol)
-                for t in live_trades:
-                    if isinstance(t, dict):
-                        units = float(t.get("currentUnits", 0) or t.get("initialUnits", 0) or 0)
-                        s = "buy" if units > 0 else "sell"
-                        size_lots = abs(units) / 100_000.0 if units else 0.0
-                        entry = float(t.get("price", 0) or 0)
-                        trade_id = str(t.get("id", ""))
-                        open_time_str = t.get("openTime")
-                        sl = None
-                        tp = None
-                        try:
-                            if t.get("stopLossOrder"):
-                                sl = float(t["stopLossOrder"]["price"])
-                        except Exception:
-                            pass
-                        try:
-                            if t.get("takeProfitOrder"):
-                                tp = float(t["takeProfitOrder"]["price"])
-                        except Exception:
-                            pass
-                    else:
-                        mt5_type = getattr(t, "type", None)
-                        if mt5_type == 0:
-                            s = "buy"
-                        elif mt5_type == 1:
-                            s = "sell"
-                        else:
-                            continue
-                        size_lots = float(getattr(t, "volume", 0.0) or 0.0)
-                        entry = float(getattr(t, "price_open", 0.0) or 0.0)
-                        trade_id = str(getattr(t, "ticket", ""))
-                        open_time_raw = getattr(t, "time", None)
-                        open_time_str = str(open_time_raw) if open_time_raw is not None else None
-                        sl = float(getattr(t, "sl", 0.0) or 0.0) or None
-                        tp = float(getattr(t, "tp", 0.0) or 0.0) or None
-
-                    if not entry or not s:
-                        continue
-
-                    unrealized = (mid - entry) / pip_size if s == "buy" else (entry - mid) / pip_size
-                    age = 0.0
-                    if open_time_str:
-                        try:
-                            import pandas as _pd2
-                            t0 = _pd2.to_datetime(open_time_str, utc=True)
-                            age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
-                        except Exception:
-                            pass
-
-                    db_row = None
+            for t in live_trades or []:
+                if isinstance(t, dict):
+                    units = float(t.get("currentUnits", 0) or t.get("initialUnits", 0) or 0)
+                    s = "buy" if units > 0 else "sell"
+                    size_lots = abs(units) / 100_000.0 if units else 0.0
+                    entry = float(t.get("price", 0) or 0)
+                    trade_id = str(t.get("id", ""))
+                    open_time_str = t.get("openTime")
+                    sl = None
+                    tp = None
                     try:
-                        db_row = db_by_position_id.get(int(trade_id))
+                        if t.get("stopLossOrder"):
+                            sl = float(t["stopLossOrder"]["price"])
                     except Exception:
-                        db_row = None
+                        pass
+                    try:
+                        if t.get("takeProfitOrder"):
+                            tp = float(t["takeProfitOrder"]["price"])
+                    except Exception:
+                        pass
+                else:
+                    mt5_type = getattr(t, "type", None)
+                    if mt5_type == 0:
+                        s = "buy"
+                    elif mt5_type == 1:
+                        s = "sell"
+                    else:
+                        continue
+                    size_lots = float(getattr(t, "volume", 0.0) or 0.0)
+                    entry = float(getattr(t, "price_open", 0.0) or 0.0)
+                    trade_id = str(getattr(t, "ticket", ""))
+                    open_time_raw = getattr(t, "time", None)
+                    open_time_str = str(open_time_raw) if open_time_raw is not None else None
+                    sl = float(getattr(t, "sl", 0.0) or 0.0) or None
+                    tp = float(getattr(t, "tp", 0.0) or 0.0) or None
 
-                    positions.append(PositionInfo(
-                        trade_id=trade_id,
-                        side=s,
-                        entry_price=entry,
-                        size_lots=round(size_lots, 4),
-                        entry_type=(db_row.get("entry_type") if db_row else None),
-                        current_price=mid,
-                        unrealized_pips=round(unrealized, 1),
-                        age_minutes=round(age, 1),
-                        stop_price=(db_row.get("stop_price") if db_row and db_row.get("stop_price") is not None else sl),
-                        target_price=(db_row.get("target_price") if db_row and db_row.get("target_price") is not None else tp),
-                        breakeven_applied=bool(db_row.get("breakeven_applied")) if db_row else False,
-                    ))
+                if not entry or not s:
+                    continue
+
+                unrealized = (mid - entry) / pip_size if s == "buy" else (entry - mid) / pip_size
+                age = 0.0
+                if open_time_str:
+                    try:
+                        import pandas as _pd2
+                        t0 = _pd2.to_datetime(open_time_str, utc=True)
+                        age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
+                    except Exception:
+                        pass
+
+                db_row = None
+                try:
+                    db_row = db_by_position_id.get(int(trade_id))
+                except Exception:
+                    db_row = None
+
+                positions.append(PositionInfo(
+                    trade_id=trade_id,
+                    side=s,
+                    entry_price=entry,
+                    size_lots=round(size_lots, 4),
+                    entry_type=(db_row.get("entry_type") if db_row else None),
+                    current_price=mid,
+                    unrealized_pips=round(unrealized, 1),
+                    age_minutes=round(age, 1),
+                    stop_price=(db_row.get("stop_price") if db_row and db_row.get("stop_price") is not None else sl),
+                    target_price=(db_row.get("target_price") if db_row and db_row.get("target_price") is not None else tp),
+                    breakeven_applied=bool(db_row.get("breakeven_applied")) if db_row else False,
+                ))
         except Exception:
             positions = []
 
@@ -1653,33 +1655,24 @@ def main() -> None:
         except Exception as _e:
             print(f"[{profile.profile_name}] Could not restore trial7_daily_state: {_e}")
 
-        # Daily Level Filter for Trial #8 (one instance per profile, state persists across iterations)
+        # Daily Level Filter for Trial #8 / Trial #9 (one instance per profile, state persists across iterations)
         daily_level_filter = None
-        if has_kt_cg_trial_8:
+        if has_kt_cg_trial_8 or has_kt_cg_trial_9:
             from core.daily_level_filter import DailyLevelFilter
+            # Prefer a Trial #9 policy if present; otherwise fall back to Trial #8.
             t8_policy = next((p for p in profile.execution.policies if getattr(p, "type", None) == "kt_cg_trial_8" and getattr(p, "enabled", True)), None)
-            if t8_policy is not None:
+            t9_policy = next((p for p in profile.execution.policies if getattr(p, "type", None) == "kt_cg_trial_9" and getattr(p, "enabled", True)), None)
+            _dl_policy = t9_policy or t8_policy
+            if _dl_policy is not None:
                 daily_level_filter = DailyLevelFilter(
-                    enabled=bool(getattr(t8_policy, "use_daily_level_filter", False)),
-                    buffer_pips=float(getattr(t8_policy, "daily_level_buffer_pips", 3.0)),
-                    breakout_candles_required=int(getattr(t8_policy, "daily_level_breakout_candles_required", 2)),
+                    enabled=bool(getattr(_dl_policy, "use_daily_level_filter", False)),
+                    buffer_pips=float(getattr(_dl_policy, "daily_level_buffer_pips", 3.0)),
+                    breakout_candles_required=int(getattr(_dl_policy, "daily_level_breakout_candles_required", 2)),
                     pip_size=float(profile.pip_size),
                 )
 
-        # No-Trade Zone filter for Trial #9
+        # No-Trade Zone filter for Trial #9 (not used now that Trial #9 is a copy of Trial #8, but kept for future experiments)
         ntz_filter = None
-        if has_kt_cg_trial_9:
-            from core.no_trade_zone import NoTradeZoneFilter
-            t9_policy = next((p for p in profile.execution.policies if getattr(p, "type", None) == "kt_cg_trial_9" and getattr(p, "enabled", True)), None)
-            if t9_policy is not None:
-                ntz_filter = NoTradeZoneFilter(
-                    enabled=bool(getattr(t9_policy, "ntz_enabled", True)),
-                    buffer_pips=float(getattr(t9_policy, "ntz_buffer_pips", 10.0)),
-                    pip_size=float(profile.pip_size),
-                    use_prev_day_hl=bool(getattr(t9_policy, "ntz_use_prev_day_hl", True)),
-                    use_weekly_hl=bool(getattr(t9_policy, "ntz_use_weekly_hl", True)),
-                    use_monthly_hl=bool(getattr(t9_policy, "ntz_use_monthly_hl", True)),
-                )
 
         # Phase 3 Integrated state (pivots, session counters, open trade tracking)
         phase3_state: dict = {}
@@ -1860,6 +1853,20 @@ def main() -> None:
                 except Exception as e:
                     print(f"[{profile.profile_name}] Failed to persist phase3_state after trade management: {e}")
 
+            # Refresh the dashboard immediately once we have current prices and positions.
+            # Policy-specific writes later in the loop can overwrite this with richer filters/context.
+            _build_and_write_dashboard(
+                profile=profile,
+                store=store,
+                log_dir=log_dir,
+                tick=tick,
+                data_by_tf=data_by_tf,
+                mode=mode,
+                adapter=adapter,
+                phase3_state=phase3_state if has_phase3_integrated else None,
+                open_positions_snapshot=open_positions_snapshot,
+            )
+
             m1_df = data_by_tf["M1"]
             m1_last_time = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
             now_utc = pd.Timestamp.now(tz="UTC")
@@ -2006,7 +2013,9 @@ def main() -> None:
                             bar_time_utc=bar_time_utc,
                             tier_state=tier_state,
                             store=store,
-                            ntz_filter=ntz_filter,
+                            daily_level_filter=daily_level_filter,
+                            daily_state=trial7_daily_state,
+                            open_positions=open_positions_snapshot,
                         )
                     elif pol_type == "kt_cg_trial_8":
                         exec_result = execute_kt_cg_trial_8_policy_demo_only(
@@ -2112,8 +2121,8 @@ def main() -> None:
                         policy_type=pol_type, tier_state=tier_state,
                         eval_result=exec_result,
                         exhaustion_result=exec_result.get("exhaustion_result"),
-                        daily_level_filter=daily_level_filter if pol_type == "kt_cg_trial_8" else None,
-                        ntz_filter=ntz_filter if pol_type == "kt_cg_trial_9" else None,
+                        daily_level_filter=daily_level_filter if pol_type in ("kt_cg_trial_8", "kt_cg_trial_9") else None,
+                        ntz_filter=None,
                     )
 
             mkt = None
@@ -3260,7 +3269,8 @@ def main() -> None:
                             bar_time_utc=bar_time_utc,
                             tier_state=tier_state,
                             store=store,
-                            ntz_filter=ntz_filter,
+                            daily_level_filter=daily_level_filter,
+                            daily_state=trial7_daily_state,
                         )
                     elif pol_type == "kt_cg_trial_8":
                         exec_result = execute_kt_cg_trial_8_policy_demo_only(
@@ -3320,23 +3330,18 @@ def main() -> None:
                             side = dec.side or "buy"
                             entry_price = tick.ask if side == "buy" else tick.bid
                             pip = float(profile.pip_size)
-                            if pol_type == "kt_cg_trial_9":
-                                # Trial 9: no broker SL, no broker TP
-                                sl_price = None
-                                tp_price = None
+                            sl_pips = getattr(pol, "sl_pips", None)
+                            if sl_pips is None:
+                                sl_pips = float(get_effective_risk(profile).min_stop_pips)
+                            if side == "buy":
+                                tp_price = entry_price + pol.tp_pips * pip
+                                sl_price = entry_price - sl_pips * pip
                             else:
-                                sl_pips = getattr(pol, "sl_pips", None)
-                                if sl_pips is None:
-                                    sl_pips = float(get_effective_risk(profile).min_stop_pips)
-                                if side == "buy":
-                                    tp_price = entry_price + pol.tp_pips * pip
-                                    sl_price = entry_price - sl_pips * pip
-                                else:
-                                    tp_price = entry_price - pol.tp_pips * pip
-                                    sl_price = entry_price + sl_pips * pip
-                                # When T8 trailing exit is on, do not set broker TP so loop can partial-close + trail
-                                if pol_type == "kt_cg_trial_8" and getattr(pol, "trail_after_tp1", False):
-                                    tp_price = None
+                                tp_price = entry_price - pol.tp_pips * pip
+                                sl_price = entry_price + sl_pips * pip
+                            # When T8/T9 trailing exit is on, do not set broker TP so loop can partial-close + trail
+                            if pol_type in ("kt_cg_trial_8", "kt_cg_trial_9") and getattr(pol, "trail_after_tp1", False):
+                                tp_price = None
                             print(f"[{profile.profile_name}] TRADE PLACED: {pol_type}:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
                                 profile=profile,

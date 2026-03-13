@@ -3617,9 +3617,8 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
             result["loop_running"] = loop_running
             result.setdefault("entry_candidate_side", None)
             result.setdefault("entry_candidate_trigger", None)
-            # While loop is running, don't show stale — file may lag during slow iterations
-            result["stale"] = False if loop_running else stale
-            result["stale_age_seconds"] = 0.0 if loop_running else stale_age_seconds
+            result["stale"] = stale
+            result["stale_age_seconds"] = stale_age_seconds
             result["data_source"] = "run_loop_file"
             # Override positions with live broker data so Open Positions panel matches OANDA
             try:

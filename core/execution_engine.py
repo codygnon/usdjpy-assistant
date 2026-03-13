@@ -5639,11 +5639,12 @@ def execute_kt_cg_trial_9_policy_demo_only(
     bar_time_utc: str,
     tier_state: dict[int, bool],
     store=None,
-    ntz_filter=None,
+    daily_level_filter: Optional[DailyLevelFilter] = None,
+    daily_state: Optional[dict] = None,
     open_positions: Optional[list] = None,
 ) -> dict:
-    """Trial #9: delegates to Trial #7 flow with NTZ filter (no daily_level_filter, no fixed SL)."""
-    return execute_kt_cg_trial_7_policy_demo_only(
+    """Trial #9: carbon copy of Trial #8 (delegates to Trial #7 flow with daily_level_filter and daily_state)."""
+    return execute_kt_cg_trial_8_policy_demo_only(
         adapter=adapter,
         profile=profile,
         log_dir=log_dir,
@@ -5656,9 +5657,8 @@ def execute_kt_cg_trial_9_policy_demo_only(
         bar_time_utc=bar_time_utc,
         tier_state=tier_state,
         store=store,
-        daily_level_filter=None,
-        daily_state=None,
-        ntz_filter=ntz_filter,
+        daily_level_filter=daily_level_filter,
+        daily_state=daily_state,
         open_positions=open_positions,
     )
 
