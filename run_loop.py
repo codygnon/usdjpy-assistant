@@ -1826,6 +1826,18 @@ def main() -> None:
             except Exception:
                 phase3_state = {}
 
+        trades_df_cache: pd.DataFrame | None = None
+
+        def _invalidate_trades_df_cache() -> None:
+            nonlocal trades_df_cache
+            trades_df_cache = None
+
+        def _get_trades_df_cached() -> pd.DataFrame:
+            nonlocal trades_df_cache
+            if trades_df_cache is None:
+                trades_df_cache = store.read_trades_df(profile.profile_name)
+            return trades_df_cache
+
         def _get_bars_cached(symbol: str, tf: str, count: int, *, include_incomplete: bool = False, force_refresh: bool = False) -> pd.DataFrame:
             """Fetch bars with caching to reduce API calls at fast poll rates."""
             now = time.time()
@@ -1847,6 +1859,7 @@ def main() -> None:
         while True:
           try:
             loop_count += 1
+            _invalidate_trades_df_cache()
             if loop_count % 20 == 0:
                 _log(f"heartbeat loop={loop_count}")
 
@@ -2000,6 +2013,7 @@ def main() -> None:
                 phase3_state=phase3_state if has_phase3_integrated else None,
                 open_positions=open_positions_snapshot,
             )
+            _invalidate_trades_df_cache()
             if has_phase3_integrated:
                 try:
                     current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
@@ -2131,7 +2145,7 @@ def main() -> None:
                 t7_mkt = None
                 spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
                 t7_mkt = MarketContext(spread_pips=float(spread_pips), alignment_score=0)
-                trades_df = store.read_trades_df(profile.profile_name)
+                trades_df = _get_trades_df_cached()
                 tier_state: dict[int, bool] = {}
                 try:
                     state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
@@ -2263,6 +2277,7 @@ def main() -> None:
                                 target_price=tp_price,
                                 entry_type=t7_trigger_type,
                             )
+                            _invalidate_trades_df_cache()
                             _append_trade_open_event(
                                 log_dir, f"{pol_type}:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
                                 side, entry_price,
@@ -2329,7 +2344,7 @@ def main() -> None:
                     pass
                 snapshot_id = store.insert_snapshot(snap_row)
 
-                trades_df = store.read_trades_df(profile.profile_name)
+                trades_df = _get_trades_df_cached()
 
                 for pol in profile.execution.policies:
                     if not getattr(pol, "enabled", True):
@@ -2481,6 +2496,7 @@ def main() -> None:
                                     **({"entry_slippage_pips": round(abs(exec_dec.fill_price - float(sig.entry_price_hint)) / float(profile.pip_size), 3)} if getattr(exec_dec, 'fill_price', None) is not None else {}),
                                 }
                             )
+                            _invalidate_trades_df_cache()
                         except Exception:
                             pass
 
@@ -2502,7 +2518,7 @@ def main() -> None:
             if has_price_level and mkt is None:
                 mkt = _compute_mkt(profile, tick, data_by_tf)
             if has_price_level and mkt is not None:
-                trades_df = store.read_trades_df(profile.profile_name)
+                trades_df = _get_trades_df_cached()
                 for pol in profile.execution.policies:
                     if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "price_level_trend":
                         continue
@@ -2536,13 +2552,14 @@ def main() -> None:
                                 target_price=tp,
                                 size_lots=float(get_effective_risk(profile).max_lots),
                             )
+                            _invalidate_trades_df_cache()
                         else:
                             print(f"[{profile.profile_name}] {dec.reason}")
 
             if (has_indicator or has_bollinger or has_vwap or has_ema_pullback) and mkt is None:
                 mkt = _compute_mkt(profile, tick, data_by_tf)
             if has_indicator and mkt is not None:
-                trades_df = store.read_trades_df(profile.profile_name)
+                trades_df = _get_trades_df_cached()
                 for pol in profile.execution.policies:
                     if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "indicator_based":
                         continue
@@ -2576,6 +2593,7 @@ def main() -> None:
                                 entry_price=entry_price,
                                 dec=dec,
                             )
+                            _invalidate_trades_df_cache()
                         else:
                             print(f"[{profile.profile_name}] {dec.reason}")
 
@@ -2583,7 +2601,7 @@ def main() -> None:
             if has_breakout and mkt is None:
                 mkt = _compute_mkt(profile, tick, data_by_tf)
             if has_breakout and mkt is not None:
-                trades_df = store.read_trades_df(profile.profile_name)
+                trades_df = _get_trades_df_cached()
                 for pol in profile.execution.policies:
                     if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "breakout_range":
                         continue
@@ -2618,6 +2636,7 @@ def main() -> None:
                                 entry_price=entry_price,
                                 dec=dec,
                             )
+                            _invalidate_trades_df_cache()
                         else:
                             print(f"[{profile.profile_name}] breakout_range {pol.id} mode={mode} -> {dec.reason}")
 
@@ -2625,7 +2644,7 @@ def main() -> None:
             if has_session and mkt is None:
                 mkt = _compute_mkt(profile, tick, data_by_tf)
             if has_session and mkt is not None:
-                trades_df = store.read_trades_df(profile.profile_name)
+                trades_df = _get_trades_df_cached()
                 for pol in profile.execution.policies:
                     if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "session_momentum":
                         continue
@@ -2655,12 +2674,13 @@ def main() -> None:
                                 entry_price=entry_price,
                                 dec=dec,
                             )
+                            _invalidate_trades_df_cache()
                         else:
                             print(f"[{profile.profile_name}] session_momentum {pol.id} mode={mode} -> {dec.reason}")
 
             # Bollinger Bands policies
             if has_bollinger and mkt is not None:
-                trades_df = store.read_trades_df(profile.profile_name)
+                trades_df = _get_trades_df_cached()
                 for pol in profile.execution.policies:
                     if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "bollinger_bands":
                         continue
@@ -2695,12 +2715,13 @@ def main() -> None:
                                 entry_price=entry_price,
                                 dec=dec,
                             )
+                            _invalidate_trades_df_cache()
                         else:
                             print(f"[{profile.profile_name}] bollinger_bands {pol.id} mode={mode} -> {dec.reason}")
 
             # VWAP policies
             if has_vwap and mkt is not None:
-                trades_df = store.read_trades_df(profile.profile_name)
+                trades_df = _get_trades_df_cached()
                 for pol in profile.execution.policies:
                     if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "vwap":
                         continue
@@ -2735,12 +2756,13 @@ def main() -> None:
                                 entry_price=entry_price,
                                 dec=dec,
                             )
+                            _invalidate_trades_df_cache()
                         else:
                             print(f"[{profile.profile_name}] vwap {pol.id} mode={mode} -> {dec.reason}")
 
             # EMA pullback policies (M5-M15 momentum pullback)
             if has_ema_pullback and mkt is not None:
-                trades_df = store.read_trades_df(profile.profile_name)
+                trades_df = _get_trades_df_cached()
                 for pol in profile.execution.policies:
                     if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "ema_pullback":
                         continue
@@ -2787,12 +2809,13 @@ def main() -> None:
                                 stop_price=sl_price,
                                 target_price=tp_price,
                             )
+                            _invalidate_trades_df_cache()
                         else:
                             print(f"[{profile.profile_name}] ema_pullback {pol.id} mode={mode} -> {dec.reason}")
 
             # KT/CG Hybrid policies (Trial #2)
             if has_kt_cg_hybrid and mkt is not None:
-                trades_df = store.read_trades_df(profile.profile_name)
+                trades_df = _get_trades_df_cached()
                 for pol in profile.execution.policies:
                     if not getattr(pol, "enabled", True) or getattr(pol, "type", None) != "kt_cg_hybrid":
                         continue
@@ -2839,6 +2862,7 @@ def main() -> None:
                                 stop_price=sl_price,
                                 target_price=tp_price,
                             )
+                            _invalidate_trades_df_cache()
                             _append_trade_open_event(
                                 log_dir, f"kt_cg_hybrid:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
                                 side, entry_price,
@@ -2858,7 +2882,7 @@ def main() -> None:
 
             # KT/CG Counter-Trend Pullback policies (Trial #3)
             if has_kt_cg_ctp and mkt is not None:
-                trades_df = store.read_trades_df(profile.profile_name)
+                trades_df = _get_trades_df_cached()
                 # Load temp overrides from runtime state if present
                 temp_overrides = None
                 try:
@@ -2924,6 +2948,7 @@ def main() -> None:
                                 stop_price=sl_price,
                                 target_price=tp_price,
                             )
+                            _invalidate_trades_df_cache()
                             _append_trade_open_event(
                                 log_dir, f"kt_cg_ctp:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
                                 side, entry_price,
@@ -2950,7 +2975,7 @@ def main() -> None:
                 if t4_mkt is None:
                     spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
                     t4_mkt = MarketContext(spread_pips=float(spread_pips), alignment_score=0)
-                trades_df = store.read_trades_df(profile.profile_name)
+                trades_df = _get_trades_df_cached()
                 # Load temp overrides and tier state from runtime state if present
                 temp_overrides = None
                 tier_state: dict[int, bool] = {}
@@ -3076,6 +3101,7 @@ def main() -> None:
                                 target_price=tp_price,
                                 entry_type=t4_trigger_type,
                             )
+                            _invalidate_trades_df_cache()
                             _append_trade_open_event(
                                 log_dir, f"kt_cg_trial_4:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
                                 side, entry_price,
@@ -3103,7 +3129,7 @@ def main() -> None:
                 if t5_mkt is None:
                     spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
                     t5_mkt = MarketContext(spread_pips=float(spread_pips), alignment_score=0)
-                trades_df = store.read_trades_df(profile.profile_name)
+                trades_df = _get_trades_df_cached()
                 temp_overrides = None
                 tier_state: dict[int, bool] = {}
                 try:
@@ -3289,6 +3315,7 @@ def main() -> None:
                                 target_price=tp_price,
                                 entry_type=t5_trigger_type,
                             )
+                            _invalidate_trades_df_cache()
                             _append_trade_open_event(
                                 log_dir, f"kt_cg_trial_5:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
                                 side, entry_price,
@@ -3342,7 +3369,7 @@ def main() -> None:
                 if t7_mkt is None:
                     spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
                     t7_mkt = MarketContext(spread_pips=float(spread_pips), alignment_score=0)
-                trades_df = store.read_trades_df(profile.profile_name)
+                trades_df = _get_trades_df_cached()
                 tier_state: dict[int, bool] = {}
                 try:
                     state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
@@ -3528,6 +3555,7 @@ def main() -> None:
                                 target_price=tp_price,
                                 entry_type=t7_trigger_type,
                             )
+                            _invalidate_trades_df_cache()
                             _append_trade_open_event(
                                 log_dir, f"{pol_type}:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
                                 side, entry_price,
@@ -3559,7 +3587,7 @@ def main() -> None:
                 if t6_mkt is None:
                     spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
                     t6_mkt = MarketContext(spread_pips=float(spread_pips), alignment_score=0)
-                trades_df = store.read_trades_df(profile.profile_name)
+                trades_df = _get_trades_df_cached()
                 # Load tier state from runtime_state.json
                 t6_tier_state: dict[int, bool] = {}
                 t6_daily_reset_state: dict = {}
@@ -3655,6 +3683,7 @@ def main() -> None:
                                 target_price=tp_price,
                                 entry_type=t6_trigger_type,
                             )
+                            _invalidate_trades_df_cache()
                             _append_trade_open_event(
                                 log_dir, f"kt_cg_trial_6:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
                                 side, entry_price, trigger_type=t6_trigger_type or "", entry_type=t6_trigger_type or "",
@@ -3693,7 +3722,7 @@ def main() -> None:
                 if up_mkt is None:
                     spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
                     up_mkt = MarketContext(spread_pips=float(spread_pips), alignment_score=0)
-                trades_df = store.read_trades_df(profile.profile_name)
+                trades_df = _get_trades_df_cached()
 
                 # Track M5 bar changes
                 m5_df_up = data_by_tf.get("M5")
@@ -3808,6 +3837,7 @@ def main() -> None:
                                 target_price=tp_price,
                                 entry_type=up_entry_type,
                             )
+                            _invalidate_trades_df_cache()
                             _append_trade_open_event(
                                 log_dir, f"uncle_parsh:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
                                 side, entry_price,
@@ -3927,6 +3957,7 @@ def main() -> None:
                                 entry_session=_entry_session,
                                 risk_usd_planned=risk_usd_planned,
                             )
+                            _invalidate_trades_df_cache()
                             _append_trade_open_event(
                                 log_dir, f"phase3_integrated:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
                                 side, entry_price,

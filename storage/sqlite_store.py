@@ -239,12 +239,25 @@ class SqliteStore:
 
     def read_trades_df(self, profile: str) -> pd.DataFrame:
         with self.connect() as conn:
-            df = pd.read_sql_query("SELECT * FROM trades WHERE profile=? ORDER BY timestamp_utc", conn, params=[profile])
+            # Exclude config_json — it stores the full profile JSON per trade (~10-100KB each) and is
+            # never accessed from the DataFrame. Loading it multiplies DB read time by 10-100x for
+            # accounts with large trade histories.
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(trades)").fetchall()]
+            select_cols = [f'"{c}"' for c in cols if c != "config_json"]
+            df = pd.read_sql_query(
+                f"SELECT {', '.join(select_cols)} FROM trades WHERE profile=? ORDER BY timestamp_utc",
+                conn, params=[profile]
+            )
         return df
 
     def read_snapshots_df(self, profile: str) -> pd.DataFrame:
         with self.connect() as conn:
-            df = pd.read_sql_query("SELECT * FROM snapshots WHERE profile=? ORDER BY timestamp_utc", conn, params=[profile])
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(snapshots)").fetchall()]
+            select_cols = [f'"{c}"' for c in cols if c != "config_json"]
+            df = pd.read_sql_query(
+                f"SELECT {', '.join(select_cols)} FROM snapshots WHERE profile=? ORDER BY timestamp_utc",
+                conn, params=[profile]
+            )
         return df
 
     # --- Daily summaries (USDJPY) ---
