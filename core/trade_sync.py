@@ -132,6 +132,22 @@ def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore", log_dir=None)
     pip_size = profile.pip_size
     is_oanda = getattr(profile, "broker_type", None) == "oanda"
     oanda_closed_map: dict[int, Any] | None = None
+    oanda_open_ids: set[int] | None = None
+
+    if is_oanda:
+        try:
+            live_positions = adapter.get_open_positions(profile.symbol) or []
+            oanda_open_ids = set()
+            for pos in live_positions:
+                pid = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
+                if pid is None:
+                    continue
+                try:
+                    oanda_open_ids.add(int(pid))
+                except (TypeError, ValueError):
+                    continue
+        except Exception:
+            oanda_open_ids = None
 
     for trade_row in open_trades:
         trade_id = trade_row["trade_id"]
@@ -160,12 +176,14 @@ def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore", log_dir=None)
         if (not mt5_position_id or pd.isna(mt5_position_id)) and position_ticket:
             store.update_trade(trade_id, {"mt5_position_id": position_ticket})
         
-        # Check if position is still open
-        position = adapter.get_position_by_ticket(position_ticket)
-        
-        if position is not None:
-            # Position is still open - nothing to sync
-            continue
+        # Check if position is still open. For OANDA, reuse one openTrades snapshot for the whole sync pass.
+        if oanda_open_ids is not None:
+            if int(position_ticket) in oanda_open_ids:
+                continue
+        else:
+            position = adapter.get_position_by_ticket(position_ticket)
+            if position is not None:
+                continue
         
         # Position is not open - check if it was closed
         close_info = adapter.get_position_close_info(position_ticket)

@@ -1768,6 +1768,10 @@ def main() -> None:
         _MAX_FETCH_RETRIES = 1
         _last_oanda_tradeid_backfill_time: float = 0.0
         _OANDA_TRADEID_BACKFILL_INTERVAL_S: float = 30.0
+        _OANDA_TRADEID_BACKFILL_MAX_PER_CYCLE: int = 5
+        _OANDA_TRADEID_BACKFILL_BUDGET_S: float = 2.0
+        _OANDA_TRADEID_RETRY_COOLDOWN_S: float = 300.0
+        _oanda_backfill_last_attempt_by_trade: dict[str, float] = {}
 
         # Candle cache: {tf: (timestamp_fetched, DataFrame)}
         # TTLs in seconds: M1=28 so new bar is seen soon after minute close (fast poll); M3=175, M5=295, ...
@@ -1909,14 +1913,22 @@ def main() -> None:
                     if _now_bf - _last_oanda_tradeid_backfill_time >= _OANDA_TRADEID_BACKFILL_INTERVAL_S:
                         missing = store.get_trades_missing_position_id(profile.profile_name)
                         updated = 0
-                        # Throttle: at most N updates per cycle to avoid API spam.
-                        for r in missing[:25]:
+                        attempted = 0
+                        _backfill_deadline = time.perf_counter() + _OANDA_TRADEID_BACKFILL_BUDGET_S
+                        for r in missing:
                             d = dict(r)
                             if d.get("exit_price") is not None:
                                 continue  # closed trade; skip
                             trade_id = str(d.get("trade_id") or "")
                             if not trade_id:
                                 continue
+                            last_attempt = _oanda_backfill_last_attempt_by_trade.get(trade_id, 0.0)
+                            if (_now_bf - last_attempt) < _OANDA_TRADEID_RETRY_COOLDOWN_S:
+                                continue
+                            if attempted >= _OANDA_TRADEID_BACKFILL_MAX_PER_CYCLE or time.perf_counter() >= _backfill_deadline:
+                                break
+                            attempted += 1
+                            _oanda_backfill_last_attempt_by_trade[trade_id] = _now_bf
                             # If mt5_deal_id already contains the OANDA tradeID (newer behavior), use it directly.
                             deal_id = d.get("mt5_deal_id")
                             order_id = d.get("mt5_order_id")
@@ -1935,6 +1947,7 @@ def main() -> None:
                                 try:
                                     store.update_trade(trade_id, {"mt5_position_id": int(pos_id)})
                                     updated += 1
+                                    _oanda_backfill_last_attempt_by_trade.pop(trade_id, None)
                                 except Exception:
                                     pass
                         if updated:
