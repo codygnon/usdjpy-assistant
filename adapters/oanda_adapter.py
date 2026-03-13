@@ -169,6 +169,11 @@ class OandaAdapter:
         self._session = requests.Session()
         self._session.headers["Authorization"] = f"Bearer {self.token}"
         self._session.headers["Content-Type"] = "application/json"
+        # Lightweight client-side throttling + caching to reduce API load under high trade volume.
+        self._last_req_time: float = 0.0
+        self._positions_cache: list[dict] | None = None
+        self._positions_cache_ts: float = 0.0
+        self._order_to_position: dict[int, int] = {}
 
     def _get_account_id(self) -> str:
         if self._account_id:
@@ -184,26 +189,39 @@ class OandaAdapter:
 
     def _req(self, method: str, path: str, **kwargs) -> dict:
         url = f"{self._base}{path}"
-        # Default timeout so we don't hang on stuck connections
+        # Keep requests fast-failing so the run loop never stalls for minutes.
+        # Let the outer run_loop control overall retry cadence.
         if "timeout" not in kwargs:
-            kwargs["timeout"] = 30
+            kwargs["timeout"] = 8  # was 30s; tighter to avoid long hangs
         last_err = None
-        max_attempts = 4  # 1 initial + 3 retries
+        max_attempts = 2  # was 4; 1 initial + 1 retry
         for attempt in range(max_attempts):
             try:
+                # Simple per-process rate limiter: ensure a small gap between OANDA requests
+                now = time.time()
+                min_gap = 0.25  # seconds; smooths bursts when many calls happen in one loop
+                if self._last_req_time:
+                    gap = now - self._last_req_time
+                    if gap < min_gap:
+                        time.sleep(min_gap - gap)
+                self._last_req_time = time.time()
                 resp = self._session.request(method, url, **kwargs)
             except requests.RequestException as e:
                 last_err = e
                 if attempt < max_attempts - 1:
-                    delay = min(2 ** (attempt + 1), 60)
+                    # Short, capped backoff so we recover quickly but don't hammer OANDA.
+                    delay = 2
                     time.sleep(delay)
                     continue
-                raise RuntimeError(f"OANDA API {method} {path}: connection error after {max_attempts} attempts: {e}") from e
+                raise RuntimeError(
+                    f"OANDA API {method} {path}: connection error after {max_attempts} attempts: {e}"
+                ) from e
+
             if resp.status_code in (502, 503, 504, 429):
+                # Transient upstream / rate-limit; brief retry, then surface to caller.
                 last_err = RuntimeError(f"OANDA API {method} {path}: {resp.status_code}")
                 if attempt < max_attempts - 1:
-                    delay = min(2 ** (attempt + 1), 60)
-                    time.sleep(delay)
+                    time.sleep(2)
                     continue
                 try:
                     err = resp.json()
@@ -215,6 +233,7 @@ class OandaAdapter:
                 elif msg and len(msg) > 300:
                     msg = msg[:300] + "..."
                 raise RuntimeError(f"OANDA API {method} {path}: {resp.status_code} {msg}")
+
             if resp.status_code >= 400:
                 try:
                     err = resp.json()
@@ -226,9 +245,11 @@ class OandaAdapter:
                 elif msg and len(msg) > 300:
                     msg = msg[:300] + "..."
                 raise RuntimeError(f"OANDA API {method} {path}: {resp.status_code} {msg}")
+
             if resp.status_code == 204 or not resp.content:
                 return {}
             return resp.json()
+
         raise RuntimeError(f"OANDA API {method} {path}: unexpected retry exhaustion") from last_err
 
     def initialize(self) -> None:
@@ -339,22 +360,33 @@ class OandaAdapter:
         OANDA paginates openTrades (default 50, max 500 per page). We fetch all pages
         so zone-entry cap and dashboard stay correct with hundreds of open positions.
         """
-        aid = self._get_account_id()
-        path = f"/v3/accounts/{aid}/openTrades"
-        page_size = 500  # OANDA max per request
-        all_trades: list = []
-        params = {"count": page_size}
-        while True:
-            data = self._req("GET", path, params=params)
-            trades = data.get("trades", [])
-            all_trades.extend(trades)
-            if len(trades) < page_size:
-                break
-            # Next page: trades with ID < oldest ID in this batch (OANDA returns newest first)
-            last_id = trades[-1].get("id")
-            if last_id is None:
-                break
-            params = {"count": page_size, "beforeID": last_id}
+        now = time.time()
+        base_trades: list = []
+        # Small TTL so multiple callers in the same loop share one openTrades fetch.
+        if self._positions_cache is not None and (now - self._positions_cache_ts) < 2.0:
+            base_trades = list(self._positions_cache)
+        else:
+            aid = self._get_account_id()
+            path = f"/v3/accounts/{aid}/openTrades"
+            page_size = 500  # OANDA max per request
+            all_trades: list = []
+            params = {"count": page_size}
+            while True:
+                data = self._req("GET", path, params=params)
+                trades = data.get("trades", [])
+                all_trades.extend(trades)
+                if len(trades) < page_size:
+                    break
+                # Next page: trades with ID < oldest ID in this batch (OANDA returns newest first)
+                last_id = trades[-1].get("id")
+                if last_id is None:
+                    break
+                params = {"count": page_size, "beforeID": last_id}
+            self._positions_cache = list(all_trades)
+            self._positions_cache_ts = time.time()
+            base_trades = all_trades
+
+        all_trades = base_trades
         if symbol:
             inst = _symbol_to_instrument(symbol)
             want_base = _instrument_to_symbol(inst).split(".")[0]
@@ -510,9 +542,9 @@ class OandaAdapter:
         return OrderResult(retcode=0, comment="closed", request_id=None, order=None, deal=None)
 
     def get_position_by_ticket(self, ticket: int):
-        aid = self._get_account_id()
-        data = self._req("GET", f"/v3/accounts/{aid}/openTrades")
-        for t in data.get("trades", []):
+        # Reuse open positions cache to avoid an extra openTrades fetch where possible.
+        trades = self.get_open_positions(None)
+        for t in trades:
             if str(t.get("id")) == str(ticket):
                 return t
         return None
@@ -522,6 +554,14 @@ class OandaAdapter:
         return deal_id
 
     def get_position_id_from_order(self, order_id: int) -> int | None:
+        # Cache mapping from order_id -> trade_id to avoid repeatedly hitting the transactions endpoint.
+        try:
+            cached = self._order_to_position.get(int(order_id))
+        except (TypeError, ValueError):
+            cached = None
+        if cached is not None:
+            return cached
+
         aid = self._get_account_id()
         data = self._req("GET", f"/v3/accounts/{aid}/transactions?orderID={order_id}")
         for t in data.get("transactions", []):
@@ -529,7 +569,12 @@ class OandaAdapter:
                 opened = t.get("tradeOpened", {})
                 tid = opened.get("tradeID")
                 if tid:
-                    return int(tid)
+                    try:
+                        tid_int = int(tid)
+                        self._order_to_position[int(order_id)] = tid_int
+                        return tid_int
+                    except (TypeError, ValueError):
+                        return None
         return None
 
     def get_deals_by_position(self, ticket: int) -> list:

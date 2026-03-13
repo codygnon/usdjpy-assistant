@@ -4825,6 +4825,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
     daily_level_filter: Optional[DailyLevelFilter] = None,
     daily_state: Optional[dict] = None,
     ntz_filter=None,
+    open_positions: Optional[list] = None,
 ) -> dict:
     """Evaluate and execute KT/CG Trial #7 or #8 (demo only). T8: no EMA zone/reversal risk; daily level filter optional."""
     candidate_side: Optional[str] = None
@@ -5214,10 +5215,15 @@ def execute_kt_cg_trial_7_policy_demo_only(
     if trigger_type == "tiered_pullback" and tiered_pullback_tier:
         rule_id = f"{policy_type}:{policy.id}:tier_{tiered_pullback_tier}"
 
-    # Enforce profile-level max_open_trades (total) and policy max_open_trades_per_side; block if any violated
-    open_positions = []
+    # Enforce profile-level max_open_trades (total) and policy max_open_trades_per_side; block if any violated.
+    # Reuse shared open_positions snapshot when provided; fall back to adapter call otherwise.
+    if open_positions is None:
+        open_positions = []
+        try:
+            open_positions = adapter.get_open_positions(profile.symbol) or []
+        except Exception:
+            open_positions = []
     try:
-        open_positions = adapter.get_open_positions(profile.symbol) or []
         total_open = len(open_positions)
         r = get_effective_risk(profile)
         max_open_trades = getattr(r, "max_open_trades", None)
@@ -5238,7 +5244,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
     if max_open_per_side is not None:
         try:
             if not open_positions:
-                open_positions = adapter.get_open_positions(profile.symbol) or []
+                if adapter is not None and open_positions is None:
+                    open_positions = adapter.get_open_positions(profile.symbol) or []
             side_open = 0
             if open_positions:
                 for pos in open_positions:
@@ -5291,15 +5298,16 @@ def execute_kt_cg_trial_7_policy_demo_only(
         # Live broker position ids: cap counts only actually open positions (not stale DB rows)
         _live_pos_ids: set[int] = set()
         try:
-            if adapter is not None:
+            positions = open_positions
+            if (positions is None or not positions) and adapter is not None:
                 positions = adapter.get_open_positions(profile.symbol)
-                for pos in positions or []:
-                    pid = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
-                    if pid is not None:
-                        try:
-                            _live_pos_ids.add(int(pid))
-                        except (TypeError, ValueError):
-                            pass
+            for pos in positions or []:
+                pid = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
+                if pid is not None:
+                    try:
+                        _live_pos_ids.add(int(pid))
+                    except (TypeError, ValueError):
+                        pass
         except Exception:
             pass
 
@@ -5595,6 +5603,7 @@ def execute_kt_cg_trial_8_policy_demo_only(
     store=None,
     daily_level_filter: Optional[DailyLevelFilter] = None,
     daily_state: Optional[dict] = None,
+    open_positions: Optional[list] = None,
 ) -> dict:
     """Trial #8: delegates to Trial #7 flow with daily_level_filter and daily_state (no EMA zone, no reversal risk)."""
     return execute_kt_cg_trial_7_policy_demo_only(
@@ -5612,6 +5621,7 @@ def execute_kt_cg_trial_8_policy_demo_only(
         store=store,
         daily_level_filter=daily_level_filter,
         daily_state=daily_state,
+        open_positions=open_positions,
     )
 
 
@@ -5630,6 +5640,7 @@ def execute_kt_cg_trial_9_policy_demo_only(
     tier_state: dict[int, bool],
     store=None,
     ntz_filter=None,
+    open_positions: Optional[list] = None,
 ) -> dict:
     """Trial #9: delegates to Trial #7 flow with NTZ filter (no daily_level_filter, no fixed SL)."""
     return execute_kt_cg_trial_7_policy_demo_only(
@@ -5648,6 +5659,7 @@ def execute_kt_cg_trial_9_policy_demo_only(
         daily_level_filter=None,
         daily_state=None,
         ntz_filter=ntz_filter,
+        open_positions=open_positions,
     )
 
 

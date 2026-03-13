@@ -210,7 +210,7 @@ def _insert_trade_for_policy(
 MIN_CLOSE_LOTS = 0.01
 
 
-def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | None = None) -> None:
+def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | None = None, open_positions: list | None = None) -> None:
     """Apply breakeven and TP1 partial close for open positions we manage. Order: breakeven first, then TP1."""
     tm = getattr(profile, "trade_management", None)
     if tm is None:
@@ -310,10 +310,12 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
     )
     if not has_simple_be and not has_scaled and t4_spread_be is None and up_policy is None and not has_t7_ema and not has_t8_trail and not has_t9_trail and not has_phase3_trail:
         return
-    try:
-        open_positions = adapter.get_open_positions(profile.symbol)
-    except Exception:
-        return
+    # Reuse shared open_positions snapshot when provided; fall back to adapter call otherwise.
+    if open_positions is None:
+        try:
+            open_positions = adapter.get_open_positions(profile.symbol)
+        except Exception:
+            return
     if not open_positions:
         return
     # sqlite3.Row doesn't support .get(); convert to dicts for safe access
@@ -1609,7 +1611,8 @@ def main() -> None:
         loop_count = 0
         last_sync_loop = 0
         SYNC_INTERVAL_LOOPS = 12  # Sync every ~60 seconds (assuming 5s poll)
-        _MAX_FETCH_RETRIES = 3  # Retry broker fetch this many times before sleeping and continuing
+        # Keep broker fetch retries light; OANDA adapter already has internal retries.
+        _MAX_FETCH_RETRIES = 1
         _last_oanda_tradeid_backfill_time: float = 0.0
         _OANDA_TRADEID_BACKFILL_INTERVAL_S: float = 30.0
 
@@ -1824,22 +1827,31 @@ def main() -> None:
                     tick = adapter.get_tick(profile.symbol)
                     break
                 except Exception as _fetch_err:
-                    if _fetch_attempt < _MAX_FETCH_RETRIES - 1:
-                        _delay = min(10 * (2 **_fetch_attempt), 60)
-                        print(f"[{profile.profile_name}] broker fetch error (retry in {_delay}s): {_fetch_err}")
-                        time.sleep(_delay)
-                    else:
-                        print(f"[{profile.profile_name}] broker temporarily unavailable after {_MAX_FETCH_RETRIES} attempts, sleeping 60s then continuing: {_fetch_err}")
-                        try:
-                            _record_loop_error(profile, store, f"broker temporarily unavailable: {_fetch_err}")
-                        except Exception:
-                            pass
-                        time.sleep(60)
+                    # Fast-fail on broker fetch errors so the loop and dashboard never stall for minutes.
+                    print(f"[{profile.profile_name}] broker fetch error: {_fetch_err}")
+                    try:
+                        _record_loop_error(profile, store, f"broker temporarily unavailable: {_fetch_err}")
+                    except Exception:
+                        pass
+                    # Let the outer loop (and poll_sec) control pacing; don't add long sleeps here.
+                    break
             if data_by_tf is None or tick is None:
                 continue
 
-            # Trade management: breakeven and TP1 partial close (only for positions we opened)
-            _run_trade_management(profile, adapter, store, tick, phase3_state=phase3_state if has_phase3_integrated else None)
+            # Trade management: breakeven and TP1 partial close (only for positions we opened).
+            # Fetch open positions once per loop so all caps/management share the same snapshot.
+            try:
+                open_positions_snapshot = adapter.get_open_positions(profile.symbol)
+            except Exception:
+                open_positions_snapshot = None
+            _run_trade_management(
+                profile,
+                adapter,
+                store,
+                tick,
+                phase3_state=phase3_state if has_phase3_integrated else None,
+                open_positions=open_positions_snapshot,
+            )
             if has_phase3_integrated:
                 try:
                     current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
@@ -2012,6 +2024,7 @@ def main() -> None:
                             store=store,
                             daily_level_filter=daily_level_filter,
                             daily_state=trial7_daily_state,
+                            open_positions=open_positions_snapshot,
                         )
                     else:
                         exec_result = execute_kt_cg_trial_7_policy_demo_only(
@@ -2029,6 +2042,7 @@ def main() -> None:
                             store=store,
                             daily_level_filter=None,
                             daily_state=None,
+                            open_positions=open_positions_snapshot,
                         )
 
                     dec = exec_result["decision"]
