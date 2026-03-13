@@ -584,85 +584,38 @@ class OandaAdapter:
         return None
 
     def get_position_close_info(self, ticket: int) -> PositionCloseInfo | None:
-        """Fetch close details for a trade from OANDA transaction history.
-        Returns None if no close transaction found (e.g. trade still open or too old).
+        """Fetch close details for a closed trade using the single-trade endpoint (O(1) API call).
+        Returns None if trade is still open or not found.
         """
         aid = self._get_account_id()
-        ticket_str = str(ticket)
-        # Request last 30 days of transactions
-        to_ts = datetime.now(timezone.utc)
-        from_ts = to_ts - timedelta(days=30)
-        from_param = _rfc3339_utc(from_ts)
-        to_param = _rfc3339_utc(to_ts)
         try:
-            data = self._req(
-                "GET",
-                f"/v3/accounts/{aid}/transactions",
-                params={"from": from_param, "to": to_param, "pageSize": 500},
-            )
-        except Exception as e:
-            if _is_oanda_invalid_time_range_error(e):
-                return None
+            data = self._req("GET", f"/v3/accounts/{aid}/trades/{ticket}")
+        except Exception:
             return None
 
-        closes: list[dict] = []
-
-        def _collect_closes(tx_list: list) -> None:
-            for t in tx_list or []:
-                if t.get("type") != "ORDER_FILL":
-                    continue
-                closed = t.get("tradeClosed") or {}
-                if str(closed.get("tradeID") or "") == ticket_str:
-                    closes.append(
-                        {
-                            "price": _to_float(t.get("price"), 0.0),
-                            "time": str(t.get("time") or ""),
-                            "pl": _realized_pl_for_closed_trade(t, closed),
-                            "units": abs(_to_int(closed.get("units"), 0)),
-                        }
-                    )
-                for tc in t.get("tradesClosed") or []:
-                    if str(tc.get("tradeID") or "") == ticket_str:
-                        closes.append(
-                            {
-                                "price": _to_float(t.get("price"), 0.0),
-                                "time": str(t.get("time") or ""),
-                                "pl": _realized_pl_for_closed_trade(t, tc),
-                                "units": abs(_to_int(tc.get("units"), 0)),
-                            }
-                        )
-
-        _collect_closes(data.get("transactions") or [])
-
-        pages = data.get("pages") or []
-        for page_path in pages:
-            if not page_path:
-                continue
-            try:
-                req_path = page_path
-                if page_path.startswith(self._base):
-                    req_path = page_path[len(self._base):]
-                elif not page_path.startswith("/"):
-                    req_path = "/" + page_path
-                page_data = self._req("GET", req_path)
-            except Exception:
-                continue
-            _collect_closes(page_data.get("transactions") or [])
-
-        if not closes:
+        trade = data.get("trade")
+        if not trade:
             return None
 
-        closes.sort(key=lambda x: str(x.get("time") or ""))
-        last = closes[-1]
-        total_pl = sum(_to_float(c.get("pl"), 0.0) for c in closes)
-        total_units = sum(max(0, _to_int(c.get("units"), 0)) for c in closes)
-        volume = (total_units / 100_000.0) if total_units > 0 else (abs(_to_int(last.get("units"), 0)) / 100_000.0)
+        state = str(trade.get("state") or "").upper()
+        if state not in ("CLOSED", "CLOSE_WHEN_TRADEABLE"):
+            return None  # still open
+
+        close_price = _to_float(trade.get("averageClosePrice"), 0.0)
+        close_time = str(trade.get("closeTime") or "")
+        realized_pl = _to_float(trade.get("realizedPL"), 0.0)
+        initial_units = abs(_to_int(trade.get("initialUnits"), 0))
+        volume = initial_units / 100_000.0
+
+        if close_price == 0.0 or not close_time:
+            return None
+
         return PositionCloseInfo(
             ticket=ticket,
-            exit_price=_to_float(last.get("price"), 0.0),
-            exit_time_utc=str(last.get("time") or ""),
-            profit=float(total_pl),
-            volume=float(volume),
+            exit_price=close_price,
+            exit_time_utc=close_time,
+            profit=realized_pl,
+            volume=volume,
         )
 
     def place_order(
