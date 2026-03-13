@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from types import SimpleNamespace
 
 from core.profile import ProfileV1
 
@@ -61,3 +62,29 @@ class _Mt5Wrapper:
     def get_closed_positions_from_history(self, **kwargs): return self._m.get_closed_positions_from_history(**kwargs)
     def get_mt5_report_stats(self, **kwargs): return self._m.get_mt5_report_stats(**kwargs)
     def get_mt5_full_report(self, **kwargs): return self._m.get_mt5_full_report(**kwargs)
+
+    def place_order(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        lots: float,
+        stop_price: float | None,
+        target_price: float | None,
+        comment: str = "",
+    ):
+        """Unified order placement API used by Phase 3 (MT5 backend)."""
+        res = self._m.order_send_market(
+            symbol=symbol,
+            side=side,
+            volume_lots=lots,
+            sl=stop_price,
+            tp=target_price,
+            comment=comment,
+        )
+        return SimpleNamespace(
+            order_retcode=getattr(res, "retcode", None),
+            order_id=getattr(res, "order", None),
+            deal_id=getattr(res, "deal", None),
+            fill_price=getattr(res, "fill_price", None),
+        )

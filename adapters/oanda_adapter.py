@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal
+from types import SimpleNamespace
 
 import pandas as pd
 import requests
@@ -617,6 +618,32 @@ class OandaAdapter:
             exit_time_utc=str(last.get("time") or ""),
             profit=float(total_pl),
             volume=float(volume),
+        )
+
+    def place_order(
+        self,
+        *,
+        symbol: str,
+        side: Literal["buy", "sell"],
+        lots: float,
+        stop_price: float | None,
+        target_price: float | None,
+        comment: str = "",
+    ):
+        """Unified order placement API used by Phase 3 (OANDA backend)."""
+        res = self.order_send_market(
+            symbol=symbol,
+            side=side,
+            volume_lots=lots,
+            sl=stop_price,
+            tp=target_price,
+            comment=comment,
+        )
+        return SimpleNamespace(
+            order_retcode=getattr(res, "retcode", None),
+            order_id=getattr(res, "order", None),
+            deal_id=getattr(res, "deal", None),
+            fill_price=getattr(res, "fill_price", None),
         )
 
     def get_closed_positions_from_history(self, days_back: int = 30, symbol: str | None = None, pip_size: float | None = None) -> list:
