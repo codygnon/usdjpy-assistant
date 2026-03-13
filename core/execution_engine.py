@@ -5154,7 +5154,10 @@ def execute_kt_cg_trial_7_policy_demo_only(
     # M5 Bull + M1 completed bar close < EMA200 → block (price broke below EMA200 in bull trend).
     # M5 Bear + M1 completed bar close > EMA200 → block (price broke above EMA200 in bear trend).
     # Entries are allowed again when M1 closes back on the trend side OR M5 trend changes.
-    if policy_type == "kt_cg_trial_9" and getattr(policy, "kill_switch_enabled", True):
+    # Trial #9 is carbon copy of T8 — no kill switch
+    if policy_type == "kt_cg_trial_9":
+        pass
+    elif getattr(policy, "kill_switch_enabled", False):
         m1_df_ks = data_by_tf.get("M1")
         m5_df_ks = data_by_tf.get("M5")
         if (
@@ -5428,10 +5431,10 @@ def execute_kt_cg_trial_7_policy_demo_only(
         )
 
     entry_price = tick.ask if side == "buy" else tick.bid
-    # Trial #9: no broker SL, no broker TP (Kill Switch + bar-close trail handles exits)
+    # Trial #9 is carbon copy of T8 — use same exit_strategy as T8
     if policy_type == "kt_cg_trial_9":
-        exit_strategy = ""  # single hardcoded exit flow
-
+        default_exit = "tp1_be_trail"
+        exit_strategy = str(getattr(policy, "exit_strategy", default_exit) or default_exit)
     # Trial #7 / Trial #8 ema_scale_runner: no broker TP, SL = spread + initial_sl_spread_plus_pips (H1 breakout style)
     # For Trial #7, default exit_strategy is tp_sl_be; for Trial #8, default is tp1_be_trail.
     elif policy_type in ("kt_cg_trial_7", "kt_cg_trial_8"):
@@ -5440,17 +5443,29 @@ def execute_kt_cg_trial_7_policy_demo_only(
     else:
         exit_strategy = ""
 
-    if policy_type == "kt_cg_trial_9":
-        # Trial #9: no SL, no TP — managed by Kill Switch + bar-close trail
+    if policy_type == "kt_cg_trial_9" and exit_strategy != "ema_scale_runner":
+        # Trial #9 carbon copy of T8: use same SL/TP and exit as T8 (tp1_be_trail or none)
+        pip = float(profile.pip_size)
+        sl_pips = getattr(policy, "sl_pips", None)
+        if sl_pips is None:
+            sl_pips = float(get_effective_risk(profile).min_stop_pips)
+        if side == "buy":
+            tp_price = entry_price + effective_tp_pips * pip
+            sl_price = entry_price - sl_pips * pip
+        else:
+            tp_price = entry_price - effective_tp_pips * pip
+            sl_price = entry_price + sl_pips * pip
+        if getattr(policy, "trail_after_tp1", False):
+            tp_price = None
         candidate = TradeCandidate(
             symbol=profile.symbol,
             side=side,
             entry_price=entry_price,
-            stop_price=None,
-            target_price=None,
+            stop_price=sl_price,
+            target_price=tp_price,
             size_lots=float(get_effective_risk(profile).max_lots),
         )
-    elif policy_type in ("kt_cg_trial_7", "kt_cg_trial_8") and exit_strategy == "ema_scale_runner":
+    elif policy_type in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9") and exit_strategy == "ema_scale_runner":
         pip = float(profile.pip_size)
         current_spread = tick.ask - tick.bid
         initial_sl_pips = float(getattr(policy, "initial_sl_spread_plus_pips", 5.0))

@@ -918,7 +918,7 @@ class ExecutionPolicyKtCgTrial8(BaseModel):
 
 
 class ExecutionPolicyKtCgTrial9(BaseModel):
-    """KT/CG Trial #9: T8 entry logic + No-Trade Zones (NTZ) + Kill Switch exit (M1-200 EMA)."""
+    """KT/CG Trial #9: Carbon copy of Trial #8 (same Daily Level Filter, Exit Strategy, TP1/BE/Trail)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -946,32 +946,43 @@ class ExecutionPolicyKtCgTrial9(BaseModel):
 
     cooldown_minutes: float = 3.0
     tp_pips: float = 4.0
+    sl_pips: Optional[float] = 20.0
     confirm_bars: int = 1
 
-    # --- No-Trade Zones (NTZ) --- replaces Daily Level Filter
-    ntz_enabled: bool = True
-    ntz_buffer_pips: float = 10.0
-    ntz_use_prev_day_hl: bool = True
-    ntz_use_weekly_hl: bool = True
-    ntz_use_monthly_hl: bool = True
-
-    # --- Kill Switch (M1-200 EMA exit) ---
-    kill_switch_enabled: bool = True
-    kill_switch_zone_entry_action: Literal["kill", "hold"] = "kill"
-
-    # TP1 + BE + Trail (single exit flow — no exit_strategy enum)
-    trail_after_tp1: bool = True
-    tp1_pips: float = 4.0
-    tp1_close_pct: float = 50.0
-    be_spread_plus_pips: float = 2.0
-    trail_ema_period: int = 21
-
-    # Spread-Aware Breakeven
+    # Spread-Aware Breakeven (same as T8)
     spread_aware_be_enabled: bool = False
     spread_aware_be_trigger_mode: Literal["spread_relative"] = "spread_relative"
     spread_aware_be_spread_buffer_pips: float = 1.0
     spread_aware_be_apply_to_zone_entry: bool = True
     spread_aware_be_apply_to_tiered_pullback: bool = True
+
+    # Daily Level Filter (same as T8)
+    use_daily_level_filter: bool = False
+    daily_level_buffer_pips: float = 3.0
+    daily_level_breakout_candles_required: int = 2
+
+    # Exit strategy (same as T8)
+    exit_strategy: Literal["none", "tp1_be_trail", "ema_scale_runner"] = "tp1_be_trail"
+    m1_exit_ema_fast: int = 9
+    m1_exit_ema_slow: int = 21
+    scale_out_pct: float = 50.0
+    initial_sl_spread_plus_pips: float = 5.0
+
+    # Trailing exit (TP1 partial + BE + M1 EMA trail) — same as T8
+    trail_after_tp1: bool = False
+    tp1_pips: float = 4.0
+    tp1_close_pct: float = 50.0
+    be_spread_plus_pips: float = 2.0
+    trail_ema_period: int = 21
+
+    # Deprecated (carbon copy of T8; kept so old saved profiles still load)
+    ntz_enabled: bool = False
+    ntz_buffer_pips: float = 10.0
+    ntz_use_prev_day_hl: bool = True
+    ntz_use_weekly_hl: bool = True
+    ntz_use_monthly_hl: bool = True
+    kill_switch_enabled: bool = False
+    kill_switch_zone_entry_action: Literal["kill", "hold"] = "hold"
 
     # Trend exhaustion (same fields as T8)
     trend_exhaustion_enabled: bool = False
