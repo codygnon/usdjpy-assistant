@@ -799,9 +799,6 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
           candidateTrigger={dashState?.entry_candidate_trigger ?? null}
         />
 
-        {/* Open Positions */}
-        <PositionsPanel trades={positions} />
-
         {/* Closed Trades */}
         <TradeLog title="Closed Trades (Last 30)" events={recentClosedEvents} />
 
