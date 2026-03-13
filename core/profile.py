@@ -962,7 +962,7 @@ class ExecutionPolicyKtCgTrial9(BaseModel):
     daily_level_breakout_candles_required: int = 2
 
     # Exit strategy (same as T8)
-    exit_strategy: Literal["none", "tp1_be_trail", "ema_scale_runner"] = "tp1_be_trail"
+    exit_strategy: Literal["none", "tp1_be_trail", "ema_scale_runner", "tp1_be_m5_trail"] = "tp1_be_m5_trail"
     m1_exit_ema_fast: int = 9
     m1_exit_ema_slow: int = 21
     scale_out_pct: float = 50.0
@@ -970,10 +970,11 @@ class ExecutionPolicyKtCgTrial9(BaseModel):
 
     # Trailing exit (TP1 partial + BE + M1 EMA trail) — same as T8
     trail_after_tp1: bool = False
-    tp1_pips: float = 4.0
-    tp1_close_pct: float = 50.0
-    be_spread_plus_pips: float = 2.0
+    tp1_pips: float = 6.0
+    tp1_close_pct: float = 80.0
+    be_spread_plus_pips: float = 0.5
     trail_ema_period: int = 21
+    trail_m5_ema_period: int = 20
 
     # Deprecated (carbon copy of T8; kept so old saved profiles still load)
     ntz_enabled: bool = False

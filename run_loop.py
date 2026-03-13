@@ -691,105 +691,197 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                 except Exception as e:
                     print(f"[{profile.profile_name}] T8 trailing EMA error pos {position_id}: {e}")
 
-        # 2c) Trial #9: TP1 + BE + bar-close-only M1 trail + Kill Switch
+        # 2c) Trial #9: TP1 + BE + bar-close trail (M1 or M5 depending on exit_strategy) + Kill Switch
         elif t9_policy is not None and entry_type in ("zone_entry", "tiered_pullback"):
+            t9_exit_strategy = str(getattr(t9_policy, "exit_strategy", "tp1_be_trail"))
             tp1_done = trade_row.get("tp1_partial_done") or 0
-            t9_tp1_pips = float(getattr(t9_policy, "tp1_pips", 4.0))
-            t9_tp1_pct = float(getattr(t9_policy, "tp1_close_pct", 50.0))
+            t9_tp1_pips = float(getattr(t9_policy, "tp1_pips", 6.0))
+            t9_tp1_pct = float(getattr(t9_policy, "tp1_close_pct", 80.0))
 
-            if not tp1_done:
-                # TP1 partial close
-                reached_buy = mid >= entry + t9_tp1_pips * pip
-                reached_sell = mid <= entry - t9_tp1_pips * pip
-                if (side == "buy" and reached_buy) or (side == "sell" and reached_sell):
-                    if isinstance(pos, dict):
-                        current_units = pos.get("currentUnits") or 0
-                        current_lots = abs(int(current_units)) / 100_000.0
-                    else:
-                        current_lots = float(getattr(pos, "volume", 0) or 0)
-                    close_lots = current_lots * (t9_tp1_pct / 100.0)
-                    close_lots = max(MIN_CLOSE_LOTS, min(close_lots, current_lots))
-                    if close_lots < 1e-6:
-                        close_lots = min(MIN_CLOSE_LOTS, current_lots)
-                    position_type = 1 if side == "sell" else 0
-                    try:
-                        adapter.close_position(
-                            ticket=position_id,
-                            symbol=profile.symbol,
-                            volume=close_lots,
-                            position_type=position_type,
-                        )
-                        print(f"[{profile.profile_name}] T9 TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t9_tp1_pct}%)")
-                    except Exception as e:
-                        print(f"[{profile.profile_name}] T9 TP1 partial close error pos {position_id}: {e}")
-                    # Always set BE and push SL to broker when TP1 level is reached (so SL appears on OANDA even if partial close failed)
-                    _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 2.0))
-                    be_offset = current_spread + _t9_be_pips * pip
-                    if side == "buy":
-                        be_sl = entry + be_offset
-                    else:
-                        be_sl = entry - be_offset
-                    try:
-                        adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
-                        store.update_trade(trade_id, {"tp1_partial_done": 1, "breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
-                        print(f"[{profile.profile_name}] T9 BE: pos {position_id} SL->{be_sl:.3f}")
-                    except Exception as e:
-                        print(f"[{profile.profile_name}] T9 BE error pos {position_id}: {e}")
+            if t9_exit_strategy == "tp1_be_m5_trail":
+                # --- Phase A: TP1 partial close ---
+                if not tp1_done:
+                    reached_buy = mid >= entry + t9_tp1_pips * pip
+                    reached_sell = mid <= entry - t9_tp1_pips * pip
+                    if (side == "buy" and reached_buy) or (side == "sell" and reached_sell):
+                        if isinstance(pos, dict):
+                            current_units = pos.get("currentUnits") or 0
+                            current_lots = abs(int(current_units)) / 100_000.0
+                        else:
+                            current_lots = float(getattr(pos, "volume", 0) or 0)
+                        close_lots = current_lots * (t9_tp1_pct / 100.0)
+                        close_lots = max(MIN_CLOSE_LOTS, min(close_lots, current_lots))
+                        if close_lots < 1e-6:
+                            close_lots = min(MIN_CLOSE_LOTS, current_lots)
+                        position_type = 1 if side == "sell" else 0
+                        try:
+                            adapter.close_position(
+                                ticket=position_id,
+                                symbol=profile.symbol,
+                                volume=close_lots,
+                                position_type=position_type,
+                            )
+                            print(f"[{profile.profile_name}] T9 TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t9_tp1_pct}%)")
+                        except Exception as e:
+                            print(f"[{profile.profile_name}] T9 TP1 partial close error pos {position_id}: {e}")
+                        # --- Phase B: BE on TP1 hit ---
+                        _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 0.5))
+                        be_offset = current_spread + _t9_be_pips * pip
+                        if side == "buy":
+                            be_sl = entry + be_offset
+                        else:
+                            be_sl = entry - be_offset
+                        try:
+                            adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
+                            store.update_trade(trade_id, {"tp1_partial_done": 1, "breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
+                            print(f"[{profile.profile_name}] T9 BE: pos {position_id} SL->{be_sl:.3f}")
+                        except Exception as e:
+                            print(f"[{profile.profile_name}] T9 BE error pos {position_id}: {e}")
 
-            elif tp1_done:
-                # Bar-close-only trailing on M1 EMA: update broker SL when trail moves, close on completed bar close crossing EMA
-                try:
-                    _t9_trail_period = int(getattr(t9_policy, "trail_ema_period", 21))
-                    m1_df_trail = adapter.get_bars(profile.symbol, "M1", 100)
-                    if m1_df_trail is not None and not m1_df_trail.empty and len(m1_df_trail) > _t9_trail_period + 1:
-                        from core.indicators import ema as ema_fn
-                        m1_close_trail = m1_df_trail["close"].astype(float)
-                        trail_ema = ema_fn(m1_close_trail, _t9_trail_period)
-                        if not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):
-                            # Use completed bar (iloc[-2]) for bar-close-only trailing
-                            ema_val = float(trail_ema.iloc[-2])
-                            last_m1_close = float(m1_close_trail.iloc[-2])
-                            # Push trailing SL to broker (same idea as T8) so SL is visible on OANDA
-                            prev_be_sl = trade_row.get("breakeven_sl_price")
-                            if prev_be_sl is not None:
-                                prev_be_sl = float(prev_be_sl)
-                            if side == "buy":
-                                new_trail_sl = ema_val - (1.0 * pip)
+                elif tp1_done:
+                    # --- Phase C: M5 bar-close-only trailing ---
+                    try:
+                        _t9_m5_trail_period = int(getattr(t9_policy, "trail_m5_ema_period", 20))
+                        m5_df_trail = adapter.get_bars(profile.symbol, "M5", 100)
+                        if m5_df_trail is not None and not m5_df_trail.empty and len(m5_df_trail) > _t9_m5_trail_period + 1:
+                            from core.indicators import ema as ema_fn
+                            m5_close_trail = m5_df_trail["close"].astype(float)
+                            trail_ema = ema_fn(m5_close_trail, _t9_m5_trail_period)
+                            if not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):
+                                ema_val = float(trail_ema.iloc[-2])
+                                last_m5_close = float(m5_close_trail.iloc[-2])
+                                prev_be_sl = trade_row.get("breakeven_sl_price")
                                 if prev_be_sl is not None:
-                                    new_trail_sl = max(new_trail_sl, prev_be_sl)
-                            else:
-                                new_trail_sl = ema_val + (1.0 * pip)
+                                    prev_be_sl = float(prev_be_sl)
+                                if side == "buy":
+                                    new_trail_sl = ema_val - (1.0 * pip)
+                                    if prev_be_sl is not None:
+                                        new_trail_sl = max(new_trail_sl, prev_be_sl)
+                                else:
+                                    new_trail_sl = ema_val + (1.0 * pip)
+                                    if prev_be_sl is not None:
+                                        new_trail_sl = min(new_trail_sl, prev_be_sl)
+                                if prev_be_sl is None or abs(new_trail_sl - prev_be_sl) > pip * 0.1:
+                                    should_update = False
+                                    if side == "buy" and (prev_be_sl is None or new_trail_sl > prev_be_sl):
+                                        should_update = True
+                                    elif side == "sell" and (prev_be_sl is None or new_trail_sl < prev_be_sl):
+                                        should_update = True
+                                    if should_update:
+                                        adapter.update_position_stop_loss(position_id, profile.symbol, round(new_trail_sl, 3))
+                                        store.update_trade(trade_id, {"breakeven_sl_price": round(new_trail_sl, 5)})
+                                if side == "buy" and last_m5_close < ema_val:
+                                    position_type = 0
+                                    if isinstance(pos, dict):
+                                        vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                    else:
+                                        vol = float(getattr(pos, "volume", 0) or 0)
+                                    if vol > 0:
+                                        adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                        print(f"[{profile.profile_name}] T9 runner closed (BUY M5 bar-close < EMA{_t9_m5_trail_period}): pos {position_id}")
+                                elif side == "sell" and last_m5_close > ema_val:
+                                    position_type = 1
+                                    if isinstance(pos, dict):
+                                        vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                    else:
+                                        vol = float(getattr(pos, "volume", 0) or 0)
+                                    if vol > 0:
+                                        adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                        print(f"[{profile.profile_name}] T9 runner closed (SELL M5 bar-close > EMA{_t9_m5_trail_period}): pos {position_id}")
+                    except Exception as e:
+                        print(f"[{profile.profile_name}] T9 M5 trailing EMA error pos {position_id}: {e}")
+
+            else:
+                # Existing tp1_be_trail logic (backward compat)
+                if not tp1_done:
+                    reached_buy = mid >= entry + t9_tp1_pips * pip
+                    reached_sell = mid <= entry - t9_tp1_pips * pip
+                    if (side == "buy" and reached_buy) or (side == "sell" and reached_sell):
+                        if isinstance(pos, dict):
+                            current_units = pos.get("currentUnits") or 0
+                            current_lots = abs(int(current_units)) / 100_000.0
+                        else:
+                            current_lots = float(getattr(pos, "volume", 0) or 0)
+                        close_lots = current_lots * (t9_tp1_pct / 100.0)
+                        close_lots = max(MIN_CLOSE_LOTS, min(close_lots, current_lots))
+                        if close_lots < 1e-6:
+                            close_lots = min(MIN_CLOSE_LOTS, current_lots)
+                        position_type = 1 if side == "sell" else 0
+                        try:
+                            adapter.close_position(
+                                ticket=position_id,
+                                symbol=profile.symbol,
+                                volume=close_lots,
+                                position_type=position_type,
+                            )
+                            print(f"[{profile.profile_name}] T9 TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t9_tp1_pct}%)")
+                        except Exception as e:
+                            print(f"[{profile.profile_name}] T9 TP1 partial close error pos {position_id}: {e}")
+                        _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 2.0))
+                        be_offset = current_spread + _t9_be_pips * pip
+                        if side == "buy":
+                            be_sl = entry + be_offset
+                        else:
+                            be_sl = entry - be_offset
+                        try:
+                            adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
+                            store.update_trade(trade_id, {"tp1_partial_done": 1, "breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
+                            print(f"[{profile.profile_name}] T9 BE: pos {position_id} SL->{be_sl:.3f}")
+                        except Exception as e:
+                            print(f"[{profile.profile_name}] T9 BE error pos {position_id}: {e}")
+
+                elif tp1_done:
+                    # Bar-close-only trailing on M1 EMA
+                    try:
+                        _t9_trail_period = int(getattr(t9_policy, "trail_ema_period", 21))
+                        m1_df_trail = adapter.get_bars(profile.symbol, "M1", 100)
+                        if m1_df_trail is not None and not m1_df_trail.empty and len(m1_df_trail) > _t9_trail_period + 1:
+                            from core.indicators import ema as ema_fn
+                            m1_close_trail = m1_df_trail["close"].astype(float)
+                            trail_ema = ema_fn(m1_close_trail, _t9_trail_period)
+                            if not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):
+                                ema_val = float(trail_ema.iloc[-2])
+                                last_m1_close = float(m1_close_trail.iloc[-2])
+                                prev_be_sl = trade_row.get("breakeven_sl_price")
                                 if prev_be_sl is not None:
-                                    new_trail_sl = min(new_trail_sl, prev_be_sl)
-                            if prev_be_sl is None or abs(new_trail_sl - prev_be_sl) > pip * 0.1:
-                                should_update = False
-                                if side == "buy" and (prev_be_sl is None or new_trail_sl > prev_be_sl):
-                                    should_update = True
-                                elif side == "sell" and (prev_be_sl is None or new_trail_sl < prev_be_sl):
-                                    should_update = True
-                                if should_update:
-                                    adapter.update_position_stop_loss(position_id, profile.symbol, round(new_trail_sl, 3))
-                                    store.update_trade(trade_id, {"breakeven_sl_price": round(new_trail_sl, 5)})
-                            if side == "buy" and last_m1_close < ema_val:
-                                position_type = 0
-                                if isinstance(pos, dict):
-                                    vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                    prev_be_sl = float(prev_be_sl)
+                                if side == "buy":
+                                    new_trail_sl = ema_val - (1.0 * pip)
+                                    if prev_be_sl is not None:
+                                        new_trail_sl = max(new_trail_sl, prev_be_sl)
                                 else:
-                                    vol = float(getattr(pos, "volume", 0) or 0)
-                                if vol > 0:
-                                    adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
-                                    print(f"[{profile.profile_name}] T9 runner closed (BUY bar-close < EMA{_t9_trail_period}): pos {position_id}")
-                            elif side == "sell" and last_m1_close > ema_val:
-                                position_type = 1
-                                if isinstance(pos, dict):
-                                    vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
-                                else:
-                                    vol = float(getattr(pos, "volume", 0) or 0)
-                                if vol > 0:
-                                    adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
-                                    print(f"[{profile.profile_name}] T9 runner closed (SELL bar-close > EMA{_t9_trail_period}): pos {position_id}")
-                except Exception as e:
-                    print(f"[{profile.profile_name}] T9 trailing EMA error pos {position_id}: {e}")
+                                    new_trail_sl = ema_val + (1.0 * pip)
+                                    if prev_be_sl is not None:
+                                        new_trail_sl = min(new_trail_sl, prev_be_sl)
+                                if prev_be_sl is None or abs(new_trail_sl - prev_be_sl) > pip * 0.1:
+                                    should_update = False
+                                    if side == "buy" and (prev_be_sl is None or new_trail_sl > prev_be_sl):
+                                        should_update = True
+                                    elif side == "sell" and (prev_be_sl is None or new_trail_sl < prev_be_sl):
+                                        should_update = True
+                                    if should_update:
+                                        adapter.update_position_stop_loss(position_id, profile.symbol, round(new_trail_sl, 3))
+                                        store.update_trade(trade_id, {"breakeven_sl_price": round(new_trail_sl, 5)})
+                                if side == "buy" and last_m1_close < ema_val:
+                                    position_type = 0
+                                    if isinstance(pos, dict):
+                                        vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                    else:
+                                        vol = float(getattr(pos, "volume", 0) or 0)
+                                    if vol > 0:
+                                        adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                        print(f"[{profile.profile_name}] T9 runner closed (BUY bar-close < EMA{_t9_trail_period}): pos {position_id}")
+                                elif side == "sell" and last_m1_close > ema_val:
+                                    position_type = 1
+                                    if isinstance(pos, dict):
+                                        vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                    else:
+                                        vol = float(getattr(pos, "volume", 0) or 0)
+                                    if vol > 0:
+                                        adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                        print(f"[{profile.profile_name}] T9 runner closed (SELL bar-close > EMA{_t9_trail_period}): pos {position_id}")
+                    except Exception as e:
+                        print(f"[{profile.profile_name}] T9 trailing EMA error pos {position_id}: {e}")
 
             # Kill Switch (M5 trend + M1-200 EMA): check on every poll, act on completed M1 bar close
             # Fires when M5 is Bull AND M1 bar close < EMA200 (BUY), or M5 is Bear AND M1 bar close > EMA200 (SELL)
