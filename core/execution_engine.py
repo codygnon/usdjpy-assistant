@@ -5431,6 +5431,10 @@ def execute_kt_cg_trial_7_policy_demo_only(
         )
 
     entry_price = tick.ask if side == "buy" else tick.bid
+    # For TP-based exits (including Trial #9 when not using ema_scale_runner), we keep a copy of the
+    # original tp_pips so we can log it and attach it to the dashboard payload.
+    original_tp_pips: float | None = None
+
     # Trial #9 is carbon copy of T8 — use same exit_strategy as T8
     if policy_type == "kt_cg_trial_9":
         default_exit = "tp1_be_trail"
@@ -5445,6 +5449,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
 
     if policy_type == "kt_cg_trial_9" and exit_strategy != "ema_scale_runner":
         # Trial #9 carbon copy of T8: use same SL/TP and exit as T8 (tp1_be_trail or none)
+        original_tp_pips = float(getattr(policy, "tp_pips", 4.0))
         pip = float(profile.pip_size)
         sl_pips = getattr(policy, "sl_pips", None)
         if sl_pips is None:
@@ -5577,16 +5582,18 @@ def execute_kt_cg_trial_7_policy_demo_only(
                 f"| SL=spread+pips (ema_scale_runner), no TP | {'; '.join(eval_reasons)}"
             )
         else:
+            base_tp_str = f"{original_tp_pips:.2f}p" if original_tp_pips is not None else "n/a"
             print(
                 f"[{profile.profile_name}] TRADE PLACED: {policy_type}:{trigger_type}{tier_info} "
-                f"| TP={effective_tp_pips:.2f}p (base={original_tp_pips:.2f}p zone={tp_zone})"
+                f"| TP={effective_tp_pips:.2f}p (base={base_tp_str} zone={tp_zone})"
                 f" | {'; '.join(eval_reasons)}"
             )
 
     extra = {}
     # Only attach TP metadata when we are actually using TP-based exits (i.e. not ema_scale_runner).
     if not (policy_type in ("kt_cg_trial_7", "kt_cg_trial_8") and str(getattr(policy, "exit_strategy", "")) == "ema_scale_runner"):
-        extra = {"tp_pips_effective": float(effective_tp_pips), "tp_pips_base": float(original_tp_pips)}
+        if original_tp_pips is not None:
+            extra = {"tp_pips_effective": float(effective_tp_pips), "tp_pips_base": float(original_tp_pips)}
     return _result_payload(
         ExecutionDecision(
             attempted=True,

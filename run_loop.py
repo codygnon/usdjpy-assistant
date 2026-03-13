@@ -1751,9 +1751,10 @@ def main() -> None:
             "H1": 3595.0, "H4": 14395.0, "D": 300.0,
             "W": 3600.0, "MN": 3600.0,
         }
-        # OANDA candles can lag; keep M1 refresh frequent so loop sees the latest candle time quickly.
+        # OANDA candles can lag; keep M1/M5 refresh frequent so loop sees the latest candle time quickly.
         if getattr(profile, "broker_type", None) == "oanda":
             _CANDLE_TTL["M1"] = 2.0
+            _CANDLE_TTL["M5"] = 55.0  # Refresh M5 trend ~once/minute instead of once/5min
 
         # Logging state for Trial #5 — reduce log spam
         _last_exhaustion_zone: str | None = None
