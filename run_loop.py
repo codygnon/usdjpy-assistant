@@ -1152,6 +1152,181 @@ def _record_loop_error(profile, store, message: str) -> None:
         pass
 
 
+def _collect_dashboard_positions(
+    *,
+    profile,
+    store,
+    tick,
+    adapter=None,
+    open_positions_snapshot: list | None = None,
+) -> list[PositionInfo]:
+    """Build dashboard position rows, reusing the loop's open-position snapshot when available."""
+    from datetime import datetime, timezone
+
+    pip_size = float(profile.pip_size)
+    now_utc = datetime.now(timezone.utc)
+    mid = (tick.bid + tick.ask) / 2.0
+    positions: list[PositionInfo] = []
+
+    db_by_position_id: dict[int, dict] = {}
+    try:
+        for row in store.list_open_trades(profile.profile_name):
+            d = dict(row)
+            pos_id = d.get("mt5_position_id")
+            if pos_id is None:
+                continue
+            try:
+                db_by_position_id[int(pos_id)] = d
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    try:
+        live_trades = open_positions_snapshot
+        if live_trades is None and adapter is not None:
+            live_trades = adapter.get_open_positions(profile.symbol)
+        for t in live_trades or []:
+            if isinstance(t, dict):
+                units = float(t.get("currentUnits", 0) or t.get("initialUnits", 0) or 0)
+                s = "buy" if units > 0 else "sell"
+                size_lots = abs(units) / 100_000.0 if units else 0.0
+                entry = float(t.get("price", 0) or 0)
+                trade_id = str(t.get("id", ""))
+                open_time_str = t.get("openTime")
+                sl = None
+                tp = None
+                try:
+                    if t.get("stopLossOrder"):
+                        sl = float(t["stopLossOrder"]["price"])
+                except Exception:
+                    pass
+                try:
+                    if t.get("takeProfitOrder"):
+                        tp = float(t["takeProfitOrder"]["price"])
+                except Exception:
+                    pass
+            else:
+                mt5_type = getattr(t, "type", None)
+                if mt5_type == 0:
+                    s = "buy"
+                elif mt5_type == 1:
+                    s = "sell"
+                else:
+                    continue
+                size_lots = float(getattr(t, "volume", 0.0) or 0.0)
+                entry = float(getattr(t, "price_open", 0.0) or 0.0)
+                trade_id = str(getattr(t, "ticket", ""))
+                open_time_raw = getattr(t, "time", None)
+                open_time_str = str(open_time_raw) if open_time_raw is not None else None
+                sl = float(getattr(t, "sl", 0.0) or 0.0) or None
+                tp = float(getattr(t, "tp", 0.0) or 0.0) or None
+
+            if not entry or not s:
+                continue
+
+            unrealized = (mid - entry) / pip_size if s == "buy" else (entry - mid) / pip_size
+            age = 0.0
+            if open_time_str:
+                try:
+                    import pandas as _pd2
+                    t0 = _pd2.to_datetime(open_time_str, utc=True)
+                    age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
+                except Exception:
+                    pass
+
+            db_row = None
+            try:
+                db_row = db_by_position_id.get(int(trade_id))
+            except Exception:
+                db_row = None
+
+            positions.append(PositionInfo(
+                trade_id=trade_id,
+                side=s,
+                entry_price=entry,
+                size_lots=round(size_lots, 4),
+                entry_type=(db_row.get("entry_type") if db_row else None),
+                current_price=mid,
+                unrealized_pips=round(unrealized, 1),
+                age_minutes=round(age, 1),
+                stop_price=(db_row.get("stop_price") if db_row and db_row.get("stop_price") is not None else sl),
+                target_price=(db_row.get("target_price") if db_row and db_row.get("target_price") is not None else tp),
+                breakeven_applied=bool(db_row.get("breakeven_applied")) if db_row else False,
+            ))
+    except Exception:
+        positions = []
+
+    if positions:
+        return positions
+
+    try:
+        open_trades = store.list_open_trades(profile.profile_name)
+        for row in open_trades:
+            d = dict(row)
+            entry = float(d.get("entry_price", 0))
+            s = str(d.get("side", "")).lower()
+            if s == "buy":
+                unrealized = (mid - entry) / pip_size
+            else:
+                unrealized = (entry - mid) / pip_size
+            age = 0.0
+            ts = d.get("timestamp_utc")
+            if ts:
+                try:
+                    import pandas as _pd
+                    t0 = _pd.to_datetime(ts, utc=True)
+                    age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
+                except Exception:
+                    pass
+            positions.append(PositionInfo(
+                trade_id=str(d.get("trade_id", "")),
+                side=s,
+                entry_price=entry,
+                size_lots=(float(d.get("size_lots")) if d.get("size_lots") is not None else None),
+                entry_type=d.get("entry_type"),
+                current_price=mid,
+                unrealized_pips=round(unrealized, 1),
+                age_minutes=round(age, 1),
+                stop_price=d.get("stop_price"),
+                target_price=d.get("target_price"),
+                breakeven_applied=bool(d.get("breakeven_applied")),
+            ))
+    except Exception:
+        pass
+
+    return positions
+
+
+def _collect_dashboard_daily_summary(profile, store) -> DailySummary:
+    """Build dashboard daily summary once per loop iteration and reuse it across writes."""
+    from datetime import datetime, timezone
+
+    now_utc = datetime.now(timezone.utc)
+    daily = DailySummary()
+    try:
+        date_str = now_utc.strftime("%Y-%m-%d")
+        closed_today = store.get_trades_for_date(profile.profile_name, date_str)
+        daily.trades_today = len(closed_today)
+        for row in closed_today:
+            d = dict(row)
+            pips = d.get("pips")
+            profit = _normalized_profit_for_dashboard_row(d, profile.symbol)
+            if pips is not None:
+                daily.total_pips += float(pips)
+                if float(pips) > 0:
+                    daily.wins += 1
+                else:
+                    daily.losses += 1
+            if profit is not None:
+                daily.total_profit += float(profit)
+        if daily.trades_today > 0:
+            daily.win_rate = round(daily.wins / daily.trades_today * 100, 1)
+    except Exception:
+        pass
+    return daily
+
+
 def _build_and_write_dashboard(
     *,
     profile,
