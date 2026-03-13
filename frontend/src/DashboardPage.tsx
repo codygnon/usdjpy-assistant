@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   getDashboard, getTradeEvents, getExecutions, startLoop, stopLoop, getRuntimeState, updateRuntimeState,
   type DashboardState, type TradeEvent, type FilterReport, type ContextItem,
-  type DailySummary, type PositionInfo, type RuntimeState,
+  type DailySummary, type RuntimeState,
 } from './api';
 
 // ---------------------------------------------------------------------------
@@ -189,98 +189,6 @@ function ContextPanel({ items }: { items: ContextItem[] }) {
         </div>
       ))}
       {items.length === 0 && <div style={{ color: colors.textSecondary, fontSize: 15 }}>No context data (start loop for live context)</div>}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Positions Panel — uses PositionInfo[] from dashboard state
-// ---------------------------------------------------------------------------
-
-function PositionsPanel({ trades }: { trades: PositionInfo[] }) {
-  const longs = trades.filter(t => t.side.toLowerCase() === 'buy').length;
-  const shorts = trades.filter(t => t.side.toLowerCase() === 'sell').length;
-  const [expanded, setExpanded] = useState(true);
-  useEffect(() => {
-    setExpanded(trades.length <= 3);
-  }, [trades.length]);
-
-  return (
-    <div style={{
-      backgroundColor: colors.panel, borderRadius: 6, padding: 14,
-      border: `1px solid ${colors.border}`, minHeight: 120,
-    }}>
-      <div style={{ fontSize: 15, fontWeight: 700, color: colors.textSecondary, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>
-        Open Positions
-      </div>
-      {trades.length === 0 ? (
-        <div style={{ color: colors.textSecondary, fontSize: 15 }}>No open positions</div>
-      ) : (
-        <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-            <span style={{ color: colors.textPrimary, fontSize: 15 }}>{longs} Longs | {shorts} Shorts</span>
-            <button
-              type="button"
-              onClick={() => setExpanded(e => !e)}
-              style={{
-                background: 'none', border: `1px solid ${colors.border}`, borderRadius: 4, padding: '4px 8px',
-                color: colors.blue, fontSize: 13, cursor: 'pointer',
-              }}
-            >
-              {expanded ? '▼ Hide table' : '▶ Show table'}
-            </button>
-          </div>
-          {expanded && (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 15, marginTop: 10 }}>
-              <thead>
-                <tr style={{ color: colors.textSecondary, borderBottom: `1px solid ${colors.border}` }}>
-                  <th style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 500 }}>Side</th>
-                  <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 500 }}>Entry</th>
-                  <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 500 }}>Current</th>
-                  <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 500 }}>P&L</th>
-                  <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 500 }}>SL</th>
-                  <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 500 }}>TP</th>
-                  <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 500 }}>Size</th>
-                </tr>
-              </thead>
-              <tbody>
-                {trades.map(t => {
-                  const currentPrice = Number.isFinite(t.current_price) ? t.current_price : t.entry_price;
-                  const slPipsAway = t.stop_price != null
-                    ? Math.abs(currentPrice - t.stop_price) / 0.01
-                    : null;
-                  const tpPipsAway = t.target_price != null
-                    ? Math.abs(t.target_price - currentPrice) / 0.01
-                    : null;
-                  return (
-                    <tr key={t.trade_id} style={{ borderBottom: `1px solid ${colors.border}22` }}>
-                      <td style={{ padding: '4px 6px' }}><SideBadge side={t.side} /></td>
-                      <td style={{ padding: '4px 6px', textAlign: 'right', ...mono, color: colors.textPrimary }}>{t.entry_price.toFixed(3)}</td>
-                      <td style={{ padding: '4px 6px', textAlign: 'right', ...mono, color: colors.textPrimary }}>{currentPrice.toFixed(3)}</td>
-                      <td style={{ padding: '4px 6px', textAlign: 'right' }}>
-                        <PipsValue pips={Number(t.unrealized_pips ?? 0)} />
-                      </td>
-                      <td style={{ padding: '4px 6px', textAlign: 'right', color: colors.textSecondary, ...mono }}>
-                        {t.stop_price != null
-                          ? `${t.stop_price.toFixed(3)} (${Math.round(slPipsAway ?? 0)}p)`
-                          : '—'}
-                      </td>
-                      <td style={{ padding: '4px 6px', textAlign: 'right', color: colors.textSecondary, ...mono }}>
-                        {t.target_price != null
-                          ? `${t.target_price.toFixed(3)} (${Math.round(tpPipsAway ?? 0)}p)`
-                          : '—'}
-                      </td>
-                      <td style={{ padding: '4px 6px', textAlign: 'right', color: colors.textSecondary, ...mono }}>
-                        {t.size_lots != null ? t.size_lots.toFixed(2) : '—'}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </>
-      )}
     </div>
   );
 }
@@ -734,7 +642,6 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
 
   const context: ContextItem[] = dashState?.context || [];
   const filters: FilterReport[] = dashState?.filters || [];
-  const positions: PositionInfo[] = dashState?.positions || [];
   const dailySummary: DailySummary | null = dashState?.daily_summary || null;
   const presetName = dashState?.preset_name || '';
   const loopLog: Array<{ts: string; level: string; msg: string}> = (dashState as unknown as Record<string, unknown>)?.loop_log as Array<{ts: string; level: string; msg: string}> || [];
