@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pandas as pd
 
 import api.main as api_main
-import core.dashboard_models as dashboard_models
 import core.dashboard_builder as dashboard_builder
+import core.dashboard_models as dashboard_models
 import run_loop
 
 
@@ -78,3 +78,23 @@ def test_build_dashboard_uses_position_snapshot_without_refetch(monkeypatch, tmp
     state = captured["state"]
     assert state.positions
     assert state.positions[0].trade_id == "12345"
+
+
+def test_dashboard_builder_uses_live_position_snapshot_without_refetch() -> None:
+    class DummyAdapter:
+        def get_open_positions(self, _symbol: str):
+            raise AssertionError("expected live_positions_snapshot to be reused")
+
+    profile = SimpleNamespace(symbol="USDJPY")
+    snapshot = [
+        {"id": "1", "currentUnits": "1000"},
+        {"id": "2", "currentUnits": "-1000"},
+        {"id": "3", "currentUnits": "2000"},
+    ]
+
+    side_counts, ok = dashboard_builder._live_side_counts(profile, DummyAdapter(), snapshot)
+    ids = dashboard_builder._live_position_ids(profile, DummyAdapter(), snapshot)
+
+    assert ok is True
+    assert side_counts == {"buy": 2, "sell": 1}
+    assert ids == {1, 2, 3}

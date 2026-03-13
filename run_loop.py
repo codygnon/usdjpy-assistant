@@ -1348,6 +1348,8 @@ def _build_and_write_dashboard(
     ntz_filter=None,
     phase3_state: dict | None = None,
     open_positions_snapshot: list | None = None,
+    positions_snapshot: list[PositionInfo] | None = None,
+    daily_summary_snapshot: DailySummary | None = None,
 ) -> None:
     """Assemble and write dashboard state JSON for the current poll cycle."""
     from datetime import datetime, timezone
@@ -1371,6 +1373,7 @@ def _build_and_write_dashboard(
             exhaustion_result=exhaustion_result,
             store=store,
             adapter=adapter,
+            live_positions_snapshot=open_positions_snapshot,
             temp_overrides=temp_overrides,
             daily_level_filter_snapshot=(daily_level_filter.get_state_snapshot() if daily_level_filter is not None else None),
             ntz_filter_snapshot=(ntz_filter.get_levels_snapshot() if ntz_filter is not None else None),
@@ -1443,160 +1446,15 @@ def _build_and_write_dashboard(
             if str(raw_trigger) in ("zone_entry", "tiered_pullback"):
                 candidate_trigger = str(raw_trigger)
 
-        # --- Positions ---
-        positions = []
-        mid = (tick.bid + tick.ask) / 2.0
+        positions = list(positions_snapshot) if positions_snapshot is not None else _collect_dashboard_positions(
+            profile=profile,
+            store=store,
+            tick=tick,
+            adapter=adapter,
+            open_positions_snapshot=open_positions_snapshot,
+        )
 
-        # Build DB map by broker position id so we can enrich live positions with entry_type/breakeven.
-        db_by_position_id: dict[int, dict] = {}
-        try:
-            for row in store.list_open_trades(profile.profile_name):
-                d = dict(row)
-                pos_id = d.get("mt5_position_id")
-                if pos_id is None:
-                    continue
-                try:
-                    db_by_position_id[int(pos_id)] = d
-                except Exception:
-                    continue
-        except Exception:
-            pass
-
-        # Prefer live broker positions for dashboard accuracy.
-        try:
-            live_trades = open_positions_snapshot
-            if live_trades is None and adapter is not None:
-                live_trades = adapter.get_open_positions(profile.symbol)
-            for t in live_trades or []:
-                if isinstance(t, dict):
-                    units = float(t.get("currentUnits", 0) or t.get("initialUnits", 0) or 0)
-                    s = "buy" if units > 0 else "sell"
-                    size_lots = abs(units) / 100_000.0 if units else 0.0
-                    entry = float(t.get("price", 0) or 0)
-                    trade_id = str(t.get("id", ""))
-                    open_time_str = t.get("openTime")
-                    sl = None
-                    tp = None
-                    try:
-                        if t.get("stopLossOrder"):
-                            sl = float(t["stopLossOrder"]["price"])
-                    except Exception:
-                        pass
-                    try:
-                        if t.get("takeProfitOrder"):
-                            tp = float(t["takeProfitOrder"]["price"])
-                    except Exception:
-                        pass
-                else:
-                    mt5_type = getattr(t, "type", None)
-                    if mt5_type == 0:
-                        s = "buy"
-                    elif mt5_type == 1:
-                        s = "sell"
-                    else:
-                        continue
-                    size_lots = float(getattr(t, "volume", 0.0) or 0.0)
-                    entry = float(getattr(t, "price_open", 0.0) or 0.0)
-                    trade_id = str(getattr(t, "ticket", ""))
-                    open_time_raw = getattr(t, "time", None)
-                    open_time_str = str(open_time_raw) if open_time_raw is not None else None
-                    sl = float(getattr(t, "sl", 0.0) or 0.0) or None
-                    tp = float(getattr(t, "tp", 0.0) or 0.0) or None
-
-                if not entry or not s:
-                    continue
-
-                unrealized = (mid - entry) / pip_size if s == "buy" else (entry - mid) / pip_size
-                age = 0.0
-                if open_time_str:
-                    try:
-                        import pandas as _pd2
-                        t0 = _pd2.to_datetime(open_time_str, utc=True)
-                        age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
-                    except Exception:
-                        pass
-
-                db_row = None
-                try:
-                    db_row = db_by_position_id.get(int(trade_id))
-                except Exception:
-                    db_row = None
-
-                positions.append(PositionInfo(
-                    trade_id=trade_id,
-                    side=s,
-                    entry_price=entry,
-                    size_lots=round(size_lots, 4),
-                    entry_type=(db_row.get("entry_type") if db_row else None),
-                    current_price=mid,
-                    unrealized_pips=round(unrealized, 1),
-                    age_minutes=round(age, 1),
-                    stop_price=(db_row.get("stop_price") if db_row and db_row.get("stop_price") is not None else sl),
-                    target_price=(db_row.get("target_price") if db_row and db_row.get("target_price") is not None else tp),
-                    breakeven_applied=bool(db_row.get("breakeven_applied")) if db_row else False,
-                ))
-        except Exception:
-            positions = []
-
-        # Fallback: DB positions when live fetch fails.
-        if not positions:
-            try:
-                open_trades = store.list_open_trades(profile.profile_name)
-                for row in open_trades:
-                    d = dict(row)
-                    entry = float(d.get("entry_price", 0))
-                    s = str(d.get("side", "")).lower()
-                    if s == "buy":
-                        unrealized = (mid - entry) / pip_size
-                    else:
-                        unrealized = (entry - mid) / pip_size
-                    age = 0.0
-                    ts = d.get("timestamp_utc")
-                    if ts:
-                        try:
-                            import pandas as _pd
-                            t0 = _pd.to_datetime(ts, utc=True)
-                            age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
-                        except Exception:
-                            pass
-                    positions.append(PositionInfo(
-                        trade_id=str(d.get("trade_id", "")),
-                        side=s,
-                        entry_price=entry,
-                        size_lots=(float(d.get("size_lots")) if d.get("size_lots") is not None else None),
-                        entry_type=d.get("entry_type"),
-                        current_price=mid,
-                        unrealized_pips=round(unrealized, 1),
-                        age_minutes=round(age, 1),
-                        stop_price=d.get("stop_price"),
-                        target_price=d.get("target_price"),
-                        breakeven_applied=bool(d.get("breakeven_applied")),
-                    ))
-            except Exception:
-                pass
-
-        # --- Daily summary ---
-        daily = DailySummary()
-        try:
-            date_str = now_utc.strftime("%Y-%m-%d")
-            closed_today = store.get_trades_for_date(profile.profile_name, date_str)
-            daily.trades_today = len(closed_today)
-            for row in closed_today:
-                d = dict(row)
-                pips = d.get("pips")
-                profit = _normalized_profit_for_dashboard_row(d, profile.symbol)
-                if pips is not None:
-                    daily.total_pips += float(pips)
-                    if float(pips) > 0:
-                        daily.wins += 1
-                    else:
-                        daily.losses += 1
-                if profit is not None:
-                    daily.total_profit += float(profit)
-            if daily.trades_today > 0:
-                daily.win_rate = round(daily.wins / daily.trades_today * 100, 1)
-        except Exception:
-            pass
+        daily = daily_summary_snapshot if daily_summary_snapshot is not None else _collect_dashboard_daily_summary(profile, store)
 
         # --- Assemble state ---
         state = DashboardState(
@@ -2104,6 +1962,14 @@ def main() -> None:
                 open_positions_snapshot = adapter.get_open_positions(profile.symbol)
             except Exception:
                 open_positions_snapshot = None
+            dashboard_positions_snapshot = _collect_dashboard_positions(
+                profile=profile,
+                store=store,
+                tick=tick,
+                adapter=adapter,
+                open_positions_snapshot=open_positions_snapshot,
+            )
+            dashboard_daily_snapshot = _collect_dashboard_daily_summary(profile, store)
             _run_trade_management(
                 profile,
                 adapter,
@@ -2132,6 +1998,8 @@ def main() -> None:
                 adapter=adapter,
                 phase3_state=phase3_state if has_phase3_integrated else None,
                 open_positions_snapshot=open_positions_snapshot,
+                positions_snapshot=dashboard_positions_snapshot,
+                daily_summary_snapshot=dashboard_daily_snapshot,
             )
 
             m1_df = data_by_tf["M1"]
@@ -2390,6 +2258,9 @@ def main() -> None:
                         exhaustion_result=exec_result.get("exhaustion_result"),
                         daily_level_filter=daily_level_filter if pol_type in ("kt_cg_trial_8", "kt_cg_trial_9") else None,
                         ntz_filter=None,
+                        open_positions_snapshot=open_positions_snapshot,
+                        positions_snapshot=dashboard_positions_snapshot,
+                        daily_summary_snapshot=dashboard_daily_snapshot,
                     )
 
             mkt = None
@@ -2958,6 +2829,9 @@ def main() -> None:
                         profile=profile, store=store, log_dir=log_dir, tick=tick,
                         data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
                         policy_type="kt_cg_hybrid",
+                        open_positions_snapshot=open_positions_snapshot,
+                        positions_snapshot=dashboard_positions_snapshot,
+                        daily_summary_snapshot=dashboard_daily_snapshot,
                     )
 
             # KT/CG Counter-Trend Pullback policies (Trial #3)
@@ -3041,6 +2915,9 @@ def main() -> None:
                         data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
                         policy_type="kt_cg_counter_trend_pullback",
                         temp_overrides=temp_overrides,
+                        open_positions_snapshot=open_positions_snapshot,
+                        positions_snapshot=dashboard_positions_snapshot,
+                        daily_summary_snapshot=dashboard_daily_snapshot,
                     )
 
             # Trial #4 execution — runs EVERY poll cycle (not just on M1 bar close)
@@ -3193,6 +3070,9 @@ def main() -> None:
                         policy_type="kt_cg_trial_4", tier_state=tier_state,
                         eval_result=exec_result, divergence_state=divergence_state,
                         temp_overrides=temp_overrides,
+                        open_positions_snapshot=open_positions_snapshot,
+                        positions_snapshot=dashboard_positions_snapshot,
+                        daily_summary_snapshot=dashboard_daily_snapshot,
                     )
 
             # Trial #5 execution — same structure as Trial #4 with dual ATR filter
@@ -3429,6 +3309,9 @@ def main() -> None:
                         daily_reset_state=daily_reset_state_t5,
                         exhaustion_result=exec_result.get("exhaustion_result"),
                         temp_overrides=temp_overrides,
+                        open_positions_snapshot=open_positions_snapshot,
+                        positions_snapshot=dashboard_positions_snapshot,
+                        daily_summary_snapshot=dashboard_daily_snapshot,
                     )
 
             # Trial #7 / Trial #8 execution — M5 Trend + Tiered Pullback (+ Daily Level Filter for T8)
@@ -3640,6 +3523,9 @@ def main() -> None:
                         exhaustion_result=exec_result.get("exhaustion_result"),
                         daily_level_filter=daily_level_filter if pol_type == "kt_cg_trial_8" else None,
                         ntz_filter=ntz_filter if pol_type == "kt_cg_trial_9" else None,
+                        open_positions_snapshot=open_positions_snapshot,
+                        positions_snapshot=dashboard_positions_snapshot,
+                        daily_summary_snapshot=dashboard_daily_snapshot,
                     )
                 # After Trial 7/8/9 block: mark this bar as seen so we don't re-run every poll for same bar.
                 # Always update (even when clock fallback was used) so we don't re-evaluate the same bar every poll.
@@ -3774,6 +3660,9 @@ def main() -> None:
                         data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
                         policy_type="kt_cg_trial_6", tier_state=t6_tier_state,
                         eval_result=exec_result,
+                        open_positions_snapshot=open_positions_snapshot,
+                        positions_snapshot=dashboard_positions_snapshot,
+                        daily_summary_snapshot=dashboard_daily_snapshot,
                     )
 
             # Uncle Parsh H1 Breakout execution
@@ -3913,6 +3802,9 @@ def main() -> None:
                         data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
                         policy_type="uncle_parsh_h1_breakout",
                         eval_result=exec_result,
+                        open_positions_snapshot=open_positions_snapshot,
+                        positions_snapshot=dashboard_positions_snapshot,
+                        daily_summary_snapshot=dashboard_daily_snapshot,
                     )
 
                 # Update M5 time tracker
@@ -3927,9 +3819,8 @@ def main() -> None:
 
                 # Count open Phase 3 trades from broker positions
                 try:
-                    p3_open_positions = adapter.get_open_positions(profile.symbol)
                     p3_open_count = 0
-                    for _p3pos in (p3_open_positions or []):
+                    for _p3pos in (open_positions_snapshot or []):
                         _p3_comment = ""
                         if isinstance(_p3pos, dict):
                             _p3_ce = _p3pos.get("clientExtensions") or _p3pos.get("tradeClientExtensions")
@@ -4029,6 +3920,9 @@ def main() -> None:
                         policy_type="phase3_integrated",
                         eval_result=exec_result,
                         phase3_state=phase3_state,
+                        open_positions_snapshot=open_positions_snapshot,
+                        positions_snapshot=dashboard_positions_snapshot,
+                        daily_summary_snapshot=dashboard_daily_snapshot,
                     )
                     # Per-minute diagnostics: bar time, is_new, placed, blocking filter count/reasons, decision reason
                     if is_new or args.once:
@@ -4057,6 +3951,9 @@ def main() -> None:
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,
                         data_by_tf=data_by_tf, mode=mode, adapter=adapter,
+                        open_positions_snapshot=open_positions_snapshot,
+                        positions_snapshot=dashboard_positions_snapshot,
+                        daily_summary_snapshot=dashboard_daily_snapshot,
                     )
 
             if args.once:
