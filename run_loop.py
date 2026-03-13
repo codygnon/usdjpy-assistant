@@ -331,6 +331,7 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
     pip = float(profile.pip_size)
     mid = (tick.bid + tick.ask) / 2.0
     current_spread = tick.ask - tick.bid
+    unmatched_position_ids: list[int] = []
 
     # Pre-fetch bar data ONCE before the per-position loop.
     # Without this, every policy calls adapter.get_bars() for each open position → O(N) API calls.
@@ -359,7 +360,7 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
             continue
         trade_row = position_to_trade.get(position_id)
         if trade_row is None:
-            print(f"[{profile.profile_name}] position {position_id}: no DB trade matched (mt5_position_id missing or mismatch)")
+            unmatched_position_ids.append(position_id)
             continue
         trade_id = str(trade_row["trade_id"])
         entry = float(trade_row["entry_price"])
@@ -1147,6 +1148,14 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
         if mae_mfe_updates:
             store.update_trade(trade_id, mae_mfe_updates)
 
+    if unmatched_position_ids:
+        sample = ",".join(str(pid) for pid in unmatched_position_ids[:5])
+        extra = "" if len(unmatched_position_ids) <= 5 else ",..."
+        print(
+            f"[{profile.profile_name}] trade management skipped {len(unmatched_position_ids)} "
+            f"unmatched live position(s) (sample ids: {sample}{extra})"
+        )
+
 
 def _record_loop_error(profile, store, message: str) -> None:
     """Record a loop error into the executions table so it appears in the dashboard execution log."""
@@ -1753,8 +1762,8 @@ def main() -> None:
         )
 
         loop_count = 0
-        last_sync_loop = 0
-        SYNC_INTERVAL_LOOPS = 12  # Sync every ~60 seconds (assuming 5s poll)
+        last_sync_time = 0.0
+        _SYNC_INTERVAL_SECONDS = 60.0
         # Keep broker fetch retries light; OANDA adapter already has internal retries.
         _MAX_FETCH_RETRIES = 1
         _last_oanda_tradeid_backfill_time: float = 0.0
@@ -1860,11 +1869,19 @@ def main() -> None:
           try:
             loop_count += 1
             _invalidate_trades_df_cache()
+            iter_started = time.perf_counter()
+            phase_times: dict[str, float] = {}
+
+            def _phase_done(name: str, started_at: float) -> None:
+                phase_times[name] = phase_times.get(name, 0.0) + (time.perf_counter() - started_at)
+
             if loop_count % 20 == 0:
                 _log(f"heartbeat loop={loop_count}")
 
             # Periodic trade sync (detect externally closed trades; import from broker history)
-            if loop_count - last_sync_loop >= SYNC_INTERVAL_LOOPS:
+            _now_sync = time.monotonic()
+            if (_now_sync - last_sync_time) >= _SYNC_INTERVAL_SECONDS:
+                _sync_started = time.perf_counter()
                 try:
                     synced = sync_closed_trades(profile, store, log_dir=log_dir)
                     if synced > 0:
@@ -1880,10 +1897,12 @@ def main() -> None:
                         _record_loop_error(profile, store, f"sync error: {e}")
                     except Exception:
                         pass
-                last_sync_loop = loop_count
+                last_sync_time = _now_sync
+                _phase_done("sync", _sync_started)
 
             # OANDA-only: backfill broker trade IDs (stored in trades.mt5_position_id) for older rows.
             # This is critical for correct dashboard classification + zone/tier cap accounting.
+            _backfill_started = time.perf_counter()
             try:
                 if getattr(profile, "broker_type", None) == "oanda":
                     _now_bf = time.time()
@@ -1923,6 +1942,7 @@ def main() -> None:
                         _last_oanda_tradeid_backfill_time = _now_bf
             except Exception:
                 pass
+            _phase_done("tradeid_backfill", _backfill_started)
 
             state = load_state(state_path)
             if state.kill_switch:
@@ -1933,6 +1953,7 @@ def main() -> None:
             # Fetch market data with retries (502/503/timeouts); avoid exiting on transient broker errors
             data_by_tf = None
             tick = None
+            _fetch_started = time.perf_counter()
             _log(f"Fetching market data (attempt loop={loop_count})")
             for _fetch_attempt in range(_MAX_FETCH_RETRIES):
                 try:
@@ -1988,11 +2009,13 @@ def main() -> None:
                         pass
                     # Let the outer loop (and poll_sec) control pacing; don't add long sleeps here.
                     break
+            _phase_done("fetch_market_data", _fetch_started)
             if data_by_tf is None or tick is None:
                 continue
 
             # Trade management: breakeven and TP1 partial close (only for positions we opened).
             # Fetch open positions once per loop so all caps/management share the same snapshot.
+            _snapshot_started = time.perf_counter()
             try:
                 open_positions_snapshot = adapter.get_open_positions(profile.symbol)
             except Exception:
@@ -2005,6 +2028,8 @@ def main() -> None:
                 open_positions_snapshot=open_positions_snapshot,
             )
             dashboard_daily_snapshot = _collect_dashboard_daily_summary(profile, store)
+            _phase_done("snapshot_build", _snapshot_started)
+            _tm_started = time.perf_counter()
             _run_trade_management(
                 profile,
                 adapter,
@@ -2014,16 +2039,20 @@ def main() -> None:
                 open_positions=open_positions_snapshot,
             )
             _invalidate_trades_df_cache()
+            _phase_done("trade_management", _tm_started)
             if has_phase3_integrated:
+                _p3_state_started = time.perf_counter()
                 try:
                     current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
                     current_state_data["phase3_state"] = phase3_state
                     state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
                 except Exception as e:
                     print(f"[{profile.profile_name}] Failed to persist phase3_state after trade management: {e}")
+                _phase_done("persist_phase3_state", _p3_state_started)
 
             # Refresh the dashboard immediately once we have current prices and positions.
             # Policy-specific writes later in the loop can overwrite this with richer filters/context.
+            _dashboard_seed_started = time.perf_counter()
             _build_and_write_dashboard(
                 profile=profile,
                 store=store,
@@ -2037,6 +2066,7 @@ def main() -> None:
                 positions_snapshot=dashboard_positions_snapshot,
                 daily_summary_snapshot=dashboard_daily_snapshot,
             )
+            _phase_done("dashboard_seed", _dashboard_seed_started)
 
             m1_df = data_by_tf["M1"]
             m1_last_time = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
@@ -2142,6 +2172,7 @@ def main() -> None:
 
             # Trial 7/8/9 intrabar execution (OANDA): evaluate every poll so zone-entry can fire within seconds.
             if intrabar_t78 and not args.once:
+                _intrabar_t78_started = time.perf_counter()
                 t7_mkt = None
                 spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
                 t7_mkt = MarketContext(spread_pips=float(spread_pips), alignment_score=0)
@@ -2299,9 +2330,11 @@ def main() -> None:
                         positions_snapshot=dashboard_positions_snapshot,
                         daily_summary_snapshot=dashboard_daily_snapshot,
                     )
+                _phase_done("trial7_9_intrabar", _intrabar_t78_started)
 
             mkt = None
             if is_new or args.once:
+                _bar_close_started = time.perf_counter()
                 spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
                 h4c = compute_tf_context(profile, "H4", data_by_tf["H4"])
                 m15c = compute_tf_context(profile, "M15", data_by_tf["M15"])
@@ -2514,6 +2547,7 @@ def main() -> None:
 
                 # Always mark bar as seen so we don't re-run every poll for same bar (even when clock fallback was used).
                 last_seen_m1_time = m1_last_time
+                _phase_done("bar_close_core", _bar_close_started)
 
             if has_price_level and mkt is None:
                 mkt = _compute_mkt(profile, tick, data_by_tf)
@@ -4000,6 +4034,7 @@ def main() -> None:
             # Catch-all dashboard write for profiles not using KT/CG policy types.
             # Runs every poll cycle so positions + prices are always fresh.
             if not (has_kt_cg_hybrid or has_kt_cg_ctp or has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6 or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_uncle_parsh or has_phase3_integrated):
+                _dashboard_fallback_started = time.perf_counter()
                 if tick is not None and data_by_tf is not None:
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,
@@ -4008,9 +4043,19 @@ def main() -> None:
                         positions_snapshot=dashboard_positions_snapshot,
                         daily_summary_snapshot=dashboard_daily_snapshot,
                     )
+                _phase_done("dashboard_fallback", _dashboard_fallback_started)
 
             if args.once:
                 break
+
+            loop_elapsed = time.perf_counter() - iter_started
+            if loop_elapsed >= 5.0:
+                phase_summary = ", ".join(
+                    f"{name}={secs:.2f}s"
+                    for name, secs in sorted(phase_times.items(), key=lambda item: item[1], reverse=True)
+                    if secs >= 0.05
+                )
+                _log(f"SLOW LOOP total={loop_elapsed:.2f}s poll={poll_sec:.2f}s {phase_summary}", "WARN")
 
             time.sleep(poll_sec)
 
