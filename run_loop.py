@@ -331,6 +331,23 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
     pip = float(profile.pip_size)
     mid = (tick.bid + tick.ask) / 2.0
     current_spread = tick.ask - tick.bid
+
+    # Pre-fetch bar data ONCE before the per-position loop.
+    # Without this, every policy calls adapter.get_bars() for each open position → O(N) API calls.
+    # N open positions × 2 bar fetches × 0.25s rate limit = N/2 seconds of stall per loop.
+    _tm_m1_df = None  # M1(250): covers T9 kill switch/trail, T8/T7/UP EMA exits (all need ≤250)
+    _tm_m5_df = None  # M5(100): covers T9 kill switch (needs 50) and M5 trail (needs 100)
+    _needs_m1 = has_t9_trail or has_t8_trail or has_t7_ema or up_policy is not None
+    _needs_m5 = has_t9_trail
+    if open_positions and (_needs_m1 or _needs_m5):
+        try:
+            if _needs_m1:
+                _tm_m1_df = adapter.get_bars(profile.symbol, "M1", 250)
+            if _needs_m5:
+                _tm_m5_df = adapter.get_bars(profile.symbol, "M5", 100)
+        except Exception:
+            pass
+
     for pos in open_positions:
         # OANDA: dict with "id", "currentUnits"; MT5: object with ticket, volume (lots)
         position_id = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
@@ -444,7 +461,7 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                     ema_fast_p = int(getattr(t7_ema_policy, "m1_exit_ema_fast", 9))
                     ema_slow_p = int(getattr(t7_ema_policy, "m1_exit_ema_slow", 21))
                     scale_pct = float(getattr(t7_ema_policy, "scale_out_pct", 50.0))
-                    m1_df_t7 = adapter.get_bars(profile.symbol, "M1", 200)
+                    m1_df_t7 = _tm_m1_df
                     if m1_df_t7 is not None and not m1_df_t7.empty and len(m1_df_t7) >= max(ema_fast_p, ema_slow_p) + 2:
                         m1_close_t7 = m1_df_t7["close"].astype(float)
                         ema_fast = ema_fn(m1_close_t7, ema_fast_p)
@@ -496,7 +513,7 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                 ema_slow_p = int(getattr(up_policy, "m1_entry_ema_slow", 21))
                 scale_pct = float(getattr(up_policy, "scale_out_pct", 50.0))
 
-                m1_df_exit = adapter.get_bars(profile.symbol, "M1", 200)
+                m1_df_exit = _tm_m1_df
                 if m1_df_exit is None or m1_df_exit.empty or len(m1_df_exit) < max(ema_fast_p, ema_slow_p) + 2:
                     continue
                 m1_close_exit = m1_df_exit["close"].astype(float)
@@ -557,7 +574,7 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                     ema_fast_p = int(t8_tm_overrides.get("m1_exit_ema_fast", getattr(t8_policy, "m1_exit_ema_fast", 9)))
                     ema_slow_p = int(t8_tm_overrides.get("m1_exit_ema_slow", getattr(t8_policy, "m1_exit_ema_slow", 21)))
                     scale_pct = float(t8_tm_overrides.get("scale_out_pct", getattr(t8_policy, "scale_out_pct", 50.0)))
-                    m1_df_t8 = adapter.get_bars(profile.symbol, "M1", 200)
+                    m1_df_t8 = _tm_m1_df
                     if m1_df_t8 is not None and not m1_df_t8.empty and len(m1_df_t8) >= max(ema_fast_p, ema_slow_p) + 2:
                         m1_close_t8 = m1_df_t8["close"].astype(float)
                         ema_fast = ema_fn(m1_close_t8, ema_fast_p)
@@ -644,7 +661,7 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
             elif tp1_done:
                 try:
                     _ov_trail_period = t8_tm_overrides.get("trail_ema_period", t8_policy.trail_ema_period)
-                    m1_df_trail = adapter.get_bars(profile.symbol, "M1", 100)
+                    m1_df_trail = _tm_m1_df
                     if m1_df_trail is not None and not m1_df_trail.empty and len(m1_df_trail) > _ov_trail_period:
                         from core.indicators import ema as ema_fn
                         m1_close_trail = m1_df_trail["close"].astype(float)
@@ -742,7 +759,7 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                     # --- Phase C: M5 bar-close-only trailing ---
                     try:
                         _t9_m5_trail_period = int(getattr(t9_policy, "trail_m5_ema_period", 20))
-                        m5_df_trail = adapter.get_bars(profile.symbol, "M5", 100)
+                        m5_df_trail = _tm_m5_df
                         if m5_df_trail is not None and not m5_df_trail.empty and len(m5_df_trail) > _t9_m5_trail_period + 1:
                             from core.indicators import ema as ema_fn
                             m5_close_trail = m5_df_trail["close"].astype(float)
@@ -834,7 +851,7 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                     # Bar-close-only trailing on M1 EMA
                     try:
                         _t9_trail_period = int(getattr(t9_policy, "trail_ema_period", 21))
-                        m1_df_trail = adapter.get_bars(profile.symbol, "M1", 100)
+                        m1_df_trail = _tm_m1_df
                         if m1_df_trail is not None and not m1_df_trail.empty and len(m1_df_trail) > _t9_trail_period + 1:
                             from core.indicators import ema as ema_fn
                             m1_close_trail = m1_df_trail["close"].astype(float)
@@ -888,7 +905,7 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
             # Closes ALL T9 trades (both tiered pullback and zone entry when kill_switch_zone_entry_action="kill")
             if t9_policy is not None and getattr(t9_policy, "kill_switch_enabled", True):
                 try:
-                    m1_df_ks = adapter.get_bars(profile.symbol, "M1", 250)
+                    m1_df_ks = _tm_m1_df
                     if m1_df_ks is not None and not m1_df_ks.empty and len(m1_df_ks) >= 202:
                         from core.indicators import ema as ema_fn
                         m1_close_ks = m1_df_ks["close"].astype(float)
@@ -897,7 +914,7 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                             last_ema200 = float(ema200.iloc[-2])
                             last_m1_close_ks = float(m1_close_ks.iloc[-2])
                             # M5 trend check
-                            m5_df_ks = adapter.get_bars(profile.symbol, "M5", 50)
+                            m5_df_ks = _tm_m5_df
                             m5_is_bull_ks = None
                             if m5_df_ks is not None and not m5_df_ks.empty and len(m5_df_ks) >= 22:
                                 m5_close_ks = m5_df_ks["close"].astype(float)
