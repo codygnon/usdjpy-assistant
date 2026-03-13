@@ -1925,16 +1925,19 @@ def main() -> None:
                     # Fetch D1 data when needed by daily H/L filter (Trial #4/5/8/9).
                     if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_phase3_integrated:
                         data_by_tf["D"] = _get_bars_cached(profile.symbol, "D", 5)
-                    # Fetch W and MN data for Trial #9 NTZ (non-fatal if unavailable).
-                    if has_kt_cg_trial_9:
+                    # Fetch W and MN data only when a T9 NTZ filter is actually enabled.
+                    if has_kt_cg_trial_9 and any(
+                        getattr(p, "type", None) == "kt_cg_trial_9"
+                        and getattr(p, "enabled", True)
+                        and getattr(p, "ntz_enabled", False)
+                        for p in profile.execution.policies
+                    ):
                         try:
                             data_by_tf["W"] = _get_bars_cached(profile.symbol, "W", 2, include_incomplete=True)
-                            _log("W candle fetch OK")
                         except Exception as _w_err:
                             _log(f"W candle fetch failed: {_w_err}", "WARN")
                         try:
                             data_by_tf["MN"] = _get_bars_cached(profile.symbol, "MN", 2, include_incomplete=True)
-                            _log("MN candle fetch OK")
                         except Exception as _mn_err:
                             _log(f"MN candle fetch failed: {_mn_err}", "WARN")
 

@@ -133,27 +133,30 @@ def _live_position_ids(
     profile: Any,
     adapter: Optional[Any],
     live_positions_snapshot: Optional[list[Any]] = None,
-) -> set[int]:
-    """Return set of broker position ids that are currently open (for cap counts)."""
-    ids: set[int] = set()
+) -> Optional[set[int]]:
+    """Return set of broker position ids that are currently open (for cap counts).
+
+    Returns None when live data is unavailable (adapter missing or fetch failed) —
+    callers should fall back to DB count in that case.
+    Returns an empty set when data was fetched successfully but 0 positions are open.
+    """
     if live_positions_snapshot is None and adapter is None:
-        return ids
+        return None
     try:
         positions = live_positions_snapshot
         if positions is None:
             positions = adapter.get_open_positions(profile.symbol)
-        if not positions:
-            return ids
-        for pos in positions:
+        ids: set[int] = set()
+        for pos in (positions or []):
             pid = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
             if pid is not None:
                 try:
                     ids.add(int(pid))
                 except (TypeError, ValueError):
                     pass
+        return ids
     except Exception:
-        pass
-    return ids
+        return None
 
 
 def _side_from_eval_result(eval_result: Optional[dict]) -> str:
@@ -380,7 +383,7 @@ def build_dashboard_filters(
 
                 def _trade_still_open(row: dict) -> bool:
                     pid = row.get("mt5_position_id")
-                    if not live_ids:
+                    if live_ids is None:
                         return True  # no live data: use DB count (backward compat)
                     if pid is None:
                         return False  # have live data but no position_id: don't count (avoid overcount)
@@ -458,11 +461,11 @@ def build_dashboard_filters(
                             continue
                 except Exception:
                     db_live_ids = set()
-                unmatched_live = (live_ids - db_live_ids) if live_ids else set()
+                unmatched_live = (live_ids - db_live_ids) if live_ids is not None else set()
 
                 def _trade_still_open_t8(row: dict) -> bool:
                     pid = row.get("mt5_position_id")
-                    if not live_ids:
+                    if live_ids is None:
                         return True
                     if pid is None:
                         return False
@@ -479,10 +482,8 @@ def build_dashboard_filters(
                         if ((dict(t) if hasattr(t, "keys") else t).get("entry_type") == "zone_entry")
                         and _trade_still_open_t8(dict(t) if hasattr(t, "keys") else t)
                     )
-                    zone_open_eff = zone_open + (len(unmatched_live) if unmatched_live else 0)
-                    fr = report_open_trade_cap_by_entry_type("zone_entry", zone_open_eff, zone_cap)
+                    fr = report_open_trade_cap_by_entry_type("zone_entry", zone_open, zone_cap)
                     if unmatched_live:
-                        fr.block_reason = fr.block_reason or f"Unclassified live trades: {len(unmatched_live)}"
                         fr.metadata["unclassified_live_trade_ids"] = sorted(unmatched_live)
                     filters.append(fr)
                 tier_cap = getattr(policy, "max_tiered_pullback_open", None)
@@ -493,10 +494,8 @@ def build_dashboard_filters(
                         if ((dict(t) if hasattr(t, "keys") else t).get("entry_type") == "tiered_pullback")
                         and _trade_still_open_t8(dict(t) if hasattr(t, "keys") else t)
                     )
-                    tier_open_eff = tier_open + (len(unmatched_live) if unmatched_live else 0)
-                    fr = report_open_trade_cap_by_entry_type("tiered_pullback", tier_open_eff, tier_cap)
+                    fr = report_open_trade_cap_by_entry_type("tiered_pullback", tier_open, tier_cap)
                     if unmatched_live:
-                        fr.block_reason = fr.block_reason or f"Unclassified live trades: {len(unmatched_live)}"
                         fr.metadata["unclassified_live_trade_ids"] = sorted(unmatched_live)
                     filters.append(fr)
             except Exception:
@@ -550,11 +549,11 @@ def build_dashboard_filters(
                             continue
                 except Exception:
                     db_live_ids = set()
-                unmatched_live = (live_ids - db_live_ids) if live_ids else set()
+                unmatched_live = (live_ids - db_live_ids) if live_ids is not None else set()
 
                 def _trade_still_open_t9(row: dict) -> bool:
                     pid = row.get("mt5_position_id")
-                    if not live_ids:
+                    if live_ids is None:
                         return True
                     if pid is None:
                         return False
@@ -571,10 +570,8 @@ def build_dashboard_filters(
                         if ((dict(t) if hasattr(t, "keys") else t).get("entry_type") == "zone_entry")
                         and _trade_still_open_t9(dict(t) if hasattr(t, "keys") else t)
                     )
-                    zone_open_eff = zone_open + (len(unmatched_live) if unmatched_live else 0)
-                    fr = report_open_trade_cap_by_entry_type("zone_entry", zone_open_eff, zone_cap)
+                    fr = report_open_trade_cap_by_entry_type("zone_entry", zone_open, zone_cap)
                     if unmatched_live:
-                        fr.block_reason = fr.block_reason or f"Unclassified live trades: {len(unmatched_live)}"
                         fr.metadata["unclassified_live_trade_ids"] = sorted(unmatched_live)
                     filters.append(fr)
                 tier_cap = getattr(policy, "max_tiered_pullback_open", None)
@@ -585,10 +582,8 @@ def build_dashboard_filters(
                         if ((dict(t) if hasattr(t, "keys") else t).get("entry_type") == "tiered_pullback")
                         and _trade_still_open_t9(dict(t) if hasattr(t, "keys") else t)
                     )
-                    tier_open_eff = tier_open + (len(unmatched_live) if unmatched_live else 0)
-                    fr = report_open_trade_cap_by_entry_type("tiered_pullback", tier_open_eff, tier_cap)
+                    fr = report_open_trade_cap_by_entry_type("tiered_pullback", tier_open, tier_cap)
                     if unmatched_live:
-                        fr.block_reason = fr.block_reason or f"Unclassified live trades: {len(unmatched_live)}"
                         fr.metadata["unclassified_live_trade_ids"] = sorted(unmatched_live)
                     filters.append(fr)
             except Exception:

@@ -714,7 +714,7 @@ def report_t6_bb_reversal_cap(policy, store, profile_name: str) -> FilterReport:
 
 
 def report_t8_exit_strategy(policy) -> FilterReport:
-    """Report Trial #8 exit strategy: none, tp1_be_trail, or ema_scale_runner (H1 breakout style)."""
+    """Report Trial #8/#9 exit strategy."""
     exit_strategy = str(getattr(policy, "exit_strategy", "tp1_be_trail") or "tp1_be_trail")
     if exit_strategy == "ema_scale_runner":
         ema_fast = getattr(policy, "m1_exit_ema_fast", 9)
@@ -723,8 +723,18 @@ def report_t8_exit_strategy(policy) -> FilterReport:
         label = f"EMA scale-out + runner (EMA{ema_fast}/{ema_slow}, {scale_pct:.0f}%)"
     elif exit_strategy == "none":
         label = "None (broker TP/SL only)"
+    elif exit_strategy == "tp1_be_m5_trail":
+        tp1_pips = getattr(policy, "tp1_pips", 6.0)
+        close_pct = getattr(policy, "tp1_close_pct", 80.0)
+        be_pips = getattr(policy, "be_spread_plus_pips", 0.5)
+        m5_period = getattr(policy, "trail_m5_ema_period", 20)
+        label = f"TP1 {tp1_pips}p/{close_pct:.0f}% + BE +{be_pips}p + M5 EMA{m5_period} trail"
     else:
-        label = "TP1 + BE + M1 EMA trail"
+        tp1_pips = getattr(policy, "tp1_pips", 4.0)
+        close_pct = getattr(policy, "tp1_close_pct", 50.0)
+        be_pips = getattr(policy, "be_spread_plus_pips", 2.0)
+        trail_period = getattr(policy, "trail_ema_period", 21)
+        label = f"TP1 {tp1_pips}p/{close_pct:.0f}% + BE +{be_pips}p + M1 EMA{trail_period} trail"
     return FilterReport(
         filter_id="t8_exit_strategy",
         display_name="Exit",
