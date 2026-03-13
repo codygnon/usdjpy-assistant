@@ -133,6 +133,9 @@ def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore", log_dir=None)
     is_oanda = getattr(profile, "broker_type", None) == "oanda"
     oanda_closed_map: dict[int, Any] | None = None
     oanda_open_ids: set[int] | None = None
+    oanda_close_checks = 0
+    oanda_close_check_max = 5
+    oanda_close_deadline = pd.Timestamp.now(tz="UTC").timestamp() + 2.0
 
     if is_oanda:
         try:
@@ -165,6 +168,10 @@ def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore", log_dir=None)
             # Try to get position_id from deal
             position_ticket = adapter.get_position_id_from_deal(int(mt5_deal_id))
         elif mt5_order_id and not pd.isna(mt5_order_id):
+            # OANDA order->trade lookups are handled by the dedicated backfill path in run_loop.
+            # Do not duplicate that expensive work inside sync.
+            if is_oanda:
+                continue
             # Try to get position_id from order
             position_ticket = adapter.get_position_id_from_order(int(mt5_order_id))
         
@@ -186,6 +193,10 @@ def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore", log_dir=None)
                 continue
         
         # Position is not open - check if it was closed
+        if is_oanda:
+            if oanda_close_checks >= oanda_close_check_max or pd.Timestamp.now(tz="UTC").timestamp() >= oanda_close_deadline:
+                continue
+            oanda_close_checks += 1
         close_info = adapter.get_position_close_info(position_ticket)
 
         if close_info is None:
