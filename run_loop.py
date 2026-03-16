@@ -9,6 +9,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 # Ensure project root is on path (fixes ModuleNotFoundError when started as subprocess)
@@ -211,7 +212,15 @@ def _insert_trade_for_policy(
 MIN_CLOSE_LOTS = 0.01
 
 
-def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | None = None, open_positions: list | None = None) -> None:
+def _run_trade_management(
+    profile,
+    adapter,
+    store,
+    tick,
+    phase3_state: dict | None = None,
+    open_positions: list | None = None,
+    data_by_tf: dict | None = None,
+) -> None:
     """Apply breakeven and TP1 partial close for open positions we manage. Order: breakeven first, then TP1."""
     tm = getattr(profile, "trade_management", None)
     if tm is None:
@@ -342,13 +351,22 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
     _needs_m1 = has_t9_trail or has_t8_trail or has_t7_ema or up_policy is not None
     _needs_m5 = has_t9_trail
     if open_positions and (_needs_m1 or _needs_m5):
-        try:
-            if _needs_m1:
-                _tm_m1_df = adapter.get_bars(profile.symbol, "M1", 250)
-            if _needs_m5:
-                _tm_m5_df = adapter.get_bars(profile.symbol, "M5", 100)
-        except Exception:
-            pass
+        if _needs_m1 and data_by_tf is not None:
+            _shared_m1 = data_by_tf.get("M1")
+            if _shared_m1 is not None and not _shared_m1.empty:
+                _tm_m1_df = drop_incomplete_last_bar(_shared_m1.copy(), "M1")
+        if _needs_m5 and data_by_tf is not None:
+            _shared_m5 = data_by_tf.get("M5")
+            if _shared_m5 is not None and not _shared_m5.empty:
+                _tm_m5_df = drop_incomplete_last_bar(_shared_m5.copy(), "M5")
+        if (_needs_m1 and _tm_m1_df is None) or (_needs_m5 and _tm_m5_df is None):
+            try:
+                if _needs_m1 and _tm_m1_df is None:
+                    _tm_m1_df = adapter.get_bars(profile.symbol, "M1", 250)
+                if _needs_m5 and _tm_m5_df is None:
+                    _tm_m5_df = adapter.get_bars(profile.symbol, "M5", 100)
+            except Exception:
+                pass
 
     for pos in open_positions:
         # OANDA: dict with "id", "currentUnits"; MT5: object with ticket, volume (lots)
@@ -1019,7 +1037,7 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                     tick=tick,
                     trade_row=trade_row,
                     position=pos,
-                    data_by_tf={},  # not available in _run_trade_management; engine uses adapter.get_bars internally if needed
+                    data_by_tf=data_by_tf or {},
                     phase3_state=phase3_state or {},
                     sizing_config=phase3_sizing_cfg,
                 )
@@ -1854,6 +1872,33 @@ def main() -> None:
             and getattr(p, "setup_id", "m1_cross_entry") in m5_cross_setup_ids
             for p in profile.execution.policies
         )
+        has_confirmed_cross = any(
+            getattr(p, "type", None) == "confirmed_cross" and getattr(p, "enabled", True)
+            for p in profile.execution.policies
+        )
+        has_trial7_reversal_risk = any(
+            getattr(p, "type", None) == "kt_cg_trial_7"
+            and getattr(p, "enabled", True)
+            and getattr(p, "use_reversal_risk_score", False)
+            for p in profile.execution.policies
+        )
+        has_m15_swing_filter = any(
+            getattr(p, "type", None) in ("kt_cg_counter_trend_pullback", "kt_cg_hybrid")
+            and getattr(p, "enabled", True)
+            and getattr(p, "swing_level_filter_enabled", False)
+            for p in profile.execution.policies
+        )
+        needs_alignment_context = (
+            has_confirmed_cross
+            or has_indicator
+            or has_breakout
+            or has_session
+            or has_bollinger
+            or has_vwap
+            or has_ema_pullback
+        )
+        needs_h4_data = has_phase3_integrated or has_trial7_reversal_risk or needs_alignment_context
+        needs_m15_data = needs_h4_data or has_m15_swing_filter
 
         loop_count = 0
         last_sync_time = 0.0
@@ -2071,8 +2116,6 @@ def main() -> None:
             for _fetch_attempt in range(_MAX_FETCH_RETRIES):
                 try:
                     data_by_tf = {
-                        "H4": _get_bars_cached(profile.symbol, "H4", 800),
-                        "M15": _get_bars_cached(profile.symbol, "M15", 2000),
                         # OANDA: request fewer bars (faster) and include forming candle for fresher timestamps.
                         "M1": _get_bars_cached(
                             profile.symbol,
@@ -2084,6 +2127,10 @@ def main() -> None:
                             include_incomplete=(getattr(profile, "broker_type", None) == "oanda"),
                         ),
                     }
+                    if needs_h4_data:
+                        data_by_tf["H4"] = _get_bars_cached(profile.symbol, "H4", 800)
+                    if needs_m15_data:
+                        data_by_tf["M15"] = _get_bars_cached(profile.symbol, "M15", 2000)
                     # Fetch M5 data when needed by ema_pullback, kt_cg_ctp, kt_cg_hybrid, M5 confirmed-cross, or uncle_parsh.
                     if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_uncle_parsh or has_phase3_integrated:
                         data_by_tf["M5"] = _get_bars_cached(profile.symbol, "M5", 2000)
@@ -2212,6 +2259,7 @@ def main() -> None:
                 tick,
                 phase3_state=phase3_state if has_phase3_integrated else None,
                 open_positions=open_positions_snapshot,
+                data_by_tf=data_by_tf,
             )
             _invalidate_trades_df_cache()
             _phase_done("trade_management", _tm_started)
@@ -2529,8 +2577,17 @@ def main() -> None:
             if is_new or args.once:
                 _bar_close_started = time.perf_counter()
                 spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
-                h4c = compute_tf_context(profile, "H4", data_by_tf["H4"])
-                m15c = compute_tf_context(profile, "M15", data_by_tf["M15"])
+                _empty_tf_context = SimpleNamespace(
+                    regime="unknown",
+                    last_cross_dir=None,
+                    last_cross_time=None,
+                    last_cross_price=None,
+                    trend_since_cross="unknown",
+                )
+                h4_df = data_by_tf.get("H4")
+                m15_df = data_by_tf.get("M15")
+                h4c = compute_tf_context(profile, "H4", h4_df) if h4_df is not None and not h4_df.empty else _empty_tf_context
+                m15c = compute_tf_context(profile, "M15", m15_df) if m15_df is not None and not m15_df.empty else _empty_tf_context
                 m1c = compute_tf_context(profile, "M1", data_by_tf["M1"])
                 diffs = compute_latest_diffs(profile, data_by_tf)
                 alignment_score = int(compute_alignment_score(profile, diffs)) if diffs else 0
