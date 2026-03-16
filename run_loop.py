@@ -1168,6 +1168,12 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
         )
 
 
+def _is_transient_broker_error(e: Exception) -> bool:
+    """Return True for transient HTTP errors (502/503/504/429) that don't need dashboard logging."""
+    msg = str(e)
+    return any(code in msg for code in (": 502 ", ": 503 ", ": 504 ", ": 429 ", "502 non-JSON", "503 non-JSON", "504 non-JSON"))
+
+
 def _record_loop_error(profile, store, message: str) -> None:
     """Record a loop error into the executions table so it appears in the dashboard execution log."""
     try:
@@ -1752,6 +1758,8 @@ def main() -> None:
         last_seen_phase3_closed_m1_time: str | None = None
         _p3_derived_cache: dict = {}  # M1-derived higher-TF frames for Phase 3; rebuilt on each new closed M1 bar
         poll_sec = _poll_seconds(profile, args.poll_seconds)
+        _PHASE3_M1_RETRY_WINDOW_S = 12.0
+        _PHASE3_M1_RETRY_INTERVAL_S = 1.0
         has_price_level = any(
             getattr(p, "type", None) == "price_level_trend" and getattr(p, "enabled", True)
             for p in profile.execution.policies
@@ -1840,10 +1848,12 @@ def main() -> None:
         _MAX_FETCH_RETRIES = 1
         _last_oanda_tradeid_backfill_time: float = 0.0
         _OANDA_TRADEID_BACKFILL_INTERVAL_S: float = 30.0
-        _OANDA_TRADEID_BACKFILL_MAX_PER_CYCLE: int = 5
-        _OANDA_TRADEID_BACKFILL_BUDGET_S: float = 2.0
-        _OANDA_TRADEID_RETRY_COOLDOWN_S: float = 300.0
-        _oanda_backfill_last_attempt_by_trade: dict[str, float] = {}
+        _OANDA_TRADEID_BACKFILL_ORDER_MAX_PER_CYCLE: int = 1
+        _OANDA_TRADEID_BACKFILL_ORDER_BUDGET_S: float = 1.0
+        _OANDA_TRADEID_DEAL_RETRY_COOLDOWN_S: float = 60.0
+        _OANDA_TRADEID_ORDER_RETRY_COOLDOWN_S: float = 900.0
+        _oanda_deal_backfill_last_attempt_by_trade: dict[str, float] = {}
+        _oanda_order_backfill_last_attempt_by_trade: dict[str, float] = {}
 
         # Candle cache: {tf: (timestamp_fetched, DataFrame)}
         # TTLs in seconds: M1=28 so new bar is seen soon after minute close (fast poll); M3=175, M5=295, ...
@@ -1969,10 +1979,11 @@ def main() -> None:
                             print(f"[{profile.profile_name}] imported {imported} trade(s) from broker history")
                 except Exception as e:
                     print(f"[{profile.profile_name}] sync error: {e}")
-                    try:
-                        _record_loop_error(profile, store, f"sync error: {e}")
-                    except Exception:
-                        pass
+                    if not _is_transient_broker_error(e):
+                        try:
+                            _record_loop_error(profile, store, f"sync error: {e}")
+                        except Exception:
+                            pass
                 last_sync_time = _now_sync
                 _phase_done("sync", _sync_started)
 
@@ -1985,41 +1996,44 @@ def main() -> None:
                     if _now_bf - _last_oanda_tradeid_backfill_time >= _OANDA_TRADEID_BACKFILL_INTERVAL_S:
                         missing = store.get_trades_missing_position_id(profile.profile_name)
                         updated = 0
-                        attempted = 0
-                        _backfill_deadline = time.perf_counter() + _OANDA_TRADEID_BACKFILL_BUDGET_S
+                        order_attempted = 0
+                        _order_backfill_deadline = time.perf_counter() + _OANDA_TRADEID_BACKFILL_ORDER_BUDGET_S
                         for r in missing:
                             d = dict(r)
-                            if d.get("exit_price") is not None:
-                                continue  # closed trade; skip
                             trade_id = str(d.get("trade_id") or "")
                             if not trade_id:
                                 continue
-                            last_attempt = _oanda_backfill_last_attempt_by_trade.get(trade_id, 0.0)
-                            if (_now_bf - last_attempt) < _OANDA_TRADEID_RETRY_COOLDOWN_S:
-                                continue
-                            if attempted >= _OANDA_TRADEID_BACKFILL_MAX_PER_CYCLE or time.perf_counter() >= _backfill_deadline:
-                                break
-                            attempted += 1
-                            _oanda_backfill_last_attempt_by_trade[trade_id] = _now_bf
                             # If mt5_deal_id already contains the OANDA tradeID (newer behavior), use it directly.
                             deal_id = d.get("mt5_deal_id")
                             order_id = d.get("mt5_order_id")
                             pos_id = None
                             if deal_id is not None:
-                                try:
-                                    pos_id = adapter.get_position_id_from_deal(int(deal_id))
-                                except Exception:
-                                    pos_id = None
+                                last_deal_attempt = _oanda_deal_backfill_last_attempt_by_trade.get(trade_id, 0.0)
+                                if (_now_bf - last_deal_attempt) >= _OANDA_TRADEID_DEAL_RETRY_COOLDOWN_S:
+                                    _oanda_deal_backfill_last_attempt_by_trade[trade_id] = _now_bf
+                                    try:
+                                        pos_id = adapter.get_position_id_from_deal(int(deal_id))
+                                    except Exception:
+                                        pos_id = None
                             if pos_id is None and order_id is not None:
-                                try:
-                                    pos_id = adapter.get_position_id_from_order(int(order_id))
-                                except Exception:
-                                    pos_id = None
+                                last_order_attempt = _oanda_order_backfill_last_attempt_by_trade.get(trade_id, 0.0)
+                                if (
+                                    (_now_bf - last_order_attempt) >= _OANDA_TRADEID_ORDER_RETRY_COOLDOWN_S
+                                    and order_attempted < _OANDA_TRADEID_BACKFILL_ORDER_MAX_PER_CYCLE
+                                    and time.perf_counter() < _order_backfill_deadline
+                                ):
+                                    order_attempted += 1
+                                    _oanda_order_backfill_last_attempt_by_trade[trade_id] = _now_bf
+                                    try:
+                                        pos_id = adapter.get_position_id_from_order(int(order_id))
+                                    except Exception:
+                                        pos_id = None
                             if pos_id is not None:
                                 try:
                                     store.update_trade(trade_id, {"mt5_position_id": int(pos_id)})
                                     updated += 1
-                                    _oanda_backfill_last_attempt_by_trade.pop(trade_id, None)
+                                    _oanda_deal_backfill_last_attempt_by_trade.pop(trade_id, None)
+                                    _oanda_order_backfill_last_attempt_by_trade.pop(trade_id, None)
                                 except Exception:
                                     pass
                         if updated:
@@ -2091,15 +2105,75 @@ def main() -> None:
                 except Exception as _fetch_err:
                     # Fast-fail on broker fetch errors so the loop and dashboard never stall for minutes.
                     print(f"[{profile.profile_name}] broker fetch error: {_fetch_err}")
-                    try:
-                        _record_loop_error(profile, store, f"broker temporarily unavailable: {_fetch_err}")
-                    except Exception:
-                        pass
+                    # 502/503/504/429 are transient OANDA outages — skip dashboard logging to avoid noise.
+                    if not _is_transient_broker_error(_fetch_err):
+                        try:
+                            _record_loop_error(profile, store, f"broker temporarily unavailable: {_fetch_err}")
+                        except Exception:
+                            pass
                     # Let the outer loop (and poll_sec) control pacing; don't add long sleeps here.
                     break
             _phase_done("fetch_market_data", _fetch_started)
             if data_by_tf is None or tick is None:
                 continue
+
+            # Phase 3 parity hardening: briefly retry M1 fetch near the minute boundary
+            # so a just-closed candle that arrives a few seconds late is still evaluated.
+            # We still evaluate each closed bar only once via last_seen_phase3_closed_m1_time.
+            if has_phase3_integrated and not args.once:
+                try:
+                    _phase3_retry_count = 0
+                    _phase3_closed_last_dt: pd.Timestamp | None = None
+                    _now_phase3 = pd.Timestamp.now(tz="UTC")
+                    _raw_m1 = data_by_tf.get("M1")
+                    if _raw_m1 is not None and not _raw_m1.empty:
+                        _p3_preview = drop_incomplete_last_bar(_raw_m1.copy(), "M1")
+                        if _p3_preview is not None and not _p3_preview.empty:
+                            _phase3_closed_last_dt = pd.to_datetime(_p3_preview["time"].iloc[-1], utc=True, errors="coerce")
+                    _last_seen_p3_dt = pd.to_datetime(last_seen_phase3_closed_m1_time, utc=True, errors="coerce") if last_seen_phase3_closed_m1_time else None
+                    _latest_due_closed_dt = _now_phase3.floor("min") - pd.Timedelta(minutes=1)
+                    _should_retry_p3 = (
+                        _phase3_closed_last_dt is not None
+                        and _last_seen_p3_dt is not None
+                        and pd.notna(_phase3_closed_last_dt)
+                        and pd.notna(_last_seen_p3_dt)
+                        and _phase3_closed_last_dt <= _last_seen_p3_dt
+                        and _latest_due_closed_dt > _last_seen_p3_dt
+                        and float(_now_phase3.second) <= _PHASE3_M1_RETRY_WINDOW_S
+                    )
+                    _retry_deadline = time.monotonic() + _PHASE3_M1_RETRY_WINDOW_S
+                    while _should_retry_p3 and time.monotonic() < _retry_deadline:
+                        time.sleep(_PHASE3_M1_RETRY_INTERVAL_S)
+                        _phase3_retry_count += 1
+                        _raw_m1 = _get_bars_cached(
+                            profile.symbol,
+                            "M1",
+                            (10000 if has_phase3_integrated else 800) if getattr(profile, "broker_type", None) == "oanda" else 3000,
+                            include_incomplete=(getattr(profile, "broker_type", None) == "oanda"),
+                            force_refresh=(getattr(profile, "broker_type", None) == "oanda"),
+                        )
+                        data_by_tf["M1"] = _raw_m1
+                        _p3_preview = drop_incomplete_last_bar(_raw_m1.copy(), "M1")
+                        if _p3_preview is not None and not _p3_preview.empty:
+                            _phase3_closed_last_dt = pd.to_datetime(_p3_preview["time"].iloc[-1], utc=True, errors="coerce")
+                        if (
+                            _phase3_closed_last_dt is not None
+                            and _last_seen_p3_dt is not None
+                            and pd.notna(_phase3_closed_last_dt)
+                            and _phase3_closed_last_dt > _last_seen_p3_dt
+                        ):
+                            break
+                    if _phase3_closed_last_dt is not None and pd.notna(_phase3_closed_last_dt):
+                        _arrival_lag_sec = max(0.0, float((pd.Timestamp.now(tz="UTC") - _phase3_closed_last_dt).total_seconds()))
+                        phase3_state["last_m1_arrival_lag_sec"] = round(_arrival_lag_sec, 3)
+                        phase3_state["last_m1_retry_count"] = int(_phase3_retry_count)
+                        if _phase3_retry_count > 0 or _arrival_lag_sec > 5.0:
+                            _log(
+                                f"Phase3 M1 arrival lag={_arrival_lag_sec:.1f}s "
+                                f"retries={_phase3_retry_count} closed_bar={_phase3_closed_last_dt.isoformat()}"
+                            )
+                except Exception as _phase3_retry_err:
+                    _log(f"Phase3 M1 retry check failed: {_phase3_retry_err}", "WARN")
 
             # Trade management: breakeven and TP1 partial close (only for positions we opened).
             # Fetch open positions once per loop so all caps/management share the same snapshot.

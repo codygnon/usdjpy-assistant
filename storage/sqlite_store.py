@@ -364,7 +364,9 @@ class SqliteStore:
         with self.connect() as conn:
             cur = conn.execute(
                 """SELECT * FROM trades WHERE profile=? AND mt5_position_id IS NULL
-                   AND (mt5_deal_id IS NOT NULL OR mt5_order_id IS NOT NULL)""",
+                   AND exit_price IS NULL
+                   AND (mt5_deal_id IS NOT NULL OR mt5_order_id IS NOT NULL)
+                   ORDER BY CASE WHEN mt5_deal_id IS NOT NULL THEN 0 ELSE 1 END""",
                 [profile],
             )
             return cur.fetchall()

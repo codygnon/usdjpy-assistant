@@ -57,6 +57,35 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return out
 
 
+def _phase3_order_confirmed(adapter, profile, order_result) -> tuple[bool, Optional[int]]:
+    """
+    Confirm a market order actually opened on the broker before Phase 3 treats it
+    as placed. For OANDA, a market order can return an order id with no immediate
+    fill/deal; those must not be counted as open trades.
+    """
+    deal_id = getattr(order_result, "deal_id", None)
+    if deal_id is not None:
+        return True, int(deal_id)
+    if getattr(profile, "broker_type", None) != "oanda":
+        return True, None
+    order_id = getattr(order_result, "order_id", None)
+    if order_id is None:
+        return False, None
+    for _ in range(3):
+        try:
+            position_id = adapter.get_position_id_from_order(int(order_id))
+            if position_id is not None:
+                try:
+                    setattr(order_result, "deal_id", int(position_id))
+                except Exception:
+                    pass
+                return True, int(position_id)
+        except Exception:
+            position_id = None
+        time.sleep(0.5)
+    return False, None
+
+
 def _normalize_v14_source(v14_src: dict[str, Any]) -> dict[str, Any]:
     ps = v14_src.get("position_sizing", {}) if isinstance(v14_src.get("position_sizing"), dict) else {}
     tm = v14_src.get("trade_management", {}) if isinstance(v14_src.get("trade_management"), dict) else {}
@@ -1941,6 +1970,23 @@ def execute_london_v2_entry(
             "strategy_tag": strategy_tag,
         }
 
+    confirmed_fill, confirmed_deal_id = _phase3_order_confirmed(adapter, profile, dec)
+    if not confirmed_fill:
+        return {
+            "decision": ExecutionDecision(
+                attempted=True,
+                placed=False,
+                reason="london_v2: broker order pending/unfilled",
+                side=side,
+                order_retcode=getattr(dec, "order_retcode", None),
+                order_id=getattr(dec, "order_id", None),
+                deal_id=getattr(dec, "deal_id", None),
+                fill_price=getattr(dec, "fill_price", None),
+            ),
+            "phase3_state_updates": state_updates,
+            "strategy_tag": strategy_tag,
+        }
+
     if strategy_tag.endswith("_arb"):
         sdat["arb_trades"] = int(sdat.get("arb_trades", 0)) + 1
         channels["A_long" if side == "buy" else "A_short"] = "FIRED"
@@ -1960,7 +2006,7 @@ def execute_london_v2_entry(
             side=side,
             order_retcode=getattr(dec, "order_retcode", None),
             order_id=getattr(dec, "order_id", None),
-            deal_id=getattr(dec, "deal_id", None),
+            deal_id=confirmed_deal_id if confirmed_deal_id is not None else getattr(dec, "deal_id", None),
             fill_price=getattr(dec, "fill_price", None),
         ),
         "phase3_state_updates": state_updates,
@@ -2698,6 +2744,23 @@ def execute_v44_ny_entry(
             "strategy_tag": strategy_tag,
         }
 
+    confirmed_fill, confirmed_deal_id = _phase3_order_confirmed(adapter, profile, dec)
+    if not confirmed_fill:
+        return {
+            "decision": ExecutionDecision(
+                attempted=True,
+                placed=False,
+                reason="v44_ny: broker order pending/unfilled",
+                side=side,
+                order_retcode=getattr(dec, "order_retcode", None),
+                order_id=getattr(dec, "order_id", None),
+                deal_id=getattr(dec, "deal_id", None),
+                fill_price=getattr(dec, "fill_price", None),
+            ),
+            "phase3_state_updates": {},
+            "strategy_tag": strategy_tag,
+        }
+
     sdat["trade_count"] = int(sdat.get("trade_count", 0)) + 1
     sdat["last_entry_time"] = now_utc.isoformat()
 
@@ -2711,7 +2774,7 @@ def execute_v44_ny_entry(
             side=side,
             order_retcode=getattr(dec, "order_retcode", None),
             order_id=getattr(dec, "order_id", None),
-            deal_id=getattr(dec, "deal_id", None),
+            deal_id=confirmed_deal_id if confirmed_deal_id is not None else getattr(dec, "deal_id", None),
             fill_price=getattr(dec, "fill_price", None),
         ),
         "phase3_state_updates": {session_key: sdat},
@@ -3485,6 +3548,23 @@ def execute_phase3_integrated_policy_demo_only(
             "strategy_tag": strategy_tag,
         }
 
+    confirmed_fill, confirmed_deal_id = _phase3_order_confirmed(adapter, profile, order_result)
+    if not confirmed_fill:
+        return {
+            "decision": ExecutionDecision(
+                attempted=True,
+                placed=False,
+                reason="phase3: broker order pending/unfilled",
+                side=best_side,
+                order_retcode=getattr(order_result, "order_retcode", None),
+                order_id=getattr(order_result, "order_id", None),
+                deal_id=getattr(order_result, "deal_id", None),
+                fill_price=getattr(order_result, "fill_price", None),
+            ),
+            "phase3_state_updates": state_updates,
+            "strategy_tag": strategy_tag,
+        }
+
     # Update session state
     session_data["trade_count"] = trade_count + 1
     session_data["last_entry_time"] = now_utc.isoformat()
@@ -3497,6 +3577,10 @@ def execute_phase3_integrated_policy_demo_only(
                    f"SL={sl_price:.3f}({sl_pips:.1f}p) TP1={tp1_price:.3f} units={units} "
                    f"sst={strength_info.get('score', 0)}({strength_info.get('bucket', 'moderate')})",
             side=best_side,
+            order_retcode=getattr(order_result, "order_retcode", None),
+            order_id=getattr(order_result, "order_id", None),
+            deal_id=confirmed_deal_id if confirmed_deal_id is not None else getattr(order_result, "deal_id", None),
+            fill_price=getattr(order_result, "fill_price", None),
         ),
         "phase3_state_updates": state_updates,
         "strategy_tag": strategy_tag,
