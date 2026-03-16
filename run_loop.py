@@ -813,8 +813,13 @@ def _run_trade_management(
                             be_offset = current_spread + _t9_be_pips * pip
                             if side == "buy":
                                 be_sl = entry + be_offset
+                                # Ensure SL is below current bid (OANDA rejects BUY SL >= current bid)
+                                be_sl = min(be_sl, tick.bid - pip * 0.5)
                             else:
                                 be_sl = entry - be_offset
+                                # Ensure SL is above current ask (OANDA rejects SELL SL <= current ask)
+                                # Wide spreads can push be_sl below current ask, causing silent rejection.
+                                be_sl = max(be_sl, tick.ask + pip * 0.5)
                             try:
                                 adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
                                 store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
@@ -824,6 +829,30 @@ def _run_trade_management(
 
                 elif tp1_done:
                     # --- Phase C: M5 bar-close-only trailing ---
+                    # Safety net: if Phase B (BE SL) failed for any reason, retry it now.
+                    # Only attempt if position is still in profit (original be_sl is above ask for SELL / below bid for BUY).
+                    _c_be_applied = trade_row.get("breakeven_applied") or 0
+                    if not _c_be_applied:
+                        _t9_be_pips_c = float(getattr(t9_policy, "be_spread_plus_pips", 0.5))
+                        _be_offset_c = current_spread + _t9_be_pips_c * pip
+                        if side == "buy":
+                            _be_sl_c = entry + _be_offset_c
+                            if _be_sl_c < tick.bid - pip * 0.1:
+                                try:
+                                    adapter.update_position_stop_loss(position_id, profile.symbol, round(_be_sl_c, 3))
+                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(_be_sl_c, 5)})
+                                    print(f"[{profile.profile_name}] T9 BE retry (Phase C): pos {position_id} SL->{_be_sl_c:.3f}")
+                                except Exception as e:
+                                    print(f"[{profile.profile_name}] T9 BE retry error pos {position_id}: {e}")
+                        else:
+                            _be_sl_c = entry - _be_offset_c
+                            if _be_sl_c > tick.ask + pip * 0.1:
+                                try:
+                                    adapter.update_position_stop_loss(position_id, profile.symbol, round(_be_sl_c, 3))
+                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(_be_sl_c, 5)})
+                                    print(f"[{profile.profile_name}] T9 BE retry (Phase C): pos {position_id} SL->{_be_sl_c:.3f}")
+                                except Exception as e:
+                                    print(f"[{profile.profile_name}] T9 BE retry error pos {position_id}: {e}")
                     try:
                         _t9_m5_trail_period = int(getattr(t9_policy, "trail_m5_ema_period", 20))
                         if _m5_close is not None and len(_m5_close) > _t9_m5_trail_period + 1:
@@ -919,8 +948,10 @@ def _run_trade_management(
                             be_offset = current_spread + _t9_be_pips * pip
                             if side == "buy":
                                 be_sl = entry + be_offset
+                                be_sl = min(be_sl, tick.bid - pip * 0.5)
                             else:
                                 be_sl = entry - be_offset
+                                be_sl = max(be_sl, tick.ask + pip * 0.5)
                             try:
                                 adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
                                 store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
@@ -930,6 +961,29 @@ def _run_trade_management(
 
                 elif tp1_done:
                     # Bar-close-only trailing on M1 EMA
+                    # Safety net: if Phase B (BE SL) failed for any reason, retry it now.
+                    _c_be_applied = trade_row.get("breakeven_applied") or 0
+                    if not _c_be_applied:
+                        _t9_be_pips_c = float(getattr(t9_policy, "be_spread_plus_pips", 2.0))
+                        _be_offset_c = current_spread + _t9_be_pips_c * pip
+                        if side == "buy":
+                            _be_sl_c = entry + _be_offset_c
+                            if _be_sl_c < tick.bid - pip * 0.1:
+                                try:
+                                    adapter.update_position_stop_loss(position_id, profile.symbol, round(_be_sl_c, 3))
+                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(_be_sl_c, 5)})
+                                    print(f"[{profile.profile_name}] T9 BE retry (Phase C): pos {position_id} SL->{_be_sl_c:.3f}")
+                                except Exception as e:
+                                    print(f"[{profile.profile_name}] T9 BE retry error pos {position_id}: {e}")
+                        else:
+                            _be_sl_c = entry - _be_offset_c
+                            if _be_sl_c > tick.ask + pip * 0.1:
+                                try:
+                                    adapter.update_position_stop_loss(position_id, profile.symbol, round(_be_sl_c, 3))
+                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(_be_sl_c, 5)})
+                                    print(f"[{profile.profile_name}] T9 BE retry (Phase C): pos {position_id} SL->{_be_sl_c:.3f}")
+                                except Exception as e:
+                                    print(f"[{profile.profile_name}] T9 BE retry error pos {position_id}: {e}")
                     try:
                         _t9_trail_period = int(getattr(t9_policy, "trail_ema_period", 21))
                         if _m1_close is not None and len(_m1_close) > _t9_trail_period + 1:
