@@ -54,8 +54,8 @@ from core.signal_engine import (
 )
 from core.trade_sync import sync_closed_trades, import_mt5_history
 from core.dashboard_models import (
-    DailySummary, DashboardState, PositionInfo, TradeEvent,
-    append_trade_event, write_dashboard_state,
+    ContextItem, DailySummary, DashboardState, FilterReport, PositionInfo, TradeEvent,
+    append_trade_event, read_dashboard_state, write_dashboard_state,
 )
 from core.dashboard_reporters import (
     collect_trial_2_context, collect_trial_3_context,
@@ -1448,10 +1448,29 @@ def _build_and_write_dashboard(
     """Assemble and write dashboard state JSON for the current poll cycle."""
     from datetime import datetime, timezone
 
+    def _deserialize_filter_report(item: dict) -> FilterReport:
+        return FilterReport(
+            filter_id=str(item.get("filter_id", "")),
+            display_name=str(item.get("display_name", "")),
+            enabled=bool(item.get("enabled", False)),
+            is_clear=bool(item.get("is_clear", False)),
+            current_value=str(item.get("current_value", "")),
+            threshold=str(item.get("threshold", "")),
+            block_reason=item.get("block_reason"),
+            explanation=item.get("explanation"),
+            sub_filters=[
+                _deserialize_filter_report(sub)
+                for sub in (item.get("sub_filters") or [])
+                if isinstance(sub, dict)
+            ],
+            metadata=dict(item.get("metadata") or {}),
+        )
+
     try:
         pip_size = float(profile.pip_size)
         now_utc = datetime.now(timezone.utc)
         spread_pips = (tick.ask - tick.bid) / pip_size
+        previous_state = read_dashboard_state(log_dir) if not policy and not policy_type else None
 
         # --- Filter reports (shared with API via core.dashboard_builder) ---
         from core.dashboard_builder import build_dashboard_filters, effective_policy_for_dashboard
@@ -1526,6 +1545,24 @@ def _build_and_write_dashboard(
                 pip_size,
             )
 
+        if isinstance(previous_state, dict):
+            if len(filters) <= 1:
+                prev_filters = previous_state.get("filters")
+                if isinstance(prev_filters, list) and prev_filters:
+                    filters = [_deserialize_filter_report(item) for item in prev_filters if isinstance(item, dict)]
+            if not context_items:
+                prev_context = previous_state.get("context")
+                if isinstance(prev_context, list) and prev_context:
+                    context_items = [
+                        ContextItem(
+                            key=str(item.get("key", "")),
+                            value=str(item.get("value", "")),
+                            category=str(item.get("category", "general")),
+                        )
+                        for item in prev_context
+                        if isinstance(item, dict)
+                    ]
+
         candidate_side = None
         candidate_trigger = None
         if isinstance(eval_result, dict):
@@ -1539,6 +1576,13 @@ def _build_and_write_dashboard(
             raw_trigger = eval_result.get("candidate_trigger") or eval_result.get("trigger_type")
             if str(raw_trigger) in ("zone_entry", "tiered_pullback"):
                 candidate_trigger = str(raw_trigger)
+        elif isinstance(previous_state, dict):
+            prev_side = previous_state.get("entry_candidate_side")
+            prev_trigger = previous_state.get("entry_candidate_trigger")
+            if str(prev_side).lower() in ("buy", "sell"):
+                candidate_side = str(prev_side).lower()
+            if str(prev_trigger) in ("zone_entry", "tiered_pullback"):
+                candidate_trigger = str(prev_trigger)
 
         positions = list(positions_snapshot) if positions_snapshot is not None else _collect_dashboard_positions(
             profile=profile,
@@ -2572,13 +2616,16 @@ def main() -> None:
                     tier_updates = exec_result.get("tier_updates", {})
                     t7_trigger_type = exec_result.get("trigger_type")
 
-                    if tier_updates:
+                    tier_resets = {t: v for t, v in tier_updates.items() if not v}
+                    tier_fires = {t: v for t, v in tier_updates.items() if v}
+
+                    if tier_resets:
                         try:
                             current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
                             tf_dict = current_state_data.get("tier_fired", {})
                             if not isinstance(tf_dict, dict):
                                 tf_dict = {}
-                            for tier, new_state in tier_updates.items():
+                            for tier, new_state in tier_resets.items():
                                 tf_dict[str(tier)] = new_state
                                 tier_state[tier] = new_state
                             current_state_data["tier_fired"] = tf_dict
@@ -2627,6 +2674,19 @@ def main() -> None:
                                 trigger_type=_event_trigger_label(t7_trigger_type, dec.reason),
                                 entry_type=t7_trigger_type or "",
                             )
+                            if tier_fires:
+                                try:
+                                    current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                                    tf_dict = current_state_data.get("tier_fired", {})
+                                    if not isinstance(tf_dict, dict):
+                                        tf_dict = {}
+                                    for tier, new_state in tier_fires.items():
+                                        tf_dict[str(tier)] = new_state
+                                        tier_state[tier] = new_state
+                                    current_state_data["tier_fired"] = tf_dict
+                                    state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
+                                except Exception as e:
+                                    print(f"[{profile.profile_name}] Failed to persist Trial #7 tier fires: {e}")
                         else:
                             print(f"[{profile.profile_name}] {pol_type} {pol.id} mode={mode} -> {dec.reason}")
 
@@ -3864,14 +3924,17 @@ def main() -> None:
                     tier_updates = exec_result.get("tier_updates", {})
                     t7_trigger_type = exec_result.get("trigger_type")
 
-                    # Persist tier state updates to runtime_state.json
-                    if tier_updates:
+                    tier_resets = {t: v for t, v in tier_updates.items() if not v}
+                    tier_fires = {t: v for t, v in tier_updates.items() if v}
+
+                    # Persist tier reset state immediately; persist tier fires only after a successful placement.
+                    if tier_resets:
                         try:
                             current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
                             tf_dict = current_state_data.get("tier_fired", {})
                             if not isinstance(tf_dict, dict):
                                 tf_dict = {}
-                            for tier, new_state in tier_updates.items():
+                            for tier, new_state in tier_resets.items():
                                 tf_dict[str(tier)] = new_state
                                 tier_state[tier] = new_state
                             current_state_data["tier_fired"] = tf_dict
@@ -3917,6 +3980,19 @@ def main() -> None:
                                 trigger_type=_event_trigger_label(t7_trigger_type, dec.reason),
                                 entry_type=t7_trigger_type or "",
                             )
+                            if tier_fires:
+                                try:
+                                    current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                                    tf_dict = current_state_data.get("tier_fired", {})
+                                    if not isinstance(tf_dict, dict):
+                                        tf_dict = {}
+                                    for tier, new_state in tier_fires.items():
+                                        tf_dict[str(tier)] = new_state
+                                        tier_state[tier] = new_state
+                                    current_state_data["tier_fired"] = tf_dict
+                                    state_path.write_text(json.dumps(current_state_data, indent=2) + "\n", encoding="utf-8")
+                                except Exception as e:
+                                    print(f"[{profile.profile_name}] Failed to persist Trial #7 tier fires: {e}")
                         else:
                             print(f"[{profile.profile_name}] {pol_type} {pol.id} mode={mode} -> {dec.reason}")
 
