@@ -48,6 +48,7 @@ from core.signal_engine import (
     compute_alignment_score,
     compute_latest_diffs,
     detect_latest_confirmed_cross_signal,
+    drop_incomplete_last_bar,
     evaluate_filters,
 )
 from core.trade_sync import sync_closed_trades, import_mt5_history
@@ -727,11 +728,12 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                             current_lots = abs(int(current_units)) / 100_000.0
                         else:
                             current_lots = float(getattr(pos, "volume", 0) or 0)
-                        close_lots = current_lots * (t9_tp1_pct / 100.0)
+                        close_lots = round(current_lots * (t9_tp1_pct / 100.0), 2)
                         close_lots = max(MIN_CLOSE_LOTS, min(close_lots, current_lots))
                         if close_lots < 1e-6:
                             close_lots = min(MIN_CLOSE_LOTS, current_lots)
                         position_type = 1 if side == "sell" else 0
+                        partial_close_ok = False
                         try:
                             adapter.close_position(
                                 ticket=position_id,
@@ -739,22 +741,26 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                                 volume=close_lots,
                                 position_type=position_type,
                             )
+                            partial_close_ok = True
                             print(f"[{profile.profile_name}] T9 TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t9_tp1_pct}%)")
                         except Exception as e:
                             print(f"[{profile.profile_name}] T9 TP1 partial close error pos {position_id}: {e}")
-                        # --- Phase B: BE on TP1 hit ---
-                        _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 0.5))
-                        be_offset = current_spread + _t9_be_pips * pip
-                        if side == "buy":
-                            be_sl = entry + be_offset
-                        else:
-                            be_sl = entry - be_offset
-                        try:
-                            adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
-                            store.update_trade(trade_id, {"tp1_partial_done": 1, "breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
-                            print(f"[{profile.profile_name}] T9 BE: pos {position_id} SL->{be_sl:.3f}")
-                        except Exception as e:
-                            print(f"[{profile.profile_name}] T9 BE error pos {position_id}: {e}")
+                        if partial_close_ok:
+                            # State lock: mark TP1 done immediately so runner is never double-closed
+                            store.update_trade(trade_id, {"tp1_partial_done": 1})
+                            # --- Phase B: BE on TP1 hit ---
+                            _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 0.5))
+                            be_offset = current_spread + _t9_be_pips * pip
+                            if side == "buy":
+                                be_sl = entry + be_offset
+                            else:
+                                be_sl = entry - be_offset
+                            try:
+                                adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
+                                store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
+                                print(f"[{profile.profile_name}] T9 BE: pos {position_id} SL->{be_sl:.3f}")
+                            except Exception as e:
+                                print(f"[{profile.profile_name}] T9 BE error pos {position_id}: {e}")
 
                 elif tp1_done:
                     # --- Phase C: M5 bar-close-only trailing ---
@@ -820,11 +826,12 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                             current_lots = abs(int(current_units)) / 100_000.0
                         else:
                             current_lots = float(getattr(pos, "volume", 0) or 0)
-                        close_lots = current_lots * (t9_tp1_pct / 100.0)
+                        close_lots = round(current_lots * (t9_tp1_pct / 100.0), 2)
                         close_lots = max(MIN_CLOSE_LOTS, min(close_lots, current_lots))
                         if close_lots < 1e-6:
                             close_lots = min(MIN_CLOSE_LOTS, current_lots)
                         position_type = 1 if side == "sell" else 0
+                        partial_close_ok = False
                         try:
                             adapter.close_position(
                                 ticket=position_id,
@@ -832,21 +839,25 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                                 volume=close_lots,
                                 position_type=position_type,
                             )
+                            partial_close_ok = True
                             print(f"[{profile.profile_name}] T9 TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t9_tp1_pct}%)")
                         except Exception as e:
                             print(f"[{profile.profile_name}] T9 TP1 partial close error pos {position_id}: {e}")
-                        _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 2.0))
-                        be_offset = current_spread + _t9_be_pips * pip
-                        if side == "buy":
-                            be_sl = entry + be_offset
-                        else:
-                            be_sl = entry - be_offset
-                        try:
-                            adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
-                            store.update_trade(trade_id, {"tp1_partial_done": 1, "breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
-                            print(f"[{profile.profile_name}] T9 BE: pos {position_id} SL->{be_sl:.3f}")
-                        except Exception as e:
-                            print(f"[{profile.profile_name}] T9 BE error pos {position_id}: {e}")
+                        if partial_close_ok:
+                            # State lock: mark TP1 done immediately so runner is never double-closed
+                            store.update_trade(trade_id, {"tp1_partial_done": 1})
+                            _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 2.0))
+                            be_offset = current_spread + _t9_be_pips * pip
+                            if side == "buy":
+                                be_sl = entry + be_offset
+                            else:
+                                be_sl = entry - be_offset
+                            try:
+                                adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
+                                store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
+                                print(f"[{profile.profile_name}] T9 BE: pos {position_id} SL->{be_sl:.3f}")
+                            except Exception as e:
+                                print(f"[{profile.profile_name}] T9 BE error pos {position_id}: {e}")
 
                 elif tp1_done:
                     # Bar-close-only trailing on M1 EMA
@@ -1589,12 +1600,39 @@ def _append_phase3_minute_diagnostics(
         dec = exec_result.get("decision")
         reason = getattr(dec, "reason", "") if dec else ""
         placed = getattr(dec, "placed", False) if dec else False
+        session_key = None
+        session_extra = ""
+        if session == "ny":
+            session_key = f"session_ny_{bar_ts.date().isoformat()}"
+            sd = phase3_state.get(session_key, {}) if isinstance(phase3_state, dict) else {}
+            ny_mode = sd.get("session_mode")
+            ny_eff = sd.get("session_efficiency_avg")
+            ny_hist = sd.get("session_efficiency_hist_len")
+            extras = []
+            if ny_mode is not None:
+                extras.append(f"ny_mode={ny_mode}")
+            if ny_eff is not None:
+                extras.append(f"ny_eff_avg={float(ny_eff):.3f}")
+            if ny_hist is not None:
+                extras.append(f"ny_eff_n={int(ny_hist)}")
+            session_extra = "\t" + "\t".join(extras) if extras else ""
+        elif session == "tokyo":
+            session_key = f"session_tokyo_{bar_ts.date().isoformat()}"
+            sd = phase3_state.get(session_key, {}) if isinstance(phase3_state, dict) else {}
+            session_extra = f"\ttokyo_breakout_blocked={int(bool(sd.get('breakout_blocked', False)))}"
+        elif session == "london":
+            ar = phase3_state.get("london_asian_range", {}) if isinstance(phase3_state, dict) else {}
+            if isinstance(ar, dict) and ar.get("date") == bar_ts.date().isoformat():
+                session_extra = (
+                    f"\tlondon_asian_pips={float(ar.get('pips', 0.0)):.1f}"
+                    f"\tlondon_asian_ok={int(bool(ar.get('is_valid', False)))}"
+                )
         ts = pd.Timestamp.now(tz="UTC").isoformat()
         line = (
             f"{ts}\tbar={m1_bar_time}\tis_new={int(is_new)}\tplaced={int(placed)}\t"
             f"session={session or 'none'}\tstrategy={strategy_tag or ''}\t"
             f"blocking={blocking_count}\t"
-            f"filters=[{'; '.join(blocking_details)}]\treason={reason!r}\n"
+            f"filters=[{'; '.join(blocking_details)}]\treason={reason!r}{session_extra}\n"
         )
         diag_path = log_dir / "phase3_minute_diagnostics.log"
         with open(diag_path, "a", encoding="utf-8") as f:
@@ -1672,6 +1710,38 @@ def main() -> None:
         except Exception:
             pass
 
+    def _resample_phase3_from_m1(m1_df: pd.DataFrame, freq: str) -> pd.DataFrame:
+        """
+        Build higher-timeframe bars from closed M1 data using strict UTC buckets.
+        Drop a partial leading bucket when the fetched M1 history starts mid-bucket.
+        The partial trailing bucket is handled later by drop_incomplete_last_bar in
+        the Phase 3 engine.
+        """
+        src = m1_df.copy()
+        src["time"] = pd.to_datetime(src["time"], utc=True, errors="coerce")
+        src = src.dropna(subset=["time"]).sort_values("time")
+        if src.empty:
+            return src
+        idx = src.set_index("time")
+        agg: dict[str, str] = {"open": "first", "high": "max", "low": "min", "close": "last"}
+        if "volume" in idx.columns:
+            agg["volume"] = "sum"
+        out = (
+            idx.resample(freq, closed="right", label="right", origin="epoch")
+            .agg(agg)
+            .dropna(subset=["open"])
+            .reset_index()
+        )
+        if out.empty:
+            return out
+        first_src_ts = pd.Timestamp(src["time"].iloc[0])
+        first_bucket_ts = pd.Timestamp(out["time"].iloc[0])
+        bucket_delta = pd.Timedelta(freq)
+        first_bucket_start = first_bucket_ts - bucket_delta + pd.Timedelta(minutes=1)
+        if first_src_ts > first_bucket_start:
+            out = out.iloc[1:].reset_index(drop=True)
+        return out
+
     adapter = get_adapter(profile)
     adapter.initialize()
     try:
@@ -1679,6 +1749,8 @@ def main() -> None:
         _log("Loop started, symbol ensured")
 
         last_seen_m1_time: str | None = None
+        last_seen_phase3_closed_m1_time: str | None = None
+        _p3_derived_cache: dict = {}  # M1-derived higher-TF frames for Phase 3; rebuilt on each new closed M1 bar
         poll_sec = _poll_seconds(profile, args.poll_seconds)
         has_price_level = any(
             getattr(p, "type", None) == "price_level_trend" and getattr(p, "enabled", True)
@@ -1977,7 +2049,10 @@ def main() -> None:
                         "M1": _get_bars_cached(
                             profile.symbol,
                             "M1",
-                            800 if getattr(profile, "broker_type", None) == "oanda" else 3000,
+                            # Phase 3 derives all higher TFs from M1. Use a deeper history so
+                            # H4 ADX and daily pivots are built from full resampled bars.
+                            # Other OANDA strategies keep the lighter 800-bar fetch.
+                            (10000 if has_phase3_integrated else 800) if getattr(profile, "broker_type", None) == "oanda" else 3000,
                             include_incomplete=(getattr(profile, "broker_type", None) == "oanda"),
                             force_refresh=(getattr(profile, "broker_type", None) == "oanda"),
                         ),
@@ -2109,6 +2184,24 @@ def main() -> None:
                         last_seen_m1_time = current_minute_iso
                 except Exception:
                     pass
+
+            phase3_closed_m1_time: str | None = None
+            phase3_is_new = False
+            _p3_closed_m1_preview: pd.DataFrame | None = None
+            if has_phase3_integrated:
+                try:
+                    _p3_closed_m1_preview = drop_incomplete_last_bar(data_by_tf["M1"].copy(), "M1")
+                    if _p3_closed_m1_preview is not None and not _p3_closed_m1_preview.empty:
+                        phase3_closed_m1_time = pd.to_datetime(
+                            _p3_closed_m1_preview["time"].iloc[-1], utc=True
+                        ).isoformat()
+                        if last_seen_phase3_closed_m1_time is None:
+                            last_seen_phase3_closed_m1_time = phase3_closed_m1_time
+                        phase3_is_new = phase3_closed_m1_time != last_seen_phase3_closed_m1_time
+                except Exception:
+                    _p3_closed_m1_preview = None
+                    phase3_closed_m1_time = None
+                    phase3_is_new = False
 
             # Update shared daily H/L state for Trial #7 / Trial #8 when we have a new M1 bar
             if (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9) and is_new:
@@ -3931,6 +4024,42 @@ def main() -> None:
                 except Exception:
                     pass
 
+                # Rebuild M1-derived higher-TF frames when a new closed M1 bar arrives.
+                # This matches the parity/backtest bar-construction path (all TFs resampled from M1).
+                _p3_cache_was_empty = not _p3_derived_cache
+                if phase3_is_new or args.once or _p3_cache_was_empty:
+                    try:
+                        _p3_closed_m1 = _p3_closed_m1_preview
+                        if _p3_closed_m1 is None:
+                            _p3_closed_m1 = drop_incomplete_last_bar(data_by_tf["M1"].copy(), "M1")
+                        _p3_derived_cache = {
+                            "M1": _p3_closed_m1,
+                            "M5": _resample_phase3_from_m1(_p3_closed_m1, "5min"),
+                            "M15": _resample_phase3_from_m1(_p3_closed_m1, "15min"),
+                            "H1": _resample_phase3_from_m1(_p3_closed_m1, "1h"),
+                            "H4": _resample_phase3_from_m1(_p3_closed_m1, "4h"),
+                            "D": _resample_phase3_from_m1(_p3_closed_m1, "1D"),
+                        }
+                        if _p3_cache_was_empty:
+                            print(
+                                f"[{profile.profile_name}] Phase3 M1-derived TFs active:"
+                                f" M1={len(_p3_derived_cache['M1'])}"
+                                f" M15={len(_p3_derived_cache['M15'])}"
+                                f" M5={len(_p3_derived_cache['M5'])}"
+                                f" H1={len(_p3_derived_cache['H1'])}"
+                                f" H4={len(_p3_derived_cache['H4'])}"
+                                f" D={len(_p3_derived_cache['D'])} bars"
+                            )
+                    except Exception as _p3_resample_err:
+                        print(f"[{profile.profile_name}] Phase3 M1-resample failed: {_p3_resample_err}; falling back to broker TFs")
+                        _p3_derived_cache = dict(data_by_tf)
+
+                # Build Phase 3 data dict: M1-derived TFs + broker-only TFs (W, MN for NTZ)
+                p3_data_by_tf = dict(_p3_derived_cache)
+                for _p3_tf in ("W", "MN"):
+                    if _p3_tf in data_by_tf:
+                        p3_data_by_tf[_p3_tf] = data_by_tf[_p3_tf]
+
                 for pol in profile.execution.policies:
                     pol_type = getattr(pol, "type", None)
                     if not getattr(pol, "enabled", True) or pol_type != "phase3_integrated":
@@ -3947,13 +4076,13 @@ def main() -> None:
                         log_dir=log_dir,
                         policy=pol,
                         context=p3_mkt,
-                        data_by_tf=data_by_tf,
+                        data_by_tf=p3_data_by_tf,
                         tick=tick,
                         mode=mode,
                         phase3_state=phase3_state,
                         store=store,
                         sizing_config=phase3_sizing if phase3_sizing else None,
-                        is_new_m1=(is_new or args.once),
+                        is_new_m1=(phase3_is_new or args.once),
                     )
                     dec = exec_result["decision"]
                     p3_state_updates = exec_result.get("phase3_state_updates", {})
@@ -4013,10 +4142,15 @@ def main() -> None:
                             )
                         else:
                             print(f"[{profile.profile_name}] phase3 {pol.id} mode={mode} -> {dec.reason}")
+                    if phase3_is_new or args.once:
+                        _log(
+                            f"Phase3 eval bar={phase3_closed_m1_time or m1_last_time} strategy={strategy_tag or '-'} "
+                            f"placed={int(bool(getattr(dec, 'placed', False)))} reason={getattr(dec, 'reason', '')}"
+                        )
 
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,
-                        data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
+                        data_by_tf=p3_data_by_tf, mode=mode, adapter=adapter, policy=pol,
                         policy_type="phase3_integrated",
                         eval_result=exec_result,
                         phase3_state=phase3_state,
@@ -4025,24 +4159,26 @@ def main() -> None:
                         daily_summary_snapshot=dashboard_daily_snapshot,
                     )
                     # Per-minute diagnostics: bar time, is_new, placed, blocking filter count/reasons, decision reason
-                    if is_new or args.once:
+                    if phase3_is_new or args.once:
                         _append_phase3_minute_diagnostics(
                             log_dir=log_dir,
                             profile=profile,
                             store=store,
                             tick=tick,
-                            data_by_tf=data_by_tf,
+                            data_by_tf=p3_data_by_tf,
                             policy=pol,
                             exec_result=exec_result,
                             phase3_state=phase3_state,
-                            m1_bar_time=m1_last_time,
-                            is_new=is_new,
+                            m1_bar_time=phase3_closed_m1_time or m1_last_time,
+                            is_new=phase3_is_new,
                             mode=mode,
                         )
 
                 # Bar-close parity for Phase 3: mark the current M1 bar as seen after evaluation
                 # so entries are evaluated once per newly closed M1 candle.
                 last_seen_m1_time = m1_last_time
+                if phase3_closed_m1_time is not None:
+                    last_seen_phase3_closed_m1_time = phase3_closed_m1_time
 
             # Catch-all dashboard write for profiles not using KT/CG policy types.
             # Runs every poll cycle so positions + prices are always fresh.

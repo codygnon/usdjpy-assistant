@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from core.dashboard_models import FilterReport
+from core.signal_engine import drop_incomplete_last_bar
 from core.dashboard_reporters import (
     report_session_filter,
     report_session_boundary_block,
@@ -600,18 +601,43 @@ def build_dashboard_filters(
             report_phase3_last_decision,
             report_phase3_tokyo_caps, report_phase3_london_window, report_phase3_london_caps,
             report_phase3_ny_caps,
-            ADX_PERIOD, ATR_PERIOD, ATR_MAX, MAX_ENTRY_SPREAD_PIPS,
+            ADX_PERIOD, ATR_PERIOD, load_phase3_sizing_config, uk_london_open_utc,
         )
+        cfg = load_phase3_sizing_config()
+        m1_closed = data_by_tf.get("M1")
+        if m1_closed is not None and not m1_closed.empty:
+            try:
+                m1_closed = drop_incomplete_last_bar(m1_closed, "M1")
+            except Exception:
+                pass
         now_utc = datetime.now(timezone.utc)
-        session = classify_session(now_utc)
-        for d in (report_phase3_session(now_utc), report_phase3_strategy(session)):
+        if m1_closed is not None and not m1_closed.empty and "time" in m1_closed.columns:
+            try:
+                now_utc = datetime.fromisoformat(str(m1_closed["time"].iloc[-1]).replace("Z", "+00:00"))
+                if now_utc.tzinfo is None:
+                    now_utc = now_utc.replace(tzinfo=timezone.utc)
+            except Exception:
+                now_utc = datetime.now(timezone.utc)
+        session = classify_session(now_utc, cfg)
+        for d in (report_phase3_session(now_utc, cfg), report_phase3_strategy(session)):
             filters.append(_phase3_dict_to_filter_report(d))
-        spread_ok = (tick.ask - tick.bid) / pip_size <= MAX_ENTRY_SPREAD_PIPS
+        v14_cfg = cfg.get("v14", {}) if isinstance(cfg.get("v14"), dict) else {}
+        ldn_cfg = cfg.get("london_v2", {}) if isinstance(cfg.get("london_v2"), dict) else {}
+        v44_cfg = cfg.get("v44_ny", {}) if isinstance(cfg.get("v44_ny"), dict) else {}
+        if session == "tokyo":
+            spread_limit = float(v14_cfg.get("max_entry_spread_pips", 3.0))
+        elif session == "london":
+            spread_limit = float(ldn_cfg.get("max_entry_spread_pips", 3.5))
+        elif session == "ny":
+            spread_limit = float(v44_cfg.get("max_entry_spread_pips", 3.0))
+        else:
+            spread_limit = 0.0
+        spread_ok = session is not None and ((tick.ask - tick.bid) / pip_size <= spread_limit)
         filters.append(_phase3_dict_to_filter_report({
             "name": "Allowed to Trade",
             "value": "yes" if (session is not None and spread_ok) else "no",
             "ok": session is not None and spread_ok,
-            "detail": f"session={'yes' if session else 'no'}, spread={'ok' if spread_ok else 'wide'}",
+            "detail": f"session={'yes' if session else 'no'}, spread_limit={spread_limit:.1f}p",
         }))
         filters.append(_phase3_dict_to_filter_report(report_phase3_last_decision(eval_result)))
         m5_df = data_by_tf.get("M5")
@@ -621,11 +647,11 @@ def build_dashboard_filters(
         m15_df = data_by_tf.get("M15")
         if m15_df is not None and not m15_df.empty and len(m15_df) >= ADX_PERIOD + 2:
             adx_val = _compute_adx(m15_df, ADX_PERIOD)
-            filters.append(_phase3_dict_to_filter_report(report_phase3_adx(adx_val)))
+            filters.append(_phase3_dict_to_filter_report(report_phase3_adx(adx_val, float(v14_cfg.get("adx_max_for_entry", 35.0)))))
             atr_series = _compute_atr(m15_df, ATR_PERIOD)
             import pandas as _pd
             atr_val = float(atr_series.iloc[-1]) if _pd.notna(atr_series.iloc[-1]) else 0.0
-            filters.append(_phase3_dict_to_filter_report(report_phase3_atr(atr_val)))
+            filters.append(_phase3_dict_to_filter_report(report_phase3_atr(atr_val, float(v14_cfg.get("atr_max_threshold_price_units", 0.30)))))
         if session == "tokyo" and phase3_state is not None:
             for d in report_phase3_tokyo_caps(phase3_state, now_utc):
                 filters.append(_phase3_dict_to_filter_report(d))
@@ -633,8 +659,21 @@ def build_dashboard_filters(
             filters.append(_phase3_dict_to_filter_report(report_phase3_london_window(now_utc)))
             m1_df = data_by_tf.get("M1")
             if m1_df is not None and not m1_df.empty:
-                a_hi, a_lo, a_pips, a_ok = compute_asian_range(m1_df, 8)
-                filters.append(_phase3_dict_to_filter_report(report_phase3_london_range(a_pips, a_ok)))
+                london_open_hour = int(uk_london_open_utc(now_utc))
+                a_hi, a_lo, a_pips, a_ok = compute_asian_range(
+                    m1_df,
+                    london_open_hour,
+                    range_min_pips=float(ldn_cfg.get("arb_range_min_pips", 30.0)),
+                    range_max_pips=float(ldn_cfg.get("arb_range_max_pips", 60.0)),
+                )
+                filters.append(_phase3_dict_to_filter_report(
+                    report_phase3_london_range(
+                        a_pips,
+                        a_ok,
+                        float(ldn_cfg.get("arb_range_min_pips", 30.0)),
+                        float(ldn_cfg.get("arb_range_max_pips", 60.0)),
+                    )
+                ))
                 filters.append(_phase3_dict_to_filter_report(report_phase3_london_levels(a_hi, a_lo)))
             if phase3_state is not None:
                 for d in report_phase3_london_caps(phase3_state):
@@ -645,10 +684,20 @@ def build_dashboard_filters(
             trend = compute_v44_h1_trend(h1_df) if h1_df is not None and not h1_df.empty else None
             filters.append(_phase3_dict_to_filter_report(report_phase3_ny_trend(trend)))
             if m5_df is not None and not m5_df.empty:
-                slope = compute_v44_m5_slope(m5_df, 4)
-                filters.append(_phase3_dict_to_filter_report(report_phase3_ny_slope(slope)))
-                atr_ok = compute_v44_atr_pct_filter(m5_df)
-                filters.append(_phase3_dict_to_filter_report(report_phase3_ny_atr_filter(atr_ok)))
+                slope_bars = int(v44_cfg.get("slope_bars", 4))
+                slope_threshold = float(v44_cfg.get("strong_slope", 0.5))
+                slope = compute_v44_m5_slope(m5_df, slope_bars)
+                filters.append(_phase3_dict_to_filter_report(report_phase3_ny_slope(slope, slope_threshold)))
+                atr_enabled = bool(v44_cfg.get("atr_pct_filter_enabled", True))
+                atr_cap = float(v44_cfg.get("atr_pct_cap", 0.67))
+                atr_lookback = int(v44_cfg.get("atr_pct_lookback", 200))
+                atr_ok = compute_v44_atr_pct_filter(
+                    m5_df,
+                    enabled=atr_enabled,
+                    cap=atr_cap,
+                    lookback=atr_lookback,
+                )
+                filters.append(_phase3_dict_to_filter_report(report_phase3_ny_atr_filter(atr_ok, atr_cap, atr_lookback)))
             if phase3_state is not None:
                 for d in report_phase3_ny_caps(phase3_state, now_utc):
                     filters.append(_phase3_dict_to_filter_report(d))

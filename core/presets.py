@@ -1823,7 +1823,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "tier_ema_periods": [17, 21, 27, 33, 50, 75, 100],
                     "tier_reset_buffer_pips": 1.0,
                     "cooldown_minutes": 3.0,
-                    "tp_pips": 4.0,
+                    "tp_pips": 0.0,
                     "confirm_bars": 1,
                     "ntz_enabled": False,
                     "ntz_buffer_pips": 10.0,

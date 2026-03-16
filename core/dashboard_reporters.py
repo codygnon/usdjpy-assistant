@@ -1547,6 +1547,21 @@ def collect_phase3_context(
         today = now_utc.date().isoformat()
         sk = f"session_ny_{today}"
         sd = phase3_state.get(sk, {})
+        session_mode = str(sd.get("session_mode") or "—")
+        eff_avg = sd.get("session_efficiency_avg")
+        eff_hist_len = int(sd.get("session_efficiency_hist_len", 0))
+        eff_min = sd.get("trend_mode_efficiency_min")
+        eff_max = sd.get("range_mode_efficiency_max")
+        range_fade_enabled = bool(sd.get("range_fade_enabled", False))
+        if eff_avg is not None:
+            eff_detail = f"avg {float(eff_avg):.3f} / n={eff_hist_len}"
+            if eff_min is not None and eff_max is not None:
+                eff_detail += f" / trend>={float(eff_min):.2f} range<={float(eff_max):.2f}"
+            items.append(ContextItem("Session mode", f"{session_mode} ({'range fade on' if range_fade_enabled else 'range fade off'})", "v44"))
+            items.append(ContextItem("Efficiency avg", eff_detail, "v44"))
+        else:
+            items.append(ContextItem("Session mode", session_mode, "v44"))
+            items.append(ContextItem("Efficiency avg", f"n={eff_hist_len}", "v44"))
         trade_count = int(sd.get("trade_count", 0))
         consec_losses = int(sd.get("consecutive_losses", 0))
         wins_closed = int(sd.get("wins_closed", 0))

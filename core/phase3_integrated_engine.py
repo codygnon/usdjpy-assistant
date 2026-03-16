@@ -82,6 +82,7 @@ def _normalize_v14_source(v14_src: dict[str, Any]) -> dict[str, Any]:
     short_rsi = short_e.get("rsi_soft_filter", {}) if isinstance(short_e.get("rsi_soft_filter"), dict) else {}
     long_conf = long_e.get("confluence_scoring", {}) if isinstance(long_e.get("confluence_scoring"), dict) else {}
     short_conf = short_e.get("confluence_scoring", {}) if isinstance(short_e.get("confluence_scoring"), dict) else {}
+    bb_regime = ind.get("bb_width_regime_filter", {}) if isinstance(ind.get("bb_width_regime_filter"), dict) else {}
     allowed_days = sf.get("allowed_trading_days", ["Tuesday", "Wednesday", "Friday"])
     return {
         "risk_per_trade_pct": float(ps.get("risk_per_trade_pct", 2.0)),
@@ -102,6 +103,9 @@ def _normalize_v14_source(v14_src: dict[str, Any]) -> dict[str, Any]:
         "atr_max_threshold_price_units": float(atr_i.get("max_threshold_price_units", ATR_MAX)),
         "adx_max_for_entry": float(adx_i.get("max_adx_for_entry", ADX_MAX)),
         "adx_filter_enabled": bool(adx_i.get("enabled", True)),
+        "bb_regime_mode": str(bb_regime.get("mode", "percentile")).strip().lower(),
+        "bb_width_lookback": int(bb_regime.get("percentile_lookback_m5_bars", BB_WIDTH_LOOKBACK)),
+        "bb_width_ranging_pct": float(bb_regime.get("ranging_percentile", BB_WIDTH_RANGING_PCT)),
         "zone_tolerance_pips": float(long_zone.get("tolerance_pips", ZONE_TOLERANCE_PIPS)),
         "rsi_long_entry": float(long_rsi.get("entry_soft_threshold", RSI_LONG_ENTRY)),
         "rsi_short_entry": float(short_rsi.get("entry_soft_threshold", RSI_SHORT_ENTRY)),
@@ -666,18 +670,32 @@ def compute_daily_fib_pivots(prev_day_high: float, prev_day_low: float, prev_day
 #  BB Width Regime
 # ===================================================================
 
-def compute_bb_width_regime(m5_df: pd.DataFrame) -> str:
-    """Return 'ranging' or 'trending' based on BB width percentile."""
+def compute_bb_width_regime(
+    m5_df: pd.DataFrame,
+    *,
+    mode: str = "percentile",
+    lookback: int = BB_WIDTH_LOOKBACK,
+    ranging_pct: float = BB_WIDTH_RANGING_PCT,
+) -> str:
+    """Return 'ranging' or 'trending' using the configured backtest regime mode."""
     close = m5_df["close"].astype(float)
     sma = close.rolling(BB_PERIOD).mean()
-    std = close.rolling(BB_PERIOD).std()
+    std = close.rolling(BB_PERIOD, min_periods=BB_PERIOD).std(ddof=0)
     upper = sma + BB_STD * std
     lower = sma - BB_STD * std
     width = (upper - lower) / sma
-    if len(width.dropna()) < BB_WIDTH_LOOKBACK:
-        return "ranging"  # default safe
-    recent = width.iloc[-BB_WIDTH_LOOKBACK:]
-    cutoff = recent.quantile(BB_WIDTH_RANGING_PCT)
+    mode_norm = str(mode).strip().lower()
+    if mode_norm in {"expanding3", "bb_width_expanding3"}:
+        valid = width.dropna()
+        if len(valid) < 4:
+            return "ranging"
+        expanding3 = bool(valid.iloc[-2] > valid.iloc[-3] and valid.iloc[-3] > valid.iloc[-4])
+        return "trending" if expanding3 else "ranging"
+    lookback_n = max(1, int(lookback))
+    if len(width.dropna()) < lookback_n:
+        return "ranging"
+    recent = width.iloc[-lookback_n:]
+    cutoff = recent.quantile(float(ranging_pct))
     current = width.iloc[-1]
     if pd.isna(current) or pd.isna(cutoff):
         return "ranging"
@@ -688,7 +706,7 @@ def _compute_bb(m5_df: pd.DataFrame) -> tuple[float, float, float]:
     """Return (bb_upper, bb_middle, bb_lower) for latest M5 bar."""
     close = m5_df["close"].astype(float)
     sma = close.rolling(BB_PERIOD).mean()
-    std = close.rolling(BB_PERIOD).std()
+    std = close.rolling(BB_PERIOD, min_periods=BB_PERIOD).std(ddof=0)
     bb_upper = float(sma.iloc[-1] + BB_STD * std.iloc[-1])
     bb_lower = float(sma.iloc[-1] - BB_STD * std.iloc[-1])
     bb_mid = float(sma.iloc[-1])
@@ -2176,6 +2194,14 @@ def execute_v44_ny_entry(
         trend_mode_efficiency_min=v44_trend_mode_efficiency_min,
         range_mode_efficiency_max=v44_range_mode_efficiency_max,
     )
+    _sess_hist_vals = [float(x) for x in sdat.get("session_efficiency_history", []) if isinstance(x, (int, float))]
+    _sess_eff_avg = (sum(_sess_hist_vals) / len(_sess_hist_vals)) if _sess_hist_vals else None
+    sdat["session_mode"] = session_mode
+    sdat["session_efficiency_avg"] = float(_sess_eff_avg) if _sess_eff_avg is not None else None
+    sdat["session_efficiency_hist_len"] = int(len(_sess_hist_vals))
+    sdat["range_fade_enabled"] = bool(v44_range_fade_enabled)
+    sdat["trend_mode_efficiency_min"] = float(v44_trend_mode_efficiency_min)
+    sdat["range_mode_efficiency_max"] = float(v44_range_mode_efficiency_max)
     if v44_dual_mode_enabled and session_mode == "neutral":
         no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: dual mode neutral", side=None)
         no_trade["phase3_state_updates"] = {session_key: sdat}
@@ -2845,23 +2871,36 @@ def execute_phase3_integrated_policy_demo_only(
         )
         return no_trade
 
-    # 4) Pivots (cache by date)
-    today_str = now_utc.date().isoformat()
+    # 4) Pivots (cache by NY-close trading day, matching the Tokyo backtest)
+    current_ny_day = (pd.Timestamp(now_utc) - pd.Timedelta(hours=22)).date()
+    prev_ny_day = current_ny_day - pd.Timedelta(days=1)
+    today_str = current_ny_day.isoformat()
     pivots = phase3_state.get("pivots")
     pivots_date = phase3_state.get("pivots_date")
     state_updates: dict = dict(base_state_updates)
     if pivots is None or pivots_date != today_str:
-        d_df = _drop_incomplete_tf(data_by_tf.get("D"), "D")
-        if d_df is None or d_df.empty or len(d_df) < 2:
+        m1_for_pivots = _drop_incomplete_tf(data_by_tf.get("M1"), "M1")
+        if m1_for_pivots is None or m1_for_pivots.empty:
             no_trade["decision"] = ExecutionDecision(
                 attempted=False, placed=False,
-                reason="phase3: no daily data for pivots", side=None,
+                reason="phase3: no M1 data for pivots", side=None,
             )
             return no_trade
-        d_sorted = d_df.sort_values("time")
-        prev = d_sorted.iloc[-2]
+        pivot_src = m1_for_pivots.copy()
+        pivot_src["time"] = pd.to_datetime(pivot_src["time"], utc=True, errors="coerce")
+        pivot_src = pivot_src.dropna(subset=["time"]).sort_values("time")
+        pivot_src["ny_day"] = (pivot_src["time"] - pd.Timedelta(hours=22)).dt.date
+        prev_day_rows = pivot_src[pivot_src["ny_day"] == prev_ny_day]
+        if prev_day_rows.empty:
+            no_trade["decision"] = ExecutionDecision(
+                attempted=False, placed=False,
+                reason="phase3: no prior NY-close day data for pivots", side=None,
+            )
+            return no_trade
         pivots = compute_daily_fib_pivots(
-            float(prev["high"]), float(prev["low"]), float(prev["close"]),
+            float(prev_day_rows["high"].max()),
+            float(prev_day_rows["low"].min()),
+            float(prev_day_rows["close"].iloc[-1]),
         )
         state_updates["pivots"] = pivots
         state_updates["pivots_date"] = today_str
@@ -2878,8 +2917,14 @@ def execute_phase3_integrated_policy_demo_only(
         no_trade["phase3_state_updates"] = state_updates
         return no_trade
 
+    v14_config = (effective_cfg or {}).get("v14", {})
+    bb_regime_mode = str(v14_config.get("bb_regime_mode", "percentile")).strip().lower()
+    bb_regime_lookback = max(1, int(v14_config.get("bb_width_lookback", BB_WIDTH_LOOKBACK)))
+    bb_regime_ranging_pct = float(v14_config.get("bb_width_ranging_pct", BB_WIDTH_RANGING_PCT))
+    bb_required_bars = BB_PERIOD + (4 if bb_regime_mode in {"expanding3", "bb_width_expanding3"} else bb_regime_lookback)
+
     # BB + regime
-    if len(m5_df) < BB_PERIOD + BB_WIDTH_LOOKBACK:
+    if len(m5_df) < bb_required_bars:
         no_trade["decision"] = ExecutionDecision(
             attempted=False, placed=False,
             reason="phase3: insufficient M5 data for BB", side=None,
@@ -2887,7 +2932,12 @@ def execute_phase3_integrated_policy_demo_only(
         no_trade["phase3_state_updates"] = state_updates
         return no_trade
 
-    regime = compute_bb_width_regime(m5_df)
+    regime = compute_bb_width_regime(
+        m5_df,
+        mode=bb_regime_mode,
+        lookback=bb_regime_lookback,
+        ranging_pct=bb_regime_ranging_pct,
+    )
     bb_upper, bb_mid, bb_lower = _compute_bb(m5_df)
 
     # RSI
@@ -2912,8 +2962,6 @@ def execute_phase3_integrated_policy_demo_only(
     # PSAR + flip
     sar_bull, sar_bear = detect_sar_flip(m1_df, PSAR_FLIP_LOOKBACK)
 
-    # Config overlays (keep defaults when key absent)
-    v14_config = (effective_cfg or {}).get("v14", {})
     day_name = now_utc.strftime("%A")
     atr_max_entry = float(v14_config.get("atr_max_threshold_price_units", ATR_MAX))
     adx_max_entry = float(v14_config.get("adx_max_for_entry", ADX_MAX))
@@ -3972,33 +4020,42 @@ def report_phase3_regime(regime: str) -> dict:
     }
 
 
-def report_phase3_adx(adx_val: float) -> dict:
+def report_phase3_adx(adx_val: float, max_adx: float | None = None) -> dict:
     """Report ADX status."""
+    limit = float(ADX_MAX if max_adx is None else max_adx)
     return {
         "name": "V14 ADX",
         "value": f"{adx_val:.1f}",
-        "ok": adx_val < ADX_MAX,
-        "detail": f"max {ADX_MAX}",
+        "ok": adx_val < limit,
+        "detail": f"max {limit:.1f}",
     }
 
 
-def report_phase3_atr(atr_val: float) -> dict:
+def report_phase3_atr(atr_val: float, atr_max: float | None = None) -> dict:
     """Report ATR status."""
+    limit = float(ATR_MAX if atr_max is None else atr_max)
     atr_pips = atr_val / PIP_SIZE
     return {
         "name": "V14 ATR",
         "value": f"{atr_pips:.1f}p",
-        "ok": atr_val < ATR_MAX,
-        "detail": f"max {ATR_MAX/PIP_SIZE:.0f}p",
+        "ok": atr_val < limit,
+        "detail": f"max {limit/PIP_SIZE:.0f}p",
     }
 
 
-def report_phase3_london_range(asian_pips: float, is_valid: bool) -> dict:
+def report_phase3_london_range(
+    asian_pips: float,
+    is_valid: bool,
+    min_pips: float | None = None,
+    max_pips: float | None = None,
+) -> dict:
+    min_limit = float(LDN_ARB_RANGE_MIN_PIPS if min_pips is None else min_pips)
+    max_limit = float(LDN_ARB_RANGE_MAX_PIPS if max_pips is None else max_pips)
     return {
         "name": "London Asian Range",
         "value": f"{asian_pips:.1f}p",
         "ok": bool(is_valid),
-        "detail": f"valid={LDN_ARB_RANGE_MIN_PIPS:.0f}-{LDN_ARB_RANGE_MAX_PIPS:.0f}p",
+        "detail": f"valid={min_limit:.0f}-{max_limit:.0f}p",
     }
 
 
@@ -4020,21 +4077,24 @@ def report_phase3_ny_trend(trend: str | None) -> dict:
     }
 
 
-def report_phase3_ny_slope(slope_pips_per_bar: float) -> dict:
+def report_phase3_ny_slope(slope_pips_per_bar: float, threshold: float | None = None) -> dict:
+    limit = float(V44_STRONG_SLOPE if threshold is None else threshold)
     return {
         "name": "NY M5 Slope",
         "value": f"{slope_pips_per_bar:.2f} p/bar",
-        "ok": abs(slope_pips_per_bar) >= V44_STRONG_SLOPE,
-        "detail": f"strong>={V44_STRONG_SLOPE:.2f}",
+        "ok": abs(slope_pips_per_bar) >= limit,
+        "detail": f"strong>={limit:.2f}",
     }
 
 
-def report_phase3_ny_atr_filter(ok: bool) -> dict:
+def report_phase3_ny_atr_filter(ok: bool, cap: float | None = None, lookback: int | None = None) -> dict:
+    cap_v = float(V44_ATR_PCT_CAP if cap is None else cap)
+    lookback_v = int(V44_ATR_PCT_LOOKBACK if lookback is None else lookback)
     return {
         "name": "NY ATR PCT Filter",
         "value": "pass" if ok else "blocked",
         "ok": bool(ok),
-        "detail": f"cap P{int(V44_ATR_PCT_CAP*100)} lookback={V44_ATR_PCT_LOOKBACK}",
+        "detail": f"cap P{int(cap_v*100)} lookback={lookback_v}",
     }
 
 
