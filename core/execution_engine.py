@@ -5626,6 +5626,7 @@ def execute_kt_cg_trial_8_policy_demo_only(
     daily_level_filter: Optional[DailyLevelFilter] = None,
     daily_state: Optional[dict] = None,
     open_positions: Optional[list] = None,
+    ntz_filter=None,
 ) -> dict:
     """Trial #8: delegates to Trial #7 flow with daily_level_filter and daily_state (no EMA zone, no reversal risk)."""
     return execute_kt_cg_trial_7_policy_demo_only(
@@ -5644,6 +5645,7 @@ def execute_kt_cg_trial_8_policy_demo_only(
         daily_level_filter=daily_level_filter,
         daily_state=daily_state,
         open_positions=open_positions,
+        ntz_filter=ntz_filter,
     )
 
 
@@ -5664,6 +5666,7 @@ def execute_kt_cg_trial_9_policy_demo_only(
     daily_level_filter: Optional[DailyLevelFilter] = None,
     daily_state: Optional[dict] = None,
     open_positions: Optional[list] = None,
+    ntz_filter=None,
 ) -> dict:
     """Trial #9: carbon copy of Trial #8 (delegates to Trial #7 flow with daily_level_filter and daily_state)."""
     return execute_kt_cg_trial_8_policy_demo_only(
@@ -5682,6 +5685,7 @@ def execute_kt_cg_trial_9_policy_demo_only(
         daily_level_filter=daily_level_filter,
         daily_state=daily_state,
         open_positions=open_positions,
+        ntz_filter=ntz_filter,
     )
 
 

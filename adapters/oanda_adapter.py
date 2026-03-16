@@ -425,6 +425,8 @@ class OandaAdapter:
             order["stopLossOnFill"] = {"price": str(round(sl, prec)), "timeInForce": "GTC"}
         if tp is not None:
             order["takeProfitOnFill"] = {"price": str(round(tp, prec)), "timeInForce": "GTC"}
+        if comment:
+            order["tradeClientExtensions"] = {"comment": comment[:128]}
         body = {"order": order}
         data = self._req("POST", f"/v3/accounts/{aid}/orders", json=body)
         fill = data.get("orderFillTransaction")

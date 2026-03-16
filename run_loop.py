@@ -1546,9 +1546,9 @@ def _build_and_write_dashboard(
             )
 
         if isinstance(previous_state, dict):
-            if len(filters) <= 1:
+            if len(filters) <= 3:
                 prev_filters = previous_state.get("filters")
-                if isinstance(prev_filters, list) and prev_filters:
+                if isinstance(prev_filters, list) and len(prev_filters) > len(filters):
                     filters = [_deserialize_filter_report(item) for item in prev_filters if isinstance(item, dict)]
             if not context_items:
                 prev_context = previous_state.get("context")
@@ -2574,6 +2574,7 @@ def main() -> None:
                             daily_level_filter=daily_level_filter,
                             daily_state=trial7_daily_state,
                             open_positions=open_positions_snapshot,
+                            ntz_filter=ntz_filter,
                         )
                     elif pol_type == "kt_cg_trial_8":
                         exec_result = execute_kt_cg_trial_8_policy_demo_only(
@@ -2696,8 +2697,8 @@ def main() -> None:
                         policy_type=pol_type, tier_state=tier_state,
                         eval_result=exec_result,
                         exhaustion_result=exec_result.get("exhaustion_result"),
-                        daily_level_filter=daily_level_filter if pol_type in ("kt_cg_trial_8", "kt_cg_trial_9") else None,
-                        ntz_filter=None,
+                        daily_level_filter=daily_level_filter if pol_type == "kt_cg_trial_8" else None,
+                        ntz_filter=ntz_filter if pol_type == "kt_cg_trial_9" else None,
                         open_positions_snapshot=open_positions_snapshot,
                         positions_snapshot=dashboard_positions_snapshot,
                         daily_summary_snapshot=dashboard_daily_snapshot,
@@ -3885,6 +3886,8 @@ def main() -> None:
                             store=store,
                             daily_level_filter=daily_level_filter,
                             daily_state=trial7_daily_state,
+                            open_positions=open_positions_snapshot,
+                            ntz_filter=ntz_filter,
                         )
                     elif pol_type == "kt_cg_trial_8":
                         exec_result = execute_kt_cg_trial_8_policy_demo_only(

@@ -503,15 +503,14 @@ def build_dashboard_filters(
                 pass
 
     elif policy_type == "kt_cg_trial_9" and policy is not None:
-        # Treat Trial #9 as a visual carbon copy of Trial #8 on the dashboard.
-        # Reuse the same reporters and daily_level_filter_snapshot handling.
         filters.append(report_t8_exit_strategy(policy))
         m5_df = data_by_tf.get("M5")
         filters.append(report_trial7_m5_ema_distance_gate(policy, m5_df, pip_size))
         if getattr(policy, "trend_exhaustion_enabled", False):
             filters.append(report_trend_exhaustion(exhaustion_result))
         filters.append(report_trial7_adaptive_tp(policy, exhaustion_result))
-        filters.append(report_daily_level_filter(policy, tick, side, pip_size, daily_level_filter_snapshot))
+        filters.append(report_ntz_status(ntz_filter_snapshot, tick, pip_size))
+        filters.append(report_kill_switch_status(policy, data_by_tf, tick, pip_size, side))
         cap_multiplier = 1.0
         cap_min = 1
         if (
