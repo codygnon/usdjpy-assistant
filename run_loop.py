@@ -746,8 +746,10 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                         except Exception as e:
                             print(f"[{profile.profile_name}] T9 TP1 partial close error pos {position_id}: {e}")
                         if partial_close_ok:
-                            # State lock: mark TP1 done immediately so runner is never double-closed
-                            store.update_trade(trade_id, {"tp1_partial_done": 1})
+                            # State lock: mark TP1 done immediately so runner is never double-closed.
+                            # tp1_time_utc anchors Phase C so stale pre-TP1 M5 bars don't close the runner.
+                            _tp1_ts = pd.Timestamp.now(tz="UTC").isoformat()
+                            store.update_trade(trade_id, {"tp1_partial_done": 1, "tp1_time_utc": _tp1_ts})
                             # --- Phase B: BE on TP1 hit ---
                             _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 0.5))
                             be_offset = current_spread + _t9_be_pips * pip
@@ -794,7 +796,19 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                                     if should_update:
                                         adapter.update_position_stop_loss(position_id, profile.symbol, round(new_trail_sl, 3))
                                         store.update_trade(trade_id, {"breakeven_sl_price": round(new_trail_sl, 5)})
-                                if side == "buy" and last_m5_close < ema_val:
+                                # Only fire runner close on an M5 bar that closed AFTER TP1 was taken.
+                                # Prevents the pre-TP1 pullback bar (already below EMA) from killing the runner instantly.
+                                _tp1_anchor = trade_row.get("tp1_time_utc")
+                                _m5_bar_close_time = None
+                                if "time" in m5_df_trail.columns:
+                                    _m5_bar_open = m5_df_trail["time"].iloc[-2]
+                                    _m5_bar_close_time = _m5_bar_open + pd.Timedelta(minutes=5)
+                                _bar_is_new = (
+                                    _tp1_anchor is None
+                                    or _m5_bar_close_time is None
+                                    or _m5_bar_close_time > pd.Timestamp(_tp1_anchor)
+                                )
+                                if side == "buy" and last_m5_close < ema_val and _bar_is_new:
                                     position_type = 0
                                     if isinstance(pos, dict):
                                         vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
@@ -803,7 +817,7 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                                     if vol > 0:
                                         adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
                                         print(f"[{profile.profile_name}] T9 runner closed (BUY M5 bar-close < EMA{_t9_m5_trail_period}): pos {position_id}")
-                                elif side == "sell" and last_m5_close > ema_val:
+                                elif side == "sell" and last_m5_close > ema_val and _bar_is_new:
                                     position_type = 1
                                     if isinstance(pos, dict):
                                         vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
@@ -844,8 +858,8 @@ def _run_trade_management(profile, adapter, store, tick, phase3_state: dict | No
                         except Exception as e:
                             print(f"[{profile.profile_name}] T9 TP1 partial close error pos {position_id}: {e}")
                         if partial_close_ok:
-                            # State lock: mark TP1 done immediately so runner is never double-closed
-                            store.update_trade(trade_id, {"tp1_partial_done": 1})
+                            _tp1_ts = pd.Timestamp.now(tz="UTC").isoformat()
+                            store.update_trade(trade_id, {"tp1_partial_done": 1, "tp1_time_utc": _tp1_ts})
                             _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 2.0))
                             be_offset = current_spread + _t9_be_pips * pip
                             if side == "buy":

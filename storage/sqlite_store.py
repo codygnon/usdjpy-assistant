@@ -190,6 +190,8 @@ class SqliteStore:
             self._ensure_column(conn, "trades", "entry_session", "TEXT")
             # v2.4: planned USD risk at entry (for exact open-risk ledger parity)
             self._ensure_column(conn, "trades", "risk_usd_planned", "REAL")
+            # v2.5: runner phase anchor — UTC timestamp when TP1 partial close fired
+            self._ensure_column(conn, "trades", "tp1_time_utc", "TEXT")
             conn.commit()
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, col: str, col_type: str) -> None:
