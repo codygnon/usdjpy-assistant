@@ -2082,7 +2082,6 @@ def main() -> None:
                             # Other OANDA strategies keep the lighter 800-bar fetch.
                             (10000 if has_phase3_integrated else 800) if getattr(profile, "broker_type", None) == "oanda" else 3000,
                             include_incomplete=(getattr(profile, "broker_type", None) == "oanda"),
-                            force_refresh=(getattr(profile, "broker_type", None) == "oanda"),
                         ),
                     }
                     # Fetch M5 data when needed by ema_pullback, kt_cg_ctp, kt_cg_hybrid, M5 confirmed-cross, or uncle_parsh.
