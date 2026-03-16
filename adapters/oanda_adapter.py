@@ -199,7 +199,7 @@ class OandaAdapter:
             try:
                 # Simple per-process rate limiter: ensure a small gap between OANDA requests
                 now = time.time()
-                min_gap = 0.25  # seconds; smooths bursts when many calls happen in one loop
+                min_gap = 0.10  # seconds; keeps bursts smoother without imposing a 250ms floor on every loop
                 if self._last_req_time:
                     gap = now - self._last_req_time
                     if gap < min_gap:

@@ -368,6 +368,59 @@ def _run_trade_management(
             except Exception:
                 pass
 
+    _m1_close = _tm_m1_df["close"].astype(float) if _tm_m1_df is not None and not _tm_m1_df.empty else None
+    _m5_close = _tm_m5_df["close"].astype(float) if _tm_m5_df is not None and not _tm_m5_df.empty else None
+    _m1_ema_cache: dict[int, pd.Series] = {}
+    _m5_ema_cache: dict[int, pd.Series] = {}
+    _ema_fn = None
+    if _m1_close is not None or _m5_close is not None:
+        try:
+            from core.indicators import ema as _ema_fn
+        except Exception:
+            _ema_fn = None
+
+    def _m1_ema(period: int) -> pd.Series | None:
+        if _ema_fn is None or _m1_close is None or len(_m1_close) <= period:
+            return None
+        if period not in _m1_ema_cache:
+            _m1_ema_cache[period] = _ema_fn(_m1_close, period)
+        return _m1_ema_cache[period]
+
+    def _m5_ema(period: int) -> pd.Series | None:
+        if _ema_fn is None or _m5_close is None or len(_m5_close) <= period:
+            return None
+        if period not in _m5_ema_cache:
+            _m5_ema_cache[period] = _ema_fn(_m5_close, period)
+        return _m5_ema_cache[period]
+
+    _t9_kill_switch_snapshot: dict[str, float | bool | None] | None = None
+    if (
+        t9_policy is not None
+        and getattr(t9_policy, "kill_switch_enabled", True)
+        and _m1_close is not None
+        and _m5_close is not None
+        and len(_m1_close) >= 202
+        and len(_m5_close) >= 22
+    ):
+        ema200 = _m1_ema(200)
+        _ks_fast_p = int(getattr(t9_policy, "m5_trend_ema_fast", 9))
+        _ks_slow_p = int(getattr(t9_policy, "m5_trend_ema_slow", 21))
+        _ks_m5_fast = _m5_ema(_ks_fast_p)
+        _ks_m5_slow = _m5_ema(_ks_slow_p)
+        if (
+            ema200 is not None
+            and _ks_m5_fast is not None
+            and _ks_m5_slow is not None
+            and pd.notna(ema200.iloc[-2])
+            and pd.notna(_ks_m5_fast.iloc[-1])
+            and pd.notna(_ks_m5_slow.iloc[-1])
+        ):
+            _t9_kill_switch_snapshot = {
+                "last_ema200": float(ema200.iloc[-2]),
+                "last_m1_close": float(_m1_close.iloc[-2]),
+                "m5_is_bull": float(_ks_m5_fast.iloc[-1]) > float(_ks_m5_slow.iloc[-1]),
+            }
+
     for pos in open_positions:
         # OANDA: dict with "id", "currentUnits"; MT5: object with ticket, volume (lots)
         position_id = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
@@ -477,17 +530,14 @@ def _run_trade_management(
             trade_policy_type = trade_id.split(":", 1)[0] if ":" in trade_id else ""
             if trade_policy_type == "kt_cg_trial_7" and str(getattr(t7_ema_policy, "exit_strategy", "tp_sl_be")) == "ema_scale_runner":
                 try:
-                    from core.indicators import ema as ema_fn
                     ema_fast_p = int(getattr(t7_ema_policy, "m1_exit_ema_fast", 9))
                     ema_slow_p = int(getattr(t7_ema_policy, "m1_exit_ema_slow", 21))
                     scale_pct = float(getattr(t7_ema_policy, "scale_out_pct", 50.0))
-                    m1_df_t7 = _tm_m1_df
-                    if m1_df_t7 is not None and not m1_df_t7.empty and len(m1_df_t7) >= max(ema_fast_p, ema_slow_p) + 2:
-                        m1_close_t7 = m1_df_t7["close"].astype(float)
-                        ema_fast = ema_fn(m1_close_t7, ema_fast_p)
-                        ema_slow = ema_fn(m1_close_t7, ema_slow_p)
+                    if _m1_close is not None and len(_m1_close) >= max(ema_fast_p, ema_slow_p) + 2:
+                        ema_fast = _m1_ema(ema_fast_p)
+                        ema_slow = _m1_ema(ema_slow_p)
                         if not ema_fast.empty and not ema_slow.empty and pd.notna(ema_fast.iloc[-1]) and pd.notna(ema_slow.iloc[-1]):
-                            last_close = float(m1_close_t7.iloc[-1])
+                            last_close = float(_m1_close.iloc[-1])
                             last_ema_fast = float(ema_fast.iloc[-1])
                             last_ema_slow = float(ema_slow.iloc[-1])
                             tp1_done = trade_row.get("tp1_partial_done") or 0
@@ -527,21 +577,17 @@ def _run_trade_management(
         # 3) Uncle Parsh H1 Breakout trade management (EMA exits; no BE moves)
         if up_policy is not None and entry_type in ("power_break", "sniper"):
             try:
-                from core.indicators import ema as ema_fn
-
                 ema_fast_p = int(getattr(up_policy, "m1_entry_ema_fast", 9))
                 ema_slow_p = int(getattr(up_policy, "m1_entry_ema_slow", 21))
                 scale_pct = float(getattr(up_policy, "scale_out_pct", 50.0))
 
-                m1_df_exit = _tm_m1_df
-                if m1_df_exit is None or m1_df_exit.empty or len(m1_df_exit) < max(ema_fast_p, ema_slow_p) + 2:
+                if _m1_close is None or len(_m1_close) < max(ema_fast_p, ema_slow_p) + 2:
                     continue
-                m1_close_exit = m1_df_exit["close"].astype(float)
-                ema_fast = ema_fn(m1_close_exit, ema_fast_p)
-                ema_slow = ema_fn(m1_close_exit, ema_slow_p)
+                ema_fast = _m1_ema(ema_fast_p)
+                ema_slow = _m1_ema(ema_slow_p)
                 if ema_fast.empty or ema_slow.empty or pd.isna(ema_fast.iloc[-1]) or pd.isna(ema_slow.iloc[-1]):
                     continue
-                last_close = float(m1_close_exit.iloc[-1])
+                last_close = float(_m1_close.iloc[-1])
                 last_ema_fast = float(ema_fast.iloc[-1])
                 last_ema_slow = float(ema_slow.iloc[-1])
 
@@ -590,17 +636,14 @@ def _run_trade_management(
             if t8_exit_strategy == "ema_scale_runner":
                 # H1 breakout style: scale-out on M1 close wrong side of EMA fast, runner on wrong side of EMA slow; no TP, no BE
                 try:
-                    from core.indicators import ema as ema_fn
                     ema_fast_p = int(t8_tm_overrides.get("m1_exit_ema_fast", getattr(t8_policy, "m1_exit_ema_fast", 9)))
                     ema_slow_p = int(t8_tm_overrides.get("m1_exit_ema_slow", getattr(t8_policy, "m1_exit_ema_slow", 21)))
                     scale_pct = float(t8_tm_overrides.get("scale_out_pct", getattr(t8_policy, "scale_out_pct", 50.0)))
-                    m1_df_t8 = _tm_m1_df
-                    if m1_df_t8 is not None and not m1_df_t8.empty and len(m1_df_t8) >= max(ema_fast_p, ema_slow_p) + 2:
-                        m1_close_t8 = m1_df_t8["close"].astype(float)
-                        ema_fast = ema_fn(m1_close_t8, ema_fast_p)
-                        ema_slow = ema_fn(m1_close_t8, ema_slow_p)
+                    if _m1_close is not None and len(_m1_close) >= max(ema_fast_p, ema_slow_p) + 2:
+                        ema_fast = _m1_ema(ema_fast_p)
+                        ema_slow = _m1_ema(ema_slow_p)
                         if not ema_fast.empty and not ema_slow.empty and pd.notna(ema_fast.iloc[-1]) and pd.notna(ema_slow.iloc[-1]):
-                            last_close = float(m1_close_t8.iloc[-1])
+                            last_close = float(_m1_close.iloc[-1])
                             last_ema_fast = float(ema_fast.iloc[-1])
                             last_ema_slow = float(ema_slow.iloc[-1])
                             tp1_done = trade_row.get("tp1_partial_done") or 0
@@ -681,11 +724,8 @@ def _run_trade_management(
             elif tp1_done:
                 try:
                     _ov_trail_period = t8_tm_overrides.get("trail_ema_period", t8_policy.trail_ema_period)
-                    m1_df_trail = _tm_m1_df
-                    if m1_df_trail is not None and not m1_df_trail.empty and len(m1_df_trail) > _ov_trail_period:
-                        from core.indicators import ema as ema_fn
-                        m1_close_trail = m1_df_trail["close"].astype(float)
-                        trail_ema = ema_fn(m1_close_trail, _ov_trail_period)
+                    if _m1_close is not None and len(_m1_close) > _ov_trail_period:
+                        trail_ema = _m1_ema(int(_ov_trail_period))
                         if not trail_ema.empty and pd.notna(trail_ema.iloc[-1]):
                             ema_val = float(trail_ema.iloc[-1])
                             prev_be_sl = trade_row.get("breakeven_sl_price")
@@ -708,7 +748,7 @@ def _run_trade_management(
                                 if should_update:
                                     adapter.update_position_stop_loss(position_id, profile.symbol, round(new_trail_sl, 3))
                                     store.update_trade(trade_id, {"breakeven_sl_price": round(new_trail_sl, 5)})
-                            last_m1_close = float(m1_close_trail.iloc[-1])
+                            last_m1_close = float(_m1_close.iloc[-1])
                             if side == "buy" and last_m1_close < ema_val:
                                 position_type = 0
                                 if isinstance(pos, dict):
@@ -786,14 +826,11 @@ def _run_trade_management(
                     # --- Phase C: M5 bar-close-only trailing ---
                     try:
                         _t9_m5_trail_period = int(getattr(t9_policy, "trail_m5_ema_period", 20))
-                        m5_df_trail = _tm_m5_df
-                        if m5_df_trail is not None and not m5_df_trail.empty and len(m5_df_trail) > _t9_m5_trail_period + 1:
-                            from core.indicators import ema as ema_fn
-                            m5_close_trail = m5_df_trail["close"].astype(float)
-                            trail_ema = ema_fn(m5_close_trail, _t9_m5_trail_period)
+                        if _m5_close is not None and len(_m5_close) > _t9_m5_trail_period + 1:
+                            trail_ema = _m5_ema(_t9_m5_trail_period)
                             if not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):
                                 ema_val = float(trail_ema.iloc[-2])
-                                last_m5_close = float(m5_close_trail.iloc[-2])
+                                last_m5_close = float(_m5_close.iloc[-2])
                                 prev_be_sl = trade_row.get("breakeven_sl_price")
                                 if prev_be_sl is not None:
                                     prev_be_sl = float(prev_be_sl)
@@ -818,8 +855,8 @@ def _run_trade_management(
                                 # Prevents the pre-TP1 pullback bar (already below EMA) from killing the runner instantly.
                                 _tp1_anchor = trade_row.get("tp1_time_utc")
                                 _m5_bar_close_time = None
-                                if "time" in m5_df_trail.columns:
-                                    _m5_bar_open = m5_df_trail["time"].iloc[-2]
+                                if _tm_m5_df is not None and "time" in _tm_m5_df.columns:
+                                    _m5_bar_open = _tm_m5_df["time"].iloc[-2]
                                     _m5_bar_close_time = _m5_bar_open + pd.Timedelta(minutes=5)
                                 _bar_is_new = (
                                     _tp1_anchor is None
@@ -895,14 +932,11 @@ def _run_trade_management(
                     # Bar-close-only trailing on M1 EMA
                     try:
                         _t9_trail_period = int(getattr(t9_policy, "trail_ema_period", 21))
-                        m1_df_trail = _tm_m1_df
-                        if m1_df_trail is not None and not m1_df_trail.empty and len(m1_df_trail) > _t9_trail_period + 1:
-                            from core.indicators import ema as ema_fn
-                            m1_close_trail = m1_df_trail["close"].astype(float)
-                            trail_ema = ema_fn(m1_close_trail, _t9_trail_period)
+                        if _m1_close is not None and len(_m1_close) > _t9_trail_period + 1:
+                            trail_ema = _m1_ema(_t9_trail_period)
                             if not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):
                                 ema_val = float(trail_ema.iloc[-2])
-                                last_m1_close = float(m1_close_trail.iloc[-2])
+                                last_m1_close = float(_m1_close.iloc[-2])
                                 prev_be_sl = trade_row.get("breakeven_sl_price")
                                 if prev_be_sl is not None:
                                     prev_be_sl = float(prev_be_sl)
@@ -947,76 +981,61 @@ def _run_trade_management(
             # Kill Switch (M5 trend + M1-200 EMA): check on every poll, act on completed M1 bar close
             # Fires when M5 is Bull AND M1 bar close < EMA200 (BUY), or M5 is Bear AND M1 bar close > EMA200 (SELL)
             # Closes ALL T9 trades (both tiered pullback and zone entry when kill_switch_zone_entry_action="kill")
-            if t9_policy is not None and getattr(t9_policy, "kill_switch_enabled", True):
+            if _t9_kill_switch_snapshot is not None:
                 try:
-                    m1_df_ks = _tm_m1_df
-                    if m1_df_ks is not None and not m1_df_ks.empty and len(m1_df_ks) >= 202:
-                        from core.indicators import ema as ema_fn
-                        m1_close_ks = m1_df_ks["close"].astype(float)
-                        ema200 = ema_fn(m1_close_ks, 200)
-                        if not ema200.empty and pd.notna(ema200.iloc[-2]):
-                            last_ema200 = float(ema200.iloc[-2])
-                            last_m1_close_ks = float(m1_close_ks.iloc[-2])
-                            # M5 trend check
-                            m5_df_ks = _tm_m5_df
-                            m5_is_bull_ks = None
-                            if m5_df_ks is not None and not m5_df_ks.empty and len(m5_df_ks) >= 22:
-                                m5_close_ks = m5_df_ks["close"].astype(float)
-                                _ks_fast_p = int(getattr(t9_policy, "m5_trend_ema_fast", 9))
-                                _ks_slow_p = int(getattr(t9_policy, "m5_trend_ema_slow", 21))
-                                _ks_m5_fast = m5_close_ks.ewm(span=_ks_fast_p, adjust=False).mean()
-                                _ks_m5_slow = m5_close_ks.ewm(span=_ks_slow_p, adjust=False).mean()
-                                m5_is_bull_ks = float(_ks_m5_fast.iloc[-1]) > float(_ks_m5_slow.iloc[-1])
-                            # Extract trade comment
-                            comment = ""
-                            if isinstance(pos, dict):
-                                ce = pos.get("clientExtensions")
-                                if isinstance(ce, dict):
-                                    comment = str(ce.get("comment") or "")
-                                if not comment:
-                                    te = pos.get("tradeClientExtensions")
-                                    if isinstance(te, dict):
-                                        comment = str(te.get("comment") or "")
-                            if "kt_cg_trial_9" not in comment:
-                                pass  # Not a T9 trade
+                    last_ema200 = float(_t9_kill_switch_snapshot["last_ema200"])
+                    last_m1_close_ks = float(_t9_kill_switch_snapshot["last_m1_close"])
+                    m5_is_bull_ks = _t9_kill_switch_snapshot["m5_is_bull"]
+                    # Extract trade comment
+                    comment = ""
+                    if isinstance(pos, dict):
+                        ce = pos.get("clientExtensions")
+                        if isinstance(ce, dict):
+                            comment = str(ce.get("comment") or "")
+                        if not comment:
+                            te = pos.get("tradeClientExtensions")
+                            if isinstance(te, dict):
+                                comment = str(te.get("comment") or "")
+                    if "kt_cg_trial_9" not in comment:
+                        pass  # Not a T9 trade
+                    else:
+                        is_zone_entry = "zone_entry" in comment
+                        import re
+                        _tier_m = re.search(r"tier_(\d+)", comment)
+                        tier_num = int(_tier_m.group(1)) if _tier_m else None
+                        if is_zone_entry:
+                            label = "zone_entry"
+                        elif tier_num is not None:
+                            label = f"tier_{tier_num}"
+                        else:
+                            label = "unknown"
+
+                        should_kill = False
+                        # Kill when M5 trend is Bull and M1 completed bar close < EMA200
+                        if side == "buy" and m5_is_bull_ks is True and last_m1_close_ks < last_ema200:
+                            if is_zone_entry:
+                                if str(getattr(t9_policy, "kill_switch_zone_entry_action", "kill")) == "kill":
+                                    should_kill = True
                             else:
-                                is_zone_entry = "zone_entry" in comment
-                                import re
-                                _tier_m = re.search(r"tier_(\d+)", comment)
-                                tier_num = int(_tier_m.group(1)) if _tier_m else None
-                                if is_zone_entry:
-                                    label = "zone_entry"
-                                elif tier_num is not None:
-                                    label = f"tier_{tier_num}"
-                                else:
-                                    label = "unknown"
+                                should_kill = True  # All tiered pullback tiers killed
+                        # Kill when M5 trend is Bear and M1 completed bar close > EMA200
+                        elif side == "sell" and m5_is_bull_ks is False and last_m1_close_ks > last_ema200:
+                            if is_zone_entry:
+                                if str(getattr(t9_policy, "kill_switch_zone_entry_action", "kill")) == "kill":
+                                    should_kill = True
+                            else:
+                                should_kill = True  # All tiered pullback tiers killed
 
-                                should_kill = False
-                                # Kill when M5 trend is Bull and M1 completed bar close < EMA200
-                                if side == "buy" and m5_is_bull_ks is True and last_m1_close_ks < last_ema200:
-                                    if is_zone_entry:
-                                        if str(getattr(t9_policy, "kill_switch_zone_entry_action", "kill")) == "kill":
-                                            should_kill = True
-                                    else:
-                                        should_kill = True  # All tiered pullback tiers killed
-                                # Kill when M5 trend is Bear and M1 completed bar close > EMA200
-                                elif side == "sell" and m5_is_bull_ks is False and last_m1_close_ks > last_ema200:
-                                    if is_zone_entry:
-                                        if str(getattr(t9_policy, "kill_switch_zone_entry_action", "kill")) == "kill":
-                                            should_kill = True
-                                    else:
-                                        should_kill = True  # All tiered pullback tiers killed
-
-                                if should_kill:
-                                    position_type = 1 if side == "sell" else 0
-                                    if isinstance(pos, dict):
-                                        vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
-                                    else:
-                                        vol = float(getattr(pos, "volume", 0) or 0)
-                                    if vol > 0:
-                                        adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
-                                        m5_trend_str = "Bull" if m5_is_bull_ks else "Bear"
-                                        print(f"[{profile.profile_name}] T9 Kill Switch: closed {label} pos {position_id} (M5={m5_trend_str}, M1 close {last_m1_close_ks:.3f} vs EMA200 {last_ema200:.3f})")
+                        if should_kill:
+                            position_type = 1 if side == "sell" else 0
+                            if isinstance(pos, dict):
+                                vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                            else:
+                                vol = float(getattr(pos, "volume", 0) or 0)
+                            if vol > 0:
+                                adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                m5_trend_str = "Bull" if m5_is_bull_ks else "Bear"
+                                print(f"[{profile.profile_name}] T9 Kill Switch: closed {label} pos {position_id} (M5={m5_trend_str}, M1 close {last_m1_close_ks:.3f} vs EMA200 {last_ema200:.3f})")
                 except Exception as e:
                     print(f"[{profile.profile_name}] T9 Kill Switch error pos {position_id}: {e}")
 
@@ -1882,6 +1901,24 @@ def main() -> None:
             and getattr(p, "use_reversal_risk_score", False)
             for p in profile.execution.policies
         )
+        has_trial8_daily_filter = any(
+            getattr(p, "type", None) == "kt_cg_trial_8"
+            and getattr(p, "enabled", True)
+            and getattr(p, "use_daily_level_filter", False)
+            for p in profile.execution.policies
+        )
+        has_trial9_daily_filter = any(
+            getattr(p, "type", None) == "kt_cg_trial_9"
+            and getattr(p, "enabled", True)
+            and getattr(p, "use_daily_level_filter", False)
+            for p in profile.execution.policies
+        )
+        has_trial9_ntz = any(
+            getattr(p, "type", None) == "kt_cg_trial_9"
+            and getattr(p, "enabled", True)
+            and getattr(p, "ntz_enabled", False)
+            for p in profile.execution.policies
+        )
         has_m15_swing_filter = any(
             getattr(p, "type", None) in ("kt_cg_counter_trend_pullback", "kt_cg_hybrid")
             and getattr(p, "enabled", True)
@@ -1899,6 +1936,36 @@ def main() -> None:
         )
         needs_h4_data = has_phase3_integrated or has_trial7_reversal_risk or needs_alignment_context
         needs_m15_data = needs_h4_data or has_m15_swing_filter
+        needs_daily_data = (
+            has_phase3_integrated
+            or has_kt_cg_trial_4
+            or has_kt_cg_trial_5
+            or has_trial8_daily_filter
+            or has_trial9_daily_filter
+            or has_trial9_ntz
+        )
+        oanda_trial79_only = (
+            getattr(profile, "broker_type", None) == "oanda"
+            and (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9)
+            and not (
+                has_confirmed_cross
+                or has_indicator
+                or has_breakout
+                or has_session
+                or has_bollinger
+                or has_vwap
+                or has_ema_pullback
+                or has_kt_cg_ctp
+                or has_kt_cg_hybrid
+                or has_kt_cg_trial_4
+                or has_kt_cg_trial_5
+                or has_kt_cg_trial_6
+                or has_uncle_parsh
+                or has_phase3_integrated
+            )
+        )
+        oanda_m1_fetch_count = 250 if oanda_trial79_only else (10000 if has_phase3_integrated else 800)
+        oanda_m5_fetch_count = 100 if oanda_trial79_only else 2000
 
         loop_count = 0
         last_sync_time = 0.0
@@ -2123,7 +2190,7 @@ def main() -> None:
                             # Phase 3 derives all higher TFs from M1. Use a deeper history so
                             # H4 ADX and daily pivots are built from full resampled bars.
                             # Other OANDA strategies keep the lighter 800-bar fetch.
-                            (10000 if has_phase3_integrated else 800) if getattr(profile, "broker_type", None) == "oanda" else 3000,
+                            oanda_m1_fetch_count if getattr(profile, "broker_type", None) == "oanda" else 3000,
                             include_incomplete=(getattr(profile, "broker_type", None) == "oanda"),
                         ),
                     }
@@ -2131,14 +2198,18 @@ def main() -> None:
                         data_by_tf["H4"] = _get_bars_cached(profile.symbol, "H4", 800)
                     if needs_m15_data:
                         data_by_tf["M15"] = _get_bars_cached(profile.symbol, "M15", 2000)
-                    # Fetch M5 data when needed by ema_pullback, kt_cg_ctp, kt_cg_hybrid, M5 confirmed-cross, or uncle_parsh.
+                    # Fetch M5 only when needed.
                     if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_uncle_parsh or has_phase3_integrated:
-                        data_by_tf["M5"] = _get_bars_cached(profile.symbol, "M5", 2000)
+                        data_by_tf["M5"] = _get_bars_cached(
+                            profile.symbol,
+                            "M5",
+                            oanda_m5_fetch_count if getattr(profile, "broker_type", None) == "oanda" else 2000,
+                        )
                     # Fetch M3 data when needed by kt_cg_trial_4/5/6 (trend detection).
                     if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6:
                         data_by_tf["M3"] = _get_bars_cached(profile.symbol, "M3", 3000)
                     # Fetch D1 data when needed by daily H/L filter (Trial #4/5/8/9).
-                    if has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_phase3_integrated:
+                    if needs_daily_data:
                         data_by_tf["D"] = _get_bars_cached(profile.symbol, "D", 5)
                     # Fetch W and MN data only when a T9 NTZ filter is actually enabled.
                     if has_kt_cg_trial_9 and any(
