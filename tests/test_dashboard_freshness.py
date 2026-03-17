@@ -10,6 +10,7 @@ import api.main as api_main
 import core.dashboard_builder as dashboard_builder
 import core.dashboard_models as dashboard_models
 import run_loop
+from storage.sqlite_store import SqliteStore
 
 
 def test_get_dashboard_reports_stale_even_while_loop_running(monkeypatch) -> None:
@@ -98,3 +99,40 @@ def test_dashboard_builder_uses_live_position_snapshot_without_refetch() -> None
     assert ok is True
     assert side_counts == {"buy": 2, "sell": 1}
     assert ids == {1, 2, 3}
+
+
+def test_get_trades_for_date_uses_exit_date_semantics(tmp_path: Path) -> None:
+    store = SqliteStore(tmp_path / "test.sqlite")
+
+    store.insert_trade(
+        {
+            "trade_id": "t-opened-yesterday-closed-today",
+            "timestamp_utc": "2026-03-15T23:50:00+00:00",
+            "profile": "demo-profile",
+            "symbol": "USDJPY",
+            "side": "buy",
+            "entry_price": 150.0,
+            "exit_price": 150.2,
+            "exit_timestamp_utc": "2026-03-16T00:05:00+00:00",
+            "pips": 20.0,
+            "profit": 12.5,
+        }
+    )
+    store.insert_trade(
+        {
+            "trade_id": "t-opened-today-closed-tomorrow",
+            "timestamp_utc": "2026-03-16T18:00:00+00:00",
+            "profile": "demo-profile",
+            "symbol": "USDJPY",
+            "side": "sell",
+            "entry_price": 150.3,
+            "exit_price": 150.1,
+            "exit_timestamp_utc": "2026-03-17T00:10:00+00:00",
+            "pips": 20.0,
+            "profit": 13.0,
+        }
+    )
+
+    rows = store.get_trades_for_date("demo-profile", "2026-03-16")
+
+    assert [row["trade_id"] for row in rows] == ["t-opened-yesterday-closed-today"]

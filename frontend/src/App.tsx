@@ -3760,7 +3760,8 @@ interface EditedSettings {
   t9_kill_switch_enabled: boolean;
   t9_kill_switch_zone_entry_action: 'kill' | 'hold';
   // Trial #9: Exit Strategy + TP1/BE/Trail
-  t9_exit_strategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail';
+  t9_exit_strategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail';
+  t9_hwm_trail_pips: number;
   t9_tp1_pips: number;
   t9_tp1_close_pct: number;
   t9_be_spread_plus_pips: number;
@@ -4022,7 +4023,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t9NtzUseMonthlyHl = false;
       let t9KillSwitchEnabled = false;
       let t9KillSwitchZoneEntryAction: 'kill' | 'hold' = 'hold';
-      let t9ExitStrategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' = 'tp1_be_m5_trail';
+      let t9ExitStrategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail' = 'tp1_be_m5_trail';
+      let t9HwmTrailPips = 3.0;
       let t9Tp1Pips = 6.0;
       let t9Tp1ClosePct = 80;
       let t9BeSpreadPlusPips = 0.5;
@@ -4445,7 +4447,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
               const ksAction = (pol.kill_switch_zone_entry_action as string) ?? 'hold';
               t9KillSwitchZoneEntryAction = (ksAction === 'kill' || ksAction === 'hold') ? ksAction : 'hold';
               const rawEs9 = (pol.exit_strategy as string) ?? 'tp1_be_m5_trail';
-              t9ExitStrategy = (['none', 'tp1_be_trail', 'ema_scale_runner', 'tp1_be_m5_trail'].includes(rawEs9) ? rawEs9 : 'tp1_be_m5_trail') as typeof t9ExitStrategy;
+              t9ExitStrategy = (['none', 'tp1_be_trail', 'ema_scale_runner', 'tp1_be_m5_trail', 'tp1_be_hwm_trail'].includes(rawEs9) ? rawEs9 : 'tp1_be_m5_trail') as typeof t9ExitStrategy;
+              t9HwmTrailPips = (pol.hwm_trail_pips as number) ?? 3.0;
               t9Tp1Pips = (pol.tp1_pips as number) ?? 6.0;
               t9Tp1ClosePct = (pol.tp1_close_pct as number) ?? 80;
               t9BeSpreadPlusPips = (pol.be_spread_plus_pips as number) ?? 0.5;
@@ -4664,8 +4667,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t9_kill_switch_zone_entry_action: t9KillSwitchZoneEntryAction,
         t9_exit_strategy: (() => {
           const raw = (tempSettings?.t9_exit_strategy ?? t9ExitStrategy) as string;
-          return (['none', 'tp1_be_trail', 'ema_scale_runner', 'tp1_be_m5_trail'].includes(raw) ? raw : 'tp1_be_m5_trail') as 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail';
+          return (['none', 'tp1_be_trail', 'ema_scale_runner', 'tp1_be_m5_trail', 'tp1_be_hwm_trail'].includes(raw) ? raw : 'tp1_be_m5_trail') as 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail';
         })(),
+        t9_hwm_trail_pips: tempSettings?.t9_hwm_trail_pips ?? t9HwmTrailPips,
         t9_tp1_pips: tempSettings?.t9_tp1_pips ?? t9Tp1Pips,
         t9_tp1_close_pct: tempSettings?.t9_tp1_close_pct ?? t9Tp1ClosePct,
         t9_be_spread_plus_pips: tempSettings?.t9_be_spread_plus_pips ?? t9BeSpreadPlusPips,
@@ -5056,6 +5060,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.daily_level_buffer_pips = Math.max(0, editedSettings.t8_daily_level_buffer_pips);
           updates.daily_level_breakout_candles_required = Math.max(1, Math.min(5, editedSettings.t8_daily_level_breakout_candles_required));
           updates.exit_strategy = editedSettings.t9_exit_strategy;
+          updates.hwm_trail_pips = editedSettings.t9_hwm_trail_pips;
           updates.m1_exit_ema_fast = Math.max(2, Math.min(50, editedSettings.t8_m1_exit_ema_fast));
           updates.m1_exit_ema_slow = Math.max(3, Math.min(100, editedSettings.t8_m1_exit_ema_slow));
           updates.scale_out_pct = Math.max(10, Math.min(90, editedSettings.t8_scale_out_pct));
@@ -5185,6 +5190,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         }
         if (hasTrial9) {
           settings.t9_exit_strategy = editedSettings.t9_exit_strategy;
+          settings.t9_hwm_trail_pips = editedSettings.t9_hwm_trail_pips;
           settings.t9_tp1_pips = editedSettings.t9_tp1_pips;
           settings.t9_tp1_close_pct = editedSettings.t9_tp1_close_pct;
           settings.t9_be_spread_plus_pips = editedSettings.t9_be_spread_plus_pips;
@@ -5959,17 +5965,18 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Mode</div>
                         <select
                           value={editedSettings.t9_exit_strategy}
-                          onChange={(e) => setEditedSettings({ ...editedSettings, t9_exit_strategy: e.target.value as 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' })}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t9_exit_strategy: e.target.value as 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail' })}
                           style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
                         >
                           <option value="none">None (broker TP/SL only)</option>
                           <option value="tp1_be_trail">TP1 + BE + M1 EMA trail</option>
                           <option value="tp1_be_m5_trail">TP1 + BE + M5 EMA trail</option>
                           <option value="ema_scale_runner">EMA scale-out + runner</option>
+                          <option value="tp1_be_hwm_trail">TP1 + BE + HWM tick trail</option>
                         </select>
                       </div>
                     </div>
-                    {(editedSettings.t9_exit_strategy === 'tp1_be_trail' || editedSettings.t9_exit_strategy === 'tp1_be_m5_trail') && (
+                    {(editedSettings.t9_exit_strategy === 'tp1_be_trail' || editedSettings.t9_exit_strategy === 'tp1_be_m5_trail' || editedSettings.t9_exit_strategy === 'tp1_be_hwm_trail') && (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>TP1 (pips)</div>
@@ -5998,6 +6005,15 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>M5 bar-close-only trail</div>
                       </div>
                       )}
+                      {editedSettings.t9_exit_strategy === 'tp1_be_hwm_trail' && (
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Trail pips (HWM)</div>
+                        <input type="number" step="0.5" min="0.5" max="20" value={editedSettings.t9_hwm_trail_pips}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t9_hwm_trail_pips: parseFloat(e.target.value) || 3.0 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>SL = max(BE, best_price - trail_pips)</div>
+                      </div>
+                      )}
                       {editedSettings.t9_exit_strategy === 'tp1_be_trail' && (
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Trail M1 EMA period</div>
@@ -6014,6 +6030,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         ? 'Close % at TP1, move SL to entry + spread + buffer; then trail runner on M5 EMA (bar-close-only). Close when completed M5 bar crosses EMA.'
                         : editedSettings.t9_exit_strategy === 'tp1_be_trail'
                         ? 'Close % at TP1, move SL to entry + spread + buffer; then trail runner on M1 EMA (bar-close-only).'
+                        : editedSettings.t9_exit_strategy === 'tp1_be_hwm_trail'
+                        ? 'Close % at TP1, move SL to entry + spread + buffer; then ratchet SL up on every tick as price makes new highs. No EMA lag — broker SL handles runner exit.'
                         : ''}
                     </div>
                   </div>

@@ -913,6 +913,108 @@ def _run_trade_management(
                     except Exception as e:
                         print(f"[{profile.profile_name}] T9 M5 trailing EMA error pos {position_id}: {e}")
 
+            elif t9_exit_strategy == "tp1_be_hwm_trail":
+                # --- Phase A: TP1 partial close ---
+                if not tp1_done:
+                    reached_buy = mid >= entry + t9_tp1_pips * pip
+                    reached_sell = mid <= entry - t9_tp1_pips * pip
+                    if (side == "buy" and reached_buy) or (side == "sell" and reached_sell):
+                        if isinstance(pos, dict):
+                            current_units = pos.get("currentUnits") or 0
+                            current_lots = abs(int(current_units)) / 100_000.0
+                        else:
+                            current_lots = float(getattr(pos, "volume", 0) or 0)
+                        close_lots = round(current_lots * (t9_tp1_pct / 100.0), 2)
+                        close_lots = max(MIN_CLOSE_LOTS, min(close_lots, current_lots))
+                        if close_lots < 1e-6:
+                            close_lots = min(MIN_CLOSE_LOTS, current_lots)
+                        position_type = 1 if side == "sell" else 0
+                        partial_close_ok = False
+                        try:
+                            adapter.close_position(
+                                ticket=position_id,
+                                symbol=profile.symbol,
+                                volume=close_lots,
+                                position_type=position_type,
+                            )
+                            partial_close_ok = True
+                            print(f"[{profile.profile_name}] T9 HWM TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t9_tp1_pct}%)")
+                        except Exception as e:
+                            print(f"[{profile.profile_name}] T9 HWM TP1 partial close error pos {position_id}: {e}")
+                        if partial_close_ok:
+                            _tp1_ts = pd.Timestamp.now(tz="UTC").isoformat()
+                            store.update_trade(trade_id, {"tp1_partial_done": 1, "tp1_time_utc": _tp1_ts})
+                            # --- Phase B: BE on TP1 hit ---
+                            _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 0.5))
+                            be_offset = current_spread + _t9_be_pips * pip
+                            if side == "buy":
+                                be_sl = entry + be_offset
+                                be_sl = min(be_sl, tick.bid - pip * 0.5)
+                            else:
+                                be_sl = entry - be_offset
+                                be_sl = max(be_sl, tick.ask + pip * 0.5)
+                            try:
+                                adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
+                                store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
+                                print(f"[{profile.profile_name}] T9 HWM BE: pos {position_id} SL->{be_sl:.3f}")
+                            except Exception as e:
+                                print(f"[{profile.profile_name}] T9 HWM BE error pos {position_id}: {e}")
+
+                elif tp1_done:
+                    # --- Phase C: HWM tick-driven trail ---
+                    # Safety net: if Phase B (BE SL) failed for any reason, retry it now.
+                    _c_be_applied = trade_row.get("breakeven_applied") or 0
+                    if not _c_be_applied:
+                        _t9_be_pips_c = float(getattr(t9_policy, "be_spread_plus_pips", 0.5))
+                        _be_offset_c = current_spread + _t9_be_pips_c * pip
+                        if side == "buy":
+                            _be_sl_c = entry + _be_offset_c
+                            if _be_sl_c < tick.bid - pip * 0.1:
+                                try:
+                                    adapter.update_position_stop_loss(position_id, profile.symbol, round(_be_sl_c, 3))
+                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(_be_sl_c, 5)})
+                                    print(f"[{profile.profile_name}] T9 HWM BE retry (Phase C): pos {position_id} SL->{_be_sl_c:.3f}")
+                                except Exception as e:
+                                    print(f"[{profile.profile_name}] T9 HWM BE retry error pos {position_id}: {e}")
+                        else:
+                            _be_sl_c = entry - _be_offset_c
+                            if _be_sl_c > tick.ask + pip * 0.1:
+                                try:
+                                    adapter.update_position_stop_loss(position_id, profile.symbol, round(_be_sl_c, 3))
+                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(_be_sl_c, 5)})
+                                    print(f"[{profile.profile_name}] T9 HWM BE retry (Phase C): pos {position_id} SL->{_be_sl_c:.3f}")
+                                except Exception as e:
+                                    print(f"[{profile.profile_name}] T9 HWM BE retry error pos {position_id}: {e}")
+                    try:
+                        _hwm_trail_pips = float(getattr(t9_policy, "hwm_trail_pips", 3.0))
+                        stored_peak = trade_row.get("peak_price")
+                        prev_be_sl = trade_row.get("breakeven_sl_price")
+                        if prev_be_sl is not None:
+                            prev_be_sl = float(prev_be_sl)
+
+                        if side == "buy":
+                            current_peak = max(float(stored_peak) if stored_peak is not None else entry, mid)
+                            new_sl = max(prev_be_sl if prev_be_sl is not None else (entry + pip), current_peak - _hwm_trail_pips * pip)
+                            # Only ratchet up (never lower the SL)
+                            if prev_be_sl is None or new_sl > prev_be_sl + pip * 0.1:
+                                adapter.update_position_stop_loss(position_id, profile.symbol, round(new_sl, 3))
+                                store.update_trade(trade_id, {"breakeven_sl_price": round(new_sl, 5)})
+                                print(f"[{profile.profile_name}] T9 HWM trail (BUY): pos {position_id} SL->{new_sl:.3f} peak->{current_peak:.3f}")
+                        else:  # sell
+                            current_peak = min(float(stored_peak) if stored_peak is not None else entry, mid)
+                            new_sl = min(prev_be_sl if prev_be_sl is not None else (entry - pip), current_peak + _hwm_trail_pips * pip)
+                            # Only ratchet down (never raise the SL)
+                            if prev_be_sl is None or new_sl < prev_be_sl - pip * 0.1:
+                                adapter.update_position_stop_loss(position_id, profile.symbol, round(new_sl, 3))
+                                store.update_trade(trade_id, {"breakeven_sl_price": round(new_sl, 5)})
+                                print(f"[{profile.profile_name}] T9 HWM trail (SELL): pos {position_id} SL->{new_sl:.3f} peak->{current_peak:.3f}")
+
+                        # Update peak_price in DB if price improved
+                        if stored_peak is None or current_peak != float(stored_peak):
+                            store.update_trade(trade_id, {"peak_price": round(current_peak, 5)})
+                    except Exception as e:
+                        print(f"[{profile.profile_name}] T9 HWM trail error pos {position_id}: {e}")
+
             else:
                 # Existing tp1_be_trail logic (backward compat)
                 if not tp1_done:
