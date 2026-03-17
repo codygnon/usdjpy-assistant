@@ -1198,6 +1198,11 @@ def nth_sunday(year: int, month: int, n: int) -> pd.Timestamp:
 
 
 def uk_london_open_utc(ts_day: pd.Timestamp) -> int:
+    ts_day = pd.Timestamp(ts_day)
+    if ts_day.tzinfo is None:
+        ts_day = ts_day.tz_localize("UTC")
+    else:
+        ts_day = ts_day.tz_convert("UTC")
     y = ts_day.year
     summer_start = last_sunday(y, 3).normalize()
     summer_end = last_sunday(y, 10).normalize()
@@ -1206,6 +1211,11 @@ def uk_london_open_utc(ts_day: pd.Timestamp) -> int:
 
 
 def us_ny_open_utc(ts_day: pd.Timestamp) -> int:
+    ts_day = pd.Timestamp(ts_day)
+    if ts_day.tzinfo is None:
+        ts_day = ts_day.tz_localize("UTC")
+    else:
+        ts_day = ts_day.tz_convert("UTC")
     y = ts_day.year
     summer_start = nth_sunday(y, 3, 2).normalize()
     summer_end = nth_sunday(y, 11, 1).normalize()
