@@ -213,6 +213,7 @@ export interface TempEmaSettings {
   t8_initial_sl_spread_plus_pips: number | null;
   // Trial #9 Exit Strategy + TP1/BE/Trail
   t9_exit_strategy: string | null;
+  t9_hwm_trail_pips: number | null;
   t9_tp1_pips: number | null;
   t9_tp1_close_pct: number | null;
   t9_be_spread_plus_pips: number | null;
