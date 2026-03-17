@@ -271,6 +271,8 @@ def _normalize_v44_source(v44_src: dict[str, Any]) -> dict[str, Any]:
         "normal_tp2_pips": float(v44_src.get("v5_normal_tp2", 3.0)),
         "weak_tp2_pips": float(v44_src.get("v5_weak_tp2", 2.0)),
         "strong_tp1_close_pct": float(v44_src.get("v5_strong_tp1_close_pct", V44_STRONG_TP1_CLOSE_PCT)),
+        "normal_tp1_close_pct": float(v44_src.get("v5_normal_tp1_close_pct", 0.5)),
+        "weak_tp1_close_pct": float(v44_src.get("v5_weak_tp1_close_pct", 0.6)),
         "be_offset_pips": float(v44_src.get("v5_be_offset", V44_BE_OFFSET_PIPS)),
         "strong_trail_buffer": float(v44_src.get("v5_strong_trail_buffer_pips", v44_src.get("v5_strong_trail_buffer", V44_STRONG_TRAIL_BUFFER))),
         "normal_trail_buffer": float(v44_src.get("v5_normal_trail_buffer", 3.0)),
@@ -3729,11 +3731,13 @@ def _manage_v44_exit(
         except Exception as e:
             return {"action": "error", "reason": f"v44_ny hard close error: {e}"}
 
-    tp1_close_pct = float(cfg.get("strong_tp1_close_pct", V44_STRONG_TP1_CLOSE_PCT))
     be_offset_pips = float(cfg.get("be_offset_pips", V44_BE_OFFSET_PIPS))
     strong_tp2_pips = float(cfg.get("strong_tp2_pips", V44_STRONG_TP2_PIPS))
     normal_tp2_pips = float(cfg.get("normal_tp2_pips", 3.0))
     weak_tp2_pips = float(cfg.get("weak_tp2_pips", 2.0))
+    strong_tp1_close_pct = float(cfg.get("strong_tp1_close_pct", V44_STRONG_TP1_CLOSE_PCT))
+    normal_tp1_close_pct = float(cfg.get("normal_tp1_close_pct", 0.5))
+    weak_tp1_close_pct = float(cfg.get("weak_tp1_close_pct", 0.6))
     strong_trail_buffer = float(cfg.get("strong_trail_buffer", V44_STRONG_TRAIL_BUFFER))
     normal_trail_buffer = float(cfg.get("normal_trail_buffer", 3.0))
     weak_trail_buffer = float(cfg.get("weak_trail_buffer", 2.0))
@@ -3742,6 +3746,12 @@ def _manage_v44_exit(
     tp1_done = int(trade_row.get("tp1_partial_done") or 0) == 1
     entry_type = str(trade_row.get("entry_type") or "")
     is_news = ":news" in entry_type
+    if ":weak" in entry_type:
+        tp1_close_pct = weak_tp1_close_pct
+    elif ":normal" in entry_type:
+        tp1_close_pct = normal_tp1_close_pct
+    else:
+        tp1_close_pct = strong_tp1_close_pct
     tp1_price = trade_row.get("target_price")
     if tp1_price is None:
         tp1_price = entry + (V44_STRONG_TP1_PIPS * pip if side == "buy" else -V44_STRONG_TP1_PIPS * pip)
