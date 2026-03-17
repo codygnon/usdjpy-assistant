@@ -983,6 +983,15 @@ class ExecutionPolicyKtCgTrial9(BaseModel):
     ntz_use_prev_day_hl: bool = True
     ntz_use_weekly_hl: bool = True
     ntz_use_monthly_hl: bool = True
+    # Fibonacci Pivot NTZ extension (uses previous daily H/L/C to compute fib levels)
+    ntz_use_fib_pivots: bool = False
+    ntz_use_fib_pp: bool = True
+    ntz_use_fib_r1: bool = True
+    ntz_use_fib_r2: bool = True
+    ntz_use_fib_r3: bool = True
+    ntz_use_fib_s1: bool = True
+    ntz_use_fib_s2: bool = True
+    ntz_use_fib_s3: bool = True
     kill_switch_enabled: bool = False
     kill_switch_zone_entry_action: Literal["kill", "hold"] = "hold"
 

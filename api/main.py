@@ -426,6 +426,7 @@ class TempEmaSettingsUpdate(BaseModel):
     t8_initial_sl_spread_plus_pips: Optional[float] = None
 
 
+
 class ApplyPresetRequest(BaseModel):
     preset_id: str
     options: Optional[dict[str, Any]] = None  # e.g. vwap_session_filter_enabled for vwap_trend

@@ -729,6 +729,12 @@ def report_t8_exit_strategy(policy) -> FilterReport:
         be_pips = getattr(policy, "be_spread_plus_pips", 0.5)
         m5_period = getattr(policy, "trail_m5_ema_period", 20)
         label = f"TP1 {tp1_pips}p/{close_pct:.0f}% + BE +{be_pips}p + M5 EMA{m5_period} trail"
+    elif exit_strategy == "tp1_be_hwm_trail":
+        tp1_pips = getattr(policy, "tp1_pips", 6.0)
+        close_pct = getattr(policy, "tp1_close_pct", 80.0)
+        be_pips = getattr(policy, "be_spread_plus_pips", 0.5)
+        hwm_pips = getattr(policy, "hwm_trail_pips", 3.0)
+        label = f"TP1 {tp1_pips}p/{close_pct:.0f}% + BE +{be_pips}p + HWM {hwm_pips}p tick trail"
     else:
         tp1_pips = getattr(policy, "tp1_pips", 4.0)
         close_pct = getattr(policy, "tp1_close_pct", 50.0)
@@ -790,7 +796,7 @@ def report_daily_level_filter(policy, tick, side: str, pip_size: float, snapshot
 
 
 def report_ntz_status(ntz_snapshot: Optional[dict], tick, pip_size: float) -> FilterReport:
-    """Report Trial #9 No-Trade Zone status."""
+    """Report Trial #9 No-Trade Zone status (including Fibonacci Pivot levels)."""
     if ntz_snapshot is None or not ntz_snapshot.get("enabled", False):
         return FilterReport(
             filter_id="ntz", display_name="No-Trade Zones",
@@ -800,6 +806,8 @@ def report_ntz_status(ntz_snapshot: Optional[dict], tick, pip_size: float) -> Fi
     buffer_pips = float(ntz_snapshot.get("buffer_pips", 10.0))
     buffer = buffer_pips * pip_size
     current_price = (tick.bid + tick.ask) / 2.0
+    fib_pivots_enabled = ntz_snapshot.get("fib_pivots_enabled", False)
+    fib_levels = ntz_snapshot.get("fib_levels", {})
 
     blocked_label = None
     closest_dist = None
@@ -818,12 +826,26 @@ def report_ntz_status(ntz_snapshot: Optional[dict], tick, pip_size: float) -> Fi
     if blocked_label is not None and closest_dist is not None:
         block_reason = f"Price within {closest_dist / pip_size:.1f}p of {blocked_label} (buffer={buffer_pips}p)"
 
+    # Build metadata with fib pivot info
+    meta: dict = {}
+    if fib_pivots_enabled:
+        meta["fib_pivots_enabled"] = True
+        meta["fib_levels"] = fib_levels
+        meta["fib_levels_count"] = len(fib_levels)
+    else:
+        meta["fib_pivots_enabled"] = False
+
+    display_name = "No-Trade Zones"
+    if fib_pivots_enabled:
+        display_name += " + Fib Pivots"
+
     return FilterReport(
-        filter_id="ntz", display_name="No-Trade Zones",
+        filter_id="ntz", display_name=display_name,
         enabled=True, is_clear=block_reason is None,
         current_value=" | ".join(level_parts) if level_parts else "No levels",
         threshold=f"Buffer: {buffer_pips}p",
         block_reason=block_reason,
+        metadata=meta,
     )
 
 

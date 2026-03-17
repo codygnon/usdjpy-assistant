@@ -13,6 +13,8 @@ import requests
 
 from core.timeframes import Timeframe
 
+_OANDA_MAX_CANDLE_COUNT = 5000
+
 # Re-export types compatible with mt5_adapter
 @dataclass(frozen=True)
 class Tick:
@@ -296,6 +298,7 @@ class OandaAdapter:
     def get_bars(self, symbol: str, tf: Timeframe, count: int, *, include_incomplete: bool = False) -> pd.DataFrame:
         inst = _symbol_to_instrument(symbol)
         gran = _timeframe_to_granularity(tf)
+        count = max(1, min(int(count), _OANDA_MAX_CANDLE_COUNT))
         data = self._req("GET", f"/v3/instruments/{inst}/candles?granularity={gran}&count={count}&price=M")
         candles = data.get("candles", [])
         if not candles:
@@ -327,6 +330,7 @@ class OandaAdapter:
         import urllib.parse
         inst = _symbol_to_instrument(symbol)
         gran = _timeframe_to_granularity(tf)
+        count = max(1, min(int(count), _OANDA_MAX_CANDLE_COUNT))
         from_enc = urllib.parse.quote(from_time_utc, safe="")
         url = f"/v3/instruments/{inst}/candles?granularity={gran}&from={from_enc}&count={count}&price=M"
         data = self._req("GET", url)

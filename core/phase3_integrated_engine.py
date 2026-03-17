@@ -22,6 +22,7 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 from core.signal_engine import drop_incomplete_last_bar
+from core.fib_pivots import compute_daily_fib_pivots
 
 try:
     from core.execution_engine import ExecutionDecision
@@ -677,24 +678,6 @@ def classify_session(now_utc: datetime, effective_config: Optional[dict[str, Any
         return "ny"
     return None
 
-
-# ===================================================================
-#  Fibonacci Pivots
-# ===================================================================
-
-def compute_daily_fib_pivots(prev_day_high: float, prev_day_low: float, prev_day_close: float) -> dict:
-    """Compute daily Fibonacci pivot levels {P, R1, R2, R3, S1, S2, S3}."""
-    p = (prev_day_high + prev_day_low + prev_day_close) / 3.0
-    r = prev_day_high - prev_day_low
-    return {
-        "P": p,
-        "R1": p + 0.382 * r,
-        "R2": p + 0.618 * r,
-        "R3": p + 1.000 * r,
-        "S1": p - 0.382 * r,
-        "S2": p - 0.618 * r,
-        "S3": p - 1.000 * r,
-    }
 
 
 # ===================================================================

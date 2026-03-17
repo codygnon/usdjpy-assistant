@@ -3756,6 +3756,15 @@ interface EditedSettings {
   t9_ntz_use_prev_day_hl: boolean;
   t9_ntz_use_weekly_hl: boolean;
   t9_ntz_use_monthly_hl: boolean;
+  // Trial #9: Fibonacci Pivot NTZ extension
+  t9_ntz_use_fib_pivots: boolean;
+  t9_ntz_use_fib_pp: boolean;
+  t9_ntz_use_fib_r1: boolean;
+  t9_ntz_use_fib_r2: boolean;
+  t9_ntz_use_fib_r3: boolean;
+  t9_ntz_use_fib_s1: boolean;
+  t9_ntz_use_fib_s2: boolean;
+  t9_ntz_use_fib_s3: boolean;
   // Trial #9: Kill Switch
   t9_kill_switch_enabled: boolean;
   t9_kill_switch_zone_entry_action: 'kill' | 'hold';
@@ -4021,6 +4030,15 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t9NtzUsePrevDayHl = true;
       let t9NtzUseWeeklyHl = false;
       let t9NtzUseMonthlyHl = false;
+      // Trial #9: Fibonacci Pivot NTZ extension
+      let t9NtzUseFibPivots = false;
+      let t9NtzUseFibPP = true;
+      let t9NtzUseFibR1 = true;
+      let t9NtzUseFibR2 = true;
+      let t9NtzUseFibR3 = true;
+      let t9NtzUseFibS1 = true;
+      let t9NtzUseFibS2 = true;
+      let t9NtzUseFibS3 = true;
       let t9KillSwitchEnabled = false;
       let t9KillSwitchZoneEntryAction: 'kill' | 'hold' = 'hold';
       let t9ExitStrategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail' = 'tp1_be_m5_trail';
@@ -4443,6 +4461,14 @@ function PresetsPage({ profile }: { profile: Profile }) {
               t9NtzUsePrevDayHl = (pol.ntz_use_prev_day_hl as boolean) ?? true;
               t9NtzUseWeeklyHl = (pol.ntz_use_weekly_hl as boolean) ?? true;
               t9NtzUseMonthlyHl = (pol.ntz_use_monthly_hl as boolean) ?? true;
+              t9NtzUseFibPivots = (pol.ntz_use_fib_pivots as boolean) ?? false;
+              t9NtzUseFibPP = (pol.ntz_use_fib_pp as boolean) ?? true;
+              t9NtzUseFibR1 = (pol.ntz_use_fib_r1 as boolean) ?? true;
+              t9NtzUseFibR2 = (pol.ntz_use_fib_r2 as boolean) ?? true;
+              t9NtzUseFibR3 = (pol.ntz_use_fib_r3 as boolean) ?? true;
+              t9NtzUseFibS1 = (pol.ntz_use_fib_s1 as boolean) ?? true;
+              t9NtzUseFibS2 = (pol.ntz_use_fib_s2 as boolean) ?? true;
+              t9NtzUseFibS3 = (pol.ntz_use_fib_s3 as boolean) ?? true;
               t9KillSwitchEnabled = (pol.kill_switch_enabled as boolean) ?? false;
               const ksAction = (pol.kill_switch_zone_entry_action as string) ?? 'hold';
               t9KillSwitchZoneEntryAction = (ksAction === 'kill' || ksAction === 'hold') ? ksAction : 'hold';
@@ -4460,6 +4486,14 @@ function PresetsPage({ profile }: { profile: Profile }) {
               t9NtzUsePrevDayHl = true;
               t9NtzUseWeeklyHl = true;
               t9NtzUseMonthlyHl = true;
+              t9NtzUseFibPivots = false;
+              t9NtzUseFibPP = true;
+              t9NtzUseFibR1 = true;
+              t9NtzUseFibR2 = true;
+              t9NtzUseFibR3 = true;
+              t9NtzUseFibS1 = true;
+              t9NtzUseFibS2 = true;
+              t9NtzUseFibS3 = true;
               t9KillSwitchEnabled = false;
               t9KillSwitchZoneEntryAction = 'hold';
             }
@@ -4663,6 +4697,14 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t9_ntz_use_prev_day_hl: t9NtzUsePrevDayHl,
         t9_ntz_use_weekly_hl: t9NtzUseWeeklyHl,
         t9_ntz_use_monthly_hl: t9NtzUseMonthlyHl,
+        t9_ntz_use_fib_pivots: t9NtzUseFibPivots,
+        t9_ntz_use_fib_pp: t9NtzUseFibPP,
+        t9_ntz_use_fib_r1: t9NtzUseFibR1,
+        t9_ntz_use_fib_r2: t9NtzUseFibR2,
+        t9_ntz_use_fib_r3: t9NtzUseFibR3,
+        t9_ntz_use_fib_s1: t9NtzUseFibS1,
+        t9_ntz_use_fib_s2: t9NtzUseFibS2,
+        t9_ntz_use_fib_s3: t9NtzUseFibS3,
         t9_kill_switch_enabled: t9KillSwitchEnabled,
         t9_kill_switch_zone_entry_action: t9KillSwitchZoneEntryAction,
         t9_exit_strategy: (() => {
@@ -5071,6 +5113,21 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.be_spread_plus_pips = Math.max(0, editedSettings.t9_be_spread_plus_pips);
           updates.trail_ema_period = Math.max(5, Math.min(50, editedSettings.t9_trail_ema_period));
           updates.trail_m5_ema_period = Math.max(3, Math.min(100, editedSettings.t9_trail_m5_ema_period));
+          // T9: NTZ settings
+          updates.ntz_enabled = editedSettings.t9_ntz_enabled;
+          updates.ntz_buffer_pips = Math.max(0, editedSettings.t9_ntz_buffer_pips);
+          updates.ntz_use_prev_day_hl = editedSettings.t9_ntz_use_prev_day_hl;
+          updates.ntz_use_weekly_hl = editedSettings.t9_ntz_use_weekly_hl;
+          updates.ntz_use_monthly_hl = editedSettings.t9_ntz_use_monthly_hl;
+          // T9: Fibonacci Pivot NTZ extension
+          updates.ntz_use_fib_pivots = editedSettings.t9_ntz_use_fib_pivots;
+          updates.ntz_use_fib_pp = editedSettings.t9_ntz_use_fib_pp;
+          updates.ntz_use_fib_r1 = editedSettings.t9_ntz_use_fib_r1;
+          updates.ntz_use_fib_r2 = editedSettings.t9_ntz_use_fib_r2;
+          updates.ntz_use_fib_r3 = editedSettings.t9_ntz_use_fib_r3;
+          updates.ntz_use_fib_s1 = editedSettings.t9_ntz_use_fib_s1;
+          updates.ntz_use_fib_s2 = editedSettings.t9_ntz_use_fib_s2;
+          updates.ntz_use_fib_s3 = editedSettings.t9_ntz_use_fib_s3;
         }
         // Update Uncle Parsh H1 Breakout settings (Major Extremes Momentum Breakout)
         if (pol.type === 'uncle_parsh_h1_breakout') {
@@ -6034,6 +6091,44 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         ? 'Close % at TP1, move SL to entry + spread + buffer; then ratchet SL up on every tick as price makes new highs. No EMA lag — broker SL handles runner exit.'
                         : ''}
                     </div>
+                  </div>
+                  )}
+                  {/* Trial #9: Fibonacci Pivot NTZ Extension */}
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_9') && (
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Trial #9 Fibonacci Pivot NTZ
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Adds Fibonacci pivot levels (PP/R1-R3/S1-S3) as no-trade zones. Computed from previous daily H/L/C. OFF by default — does not affect current behavior until enabled.
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 12 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={editedSettings.t9_ntz_use_fib_pivots}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t9_ntz_use_fib_pivots: e.target.checked })}
+                            style={{ width: 18, height: 18, cursor: 'pointer' }} />
+                          <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>Use Fibonacci Pivots in NTZ</span>
+                        </label>
+                      </div>
+                    </div>
+                    {editedSettings.t9_ntz_use_fib_pivots && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: 8 }}>
+                      {(['PP', 'R1', 'R2', 'R3', 'S1', 'S2', 'S3'] as const).map(level => {
+                        const key = `t9_ntz_use_fib_${level.toLowerCase()}` as keyof EditedSettings;
+                        return (
+                          <div key={level} style={{ padding: 6, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                              <input type="checkbox" checked={editedSettings[key] as boolean}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, [key]: e.target.checked })}
+                                style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                              <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>{level}</span>
+                            </label>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    )}
                   </div>
                   )}
                   {/* Trend Extension Exhaustion (Trial #5 only) */}

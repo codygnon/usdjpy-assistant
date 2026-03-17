@@ -4,6 +4,7 @@ Blocks entries when price is within a configurable buffer of major liquidity lev
 - Previous Day High/Low (D1 candle)
 - Weekly High/Low (W candle)
 - Monthly High/Low (MN candle)
+- Fibonacci Pivot levels (PP/R1/R2/R3/S1/S2/S3) computed from previous daily H/L/C
 """
 from __future__ import annotations
 
@@ -20,6 +21,15 @@ class NoTradeZoneFilter:
         use_prev_day_hl: bool = True,
         use_weekly_hl: bool = True,
         use_monthly_hl: bool = True,
+        # Fibonacci Pivot extension
+        use_fib_pivots: bool = False,
+        use_fib_pp: bool = True,
+        use_fib_r1: bool = True,
+        use_fib_r2: bool = True,
+        use_fib_r3: bool = True,
+        use_fib_s1: bool = True,
+        use_fib_s2: bool = True,
+        use_fib_s3: bool = True,
     ):
         self.enabled = enabled
         self.buffer_pips = buffer_pips
@@ -28,6 +38,16 @@ class NoTradeZoneFilter:
         self.use_weekly_hl = use_weekly_hl
         self.use_monthly_hl = use_monthly_hl
 
+        # Fib pivot toggles
+        self.use_fib_pivots = use_fib_pivots
+        self.use_fib_pp = use_fib_pp
+        self.use_fib_r1 = use_fib_r1
+        self.use_fib_r2 = use_fib_r2
+        self.use_fib_r3 = use_fib_r3
+        self.use_fib_s1 = use_fib_s1
+        self.use_fib_s2 = use_fib_s2
+        self.use_fib_s3 = use_fib_s3
+
         # Level storage (set via update_levels)
         self.prev_day_high: float | None = None
         self.prev_day_low: float | None = None
@@ -35,6 +55,9 @@ class NoTradeZoneFilter:
         self.weekly_low: float | None = None
         self.monthly_high: float | None = None
         self.monthly_low: float | None = None
+
+        # Fibonacci pivot levels (set via update_fib_levels)
+        self.fib_levels: dict[str, float] = {}  # e.g. {"PP": 150.5, "R1": 150.8, ...}
 
     def update_levels(
         self,
@@ -53,6 +76,33 @@ class NoTradeZoneFilter:
         self.weekly_low = weekly_low
         self.monthly_high = monthly_high
         self.monthly_low = monthly_low
+
+    def update_fib_levels(self, fib_levels: dict[str, float] | None) -> None:
+        """Store computed Fibonacci pivot levels. Keys: P, R1, R2, R3, S1, S2, S3."""
+        self.fib_levels = dict(fib_levels) if fib_levels else {}
+
+    def _get_active_fib_levels(self) -> list[tuple[str, float]]:
+        """Return list of (label, value) for enabled fib levels."""
+        if not self.use_fib_pivots or not self.fib_levels:
+            return []
+        mapping = {
+            "PP": self.use_fib_pp,
+            "R1": self.use_fib_r1,
+            "R2": self.use_fib_r2,
+            "R3": self.use_fib_r3,
+            "S1": self.use_fib_s1,
+            "S2": self.use_fib_s2,
+            "S3": self.use_fib_s3,
+        }
+        result = []
+        for key, enabled in mapping.items():
+            if enabled:
+                # Fib levels use "P" internally, display as "PP"
+                source_key = "P" if key == "PP" else key
+                val = self.fib_levels.get(source_key)
+                if val is not None:
+                    result.append((f"Fib-{key}", val))
+        return result
 
     def is_in_no_trade_zone(self, current_price: float) -> tuple[bool, str]:
         """Check if price is within buffer_pips of any enabled level.
@@ -76,6 +126,10 @@ class NoTradeZoneFilter:
         if self.use_monthly_hl:
             levels.append(("MH", self.monthly_high))
             levels.append(("ML", self.monthly_low))
+
+        # Add active fib pivot levels
+        for label, val in self._get_active_fib_levels():
+            levels.append((label, val))
 
         for label, level in levels:
             if level is None:
@@ -103,8 +157,18 @@ class NoTradeZoneFilter:
         if self.use_monthly_hl:
             levels["MH"] = self.monthly_high
             levels["ML"] = self.monthly_low
+
+        # Add fib levels to snapshot
+        fib_snapshot: dict = {}
+        if self.use_fib_pivots and self.fib_levels:
+            for label, val in self._get_active_fib_levels():
+                levels[label] = val
+                fib_snapshot[label] = val
+
         return {
             "enabled": self.enabled,
             "buffer_pips": self.buffer_pips,
             "levels": levels,
+            "fib_pivots_enabled": self.use_fib_pivots,
+            "fib_levels": fib_snapshot,
         }

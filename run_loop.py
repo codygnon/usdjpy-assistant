@@ -2164,7 +2164,7 @@ def main() -> None:
                 or has_phase3_integrated
             )
         )
-        oanda_m1_fetch_count = 250 if oanda_trial79_only else (10000 if has_phase3_integrated else 800)
+        oanda_m1_fetch_count = 250 if oanda_trial79_only else (5000 if has_phase3_integrated else 800)
         oanda_m5_fetch_count = 100 if oanda_trial79_only else 2000
 
         loop_count = 0
@@ -2199,7 +2199,7 @@ def main() -> None:
         _last_summary_time: float = 0.0
         _SUMMARY_INTERVAL: float = 30.0  # Print periodic summary every 30s
 
-        # Shared daily H/L state for Trial #7 and Trial #8 (today_high/low, prev_day_high/low)
+        # Shared daily H/L/C state for Trial #7 and Trial #8 (today_high/low, prev_day_high/low/close)
         trial7_daily_state: dict = {
             "date_utc": None,
             "today_open": None,
@@ -2207,6 +2207,7 @@ def main() -> None:
             "today_low": None,
             "prev_day_high": None,
             "prev_day_low": None,
+            "prev_day_close": None,
         }
         try:
             _init_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
@@ -2235,8 +2236,28 @@ def main() -> None:
                     pip_size=float(profile.pip_size),
                 )
 
-        # No-Trade Zone filter for Trial #9 (not used now that Trial #9 is a copy of Trial #8, but kept for future experiments)
+        # No-Trade Zone filter for Trial #9 (includes optional Fibonacci Pivot levels)
         ntz_filter = None
+        if has_kt_cg_trial_9:
+            from core.no_trade_zone import NoTradeZoneFilter
+            _t9_pol = next((p for p in profile.execution.policies if getattr(p, "type", None) == "kt_cg_trial_9" and getattr(p, "enabled", True)), None)
+            if _t9_pol is not None:
+                ntz_filter = NoTradeZoneFilter(
+                    enabled=bool(getattr(_t9_pol, "ntz_enabled", False)),
+                    buffer_pips=float(getattr(_t9_pol, "ntz_buffer_pips", 10.0)),
+                    pip_size=float(profile.pip_size),
+                    use_prev_day_hl=bool(getattr(_t9_pol, "ntz_use_prev_day_hl", True)),
+                    use_weekly_hl=bool(getattr(_t9_pol, "ntz_use_weekly_hl", True)),
+                    use_monthly_hl=bool(getattr(_t9_pol, "ntz_use_monthly_hl", True)),
+                    use_fib_pivots=bool(getattr(_t9_pol, "ntz_use_fib_pivots", False)),
+                    use_fib_pp=bool(getattr(_t9_pol, "ntz_use_fib_pp", True)),
+                    use_fib_r1=bool(getattr(_t9_pol, "ntz_use_fib_r1", True)),
+                    use_fib_r2=bool(getattr(_t9_pol, "ntz_use_fib_r2", True)),
+                    use_fib_r3=bool(getattr(_t9_pol, "ntz_use_fib_r3", True)),
+                    use_fib_s1=bool(getattr(_t9_pol, "ntz_use_fib_s1", True)),
+                    use_fib_s2=bool(getattr(_t9_pol, "ntz_use_fib_s2", True)),
+                    use_fib_s3=bool(getattr(_t9_pol, "ntz_use_fib_s3", True)),
+                )
 
         # Phase 3 Integrated state (pivots, session counters, open trade tracking)
         phase3_state: dict = {}
@@ -2479,7 +2500,7 @@ def main() -> None:
                         _raw_m1 = _get_bars_cached(
                             profile.symbol,
                             "M1",
-                            (10000 if has_phase3_integrated else 800) if getattr(profile, "broker_type", None) == "oanda" else 3000,
+                            (5000 if has_phase3_integrated else 800) if getattr(profile, "broker_type", None) == "oanda" else 3000,
                             include_incomplete=(getattr(profile, "broker_type", None) == "oanda"),
                             force_refresh=(getattr(profile, "broker_type", None) == "oanda"),
                         )
@@ -2641,9 +2662,10 @@ def main() -> None:
                             else:
                                 prev_row = d_local.iloc[-1]
                                 _log(f"D1 prev_row: iloc[-1] (last candle is NOT today={now_date}, last={d_local.iloc[-1]['time'].date().isoformat()})")
-                            _log(f"D1 selected: H={float(prev_row['high']):.3f} L={float(prev_row['low']):.3f}")
+                            _log(f"D1 selected: H={float(prev_row['high']):.3f} L={float(prev_row['low']):.3f} C={float(prev_row['close']):.3f}")
                             trial7_daily_state["prev_day_high"] = float(prev_row["high"])
                             trial7_daily_state["prev_day_low"] = float(prev_row["low"])
+                            trial7_daily_state["prev_day_close"] = float(prev_row["close"])
                     except Exception:
                         pass
                 if date_changed and daily_level_filter is not None:
@@ -4025,6 +4047,22 @@ def main() -> None:
                                     _ntz_levels["monthly_low"] = ml
 
                                 ntz_filter.update_levels(**_ntz_levels)
+
+                                # Compute Fibonacci pivots from previous daily H/L/C
+                                if ntz_filter.use_fib_pivots:
+                                    _pdh = trial7_daily_state.get("prev_day_high")
+                                    _pdl = trial7_daily_state.get("prev_day_low")
+                                    _pdc = trial7_daily_state.get("prev_day_close")
+                                    if _pdh is not None and _pdl is not None and _pdc is not None:
+                                        try:
+                                            from core.fib_pivots import compute_daily_fib_pivots
+                                            _fib = compute_daily_fib_pivots(float(_pdh), float(_pdl), float(_pdc))
+                                            ntz_filter.update_fib_levels(_fib)
+                                            _log(f"NTZ Fib pivots: PP={_fib['P']:.3f} R1={_fib['R1']:.3f} S1={_fib['S1']:.3f}")
+                                        except Exception as _fib_err:
+                                            _log(f"NTZ Fib pivot compute error: {_fib_err}", "ERROR")
+                                    else:
+                                        ntz_filter.update_fib_levels(None)
                             except Exception as _ntz_err:
                                 _log(f"NTZ level update error: {_ntz_err}", "ERROR")
                         exec_result = execute_kt_cg_trial_9_policy_demo_only(
