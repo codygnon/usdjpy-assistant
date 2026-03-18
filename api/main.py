@@ -3138,7 +3138,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                     if _policy_type in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6"):
                         data_by_tf["M3"] = _get_bars_cached(_adapter, profile.symbol, "M3", 3000)
                     if _policy_type in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_8", "kt_cg_trial_9"):
-                        data_by_tf["D"] = _get_bars_cached(_adapter, profile.symbol, "D", 2)
+                        data_by_tf["D"] = _get_bars_cached(_adapter, profile.symbol, "D", 3)
                     if _policy_type in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9", "phase3_integrated"):
                         data_by_tf["M5"] = _get_bars_cached(_adapter, profile.symbol, "M5", 2000)
                     if _policy_type == "phase3_integrated":
@@ -3232,17 +3232,21 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         from core.fib_pivots import compute_daily_fib_pivots
 
                         def _prev_d_row(d_df: pd.DataFrame | None) -> dict[str, Any] | None:
-                            if d_df is None or d_df.empty or len(d_df) < 2:
+                            if d_df is None or d_df.empty:
                                 return None
                             d_local = d_df.copy()
                             d_local["time"] = pd.to_datetime(d_local["time"], utc=True, errors="coerce")
                             d_local = d_local.dropna(subset=["time"]).sort_values("time")
-                            if len(d_local) < 2:
+                            if d_local.empty:
                                 return None
                             now_date = now_utc.date().isoformat()
                             if str(d_local.iloc[-1]["time"].date().isoformat()) == now_date:
+                                # Last bar is today's forming candle; take the previous completed day
+                                if len(d_local) < 2:
+                                    return None
                                 row = d_local.iloc[-2]
                             else:
+                                # Last bar is a completed previous day (e.g. only completed bars returned)
                                 row = d_local.iloc[-1]
                             return {k: row.get(k) for k in ("high", "low", "close")}
 
