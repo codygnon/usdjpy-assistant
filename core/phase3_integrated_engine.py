@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import time
 import hashlib
@@ -1242,8 +1243,8 @@ def impact_rank(v: object) -> int:
     return 0
 
 
-@lru_cache(maxsize=8)
-def _load_news_events_cached(calendar_path: str, impact_floor: str) -> tuple[pd.Timestamp, ...]:
+@lru_cache(maxsize=16)
+def _load_news_events_cached_inner(calendar_path: str, impact_floor: str, mtime_ns: int) -> tuple[pd.Timestamp, ...]:
     events: list[pd.Timestamp] = []
     try:
         news_df = pd.read_csv(calendar_path)
@@ -1278,6 +1279,14 @@ def _load_news_events_cached(calendar_path: str, impact_floor: str) -> tuple[pd.
             continue
     events.sort()
     return tuple(events)
+
+
+def _load_news_events_cached(calendar_path: str, impact_floor: str) -> tuple[pd.Timestamp, ...]:
+    try:
+        mtime_ns = int(os.stat(calendar_path).st_mtime_ns)
+    except Exception:
+        mtime_ns = -1
+    return _load_news_events_cached_inner(calendar_path, impact_floor, mtime_ns)
 
 
 def is_in_news_window(ts_now: datetime, events: tuple[pd.Timestamp, ...], before_min: int, after_min: int) -> bool:

@@ -32,6 +32,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "session": {
         "active_days_utc": ["Tuesday", "Wednesday", "Thursday"],
         "hard_close_at_ny_open": True,
+        "tp1_runner_hard_close_delay_minutes_after_ny_open": 0,
     },
     "risk": {
         "risk_per_trade_pct": 0.01,
@@ -122,6 +123,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "tp2_r_multiple": 2.0,
             "tp1_close_fraction": 0.5,
             "be_offset_pips": 1.0,
+            "extend_runner_until_ny_start_delay": False,
+            "grace_trail_distance_pips": 8.0,
             "reset_mode": "touch_level",
         },
     },
@@ -415,8 +418,11 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
         london_open = day_start + pd.Timedelta(hours=london_h)
         ny_open = day_start + pd.Timedelta(hours=ny_h)
         hard_close = ny_open
+        tp1_runner_hard_close = ny_open + pd.Timedelta(
+            minutes=int(cfg["session"].get("tp1_runner_hard_close_delay_minutes_after_ny_open", 0) or 0)
+        )
 
-        if day_df["time"].max() < hard_close:
+        if day_df["time"].max() < max(hard_close, tp1_runner_hard_close):
             continue
 
         asian = day_df[(day_df["time"] >= day_start) & (day_df["time"] < london_open)]
@@ -508,6 +514,7 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
             bid_o, ask_o = to_bid_ask(float(row["open"]), sp)
             bid_h, ask_h = to_bid_ask(float(row["high"]), sp)
             bid_l, ask_l = to_bid_ask(float(row["low"]), sp)
+            bid_c, ask_c = to_bid_ask(float(row["close"]), sp)
 
             # execute pending entries
             to_exec = [x for x in pending_entries if x["execute_time"] == ts]
@@ -613,9 +620,24 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
                 day_entries_setup[setup] += 1
                 day_entries_setup_dir[(setup, direction)] += 1
 
-            # hard close at NY open
-            if ts == hard_close:
+            # hard close at NY open, with optional delayed close for runners that
+            # already hit TP1 and are protected at BE.
+            if ts == hard_close or ts == tp1_runner_hard_close:
+                survivors_after_forced_close: list[Position] = []
                 for p in open_positions:
+                    allow_delayed_runner = (
+                        p.setup_type == "D"
+                        and bool(cfg["setups"]["D"].get("extend_runner_until_ny_start_delay", False))
+                        and p.tp1_hit
+                        and p.remaining_units > 0
+                        and tp1_runner_hard_close > hard_close
+                    )
+                    if (
+                        ts == hard_close
+                        and allow_delayed_runner
+                    ):
+                        survivors_after_forced_close.append(p)
+                        continue
                     exit_px = bid_o if p.direction == "long" else ask_o
                     u = p.remaining_units
                     lp, lu = calc_leg_pnl(p.direction, p.entry_price, float(exit_px), u)
@@ -624,7 +646,10 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
                     p.remaining_units = 0
                     p.exit_time = ts
                     p.exit_price_last = float(exit_px)
-                    p.exit_reason = "TP1_PARTIAL" if p.tp1_hit else "HARD_CLOSE"
+                    if p.tp1_hit and ts > hard_close:
+                        p.exit_reason = "TP1_THEN_DELAYED_HARD_CLOSE"
+                    else:
+                        p.exit_reason = "TP1_ONLY_HARD_CLOSE" if p.tp1_hit else "HARD_CLOSE"
                     equity += p.pnl_usd_realized
                     equity_events.append((ts, p.pnl_usd_realized))
                     trades_out.append(
@@ -659,8 +684,11 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
                         }
                     )
                     mark_post_exit(p, ts)
-                open_positions = []
-                break
+                open_positions = survivors_after_forced_close
+                if ts == tp1_runner_hard_close:
+                    break
+                if ts == hard_close and tp1_runner_hard_close <= hard_close:
+                    break
 
             # manage open positions
             survivors: list[Position] = []
@@ -773,6 +801,21 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
                     if first2 == "b":
                         close_remaining("BE_STOP", p.sl_price)
                         continue
+
+                    # Optional: after NY open, allow only Setup D TP1 runners to
+                    # continue until NY start-delay while protecting them with a
+                    # simple trailing stop.
+                    if (
+                        p.setup_type == "D"
+                        and bool(cfg["setups"]["D"].get("extend_runner_until_ny_start_delay", False))
+                        and hard_close <= ts < tp1_runner_hard_close
+                    ):
+                        grace_trail_pips = float(cfg["setups"]["D"].get("grace_trail_distance_pips", 0.0) or 0.0)
+                        if grace_trail_pips > 0:
+                            if p.direction == "long":
+                                p.sl_price = max(p.sl_price, bid_c - grace_trail_pips * PIP_SIZE)
+                            else:
+                                p.sl_price = min(p.sl_price, ask_c + grace_trail_pips * PIP_SIZE)
 
                 survivors.append(p)
 
@@ -1123,7 +1166,15 @@ def write_outputs(
                 }
             )
 
-    exit_reasons = ["TP1_PARTIAL", "TP2_FULL", "SL_FULL", "BE_STOP", "HARD_CLOSE"]
+    exit_reasons = [
+        "TP1_PARTIAL",
+        "TP1_ONLY_HARD_CLOSE",
+        "TP1_THEN_DELAYED_HARD_CLOSE",
+        "TP2_FULL",
+        "SL_FULL",
+        "BE_STOP",
+        "HARD_CLOSE",
+    ]
     exit_by_setup: dict[str, list[dict[str, Any]]] = {}
     for s in ["A", "B", "C", "D"]:
         rows = []
