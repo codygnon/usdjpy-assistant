@@ -1210,6 +1210,83 @@ def collect_trial_7_context(
     return items
 
 
+def collect_trial_9_context(
+    policy,
+    data_by_tf: dict,
+    tick,
+    tier_state: dict,
+    eval_result: Optional[dict],
+    pip_size: float,
+    *,
+    exhaustion_result: Optional[dict] = None,
+    ntz_snapshot: Optional[dict] = None,
+) -> list[ContextItem]:
+    """Collect Trial #9 dashboard context, including NTZ/Fibonacci details."""
+    items = collect_trial_7_context(
+        policy,
+        data_by_tf,
+        tick,
+        tier_state,
+        eval_result,
+        pip_size,
+        exhaustion_result=exhaustion_result,
+    )
+
+    ntz_enabled = bool(getattr(policy, "ntz_enabled", False))
+    fib_enabled = bool(getattr(policy, "ntz_use_fib_pivots", False))
+    buffer_pips = float(getattr(policy, "ntz_buffer_pips", 10.0))
+    current_price = (tick.bid + tick.ask) / 2.0
+
+    items.append(ContextItem("NTZ", "ON" if ntz_enabled else "OFF", "filters"))
+    if ntz_enabled:
+        items.append(ContextItem("NTZ Buffer", f"{buffer_pips:.1f}p", "filters"))
+    items.append(ContextItem("Fib Pivot NTZ", "ON" if fib_enabled else "OFF", "filters"))
+
+    levels = dict((ntz_snapshot or {}).get("levels") or {})
+    fib_levels = dict((ntz_snapshot or {}).get("fib_levels") or {})
+    if fib_enabled:
+        active_labels = ", ".join(fib_levels.keys()) if fib_levels else "Awaiting daily H/L/C"
+        items.append(ContextItem("Fib Levels Active", active_labels, "filters"))
+
+        nearest_label: str | None = None
+        nearest_dist_pips: float | None = None
+        for label, val in fib_levels.items():
+            try:
+                if val is None:
+                    continue
+                level = float(val)
+                dist_pips = abs(current_price - level) / pip_size
+                items.append(ContextItem(label, f"{level:.3f}", "filters"))
+                if nearest_dist_pips is None or dist_pips < nearest_dist_pips:
+                    nearest_dist_pips = dist_pips
+                    nearest_label = label
+            except Exception:
+                continue
+        if nearest_label is not None and nearest_dist_pips is not None:
+            items.append(ContextItem("Nearest Fib Level", f"{nearest_label} ({nearest_dist_pips:.1f}p)", "filters"))
+
+    if ntz_enabled and levels:
+        blocked_label: str | None = None
+        blocked_dist_pips: float | None = None
+        buffer = buffer_pips * pip_size
+        for label, val in levels.items():
+            try:
+                if val is None:
+                    continue
+                dist = abs(current_price - float(val))
+                if dist <= buffer and (blocked_dist_pips is None or dist / pip_size < blocked_dist_pips):
+                    blocked_dist_pips = dist / pip_size
+                    blocked_label = label
+            except Exception:
+                continue
+        if blocked_label is not None and blocked_dist_pips is not None:
+            items.append(ContextItem("NTZ Blocking", f"{blocked_label} ({blocked_dist_pips:.1f}p)", "filters"))
+        else:
+            items.append(ContextItem("NTZ Blocking", "clear", "filters"))
+
+    return items
+
+
 def collect_trial_2_context(
     policy, data_by_tf: dict, tick, pip_size: float,
 ) -> list[ContextItem]:

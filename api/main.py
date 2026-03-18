@@ -3048,6 +3048,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
     bid = ask = spread_pips = 0.0
     positions: list[dict] = []
     filters: list[dict] = []
+    context: list[dict] = []
     tick = None
 
     try:
@@ -3129,6 +3130,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
             exhaustion_result: Optional[dict] = None
             temp_overrides_api: Optional[dict] = None
             phase3_state_for_filters: Optional[dict] = None
+            ntz_filter_snapshot: Optional[dict] = None
             if _policy is not None:
                 try:
                     _adapter = _get_dashboard_adapter(profile)
@@ -3225,6 +3227,102 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 except Exception:
                     temp_overrides_api = None
                     pass
+                if _policy_type == "kt_cg_trial_9":
+                    try:
+                        from core.fib_pivots import compute_daily_fib_pivots
+
+                        def _prev_d_row(d_df: pd.DataFrame | None) -> dict[str, Any] | None:
+                            if d_df is None or d_df.empty or len(d_df) < 2:
+                                return None
+                            d_local = d_df.copy()
+                            d_local["time"] = pd.to_datetime(d_local["time"], utc=True, errors="coerce")
+                            d_local = d_local.dropna(subset=["time"]).sort_values("time")
+                            if len(d_local) < 2:
+                                return None
+                            now_date = now_utc.date().isoformat()
+                            if str(d_local.iloc[-1]["time"].date().isoformat()) == now_date:
+                                row = d_local.iloc[-2]
+                            else:
+                                row = d_local.iloc[-1]
+                            return {k: row.get(k) for k in ("high", "low", "close")}
+
+                        def _prev_candle_hl(df: pd.DataFrame | None) -> tuple[float | None, float | None]:
+                            if df is None or df.empty or len(df) < 2:
+                                return None, None
+                            local = df.copy()
+                            local["time"] = pd.to_datetime(local["time"], utc=True, errors="coerce")
+                            local = local.dropna(subset=["time"]).sort_values("time")
+                            if len(local) < 2:
+                                return None, None
+                            row = local.iloc[-2]
+                            try:
+                                return float(row["high"]), float(row["low"])
+                            except Exception:
+                                return None, None
+
+                        ntz_levels: dict[str, float] = {}
+                        prev_daily = _prev_d_row(data_by_tf.get("D"))
+                        if getattr(_policy, "ntz_use_prev_day_hl", True) and prev_daily is not None:
+                            try:
+                                ntz_levels["PDH"] = float(prev_daily["high"])
+                                ntz_levels["PDL"] = float(prev_daily["low"])
+                            except Exception:
+                                pass
+                        if getattr(_policy, "ntz_use_weekly_hl", True):
+                            wh, wl = _prev_candle_hl(data_by_tf.get("W"))
+                            if wh is not None and wl is not None:
+                                ntz_levels["WH"] = wh
+                                ntz_levels["WL"] = wl
+                        if getattr(_policy, "ntz_use_monthly_hl", True):
+                            mh, ml = _prev_candle_hl(data_by_tf.get("MN"))
+                            if mh is not None and ml is not None:
+                                ntz_levels["MH"] = mh
+                                ntz_levels["ML"] = ml
+
+                        fib_levels: dict[str, float] = {}
+                        if bool(getattr(_policy, "ntz_use_fib_pivots", False)) and prev_daily is not None:
+                            try:
+                                fib_raw = compute_daily_fib_pivots(
+                                    float(prev_daily["high"]),
+                                    float(prev_daily["low"]),
+                                    float(prev_daily["close"]),
+                                )
+                                fib_toggle_map = {
+                                    "Fib-PP": bool(getattr(_policy, "ntz_use_fib_pp", True)),
+                                    "Fib-R1": bool(getattr(_policy, "ntz_use_fib_r1", True)),
+                                    "Fib-R2": bool(getattr(_policy, "ntz_use_fib_r2", True)),
+                                    "Fib-R3": bool(getattr(_policy, "ntz_use_fib_r3", True)),
+                                    "Fib-S1": bool(getattr(_policy, "ntz_use_fib_s1", True)),
+                                    "Fib-S2": bool(getattr(_policy, "ntz_use_fib_s2", True)),
+                                    "Fib-S3": bool(getattr(_policy, "ntz_use_fib_s3", True)),
+                                }
+                                fib_value_map = {
+                                    "Fib-PP": float(fib_raw["P"]),
+                                    "Fib-R1": float(fib_raw["R1"]),
+                                    "Fib-R2": float(fib_raw["R2"]),
+                                    "Fib-R3": float(fib_raw["R3"]),
+                                    "Fib-S1": float(fib_raw["S1"]),
+                                    "Fib-S2": float(fib_raw["S2"]),
+                                    "Fib-S3": float(fib_raw["S3"]),
+                                }
+                                fib_levels = {
+                                    label: value
+                                    for label, value in fib_value_map.items()
+                                    if fib_toggle_map.get(label, False)
+                                }
+                                ntz_levels.update(fib_levels)
+                            except Exception:
+                                fib_levels = {}
+
+                        ntz_filter_snapshot = {
+                            "enabled": bool(getattr(_policy, "ntz_enabled", False)),
+                            "buffer_pips": float(getattr(_policy, "ntz_buffer_pips", 10.0)),
+                            "levels": ntz_levels,
+                            "fib_pivots_enabled": bool(getattr(_policy, "ntz_use_fib_pivots", False)),
+                            "fib_levels": fib_levels,
+                        }
+                    except Exception:
+                        ntz_filter_snapshot = None
             # Compute Trial #6 M3 trend for filter display
             t6_eval_result = None
             if _policy_type == "kt_cg_trial_6" and _policy is not None:
@@ -3250,9 +3348,50 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 store=store,
                 adapter=_adapter if '_adapter' in locals() else None,
                 temp_overrides=temp_overrides_api,
+                ntz_filter_snapshot=ntz_filter_snapshot,
                 phase3_state=phase3_state_for_filters,
             )
             filters.extend(asdict(f) for f in filter_reports)
+            try:
+                from core.dashboard_builder import effective_policy_for_dashboard
+                from core.dashboard_reporters import (
+                    collect_trial_4_context,
+                    collect_trial_5_context,
+                    collect_trial_6_context,
+                    collect_trial_7_context,
+                    collect_trial_9_context,
+                )
+
+                policy_for_context = effective_policy_for_dashboard(_policy, temp_overrides_api) if _policy is not None else None
+                context_items = []
+                if _policy_type == "kt_cg_trial_4" and policy_for_context is not None:
+                    context_items = collect_trial_4_context(policy_for_context, data_by_tf, _tick, {}, None, pip_size)
+                elif _policy_type == "kt_cg_trial_5" and policy_for_context is not None:
+                    context_items = collect_trial_5_context(
+                        policy_for_context, data_by_tf, _tick, {}, None, pip_size,
+                        exhaustion_result=exhaustion_result, daily_reset_state=daily_reset_state,
+                    )
+                elif _policy_type == "kt_cg_trial_6" and policy_for_context is not None:
+                    context_items = collect_trial_6_context(policy_for_context, data_by_tf, _tick, {}, t6_eval_result, pip_size)
+                elif _policy_type == "kt_cg_trial_7" and policy_for_context is not None:
+                    context_items = collect_trial_7_context(
+                        policy_for_context, data_by_tf, _tick, {}, None, pip_size,
+                        exhaustion_result=exhaustion_result,
+                    )
+                elif _policy_type == "kt_cg_trial_8" and policy_for_context is not None:
+                    context_items = collect_trial_7_context(
+                        policy_for_context, data_by_tf, _tick, {}, None, pip_size,
+                        exhaustion_result=exhaustion_result,
+                    )
+                elif _policy_type == "kt_cg_trial_9" and policy_for_context is not None:
+                    context_items = collect_trial_9_context(
+                        policy_for_context, data_by_tf, _tick, {}, None, pip_size,
+                        exhaustion_result=exhaustion_result,
+                        ntz_snapshot=ntz_filter_snapshot,
+                    )
+                context = [asdict(item) for item in context_items]
+            except Exception as e:
+                print(f"[api] dashboard context error for '{profile_name}': {e}")
     except Exception as e:
         print(f"[api] dashboard filters error for '{profile_name}': {e}")
 
@@ -3300,7 +3439,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
         "entry_candidate_side": None,
         "entry_candidate_trigger": None,
         "filters": filters,
-        "context": [],
+        "context": context,
         "positions": positions,
         "daily_summary": daily_summary,
         "bid": bid,
@@ -3438,6 +3577,14 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
                 "use_prev_day_hl": getattr(policy, "ntz_use_prev_day_hl", True),
                 "use_weekly_hl": getattr(policy, "ntz_use_weekly_hl", True),
                 "use_monthly_hl": getattr(policy, "ntz_use_monthly_hl", True),
+                "use_fib_pivots": getattr(policy, "ntz_use_fib_pivots", False),
+                "use_fib_pp": getattr(policy, "ntz_use_fib_pp", True),
+                "use_fib_r1": getattr(policy, "ntz_use_fib_r1", True),
+                "use_fib_r2": getattr(policy, "ntz_use_fib_r2", True),
+                "use_fib_r3": getattr(policy, "ntz_use_fib_r3", True),
+                "use_fib_s1": getattr(policy, "ntz_use_fib_s1", True),
+                "use_fib_s2": getattr(policy, "ntz_use_fib_s2", True),
+                "use_fib_s3": getattr(policy, "ntz_use_fib_s3", True),
             }
             filters["kill_switch"] = {
                 "enabled": getattr(policy, "kill_switch_enabled", True),

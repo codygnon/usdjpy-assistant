@@ -226,6 +226,11 @@ def _normalize_london_source(v2_src: dict[str, Any]) -> dict[str, Any]:
 def _normalize_v44_source(v44_src: dict[str, Any]) -> dict[str, Any]:
     ny_start_raw = v44_src.get("ny_start", v44_src.get("v5_ny_start"))
     ny_end_raw = v44_src.get("ny_end", v44_src.get("v5_ny_end"))
+    # The benchmark session_momentum backtest uses fixed UTC ny_start/ny_end values.
+    # Default live normalization to fixed_utc unless the source config explicitly opts
+    # into DST-aware routing.
+    ny_window_mode = str(v44_src.get("ny_window_mode", "fixed_utc")).lower()
+    ny_daily_loss_usd = v44_src.get("v5_ny_daily_loss_usd", v44_src.get("v5_daily_loss_limit_usd", 0.0))
     return {
         "risk_per_trade_pct": float(v44_src.get("v5_risk_per_trade_pct", V44_RISK_PCT) or V44_RISK_PCT),
         "rp_min_lot": float(v44_src.get("v5_rp_min_lot", 1.0)),
@@ -322,7 +327,7 @@ def _normalize_v44_source(v44_src: dict[str, Any]) -> dict[str, Any]:
         "exhaustion_gate_max_range_pips": float(v44_src.get("v5_exhaustion_gate_max_range_pips", 40.0)),
         "exhaustion_gate_cooldown_minutes": int(v44_src.get("v5_exhaustion_gate_cooldown_minutes", 15)),
         "daily_loss_limit_pips": float(v44_src.get("v5_daily_loss_limit_pips", 0.0)),
-        "daily_loss_limit_usd": float(v44_src.get("v5_daily_loss_limit_usd", 0.0)),
+        "daily_loss_limit_usd": float(ny_daily_loss_usd or 0.0),
         "weekly_loss_limit_pips": float(v44_src.get("v5_weekly_loss_limit_pips", 0.0)),
         "gl_enabled": bool(v44_src.get("v5_gl_enabled", False)),
         "gl_min_wins": int(v44_src.get("v5_gl_min_wins", 1)),
@@ -331,7 +336,7 @@ def _normalize_v44_source(v44_src: dict[str, Any]) -> dict[str, Any]:
         "gl_normal_atr_cap": float(v44_src.get("v5_gl_normal_atr_cap", 0.67)),
         "gl_slope_relax": float(v44_src.get("v5_gl_slope_relax", 0.0)),
         "gl_max_open": int(v44_src.get("v5_gl_max_open", 0)),
-        "ny_window_mode": str(v44_src.get("ny_window_mode", "dst_auto")).lower(),
+        "ny_window_mode": ny_window_mode,
         "ny_start_hour": float(ny_start_raw) if ny_start_raw is not None else None,
         "ny_end_hour": float(ny_end_raw) if ny_end_raw is not None else None,
         "ny_duration_hours": float(v44_src.get("ny_duration_hours", 3.0)),
@@ -1128,7 +1133,10 @@ def compute_v14_units_from_config(
     risk_amount = equity * risk_pct * day_mult
     pip_value_per_unit = pip_size / current_price
     units = risk_amount / (sl_pips * pip_value_per_unit)
-    max_margin_units = (equity * leverage) / current_price
+    # USDJPY on OANDA uses USD as the base currency, so position size is already in
+    # USD-denominated units. Margin capacity is therefore units/leverage in USD,
+    # not quote-price-adjusted.
+    max_margin_units = equity * leverage
     units = min(units, max_margin_units)
     units = min(units, float(max_units))
     return int(math.floor(max(0.0, units)))
@@ -2285,11 +2293,13 @@ def execute_v44_ny_entry(
         try:
             profile_name = getattr(profile, "profile_name", str(profile))
             get_by_exit_date = getattr(store, "get_closed_trades_for_exit_date", None)
-            if v44_daily_loss_limit_pips > 0:
+            day_trades = None
+            if v44_daily_loss_limit_pips > 0 or v44_daily_loss_limit_usd > 0:
                 if callable(get_by_exit_date):
                     day_trades = get_by_exit_date(profile_name, today)
                 else:
                     day_trades = store.get_trades_for_date(profile_name, today)
+            if day_trades is not None:
                 day_pips = sum(
                     float(t["pips"] or 0)
                     for t in day_trades
@@ -2300,7 +2310,7 @@ def execute_v44_ny_entry(
                     for t in day_trades
                     if str(t["entry_type"] or "").startswith("phase3:v44") and t["profit"] is not None
                 )
-                if day_pips <= -v44_daily_loss_limit_pips:
+                if v44_daily_loss_limit_pips > 0 and day_pips <= -v44_daily_loss_limit_pips:
                     no_trade["decision"] = ExecutionDecision(
                         attempted=False, placed=False,
                         reason=f"v44_ny: daily loss limit ({day_pips:.1f}p <= -{v44_daily_loss_limit_pips:.0f}p)",

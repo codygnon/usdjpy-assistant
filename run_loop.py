@@ -60,10 +60,42 @@ from core.dashboard_models import (
 from core.dashboard_reporters import (
     collect_trial_2_context, collect_trial_3_context,
     collect_trial_4_context, collect_trial_5_context,
-    collect_trial_6_context, collect_trial_7_context,
+    collect_trial_6_context, collect_trial_7_context, collect_trial_9_context,
     collect_uncle_parsh_context,
 )
 from storage.sqlite_store import SqliteStore
+
+
+def _safe_update_trail_sl(
+    adapter, store, position_id, trade_id, symbol, new_sl, prev_be_sl,
+    side, tick, pip, profile_name, label="trail",
+):
+    """Update trailing SL on OANDA with round-then-compare, min distance, and error resilience."""
+    prec = 3  # USDJPY OANDA precision
+    rounded_new = round(new_sl, prec)
+    rounded_prev = round(prev_be_sl, prec) if prev_be_sl is not None else None
+
+    # Bug 1 fix: skip if rounded prices are identical
+    if rounded_prev is not None and rounded_new == rounded_prev:
+        return False
+
+    # Bug 3 fix: minimum distance from current price
+    min_dist = pip * 0.5
+    if side == "buy" and rounded_new >= tick.bid - min_dist:
+        return False
+    if side == "sell" and rounded_new <= tick.ask + min_dist:
+        return False
+
+    try:
+        adapter.update_position_stop_loss(position_id, symbol, rounded_new)
+    except Exception as e:
+        print(f"[{profile_name}] {label} SL update error pos {position_id}: {e}")
+        # Bug 2 fix: still update DB so we don't retry same rejected price
+        store.update_trade(trade_id, {"breakeven_sl_price": rounded_new})
+        return False
+
+    store.update_trade(trade_id, {"breakeven_sl_price": rounded_new})
+    return True
 
 
 def _poll_seconds(profile, cli_poll: float | None) -> float:
@@ -489,7 +521,7 @@ def _run_trade_management(
                             if prev_be_sl is None or abs(new_sl - prev_be_sl) > pip * 0.01:
                                 try:
                                     adapter.update_position_stop_loss(position_id, profile.symbol, round(new_sl, 3))
-                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(new_sl, 5)})
+                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(new_sl, 3)})
                                     spread_pips = current_spread / pip
                                     print(f"[{profile.profile_name}] spread-aware BE: pos {position_id} SL -> {new_sl:.3f} (spread={spread_pips:.1f}p, profit={profit_pips:.1f}p)")
                                 except Exception as e:
@@ -716,7 +748,7 @@ def _run_trade_management(
                         be_sl = entry - be_offset
                     try:
                         adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
-                        store.update_trade(trade_id, {"tp1_partial_done": 1, "breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
+                        store.update_trade(trade_id, {"tp1_partial_done": 1, "breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 3)})
                         print(f"[{profile.profile_name}] T8 BE: pos {position_id} SL->{be_sl:.3f}")
                     except Exception as e:
                         print(f"[{profile.profile_name}] T8 BE error pos {position_id}: {e}")
@@ -739,15 +771,11 @@ def _run_trade_management(
                                 new_trail_sl = ema_val + (1.0 * pip)
                                 if prev_be_sl is not None:
                                     new_trail_sl = min(new_trail_sl, prev_be_sl)
-                            if prev_be_sl is None or abs(new_trail_sl - prev_be_sl) > pip * 0.1:
-                                should_update = False
-                                if side == "buy" and (prev_be_sl is None or new_trail_sl > prev_be_sl):
-                                    should_update = True
-                                elif side == "sell" and (prev_be_sl is None or new_trail_sl < prev_be_sl):
-                                    should_update = True
-                                if should_update:
-                                    adapter.update_position_stop_loss(position_id, profile.symbol, round(new_trail_sl, 3))
-                                    store.update_trade(trade_id, {"breakeven_sl_price": round(new_trail_sl, 5)})
+                            _safe_update_trail_sl(
+                                adapter, store, position_id, trade_id, profile.symbol,
+                                new_trail_sl, prev_be_sl, side, tick, pip,
+                                profile.profile_name, label="T8 trail",
+                            )
                             last_m1_close = float(_m1_close.iloc[-1])
                             if side == "buy" and last_m1_close < ema_val:
                                 position_type = 0
@@ -822,7 +850,7 @@ def _run_trade_management(
                                 be_sl = max(be_sl, tick.ask + pip * 0.5)
                             try:
                                 adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
-                                store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
+                                store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 3)})
                                 print(f"[{profile.profile_name}] T9 BE: pos {position_id} SL->{be_sl:.3f}")
                             except Exception as e:
                                 print(f"[{profile.profile_name}] T9 BE error pos {position_id}: {e}")
@@ -840,7 +868,7 @@ def _run_trade_management(
                             if _be_sl_c < tick.bid - pip * 0.1:
                                 try:
                                     adapter.update_position_stop_loss(position_id, profile.symbol, round(_be_sl_c, 3))
-                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(_be_sl_c, 5)})
+                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(_be_sl_c, 3)})
                                     print(f"[{profile.profile_name}] T9 BE retry (Phase C): pos {position_id} SL->{_be_sl_c:.3f}")
                                 except Exception as e:
                                     print(f"[{profile.profile_name}] T9 BE retry error pos {position_id}: {e}")
@@ -849,7 +877,7 @@ def _run_trade_management(
                             if _be_sl_c > tick.ask + pip * 0.1:
                                 try:
                                     adapter.update_position_stop_loss(position_id, profile.symbol, round(_be_sl_c, 3))
-                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(_be_sl_c, 5)})
+                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(_be_sl_c, 3)})
                                     print(f"[{profile.profile_name}] T9 BE retry (Phase C): pos {position_id} SL->{_be_sl_c:.3f}")
                                 except Exception as e:
                                     print(f"[{profile.profile_name}] T9 BE retry error pos {position_id}: {e}")
@@ -871,15 +899,11 @@ def _run_trade_management(
                                     new_trail_sl = ema_val + (1.0 * pip)
                                     if prev_be_sl is not None:
                                         new_trail_sl = min(new_trail_sl, prev_be_sl)
-                                if prev_be_sl is None or abs(new_trail_sl - prev_be_sl) > pip * 0.1:
-                                    should_update = False
-                                    if side == "buy" and (prev_be_sl is None or new_trail_sl > prev_be_sl):
-                                        should_update = True
-                                    elif side == "sell" and (prev_be_sl is None or new_trail_sl < prev_be_sl):
-                                        should_update = True
-                                    if should_update:
-                                        adapter.update_position_stop_loss(position_id, profile.symbol, round(new_trail_sl, 3))
-                                        store.update_trade(trade_id, {"breakeven_sl_price": round(new_trail_sl, 5)})
+                                _safe_update_trail_sl(
+                                    adapter, store, position_id, trade_id, profile.symbol,
+                                    new_trail_sl, prev_be_sl, side, tick, pip,
+                                    profile.profile_name, label="T9 M5 trail",
+                                )
                                 # Only fire runner close on an M5 bar that closed AFTER TP1 was taken.
                                 # Prevents the pre-TP1 pullback bar (already below EMA) from killing the runner instantly.
                                 _tp1_anchor = trade_row.get("tp1_time_utc")
@@ -955,7 +979,7 @@ def _run_trade_management(
                                 be_sl = max(be_sl, tick.ask + pip * 0.5)
                             try:
                                 adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
-                                store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
+                                store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 3)})
                                 print(f"[{profile.profile_name}] T9 HWM BE: pos {position_id} SL->{be_sl:.3f}")
                             except Exception as e:
                                 print(f"[{profile.profile_name}] T9 HWM BE error pos {position_id}: {e}")
@@ -972,7 +996,7 @@ def _run_trade_management(
                             if _be_sl_c < tick.bid - pip * 0.1:
                                 try:
                                     adapter.update_position_stop_loss(position_id, profile.symbol, round(_be_sl_c, 3))
-                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(_be_sl_c, 5)})
+                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(_be_sl_c, 3)})
                                     print(f"[{profile.profile_name}] T9 HWM BE retry (Phase C): pos {position_id} SL->{_be_sl_c:.3f}")
                                 except Exception as e:
                                     print(f"[{profile.profile_name}] T9 HWM BE retry error pos {position_id}: {e}")
@@ -981,7 +1005,7 @@ def _run_trade_management(
                             if _be_sl_c > tick.ask + pip * 0.1:
                                 try:
                                     adapter.update_position_stop_loss(position_id, profile.symbol, round(_be_sl_c, 3))
-                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(_be_sl_c, 5)})
+                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(_be_sl_c, 3)})
                                     print(f"[{profile.profile_name}] T9 HWM BE retry (Phase C): pos {position_id} SL->{_be_sl_c:.3f}")
                                 except Exception as e:
                                     print(f"[{profile.profile_name}] T9 HWM BE retry error pos {position_id}: {e}")
@@ -996,17 +1020,21 @@ def _run_trade_management(
                             current_peak = max(float(stored_peak) if stored_peak is not None else entry, mid)
                             new_sl = max(prev_be_sl if prev_be_sl is not None else (entry + pip), current_peak - _hwm_trail_pips * pip)
                             # Only ratchet up (never lower the SL)
-                            if prev_be_sl is None or new_sl > prev_be_sl + pip * 0.1:
-                                adapter.update_position_stop_loss(position_id, profile.symbol, round(new_sl, 3))
-                                store.update_trade(trade_id, {"breakeven_sl_price": round(new_sl, 5)})
+                            if _safe_update_trail_sl(
+                                adapter, store, position_id, trade_id, profile.symbol,
+                                new_sl, prev_be_sl, side, tick, pip,
+                                profile.profile_name, label="T9 HWM trail (BUY)",
+                            ):
                                 print(f"[{profile.profile_name}] T9 HWM trail (BUY): pos {position_id} SL->{new_sl:.3f} peak->{current_peak:.3f}")
                         else:  # sell
                             current_peak = min(float(stored_peak) if stored_peak is not None else entry, mid)
                             new_sl = min(prev_be_sl if prev_be_sl is not None else (entry - pip), current_peak + _hwm_trail_pips * pip)
                             # Only ratchet down (never raise the SL)
-                            if prev_be_sl is None or new_sl < prev_be_sl - pip * 0.1:
-                                adapter.update_position_stop_loss(position_id, profile.symbol, round(new_sl, 3))
-                                store.update_trade(trade_id, {"breakeven_sl_price": round(new_sl, 5)})
+                            if _safe_update_trail_sl(
+                                adapter, store, position_id, trade_id, profile.symbol,
+                                new_sl, prev_be_sl, side, tick, pip,
+                                profile.profile_name, label="T9 HWM trail (SELL)",
+                            ):
                                 print(f"[{profile.profile_name}] T9 HWM trail (SELL): pos {position_id} SL->{new_sl:.3f} peak->{current_peak:.3f}")
 
                         # Update peak_price in DB if price improved
@@ -1056,7 +1084,7 @@ def _run_trade_management(
                                 be_sl = max(be_sl, tick.ask + pip * 0.5)
                             try:
                                 adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
-                                store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 5)})
+                                store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 3)})
                                 print(f"[{profile.profile_name}] T9 BE: pos {position_id} SL->{be_sl:.3f}")
                             except Exception as e:
                                 print(f"[{profile.profile_name}] T9 BE error pos {position_id}: {e}")
@@ -1073,7 +1101,7 @@ def _run_trade_management(
                             if _be_sl_c < tick.bid - pip * 0.1:
                                 try:
                                     adapter.update_position_stop_loss(position_id, profile.symbol, round(_be_sl_c, 3))
-                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(_be_sl_c, 5)})
+                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(_be_sl_c, 3)})
                                     print(f"[{profile.profile_name}] T9 BE retry (Phase C): pos {position_id} SL->{_be_sl_c:.3f}")
                                 except Exception as e:
                                     print(f"[{profile.profile_name}] T9 BE retry error pos {position_id}: {e}")
@@ -1082,7 +1110,7 @@ def _run_trade_management(
                             if _be_sl_c > tick.ask + pip * 0.1:
                                 try:
                                     adapter.update_position_stop_loss(position_id, profile.symbol, round(_be_sl_c, 3))
-                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(_be_sl_c, 5)})
+                                    store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(_be_sl_c, 3)})
                                     print(f"[{profile.profile_name}] T9 BE retry (Phase C): pos {position_id} SL->{_be_sl_c:.3f}")
                                 except Exception as e:
                                     print(f"[{profile.profile_name}] T9 BE retry error pos {position_id}: {e}")
@@ -1104,15 +1132,11 @@ def _run_trade_management(
                                     new_trail_sl = ema_val + (1.0 * pip)
                                     if prev_be_sl is not None:
                                         new_trail_sl = min(new_trail_sl, prev_be_sl)
-                                if prev_be_sl is None or abs(new_trail_sl - prev_be_sl) > pip * 0.1:
-                                    should_update = False
-                                    if side == "buy" and (prev_be_sl is None or new_trail_sl > prev_be_sl):
-                                        should_update = True
-                                    elif side == "sell" and (prev_be_sl is None or new_trail_sl < prev_be_sl):
-                                        should_update = True
-                                    if should_update:
-                                        adapter.update_position_stop_loss(position_id, profile.symbol, round(new_trail_sl, 3))
-                                        store.update_trade(trade_id, {"breakeven_sl_price": round(new_trail_sl, 5)})
+                                _safe_update_trail_sl(
+                                    adapter, store, position_id, trade_id, profile.symbol,
+                                    new_trail_sl, prev_be_sl, side, tick, pip,
+                                    profile.profile_name, label="T9 M1 trail",
+                                )
                                 if side == "buy" and last_m1_close < ema_val:
                                     position_type = 0
                                     if isinstance(pos, dict):
@@ -1677,9 +1701,10 @@ def _build_and_write_dashboard(
                 exhaustion_result=exhaustion_result,
             )
         elif policy_type == "kt_cg_trial_9":
-            context_items = collect_trial_7_context(
+            context_items = collect_trial_9_context(
                 policy_for_context, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
                 exhaustion_result=exhaustion_result,
+                ntz_snapshot=(ntz_filter.get_levels_snapshot() if ntz_filter is not None else None),
             )
         elif policy_type == "kt_cg_hybrid":
             context_items = collect_trial_2_context(policy, data_by_tf, tick, pip_size)
@@ -2134,11 +2159,12 @@ def main() -> None:
             or has_vwap
             or has_ema_pullback
         )
-        needs_h4_data = has_phase3_integrated or has_trial7_reversal_risk or needs_alignment_context
+        # Phase 3 now derives H4/M15/H1/M5/D from M1, so it should not force
+        # extra broker timeframe fetches by itself.
+        needs_h4_data = has_trial7_reversal_risk or needs_alignment_context
         needs_m15_data = needs_h4_data or has_m15_swing_filter
         needs_daily_data = (
-            has_phase3_integrated
-            or has_kt_cg_trial_4
+            has_kt_cg_trial_4
             or has_kt_cg_trial_5
             or has_trial8_daily_filter
             or has_trial9_daily_filter
@@ -2164,7 +2190,7 @@ def main() -> None:
                 or has_phase3_integrated
             )
         )
-        oanda_m1_fetch_count = 250 if oanda_trial79_only else (5000 if has_phase3_integrated else 800)
+        oanda_m1_fetch_count = 250 if oanda_trial79_only else (10000 if has_phase3_integrated else 800)
         oanda_m5_fetch_count = 100 if oanda_trial79_only else 2000
 
         loop_count = 0
@@ -2420,7 +2446,7 @@ def main() -> None:
                     if needs_m15_data:
                         data_by_tf["M15"] = _get_bars_cached(profile.symbol, "M15", 2000)
                     # Fetch M5 only when needed.
-                    if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_uncle_parsh or has_phase3_integrated:
+                    if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_uncle_parsh:
                         data_by_tf["M5"] = _get_bars_cached(
                             profile.symbol,
                             "M5",
@@ -2448,8 +2474,8 @@ def main() -> None:
                         except Exception as _mn_err:
                             _log(f"MN candle fetch failed: {_mn_err}", "WARN")
 
-                    # Fetch H1 data when needed by Uncle Parsh or Phase3 integrated NY branch.
-                    if has_uncle_parsh or has_phase3_integrated:
+                    # Fetch H1 only when a non-Phase3 policy needs broker-native H1 data.
+                    if has_uncle_parsh:
                         data_by_tf["H1"] = _get_bars_cached(profile.symbol, "H1", 200)
                     # Tick always fetched fresh for live price detection
                     tick = adapter.get_tick(profile.symbol)
