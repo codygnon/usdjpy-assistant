@@ -797,7 +797,16 @@ def report_daily_level_filter(policy, tick, side: str, pip_size: float, snapshot
 
 def report_ntz_status(ntz_snapshot: Optional[dict], tick, pip_size: float) -> FilterReport:
     """Report Trial #9 No-Trade Zone status (including Fibonacci Pivot levels)."""
-    if ntz_snapshot is None or not ntz_snapshot.get("enabled", False):
+    if ntz_snapshot is None:
+        return FilterReport(
+            filter_id="ntz", display_name="No-Trade Zones",
+            enabled=False, is_clear=True,
+        )
+    ntz_blocking_enabled = ntz_snapshot.get("enabled", False)
+    fib_pivots_enabled = ntz_snapshot.get("fib_pivots_enabled", False)
+    fib_levels_data = ntz_snapshot.get("fib_levels", {})
+    # Return disabled only if both NTZ blocking AND fib pivots have no data
+    if not ntz_blocking_enabled and not (fib_pivots_enabled and fib_levels_data):
         return FilterReport(
             filter_id="ntz", display_name="No-Trade Zones",
             enabled=False, is_clear=True,
@@ -806,8 +815,7 @@ def report_ntz_status(ntz_snapshot: Optional[dict], tick, pip_size: float) -> Fi
     buffer_pips = float(ntz_snapshot.get("buffer_pips", 10.0))
     buffer = buffer_pips * pip_size
     current_price = (tick.bid + tick.ask) / 2.0
-    fib_pivots_enabled = ntz_snapshot.get("fib_pivots_enabled", False)
-    fib_levels = ntz_snapshot.get("fib_levels", {})
+    fib_levels = fib_levels_data  # already fetched above
 
     blocked_label = None
     closest_dist = None
@@ -816,18 +824,20 @@ def report_ntz_status(ntz_snapshot: Optional[dict], tick, pip_size: float) -> Fi
         if val is not None:
             dist = abs(current_price - val)
             dist_pips = dist / pip_size
-            in_zone = dist <= buffer
+            in_zone = ntz_blocking_enabled and dist <= buffer
             level_parts.append(f"{label}={val:.3f}({dist_pips:.1f}p{'*' if in_zone else ''})")
             if in_zone and (closest_dist is None or dist < closest_dist):
                 closest_dist = dist
                 blocked_label = label
 
     block_reason = None
-    if blocked_label is not None and closest_dist is not None:
+    if ntz_blocking_enabled and blocked_label is not None and closest_dist is not None:
         block_reason = f"Price within {closest_dist / pip_size:.1f}p of {blocked_label} (buffer={buffer_pips}p)"
     explanation = None
     if level_parts:
-        if block_reason is not None:
+        if not ntz_blocking_enabled:
+            explanation = f"NTZ blocking OFF; showing {len(level_parts)} reference levels"
+        elif block_reason is not None:
             explanation = f"Blocking at {blocked_label}; monitoring {len(level_parts)} levels"
         else:
             explanation = f"Clear; monitoring {len(level_parts)} levels"
@@ -841,7 +851,7 @@ def report_ntz_status(ntz_snapshot: Optional[dict], tick, pip_size: float) -> Fi
     else:
         meta["fib_pivots_enabled"] = False
 
-    display_name = "No-Trade Zones"
+    display_name = "No-Trade Zones" if ntz_blocking_enabled else "NTZ Levels (blocking OFF)"
     if fib_pivots_enabled:
         display_name += " + Fib Pivots"
 
@@ -849,7 +859,7 @@ def report_ntz_status(ntz_snapshot: Optional[dict], tick, pip_size: float) -> Fi
         filter_id="ntz", display_name=display_name,
         enabled=True, is_clear=block_reason is None,
         current_value=" | ".join(level_parts) if level_parts else "No levels",
-        threshold=f"Buffer: {buffer_pips}p",
+        threshold=f"Buffer: {buffer_pips}p" if ntz_blocking_enabled else "Blocking disabled",
         block_reason=block_reason,
         explanation=explanation,
         metadata=meta,

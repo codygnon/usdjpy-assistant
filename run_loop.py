@@ -2350,6 +2350,27 @@ def main() -> None:
             if ntz_filter is None:
                 return
 
+            # Sync fib pivot settings from saved profile on disk so changes via
+            # "View Settings" take effect without a full loop restart.
+            try:
+                _live_data = json.loads(Path(args.profile).read_text(encoding="utf-8"))
+                _live_t9 = next(
+                    (p for p in _live_data.get("execution", {}).get("policies", [])
+                     if p.get("type") == "kt_cg_trial_9" and p.get("enabled", True)),
+                    None,
+                )
+                if _live_t9 is not None:
+                    ntz_filter.use_fib_pivots = bool(_live_t9.get("ntz_use_fib_pivots", False))
+                    ntz_filter.use_fib_pp = bool(_live_t9.get("ntz_use_fib_pp", True))
+                    ntz_filter.use_fib_r1 = bool(_live_t9.get("ntz_use_fib_r1", True))
+                    ntz_filter.use_fib_r2 = bool(_live_t9.get("ntz_use_fib_r2", True))
+                    ntz_filter.use_fib_r3 = bool(_live_t9.get("ntz_use_fib_r3", True))
+                    ntz_filter.use_fib_s1 = bool(_live_t9.get("ntz_use_fib_s1", True))
+                    ntz_filter.use_fib_s2 = bool(_live_t9.get("ntz_use_fib_s2", True))
+                    ntz_filter.use_fib_s3 = bool(_live_t9.get("ntz_use_fib_s3", True))
+            except Exception:
+                pass  # Use existing filter settings if disk read fails
+
             ntz_levels: dict[str, float] = {}
 
             def _prev_candle_hlc(df, tf_label):
@@ -2404,29 +2425,24 @@ def main() -> None:
 
             ntz_filter.update_levels(**ntz_levels)
 
-            _log(f"NTZ-FIB-DEBUG: use_fib_pivots={ntz_filter.use_fib_pivots} dh={dh} dl={dl} dc={dc} d_df_len={len(d_df) if d_df is not None else 'None'}")
             if ntz_filter.use_fib_pivots:
                 # Use D candle data fetched this poll as the primary source for fib inputs.
                 # Fall back to trial7_daily_state only if D candle data is unavailable.
                 pdh = dh if dh is not None else trial7_daily_state.get("prev_day_high")
                 pdl = dl if dl is not None else trial7_daily_state.get("prev_day_low")
                 pdc = dc if dc is not None else trial7_daily_state.get("prev_day_close")
-                _log(f"NTZ-FIB-DEBUG: pdh={pdh} pdl={pdl} pdc={pdc}")
                 if pdh is not None and pdl is not None and pdc is not None:
                     try:
                         from core.fib_pivots import compute_daily_fib_pivots
-
                         fib_levels = compute_daily_fib_pivots(float(pdh), float(pdl), float(pdc))
                         ntz_filter.update_fib_levels(fib_levels)
-                        _log(
-                            f"NTZ Fib pivots: PP={fib_levels['P']:.3f} "
-                            f"R1={fib_levels['R1']:.3f} S1={fib_levels['S1']:.3f}"
-                        )
                     except Exception as fib_err:
                         _log(f"NTZ Fib pivot compute error: {fib_err}", "ERROR")
                 else:
-                    _log(f"NTZ-FIB-DEBUG: MISSING DATA - clearing fib levels (pdh={pdh} pdl={pdl} pdc={pdc})")
+                    _log(f"NTZ Fib: missing D data (pdh={pdh} pdl={pdl} pdc={pdc})", "WARN")
                     ntz_filter.update_fib_levels(None)
+            else:
+                ntz_filter.update_fib_levels(None)
 
         trades_df_cache: pd.DataFrame | None = None
 
