@@ -240,6 +240,12 @@ class OandaAdapter:
                 try:
                     err = resp.json()
                     msg = err.get("errorMessage", resp.text)
+                    # Extract specific rejection reason from OANDA transaction details
+                    rej_txn = err.get("orderRejectTransaction") or err.get("marketOrderRejectTransaction")
+                    if rej_txn:
+                        reason = rej_txn.get("rejectReason", "")
+                        if reason:
+                            msg = f"{msg} (rejectReason: {reason})"
                 except Exception:
                     msg = resp.text
                 if msg and ("<" in msg and ">" in msg):
@@ -537,11 +543,15 @@ class OandaAdapter:
     ) -> OrderResult:
         aid = self._get_account_id()
         # OANDA: ticket is trade_id; close by units. Min 1000 units (0.01 lots) for forex.
+        # Close endpoint always takes positive units — direction is implicit from the trade.
         raw_units = int(round(volume * 100_000))
-        units = str(max(1000, raw_units)) if raw_units > 0 else "1000"
-        if position_type == 1:  # SELL position
-            units = "-" + units
+        units = str(max(1000, abs(raw_units))) if raw_units != 0 else "1000"
         data = self._req("PUT", f"/v3/accounts/{aid}/trades/{ticket}/close", json={"units": units})
+        # Detect silent rejections: OANDA may return 200 with a reject/cancel transaction
+        rej = data.get("orderRejectTransaction") or data.get("marketOrderRejectTransaction") or data.get("orderCancelTransaction")
+        if rej and not data.get("orderFillTransaction"):
+            reason = rej.get("rejectReason") or rej.get("reason") or "REJECTED"
+            raise RuntimeError(f"OANDA close trade {ticket} rejected: {reason}")
         close = data.get("orderFillTransaction") or data.get("orderCreateTransaction")
         if close:
             return OrderResult(retcode=0, comment=close.get("reason", "CLOSED"), request_id=None, order=int(close.get("id", 0)) or None, deal=int(close.get("id", 0)) or None)

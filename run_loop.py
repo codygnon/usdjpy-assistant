@@ -77,13 +77,16 @@ def _safe_update_trail_sl(
 
     # Bug 1 fix: skip if rounded prices are identical
     if rounded_prev is not None and rounded_new == rounded_prev:
+        print(f"[{profile_name}] {label} SL skip pos {position_id}: rounded price unchanged ({rounded_new:.3f})")
         return False
 
     # Bug 3 fix: minimum distance from current price
     min_dist = pip * 0.5
     if side == "buy" and rounded_new >= tick.bid - min_dist:
+        print(f"[{profile_name}] {label} SL skip pos {position_id}: too close to bid ({rounded_new:.3f} >= bid {tick.bid:.3f} - {min_dist:.3f})")
         return False
     if side == "sell" and rounded_new <= tick.ask + min_dist:
+        print(f"[{profile_name}] {label} SL skip pos {position_id}: too close to ask ({rounded_new:.3f} <= ask {tick.ask:.3f} + {min_dist:.3f})")
         return False
 
     try:
@@ -242,6 +245,10 @@ def _insert_trade_for_policy(
 
 # Minimum partial-close size (lots). OANDA typically requires >= 1000 units = 0.01 lots.
 MIN_CLOSE_LOTS = 0.01
+
+# Throttle for sticky TP1 retries: don't hammer OANDA on every poll cycle.
+_tp1_retry_last: dict[int, float] = {}  # position_id -> last retry timestamp
+_TP1_RETRY_INTERVAL = 3.0  # seconds between retry attempts
 
 
 def _run_trade_management(
@@ -800,6 +807,7 @@ def _run_trade_management(
         elif t9_policy is not None and entry_type in ("zone_entry", "tiered_pullback"):
             t9_exit_strategy = str(getattr(t9_policy, "exit_strategy", "tp1_be_trail"))
             tp1_done = trade_row.get("tp1_partial_done") or 0
+            tp1_triggered = trade_row.get("tp1_triggered") or 0
             t9_tp1_pips = float(getattr(t9_policy, "tp1_pips", 6.0))
             t9_tp1_pct = float(getattr(t9_policy, "tp1_close_pct", 80.0))
 
@@ -808,7 +816,18 @@ def _run_trade_management(
                 if not tp1_done:
                     reached_buy = mid >= entry + t9_tp1_pips * pip
                     reached_sell = mid <= entry - t9_tp1_pips * pip
-                    if (side == "buy" and reached_buy) or (side == "sell" and reached_sell):
+                    tp1_hit_now = (side == "buy" and reached_buy) or (side == "sell" and reached_sell)
+                    # Sticky trigger: once price hits TP1, keep retrying close even if price dips back
+                    if tp1_hit_now and not tp1_triggered:
+                        store.update_trade(trade_id, {"tp1_triggered": 1})
+                        tp1_triggered = 1
+                    # Throttle retries when price has dipped back below TP1
+                    _tp1_should_try = tp1_triggered
+                    if tp1_triggered and not tp1_hit_now:
+                        _last = _tp1_retry_last.get(position_id, 0.0)
+                        if time.time() - _last < _TP1_RETRY_INTERVAL:
+                            _tp1_should_try = False
+                    if _tp1_should_try:
                         if isinstance(pos, dict):
                             current_units = pos.get("currentUnits") or 0
                             current_lots = abs(int(current_units)) / 100_000.0
@@ -830,8 +849,10 @@ def _run_trade_management(
                             partial_close_ok = True
                             print(f"[{profile.profile_name}] T9 TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t9_tp1_pct}%)")
                         except Exception as e:
+                            _tp1_retry_last[position_id] = time.time()
                             print(f"[{profile.profile_name}] T9 TP1 partial close error pos {position_id}: {e}")
                         if partial_close_ok:
+                            _tp1_retry_last.pop(position_id, None)
                             # State lock: mark TP1 done immediately so runner is never double-closed.
                             # tp1_time_utc anchors Phase C so stale pre-TP1 M5 bars don't close the runner.
                             _tp1_ts = pd.Timestamp.now(tz="UTC").isoformat()
@@ -942,7 +963,16 @@ def _run_trade_management(
                 if not tp1_done:
                     reached_buy = mid >= entry + t9_tp1_pips * pip
                     reached_sell = mid <= entry - t9_tp1_pips * pip
-                    if (side == "buy" and reached_buy) or (side == "sell" and reached_sell):
+                    tp1_hit_now = (side == "buy" and reached_buy) or (side == "sell" and reached_sell)
+                    if tp1_hit_now and not tp1_triggered:
+                        store.update_trade(trade_id, {"tp1_triggered": 1})
+                        tp1_triggered = 1
+                    _tp1_should_try = tp1_triggered
+                    if tp1_triggered and not tp1_hit_now:
+                        _last = _tp1_retry_last.get(position_id, 0.0)
+                        if time.time() - _last < _TP1_RETRY_INTERVAL:
+                            _tp1_should_try = False
+                    if _tp1_should_try:
                         if isinstance(pos, dict):
                             current_units = pos.get("currentUnits") or 0
                             current_lots = abs(int(current_units)) / 100_000.0
@@ -964,8 +994,10 @@ def _run_trade_management(
                             partial_close_ok = True
                             print(f"[{profile.profile_name}] T9 HWM TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t9_tp1_pct}%)")
                         except Exception as e:
+                            _tp1_retry_last[position_id] = time.time()
                             print(f"[{profile.profile_name}] T9 HWM TP1 partial close error pos {position_id}: {e}")
                         if partial_close_ok:
+                            _tp1_retry_last.pop(position_id, None)
                             _tp1_ts = pd.Timestamp.now(tz="UTC").isoformat()
                             store.update_trade(trade_id, {"tp1_partial_done": 1, "tp1_time_utc": _tp1_ts})
                             # --- Phase B: BE on TP1 hit ---
@@ -1048,7 +1080,16 @@ def _run_trade_management(
                 if not tp1_done:
                     reached_buy = mid >= entry + t9_tp1_pips * pip
                     reached_sell = mid <= entry - t9_tp1_pips * pip
-                    if (side == "buy" and reached_buy) or (side == "sell" and reached_sell):
+                    tp1_hit_now = (side == "buy" and reached_buy) or (side == "sell" and reached_sell)
+                    if tp1_hit_now and not tp1_triggered:
+                        store.update_trade(trade_id, {"tp1_triggered": 1})
+                        tp1_triggered = 1
+                    _tp1_should_try = tp1_triggered
+                    if tp1_triggered and not tp1_hit_now:
+                        _last = _tp1_retry_last.get(position_id, 0.0)
+                        if time.time() - _last < _TP1_RETRY_INTERVAL:
+                            _tp1_should_try = False
+                    if _tp1_should_try:
                         if isinstance(pos, dict):
                             current_units = pos.get("currentUnits") or 0
                             current_lots = abs(int(current_units)) / 100_000.0
@@ -1070,8 +1111,10 @@ def _run_trade_management(
                             partial_close_ok = True
                             print(f"[{profile.profile_name}] T9 TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t9_tp1_pct}%)")
                         except Exception as e:
+                            _tp1_retry_last[position_id] = time.time()
                             print(f"[{profile.profile_name}] T9 TP1 partial close error pos {position_id}: {e}")
                         if partial_close_ok:
+                            _tp1_retry_last.pop(position_id, None)
                             _tp1_ts = pd.Timestamp.now(tz="UTC").isoformat()
                             store.update_trade(trade_id, {"tp1_partial_done": 1, "tp1_time_utc": _tp1_ts})
                             _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 2.0))
@@ -2294,6 +2337,83 @@ def main() -> None:
             except Exception:
                 phase3_state = {}
 
+        def _refresh_trial9_ntz_levels() -> None:
+            """Refresh Trial #9 NTZ levels, including optional Fibonacci pivots."""
+            nonlocal ntz_filter
+            if ntz_filter is None:
+                return
+
+            ntz_levels: dict[str, float] = {}
+
+            def _prev_candle_hl(df, tf_label):
+                """Extract the relevant H/L for NTZ use."""
+                if df is None or df.empty:
+                    return None, None
+                d_sorted = df.copy()
+                d_sorted["_time"] = pd.to_datetime(d_sorted["time"], utc=True, errors="coerce")
+                d_sorted = d_sorted.dropna(subset=["_time"]).sort_values("_time")
+                if len(d_sorted) < 1:
+                    return None, None
+                if tf_label in ("W", "MN"):
+                    cur_row = d_sorted.iloc[-1]
+                    h = float(cur_row["high"])
+                    l = float(cur_row["low"])
+                    _log(f"NTZ {tf_label}: using CURRENT candle iloc[-1] time={cur_row['_time']} H={h:.3f} L={l:.3f}")
+                    return h, l
+                now_date = pd.Timestamp.now(tz="UTC").date().isoformat()
+                last_date = d_sorted.iloc[-1]["_time"].date().isoformat()
+                if last_date == now_date:
+                    if len(d_sorted) < 2:
+                        return None, None
+                    prev_row = d_sorted.iloc[-2]
+                    _log(f"NTZ {tf_label}: last candle is today ({now_date}), using iloc[-2]")
+                else:
+                    prev_row = d_sorted.iloc[-1]
+                    _log(f"NTZ {tf_label}: last candle is {last_date} (not today {now_date}), using iloc[-1]")
+                h = float(prev_row["high"])
+                l = float(prev_row["low"])
+                _log(f"NTZ {tf_label}: time={prev_row['_time']} H={h:.3f} L={l:.3f}")
+                return h, l
+
+            d_df = data_by_tf.get("D")
+            dh, dl = _prev_candle_hl(d_df, "D1")
+            if dh is not None:
+                ntz_levels["prev_day_high"] = dh
+                ntz_levels["prev_day_low"] = dl
+
+            w_df = data_by_tf.get("W")
+            wh, wl = _prev_candle_hl(w_df, "W")
+            if wh is not None:
+                ntz_levels["weekly_high"] = wh
+                ntz_levels["weekly_low"] = wl
+
+            mn_df = data_by_tf.get("MN")
+            mh, ml = _prev_candle_hl(mn_df, "MN")
+            if mh is not None:
+                ntz_levels["monthly_high"] = mh
+                ntz_levels["monthly_low"] = ml
+
+            ntz_filter.update_levels(**ntz_levels)
+
+            if ntz_filter.use_fib_pivots:
+                pdh = trial7_daily_state.get("prev_day_high")
+                pdl = trial7_daily_state.get("prev_day_low")
+                pdc = trial7_daily_state.get("prev_day_close")
+                if pdh is not None and pdl is not None and pdc is not None:
+                    try:
+                        from core.fib_pivots import compute_daily_fib_pivots
+
+                        fib_levels = compute_daily_fib_pivots(float(pdh), float(pdl), float(pdc))
+                        ntz_filter.update_fib_levels(fib_levels)
+                        _log(
+                            f"NTZ Fib pivots: PP={fib_levels['P']:.3f} "
+                            f"R1={fib_levels['R1']:.3f} S1={fib_levels['S1']:.3f}"
+                        )
+                    except Exception as fib_err:
+                        _log(f"NTZ Fib pivot compute error: {fib_err}", "ERROR")
+                else:
+                    ntz_filter.update_fib_levels(None)
+
         trades_df_cache: pd.DataFrame | None = None
 
         def _invalidate_trades_df_cache() -> None:
@@ -2762,6 +2882,10 @@ def main() -> None:
                     # Use poll time for bar_time_utc so multiple evaluations within a minute are distinct.
                     bar_time_utc = now_utc.isoformat()
                     if pol_type == "kt_cg_trial_9":
+                        try:
+                            _refresh_trial9_ntz_levels()
+                        except Exception as _ntz_err:
+                            _log(f"NTZ level update error: {_ntz_err}", "ERROR")
                         exec_result = execute_kt_cg_trial_9_policy_demo_only(
                             adapter=adapter,
                             profile=profile,
@@ -4017,80 +4141,10 @@ def main() -> None:
                         continue
                     bar_time_utc = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
                     if pol_type == "kt_cg_trial_9":
-                        # Update NTZ levels from candle data
-                        if ntz_filter is not None:
-                            _ntz_levels: dict = {}
-                            try:
-                                def _prev_candle_hl(df, tf_label):
-                                    """Extract high/low from the previous completed candle (sort by time, check if last is today)."""
-                                    if df is None or df.empty:
-                                        return None, None
-                                    d_sorted = df.copy()
-                                    d_sorted["_time"] = pd.to_datetime(d_sorted["time"], utc=True, errors="coerce")
-                                    d_sorted = d_sorted.dropna(subset=["_time"]).sort_values("_time")
-                                    if len(d_sorted) < 1:
-                                        return None, None
-                                    # W/MN: use CURRENT candle HL (forming week/month). We fetch with include_incomplete=True.
-                                    if tf_label in ("W", "MN"):
-                                        cur_row = d_sorted.iloc[-1]
-                                        h = float(cur_row["high"])
-                                        l = float(cur_row["low"])
-                                        _log(f"NTZ {tf_label}: using CURRENT candle iloc[-1] time={cur_row['_time']} H={h:.3f} L={l:.3f}")
-                                        return h, l
-                                    now_date = pd.Timestamp.now(tz="UTC").date().isoformat()
-                                    last_date = d_sorted.iloc[-1]["_time"].date().isoformat()
-                                    if last_date == now_date:
-                                        # Last candle is today's forming candle — use the one before
-                                        if len(d_sorted) < 2:
-                                            return None, None
-                                        prev_row = d_sorted.iloc[-2]
-                                        _log(f"NTZ {tf_label}: last candle is today ({now_date}), using iloc[-2]")
-                                    else:
-                                        # Last candle is a past completed day — use it directly
-                                        prev_row = d_sorted.iloc[-1]
-                                        _log(f"NTZ {tf_label}: last candle is {last_date} (not today {now_date}), using iloc[-1]")
-                                    h = float(prev_row["high"])
-                                    l = float(prev_row["low"])
-                                    _log(f"NTZ {tf_label}: time={prev_row['_time']} H={h:.3f} L={l:.3f}")
-                                    return h, l
-
-                                d_df = data_by_tf.get("D")
-                                dh, dl = _prev_candle_hl(d_df, "D1")
-                                if dh is not None:
-                                    _ntz_levels["prev_day_high"] = dh
-                                    _ntz_levels["prev_day_low"] = dl
-
-                                w_df = data_by_tf.get("W")
-                                wh, wl = _prev_candle_hl(w_df, "W")
-                                if wh is not None:
-                                    _ntz_levels["weekly_high"] = wh
-                                    _ntz_levels["weekly_low"] = wl
-
-                                mn_df = data_by_tf.get("MN")
-                                mh, ml = _prev_candle_hl(mn_df, "MN")
-                                if mh is not None:
-                                    _ntz_levels["monthly_high"] = mh
-                                    _ntz_levels["monthly_low"] = ml
-
-                                ntz_filter.update_levels(**_ntz_levels)
-
-                                # Compute Fibonacci pivots from previous daily H/L/C
-                                if ntz_filter.use_fib_pivots:
-                                    _pdh = trial7_daily_state.get("prev_day_high")
-                                    _pdl = trial7_daily_state.get("prev_day_low")
-                                    _pdc = trial7_daily_state.get("prev_day_close")
-                                    if _pdh is not None and _pdl is not None and _pdc is not None:
-                                        try:
-                                            from core.fib_pivots import compute_daily_fib_pivots
-                                            _fib = compute_daily_fib_pivots(float(_pdh), float(_pdl), float(_pdc))
-                                            ntz_filter.update_fib_levels(_fib)
-                                            _log(f"NTZ Fib pivots: PP={_fib['P']:.3f} R1={_fib['R1']:.3f} S1={_fib['S1']:.3f}")
-                                        except Exception as _fib_err:
-                                            _log(f"NTZ Fib pivot compute error: {_fib_err}", "ERROR")
-                                    else:
-                                        ntz_filter.update_fib_levels(None)
-                            except Exception as _ntz_err:
-                                _log(f"NTZ level update error: {_ntz_err}", "ERROR")
+                        try:
+                            _refresh_trial9_ntz_levels()
+                        except Exception as _ntz_err:
+                            _log(f"NTZ level update error: {_ntz_err}", "ERROR")
                         exec_result = execute_kt_cg_trial_9_policy_demo_only(
                             adapter=adapter,
                             profile=profile,

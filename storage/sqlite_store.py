@@ -194,6 +194,8 @@ class SqliteStore:
             self._ensure_column(conn, "trades", "tp1_time_utc", "TEXT")
             # v2.6: HWM trail — best price reached since TP1 for runner management
             self._ensure_column(conn, "trades", "peak_price", "REAL")
+            # v2.7: sticky TP1 trigger — price hit TP1 but close may have been rejected
+            self._ensure_column(conn, "trades", "tp1_triggered", "INTEGER")
             conn.commit()
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, col: str, col_type: str) -> None:

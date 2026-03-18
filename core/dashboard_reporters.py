@@ -825,6 +825,12 @@ def report_ntz_status(ntz_snapshot: Optional[dict], tick, pip_size: float) -> Fi
     block_reason = None
     if blocked_label is not None and closest_dist is not None:
         block_reason = f"Price within {closest_dist / pip_size:.1f}p of {blocked_label} (buffer={buffer_pips}p)"
+    explanation = None
+    if level_parts:
+        if block_reason is not None:
+            explanation = f"Blocking at {blocked_label}; monitoring {len(level_parts)} levels"
+        else:
+            explanation = f"Clear; monitoring {len(level_parts)} levels"
 
     # Build metadata with fib pivot info
     meta: dict = {}
@@ -845,6 +851,7 @@ def report_ntz_status(ntz_snapshot: Optional[dict], tick, pip_size: float) -> Fi
         current_value=" | ".join(level_parts) if level_parts else "No levels",
         threshold=f"Buffer: {buffer_pips}p",
         block_reason=block_reason,
+        explanation=explanation,
         metadata=meta,
     )
 
