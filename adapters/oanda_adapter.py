@@ -432,9 +432,9 @@ class OandaAdapter:
             "positionFill": "DEFAULT",
         }
         if sl is not None:
-            order["stopLossOnFill"] = {"price": str(round(sl, prec)), "timeInForce": "GTC"}
+            order["stopLossOnFill"] = {"price": f"{round(sl, prec):.{prec}f}", "timeInForce": "GTC"}
         if tp is not None:
-            order["takeProfitOnFill"] = {"price": str(round(tp, prec)), "timeInForce": "GTC"}
+            order["takeProfitOnFill"] = {"price": f"{round(tp, prec):.{prec}f}", "timeInForce": "GTC"}
         if comment:
             order["tradeClientExtensions"] = {"comment": comment[:128]}
         body = {"order": order}
@@ -501,14 +501,14 @@ class OandaAdapter:
             "type": "LIMIT",
             "instrument": inst,
             "units": str(units),
-            "price": str(round(price, prec)),
+            "price": f"{round(price, prec):.{prec}f}",
             "timeInForce": "GTC",
             "positionFill": "DEFAULT",
         }
         if sl is not None:
-            order["stopLossOnFill"] = {"price": str(round(sl, prec)), "timeInForce": "GTC"}
+            order["stopLossOnFill"] = {"price": f"{round(sl, prec):.{prec}f}", "timeInForce": "GTC"}
         if tp is not None:
-            order["takeProfitOnFill"] = {"price": str(round(tp, prec)), "timeInForce": "GTC"}
+            order["takeProfitOnFill"] = {"price": f"{round(tp, prec):.{prec}f}", "timeInForce": "GTC"}
         data = self._req("POST", f"/v3/accounts/{aid}/orders", json={"order": order})
         create = data.get("orderCreateTransaction")
         if data.get("orderRejectTransaction"):
@@ -527,7 +527,9 @@ class OandaAdapter:
         aid = self._get_account_id()
         inst = _symbol_to_instrument(symbol)
         prec = _order_price_precision(inst)
-        body = {"stopLoss": {"timeInForce": "GTC", "price": str(round(stop_loss_price, prec))}}
+        price_str = f"{round(stop_loss_price, prec):.{prec}f}"
+        body = {"stopLoss": {"timeInForce": "GTC", "price": price_str}}
+        print(f"[OANDA DEBUG] update_position_stop_loss trade={trade_id} body={body}")
         self._req("PUT", f"/v3/accounts/{aid}/trades/{trade_id}/orders", json=body)
 
     def close_position(
@@ -546,6 +548,7 @@ class OandaAdapter:
         # Close endpoint always takes positive units — direction is implicit from the trade.
         raw_units = int(round(volume * 100_000))
         units = str(max(1000, abs(raw_units))) if raw_units != 0 else "1000"
+        print(f"[OANDA DEBUG] close_position trade={ticket} units={units} volume={volume} position_type={position_type}")
         data = self._req("PUT", f"/v3/accounts/{aid}/trades/{ticket}/close", json={"units": units})
         # Detect silent rejections: OANDA may return 200 with a reject/cancel transaction
         rej = data.get("orderRejectTransaction") or data.get("marketOrderRejectTransaction") or data.get("orderCancelTransaction")
