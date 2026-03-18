@@ -645,7 +645,6 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
   const dailySummary: DailySummary | null = dashState?.daily_summary || null;
   const presetName = dashState?.preset_name || '';
   const loopLog: Array<{ts: string; level: string; msg: string}> = (dashState as unknown as Record<string, unknown>)?.loop_log as Array<{ts: string; level: string; msg: string}> || [];
-  const [loopLogExpanded, setLoopLogExpanded] = useState(false);
   const openEvents = events.filter((e) => e.event_type === 'open');
   const closedEvents = events.filter((e) => e.event_type === 'close');
   const recentOpenEvents = openEvents.slice(0, 30);
@@ -712,49 +711,20 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
         {/* Execution Log: reasons candidate trades were not placed + loop errors */}
         <ExecutionLog executions={executions} />
 
-        {/* Loop Log — collapsible diagnostic log */}
+        {/* Loop Log — OG style */}
         {loopLog.length > 0 && (
           <div style={{
             backgroundColor: colors.panel, borderRadius: 6,
-            border: `1px solid ${colors.border}`,
+            border: `1px solid ${colors.border}`, padding: 12,
           }}>
-            <div
-              onClick={() => setLoopLogExpanded(!loopLogExpanded)}
-              style={{
-                padding: '8px 12px', cursor: 'pointer', display: 'flex',
-                alignItems: 'center', justifyContent: 'space-between',
-                userSelect: 'none',
-              }}
-            >
-              <div style={{ fontSize: 11, fontWeight: 700, color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 1 }}>
-                Loop Log ({loopLog.length})
-              </div>
-              <span style={{ color: colors.textSecondary, fontSize: 12 }}>
-                {loopLogExpanded ? '\u25B2' : '\u25BC'}
-              </span>
+            <div style={{ fontSize: 11, fontWeight: 700, color: colors.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
+              Loop Log ({loopLog.length})
             </div>
-            {loopLogExpanded && (
-              <div style={{
-                maxHeight: 300, overflowY: 'auto', padding: '0 12px 8px',
-                fontFamily: 'monospace', fontSize: 11, lineHeight: 1.5,
-              }}>
-                {[...loopLog].reverse().map((entry, i) => (
-                  <div key={i} style={{
-                    color: entry.level === 'ERROR' ? colors.red
-                      : entry.level === 'WARN' ? colors.amber
-                      : colors.textSecondary,
-                    whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-                  }}>
-                    <span style={{ color: colors.textSecondary }}>{entry.ts}</span>
-                    {' '}
-                    <span style={{ fontWeight: entry.level !== 'INFO' ? 700 : 400 }}>
-                      [{entry.level}]
-                    </span>
-                    {' '}{entry.msg}
-                  </div>
-                ))}
-              </div>
-            )}
+            <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+              <pre style={{ margin: 0, fontFamily: 'monospace', fontSize: 11, lineHeight: 1.5, color: colors.textSecondary, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+{[...loopLog].reverse().map((e) => `${e.ts} [${e.level}] ${e.msg}`).join('\n')}
+              </pre>
+            </div>
           </div>
         )}
 

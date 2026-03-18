@@ -361,10 +361,10 @@ def _run_trade_management(
         return
     # Reuse shared open_positions snapshot when provided; fall back to adapter call otherwise.
     if open_positions is None:
-        try:
-            open_positions = adapter.get_open_positions(profile.symbol)
-        except Exception:
-            return
+    try:
+        open_positions = adapter.get_open_positions(profile.symbol)
+    except Exception:
+        return
     if not open_positions:
         return
     # sqlite3.Row doesn't support .get(); convert to dicts for safe access
@@ -813,9 +813,9 @@ def _run_trade_management(
 
             if t9_exit_strategy == "tp1_be_m5_trail":
                 # --- Phase A: TP1 partial close ---
-                if not tp1_done:
-                    reached_buy = mid >= entry + t9_tp1_pips * pip
-                    reached_sell = mid <= entry - t9_tp1_pips * pip
+            if not tp1_done:
+                reached_buy = mid >= entry + t9_tp1_pips * pip
+                reached_sell = mid <= entry - t9_tp1_pips * pip
                     tp1_hit_now = (side == "buy" and reached_buy) or (side == "sell" and reached_sell)
                     # Sticky trigger: once price hits TP1, keep retrying close even if price dips back
                     if tp1_hit_now and not tp1_triggered:
@@ -828,29 +828,29 @@ def _run_trade_management(
                         if time.time() - _last < _TP1_RETRY_INTERVAL:
                             _tp1_should_try = False
                     if _tp1_should_try:
-                        if isinstance(pos, dict):
-                            current_units = pos.get("currentUnits") or 0
-                            current_lots = abs(int(current_units)) / 100_000.0
-                        else:
-                            current_lots = float(getattr(pos, "volume", 0) or 0)
+                    if isinstance(pos, dict):
+                        current_units = pos.get("currentUnits") or 0
+                        current_lots = abs(int(current_units)) / 100_000.0
+                    else:
+                        current_lots = float(getattr(pos, "volume", 0) or 0)
                         close_lots = round(current_lots * (t9_tp1_pct / 100.0), 2)
-                        close_lots = max(MIN_CLOSE_LOTS, min(close_lots, current_lots))
-                        if close_lots < 1e-6:
-                            close_lots = min(MIN_CLOSE_LOTS, current_lots)
-                        position_type = 1 if side == "sell" else 0
+                    close_lots = max(MIN_CLOSE_LOTS, min(close_lots, current_lots))
+                    if close_lots < 1e-6:
+                        close_lots = min(MIN_CLOSE_LOTS, current_lots)
+                    position_type = 1 if side == "sell" else 0
                         partial_close_ok = False
-                        try:
-                            adapter.close_position(
-                                ticket=position_id,
-                                symbol=profile.symbol,
-                                volume=close_lots,
-                                position_type=position_type,
-                            )
+                    try:
+                        adapter.close_position(
+                            ticket=position_id,
+                            symbol=profile.symbol,
+                            volume=close_lots,
+                            position_type=position_type,
+                        )
                             partial_close_ok = True
-                            print(f"[{profile.profile_name}] T9 TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t9_tp1_pct}%)")
-                        except Exception as e:
+                        print(f"[{profile.profile_name}] T9 TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t9_tp1_pct}%)")
+                    except Exception as e:
                             _tp1_retry_last[position_id] = time.time()
-                            print(f"[{profile.profile_name}] T9 TP1 partial close error pos {position_id}: {e}")
+                        print(f"[{profile.profile_name}] T9 TP1 partial close error pos {position_id}: {e}")
                         if partial_close_ok:
                             _tp1_retry_last.pop(position_id, None)
                             # State lock: mark TP1 done immediately so runner is never double-closed.
@@ -1117,22 +1117,22 @@ def _run_trade_management(
                             _tp1_retry_last.pop(position_id, None)
                             _tp1_ts = pd.Timestamp.now(tz="UTC").isoformat()
                             store.update_trade(trade_id, {"tp1_partial_done": 1, "tp1_time_utc": _tp1_ts})
-                            _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 2.0))
-                            be_offset = current_spread + _t9_be_pips * pip
-                            if side == "buy":
-                                be_sl = entry + be_offset
+                    _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 2.0))
+                    be_offset = current_spread + _t9_be_pips * pip
+                    if side == "buy":
+                        be_sl = entry + be_offset
                                 be_sl = min(be_sl, tick.bid - pip * 0.5)
-                            else:
-                                be_sl = entry - be_offset
+                    else:
+                        be_sl = entry - be_offset
                                 be_sl = max(be_sl, tick.ask + pip * 0.5)
-                            try:
-                                adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
+                    try:
+                        adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
                                 store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 3)})
-                                print(f"[{profile.profile_name}] T9 BE: pos {position_id} SL->{be_sl:.3f}")
-                            except Exception as e:
-                                print(f"[{profile.profile_name}] T9 BE error pos {position_id}: {e}")
+                        print(f"[{profile.profile_name}] T9 BE: pos {position_id} SL->{be_sl:.3f}")
+                    except Exception as e:
+                        print(f"[{profile.profile_name}] T9 BE error pos {position_id}: {e}")
 
-                elif tp1_done:
+            elif tp1_done:
                     # Bar-close-only trailing on M1 EMA
                     # Safety net: if Phase B (BE SL) failed for any reason, retry it now.
                     _c_be_applied = trade_row.get("breakeven_applied") or 0
@@ -1157,49 +1157,49 @@ def _run_trade_management(
                                     print(f"[{profile.profile_name}] T9 BE retry (Phase C): pos {position_id} SL->{_be_sl_c:.3f}")
                                 except Exception as e:
                                     print(f"[{profile.profile_name}] T9 BE retry error pos {position_id}: {e}")
-                    try:
-                        _t9_trail_period = int(getattr(t9_policy, "trail_ema_period", 21))
+                try:
+                    _t9_trail_period = int(getattr(t9_policy, "trail_ema_period", 21))
                         if _m1_close is not None and len(_m1_close) > _t9_trail_period + 1:
                             trail_ema = _m1_ema(_t9_trail_period)
-                            if not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):
-                                ema_val = float(trail_ema.iloc[-2])
+                        if not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):
+                            ema_val = float(trail_ema.iloc[-2])
                                 last_m1_close = float(_m1_close.iloc[-2])
-                                prev_be_sl = trade_row.get("breakeven_sl_price")
+                            prev_be_sl = trade_row.get("breakeven_sl_price")
+                            if prev_be_sl is not None:
+                                prev_be_sl = float(prev_be_sl)
+                            if side == "buy":
+                                new_trail_sl = ema_val - (1.0 * pip)
                                 if prev_be_sl is not None:
-                                    prev_be_sl = float(prev_be_sl)
-                                if side == "buy":
-                                    new_trail_sl = ema_val - (1.0 * pip)
-                                    if prev_be_sl is not None:
-                                        new_trail_sl = max(new_trail_sl, prev_be_sl)
-                                else:
-                                    new_trail_sl = ema_val + (1.0 * pip)
-                                    if prev_be_sl is not None:
-                                        new_trail_sl = min(new_trail_sl, prev_be_sl)
+                                    new_trail_sl = max(new_trail_sl, prev_be_sl)
+                            else:
+                                new_trail_sl = ema_val + (1.0 * pip)
+                                if prev_be_sl is not None:
+                                    new_trail_sl = min(new_trail_sl, prev_be_sl)
                                 _safe_update_trail_sl(
                                     adapter, store, position_id, trade_id, profile.symbol,
                                     new_trail_sl, prev_be_sl, side, tick, pip,
                                     profile.profile_name, label="T9 M1 trail",
                                 )
-                                if side == "buy" and last_m1_close < ema_val:
-                                    position_type = 0
-                                    if isinstance(pos, dict):
-                                        vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
-                                    else:
-                                        vol = float(getattr(pos, "volume", 0) or 0)
-                                    if vol > 0:
-                                        adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
-                                        print(f"[{profile.profile_name}] T9 runner closed (BUY bar-close < EMA{_t9_trail_period}): pos {position_id}")
-                                elif side == "sell" and last_m1_close > ema_val:
-                                    position_type = 1
-                                    if isinstance(pos, dict):
-                                        vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
-                                    else:
-                                        vol = float(getattr(pos, "volume", 0) or 0)
-                                    if vol > 0:
-                                        adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
-                                        print(f"[{profile.profile_name}] T9 runner closed (SELL bar-close > EMA{_t9_trail_period}): pos {position_id}")
-                    except Exception as e:
-                        print(f"[{profile.profile_name}] T9 trailing EMA error pos {position_id}: {e}")
+                            if side == "buy" and last_m1_close < ema_val:
+                                position_type = 0
+                                if isinstance(pos, dict):
+                                    vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                else:
+                                    vol = float(getattr(pos, "volume", 0) or 0)
+                                if vol > 0:
+                                    adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                    print(f"[{profile.profile_name}] T9 runner closed (BUY bar-close < EMA{_t9_trail_period}): pos {position_id}")
+                            elif side == "sell" and last_m1_close > ema_val:
+                                position_type = 1
+                                if isinstance(pos, dict):
+                                    vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                else:
+                                    vol = float(getattr(pos, "volume", 0) or 0)
+                                if vol > 0:
+                                    adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                    print(f"[{profile.profile_name}] T9 runner closed (SELL bar-close > EMA{_t9_trail_period}): pos {position_id}")
+                except Exception as e:
+                    print(f"[{profile.profile_name}] T9 trailing EMA error pos {position_id}: {e}")
 
             # Kill Switch (M5 trend + M1-200 EMA): check on every poll, act on completed M1 bar close
             # Fires when M5 is Bull AND M1 bar close < EMA200 (BUY), or M5 is Bear AND M1 bar close > EMA200 (SELL)
@@ -1209,56 +1209,56 @@ def _run_trade_management(
                     last_ema200 = float(_t9_kill_switch_snapshot["last_ema200"])
                     last_m1_close_ks = float(_t9_kill_switch_snapshot["last_m1_close"])
                     m5_is_bull_ks = _t9_kill_switch_snapshot["m5_is_bull"]
-                    # Extract trade comment
-                    comment = ""
-                    if isinstance(pos, dict):
-                        ce = pos.get("clientExtensions")
-                        if isinstance(ce, dict):
-                            comment = str(ce.get("comment") or "")
-                        if not comment:
-                            te = pos.get("tradeClientExtensions")
-                            if isinstance(te, dict):
-                                comment = str(te.get("comment") or "")
-                    if "kt_cg_trial_9" not in comment:
-                        pass  # Not a T9 trade
-                    else:
-                        is_zone_entry = "zone_entry" in comment
-                        import re
-                        _tier_m = re.search(r"tier_(\d+)", comment)
-                        tier_num = int(_tier_m.group(1)) if _tier_m else None
-                        if is_zone_entry:
-                            label = "zone_entry"
-                        elif tier_num is not None:
-                            label = f"tier_{tier_num}"
-                        else:
-                            label = "unknown"
-
-                        should_kill = False
-                        # Kill when M5 trend is Bull and M1 completed bar close < EMA200
-                        if side == "buy" and m5_is_bull_ks is True and last_m1_close_ks < last_ema200:
-                            if is_zone_entry:
-                                if str(getattr(t9_policy, "kill_switch_zone_entry_action", "kill")) == "kill":
-                                    should_kill = True
-                            else:
-                                should_kill = True  # All tiered pullback tiers killed
-                        # Kill when M5 trend is Bear and M1 completed bar close > EMA200
-                        elif side == "sell" and m5_is_bull_ks is False and last_m1_close_ks > last_ema200:
-                            if is_zone_entry:
-                                if str(getattr(t9_policy, "kill_switch_zone_entry_action", "kill")) == "kill":
-                                    should_kill = True
-                            else:
-                                should_kill = True  # All tiered pullback tiers killed
-
-                        if should_kill:
-                            position_type = 1 if side == "sell" else 0
+                            # Extract trade comment
+                            comment = ""
                             if isinstance(pos, dict):
-                                vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                ce = pos.get("clientExtensions")
+                                if isinstance(ce, dict):
+                                    comment = str(ce.get("comment") or "")
+                                if not comment:
+                                    te = pos.get("tradeClientExtensions")
+                                    if isinstance(te, dict):
+                                        comment = str(te.get("comment") or "")
+                            if "kt_cg_trial_9" not in comment:
+                                pass  # Not a T9 trade
                             else:
-                                vol = float(getattr(pos, "volume", 0) or 0)
-                            if vol > 0:
-                                adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
-                                m5_trend_str = "Bull" if m5_is_bull_ks else "Bear"
-                                print(f"[{profile.profile_name}] T9 Kill Switch: closed {label} pos {position_id} (M5={m5_trend_str}, M1 close {last_m1_close_ks:.3f} vs EMA200 {last_ema200:.3f})")
+                                is_zone_entry = "zone_entry" in comment
+                                import re
+                                _tier_m = re.search(r"tier_(\d+)", comment)
+                                tier_num = int(_tier_m.group(1)) if _tier_m else None
+                                if is_zone_entry:
+                                    label = "zone_entry"
+                                elif tier_num is not None:
+                                    label = f"tier_{tier_num}"
+                                else:
+                                    label = "unknown"
+
+                                should_kill = False
+                                # Kill when M5 trend is Bull and M1 completed bar close < EMA200
+                                if side == "buy" and m5_is_bull_ks is True and last_m1_close_ks < last_ema200:
+                                    if is_zone_entry:
+                                        if str(getattr(t9_policy, "kill_switch_zone_entry_action", "kill")) == "kill":
+                                            should_kill = True
+                                    else:
+                                        should_kill = True  # All tiered pullback tiers killed
+                                # Kill when M5 trend is Bear and M1 completed bar close > EMA200
+                                elif side == "sell" and m5_is_bull_ks is False and last_m1_close_ks > last_ema200:
+                                    if is_zone_entry:
+                                        if str(getattr(t9_policy, "kill_switch_zone_entry_action", "kill")) == "kill":
+                                            should_kill = True
+                                    else:
+                                        should_kill = True  # All tiered pullback tiers killed
+
+                                if should_kill:
+                                    position_type = 1 if side == "sell" else 0
+                                    if isinstance(pos, dict):
+                                        vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                    else:
+                                        vol = float(getattr(pos, "volume", 0) or 0)
+                                    if vol > 0:
+                                        adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                        m5_trend_str = "Bull" if m5_is_bull_ks else "Bear"
+                                        print(f"[{profile.profile_name}] T9 Kill Switch: closed {label} pos {position_id} (M5={m5_trend_str}, M1 close {last_m1_close_ks:.3f} vs EMA200 {last_ema200:.3f})")
                 except Exception as e:
                     print(f"[{profile.profile_name}] T9 Kill Switch error pos {position_id}: {e}")
 
@@ -1480,137 +1480,137 @@ def _collect_dashboard_positions(
     """Build dashboard position rows, reusing the loop's open-position snapshot when available."""
     from datetime import datetime, timezone
 
-    pip_size = float(profile.pip_size)
-    now_utc = datetime.now(timezone.utc)
-    mid = (tick.bid + tick.ask) / 2.0
+        pip_size = float(profile.pip_size)
+        now_utc = datetime.now(timezone.utc)
+        mid = (tick.bid + tick.ask) / 2.0
     positions: list[PositionInfo] = []
 
-    db_by_position_id: dict[int, dict] = {}
-    try:
-        for row in store.list_open_trades(profile.profile_name):
-            d = dict(row)
-            pos_id = d.get("mt5_position_id")
-            if pos_id is None:
-                continue
-            try:
-                db_by_position_id[int(pos_id)] = d
-            except Exception:
-                continue
-    except Exception:
-        pass
+        db_by_position_id: dict[int, dict] = {}
+        try:
+            for row in store.list_open_trades(profile.profile_name):
+                d = dict(row)
+                pos_id = d.get("mt5_position_id")
+                if pos_id is None:
+                    continue
+                try:
+                    db_by_position_id[int(pos_id)] = d
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
-    try:
+        try:
         live_trades = open_positions_snapshot
         if live_trades is None and adapter is not None:
-            live_trades = adapter.get_open_positions(profile.symbol)
+                live_trades = adapter.get_open_positions(profile.symbol)
         for t in live_trades or []:
-            if isinstance(t, dict):
-                units = float(t.get("currentUnits", 0) or t.get("initialUnits", 0) or 0)
-                s = "buy" if units > 0 else "sell"
-                size_lots = abs(units) / 100_000.0 if units else 0.0
-                entry = float(t.get("price", 0) or 0)
-                trade_id = str(t.get("id", ""))
-                open_time_str = t.get("openTime")
-                sl = None
-                tp = None
-                try:
-                    if t.get("stopLossOrder"):
-                        sl = float(t["stopLossOrder"]["price"])
-                except Exception:
-                    pass
-                try:
-                    if t.get("takeProfitOrder"):
-                        tp = float(t["takeProfitOrder"]["price"])
-                except Exception:
-                    pass
-            else:
-                mt5_type = getattr(t, "type", None)
-                if mt5_type == 0:
-                    s = "buy"
-                elif mt5_type == 1:
-                    s = "sell"
-                else:
-                    continue
-                size_lots = float(getattr(t, "volume", 0.0) or 0.0)
-                entry = float(getattr(t, "price_open", 0.0) or 0.0)
-                trade_id = str(getattr(t, "ticket", ""))
-                open_time_raw = getattr(t, "time", None)
-                open_time_str = str(open_time_raw) if open_time_raw is not None else None
-                sl = float(getattr(t, "sl", 0.0) or 0.0) or None
-                tp = float(getattr(t, "tp", 0.0) or 0.0) or None
+                    if isinstance(t, dict):
+                        units = float(t.get("currentUnits", 0) or t.get("initialUnits", 0) or 0)
+                        s = "buy" if units > 0 else "sell"
+                        size_lots = abs(units) / 100_000.0 if units else 0.0
+                        entry = float(t.get("price", 0) or 0)
+                        trade_id = str(t.get("id", ""))
+                        open_time_str = t.get("openTime")
+                        sl = None
+                        tp = None
+                        try:
+                            if t.get("stopLossOrder"):
+                                sl = float(t["stopLossOrder"]["price"])
+                        except Exception:
+                            pass
+                        try:
+                            if t.get("takeProfitOrder"):
+                                tp = float(t["takeProfitOrder"]["price"])
+                        except Exception:
+                            pass
+                    else:
+                        mt5_type = getattr(t, "type", None)
+                        if mt5_type == 0:
+                            s = "buy"
+                        elif mt5_type == 1:
+                            s = "sell"
+                        else:
+                            continue
+                        size_lots = float(getattr(t, "volume", 0.0) or 0.0)
+                        entry = float(getattr(t, "price_open", 0.0) or 0.0)
+                        trade_id = str(getattr(t, "ticket", ""))
+                        open_time_raw = getattr(t, "time", None)
+                        open_time_str = str(open_time_raw) if open_time_raw is not None else None
+                        sl = float(getattr(t, "sl", 0.0) or 0.0) or None
+                        tp = float(getattr(t, "tp", 0.0) or 0.0) or None
 
-            if not entry or not s:
-                continue
+                    if not entry or not s:
+                        continue
 
-            unrealized = (mid - entry) / pip_size if s == "buy" else (entry - mid) / pip_size
-            age = 0.0
-            if open_time_str:
-                try:
-                    import pandas as _pd2
-                    t0 = _pd2.to_datetime(open_time_str, utc=True)
-                    age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
-                except Exception:
-                    pass
+                    unrealized = (mid - entry) / pip_size if s == "buy" else (entry - mid) / pip_size
+                    age = 0.0
+                    if open_time_str:
+                        try:
+                            import pandas as _pd2
+                            t0 = _pd2.to_datetime(open_time_str, utc=True)
+                            age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
+                        except Exception:
+                            pass
 
-            db_row = None
-            try:
-                db_row = db_by_position_id.get(int(trade_id))
-            except Exception:
-                db_row = None
+                    db_row = None
+                    try:
+                        db_row = db_by_position_id.get(int(trade_id))
+                    except Exception:
+                        db_row = None
 
-            positions.append(PositionInfo(
-                trade_id=trade_id,
-                side=s,
-                entry_price=entry,
-                size_lots=round(size_lots, 4),
-                entry_type=(db_row.get("entry_type") if db_row else None),
-                current_price=mid,
-                unrealized_pips=round(unrealized, 1),
-                age_minutes=round(age, 1),
-                stop_price=(db_row.get("stop_price") if db_row and db_row.get("stop_price") is not None else sl),
-                target_price=(db_row.get("target_price") if db_row and db_row.get("target_price") is not None else tp),
-                breakeven_applied=bool(db_row.get("breakeven_applied")) if db_row else False,
-            ))
-    except Exception:
-        positions = []
+                    positions.append(PositionInfo(
+                        trade_id=trade_id,
+                        side=s,
+                        entry_price=entry,
+                        size_lots=round(size_lots, 4),
+                        entry_type=(db_row.get("entry_type") if db_row else None),
+                        current_price=mid,
+                        unrealized_pips=round(unrealized, 1),
+                        age_minutes=round(age, 1),
+                        stop_price=(db_row.get("stop_price") if db_row and db_row.get("stop_price") is not None else sl),
+                        target_price=(db_row.get("target_price") if db_row and db_row.get("target_price") is not None else tp),
+                        breakeven_applied=bool(db_row.get("breakeven_applied")) if db_row else False,
+                    ))
+        except Exception:
+            positions = []
 
     if positions:
         return positions
 
-    try:
-        open_trades = store.list_open_trades(profile.profile_name)
-        for row in open_trades:
-            d = dict(row)
-            entry = float(d.get("entry_price", 0))
-            s = str(d.get("side", "")).lower()
-            if s == "buy":
-                unrealized = (mid - entry) / pip_size
-            else:
-                unrealized = (entry - mid) / pip_size
-            age = 0.0
-            ts = d.get("timestamp_utc")
-            if ts:
-                try:
-                    import pandas as _pd
-                    t0 = _pd.to_datetime(ts, utc=True)
-                    age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
-                except Exception:
-                    pass
-            positions.append(PositionInfo(
-                trade_id=str(d.get("trade_id", "")),
-                side=s,
-                entry_price=entry,
-                size_lots=(float(d.get("size_lots")) if d.get("size_lots") is not None else None),
-                entry_type=d.get("entry_type"),
-                current_price=mid,
-                unrealized_pips=round(unrealized, 1),
-                age_minutes=round(age, 1),
-                stop_price=d.get("stop_price"),
-                target_price=d.get("target_price"),
-                breakeven_applied=bool(d.get("breakeven_applied")),
-            ))
-    except Exception:
-        pass
+            try:
+                open_trades = store.list_open_trades(profile.profile_name)
+                for row in open_trades:
+                    d = dict(row)
+                    entry = float(d.get("entry_price", 0))
+                    s = str(d.get("side", "")).lower()
+                    if s == "buy":
+                        unrealized = (mid - entry) / pip_size
+                    else:
+                        unrealized = (entry - mid) / pip_size
+                    age = 0.0
+                    ts = d.get("timestamp_utc")
+                    if ts:
+                        try:
+                            import pandas as _pd
+                            t0 = _pd.to_datetime(ts, utc=True)
+                            age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
+                        except Exception:
+                            pass
+                    positions.append(PositionInfo(
+                        trade_id=str(d.get("trade_id", "")),
+                        side=s,
+                        entry_price=entry,
+                        size_lots=(float(d.get("size_lots")) if d.get("size_lots") is not None else None),
+                        entry_type=d.get("entry_type"),
+                        current_price=mid,
+                        unrealized_pips=round(unrealized, 1),
+                        age_minutes=round(age, 1),
+                        stop_price=d.get("stop_price"),
+                        target_price=d.get("target_price"),
+                        breakeven_applied=bool(d.get("breakeven_applied")),
+                    ))
+            except Exception:
+                pass
 
     return positions
 
@@ -1620,27 +1620,27 @@ def _collect_dashboard_daily_summary(profile, store) -> DailySummary:
     from datetime import datetime, timezone
 
     now_utc = datetime.now(timezone.utc)
-    daily = DailySummary()
-    try:
-        date_str = now_utc.strftime("%Y-%m-%d")
-        closed_today = store.get_trades_for_date(profile.profile_name, date_str)
-        daily.trades_today = len(closed_today)
-        for row in closed_today:
-            d = dict(row)
-            pips = d.get("pips")
-            profit = _normalized_profit_for_dashboard_row(d, profile.symbol)
-            if pips is not None:
-                daily.total_pips += float(pips)
-                if float(pips) > 0:
-                    daily.wins += 1
-                else:
-                    daily.losses += 1
-            if profit is not None:
-                daily.total_profit += float(profit)
-        if daily.trades_today > 0:
-            daily.win_rate = round(daily.wins / daily.trades_today * 100, 1)
-    except Exception:
-        pass
+        daily = DailySummary()
+        try:
+            date_str = now_utc.strftime("%Y-%m-%d")
+            closed_today = store.get_trades_for_date(profile.profile_name, date_str)
+            daily.trades_today = len(closed_today)
+            for row in closed_today:
+                d = dict(row)
+                pips = d.get("pips")
+                profit = _normalized_profit_for_dashboard_row(d, profile.symbol)
+                if pips is not None:
+                    daily.total_pips += float(pips)
+                    if float(pips) > 0:
+                        daily.wins += 1
+                    else:
+                        daily.losses += 1
+                if profit is not None:
+                    daily.total_profit += float(profit)
+            if daily.trades_today > 0:
+                daily.win_rate = round(daily.wins / daily.trades_today * 100, 1)
+        except Exception:
+            pass
     return daily
 
 
@@ -2467,16 +2467,16 @@ def main() -> None:
                         print(f"[{profile.profile_name}] synced {synced} externally closed trade(s)")
                     # Import from broker history (MT5 only — OANDA places all trades via bot, already in DB)
                     if getattr(profile, "broker_type", None) != "oanda":
-                        imported = import_mt5_history(profile, store, days_back=90)
-                        if imported > 0:
-                            print(f"[{profile.profile_name}] imported {imported} trade(s) from broker history")
+                    imported = import_mt5_history(profile, store, days_back=90)
+                    if imported > 0:
+                        print(f"[{profile.profile_name}] imported {imported} trade(s) from broker history")
                 except Exception as e:
                     print(f"[{profile.profile_name}] sync error: {e}")
                     if not _is_transient_broker_error(e):
-                        try:
-                            _record_loop_error(profile, store, f"sync error: {e}")
-                        except Exception:
-                            pass
+                    try:
+                        _record_loop_error(profile, store, f"sync error: {e}")
+                    except Exception:
+                        pass
                 last_sync_time = _now_sync
                 _phase_done("sync", _sync_started)
 
@@ -2504,10 +2504,10 @@ def main() -> None:
                                 last_deal_attempt = _oanda_deal_backfill_last_attempt_by_trade.get(trade_id, 0.0)
                                 if (_now_bf - last_deal_attempt) >= _OANDA_TRADEID_DEAL_RETRY_COOLDOWN_S:
                                     _oanda_deal_backfill_last_attempt_by_trade[trade_id] = _now_bf
-                                    try:
-                                        pos_id = adapter.get_position_id_from_deal(int(deal_id))
-                                    except Exception:
-                                        pos_id = None
+                                try:
+                                    pos_id = adapter.get_position_id_from_deal(int(deal_id))
+                                except Exception:
+                                    pos_id = None
                             if pos_id is None and order_id is not None:
                                 last_order_attempt = _oanda_order_backfill_last_attempt_by_trade.get(trade_id, 0.0)
                                 if (
@@ -2517,10 +2517,10 @@ def main() -> None:
                                 ):
                                     order_attempted += 1
                                     _oanda_order_backfill_last_attempt_by_trade[trade_id] = _now_bf
-                                    try:
-                                        pos_id = adapter.get_position_id_from_order(int(order_id))
-                                    except Exception:
-                                        pos_id = None
+                                try:
+                                    pos_id = adapter.get_position_id_from_order(int(order_id))
+                                except Exception:
+                                    pos_id = None
                             if pos_id is not None:
                                 try:
                                     store.update_trade(trade_id, {"mt5_position_id": int(pos_id)})
@@ -4143,8 +4143,8 @@ def main() -> None:
                     if pol_type == "kt_cg_trial_9":
                         try:
                             _refresh_trial9_ntz_levels()
-                        except Exception as _ntz_err:
-                            _log(f"NTZ level update error: {_ntz_err}", "ERROR")
+                            except Exception as _ntz_err:
+                                _log(f"NTZ level update error: {_ntz_err}", "ERROR")
                         exec_result = execute_kt_cg_trial_9_policy_demo_only(
                             adapter=adapter,
                             profile=profile,
@@ -4224,18 +4224,18 @@ def main() -> None:
                             side = dec.side or "buy"
                             entry_price = tick.ask if side == "buy" else tick.bid
                             pip = float(profile.pip_size)
-                            sl_pips = getattr(pol, "sl_pips", None)
-                            if sl_pips is None:
-                                sl_pips = float(get_effective_risk(profile).min_stop_pips)
-                            if side == "buy":
-                                tp_price = entry_price + pol.tp_pips * pip
-                                sl_price = entry_price - sl_pips * pip
-                            else:
-                                tp_price = entry_price - pol.tp_pips * pip
-                                sl_price = entry_price + sl_pips * pip
+                                sl_pips = getattr(pol, "sl_pips", None)
+                                if sl_pips is None:
+                                    sl_pips = float(get_effective_risk(profile).min_stop_pips)
+                                if side == "buy":
+                                    tp_price = entry_price + pol.tp_pips * pip
+                                    sl_price = entry_price - sl_pips * pip
+                                else:
+                                    tp_price = entry_price - pol.tp_pips * pip
+                                    sl_price = entry_price + sl_pips * pip
                             # When T8/T9 trailing exit is on, do not set broker TP so loop can partial-close + trail
                             if pol_type in ("kt_cg_trial_8", "kt_cg_trial_9") and getattr(pol, "trail_after_tp1", False):
-                                tp_price = None
+                                    tp_price = None
                             print(f"[{profile.profile_name}] TRADE PLACED: {pol_type}:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
                                 profile=profile,

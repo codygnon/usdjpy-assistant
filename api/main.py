@@ -3784,6 +3784,21 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
                 result["loop_log"] = []
             return result
 
+        live = _build_live_dashboard_state(profile_name, profile_path)
+        if "error" not in live:
+            live["stale"] = True
+            live["stale_age_seconds"] = None
+            live["data_source"] = "live_fallback"
+            try:
+                _loop_log_path = log_dir / "loop_log.json"
+                if _loop_log_path.exists():
+                    live["loop_log"] = json.loads(_loop_log_path.read_text(encoding="utf-8"))
+                else:
+                    live["loop_log"] = []
+            except Exception:
+                live["loop_log"] = []
+            return live
+
         return {
             "timestamp_utc": None,
             "preset_name": "",
