@@ -2397,30 +2397,28 @@ def main() -> None:
 
             ntz_filter.update_levels(**ntz_levels)
 
-            print(f"[NTZ-FIB-DEBUG] use_fib_pivots={ntz_filter.use_fib_pivots} dh={dh} dl={dl} dc={dc} d_df_len={len(d_df) if d_df is not None else 'None'}")
+            _log(f"NTZ-FIB-DEBUG: use_fib_pivots={ntz_filter.use_fib_pivots} dh={dh} dl={dl} dc={dc} d_df_len={len(d_df) if d_df is not None else 'None'}")
             if ntz_filter.use_fib_pivots:
                 # Use D candle data fetched this poll as the primary source for fib inputs.
                 # Fall back to trial7_daily_state only if D candle data is unavailable.
                 pdh = dh if dh is not None else trial7_daily_state.get("prev_day_high")
                 pdl = dl if dl is not None else trial7_daily_state.get("prev_day_low")
                 pdc = dc if dc is not None else trial7_daily_state.get("prev_day_close")
-                print(f"[NTZ-FIB-DEBUG] pdh={pdh} pdl={pdl} pdc={pdc}")
+                _log(f"NTZ-FIB-DEBUG: pdh={pdh} pdl={pdl} pdc={pdc}")
                 if pdh is not None and pdl is not None and pdc is not None:
                     try:
                         from core.fib_pivots import compute_daily_fib_pivots
 
                         fib_levels = compute_daily_fib_pivots(float(pdh), float(pdl), float(pdc))
                         ntz_filter.update_fib_levels(fib_levels)
-                        print(f"[NTZ-FIB-DEBUG] SUCCESS: PP={fib_levels['P']:.3f} R1={fib_levels['R1']:.3f} S1={fib_levels['S1']:.3f}")
                         _log(
                             f"NTZ Fib pivots: PP={fib_levels['P']:.3f} "
                             f"R1={fib_levels['R1']:.3f} S1={fib_levels['S1']:.3f}"
                         )
                     except Exception as fib_err:
-                        print(f"[NTZ-FIB-DEBUG] EXCEPTION: {fib_err}")
                         _log(f"NTZ Fib pivot compute error: {fib_err}", "ERROR")
                 else:
-                    print(f"[NTZ-FIB-DEBUG] MISSING DATA: clearing fib levels")
+                    _log(f"NTZ-FIB-DEBUG: MISSING DATA - clearing fib levels (pdh={pdh} pdl={pdl} pdc={pdc})")
                     ntz_filter.update_fib_levels(None)
 
         trades_df_cache: pd.DataFrame | None = None
