@@ -2345,26 +2345,27 @@ def main() -> None:
 
             ntz_levels: dict[str, float] = {}
 
-            def _prev_candle_hl(df, tf_label):
-                """Extract the relevant H/L for NTZ use."""
+            def _prev_candle_hlc(df, tf_label):
+                """Extract the relevant H/L/C for NTZ use. Returns (h, l, c)."""
                 if df is None or df.empty:
-                    return None, None
+                    return None, None, None
                 d_sorted = df.copy()
                 d_sorted["_time"] = pd.to_datetime(d_sorted["time"], utc=True, errors="coerce")
                 d_sorted = d_sorted.dropna(subset=["_time"]).sort_values("_time")
                 if len(d_sorted) < 1:
-                    return None, None
+                    return None, None, None
                 if tf_label in ("W", "MN"):
                     cur_row = d_sorted.iloc[-1]
                     h = float(cur_row["high"])
                     l = float(cur_row["low"])
+                    c = float(cur_row["close"])
                     _log(f"NTZ {tf_label}: using CURRENT candle iloc[-1] time={cur_row['_time']} H={h:.3f} L={l:.3f}")
-                    return h, l
+                    return h, l, c
                 now_date = pd.Timestamp.now(tz="UTC").date().isoformat()
                 last_date = d_sorted.iloc[-1]["_time"].date().isoformat()
                 if last_date == now_date:
                     if len(d_sorted) < 2:
-                        return None, None
+                        return None, None, None
                     prev_row = d_sorted.iloc[-2]
                     _log(f"NTZ {tf_label}: last candle is today ({now_date}), using iloc[-2]")
                 else:
@@ -2372,23 +2373,24 @@ def main() -> None:
                     _log(f"NTZ {tf_label}: last candle is {last_date} (not today {now_date}), using iloc[-1]")
                 h = float(prev_row["high"])
                 l = float(prev_row["low"])
-                _log(f"NTZ {tf_label}: time={prev_row['_time']} H={h:.3f} L={l:.3f}")
-                return h, l
+                c = float(prev_row["close"])
+                _log(f"NTZ {tf_label}: time={prev_row['_time']} H={h:.3f} L={l:.3f} C={c:.3f}")
+                return h, l, c
 
             d_df = data_by_tf.get("D")
-            dh, dl = _prev_candle_hl(d_df, "D1")
+            dh, dl, dc = _prev_candle_hlc(d_df, "D1")
             if dh is not None:
                 ntz_levels["prev_day_high"] = dh
                 ntz_levels["prev_day_low"] = dl
 
             w_df = data_by_tf.get("W")
-            wh, wl = _prev_candle_hl(w_df, "W")
+            wh, wl, _ = _prev_candle_hlc(w_df, "W")
             if wh is not None:
                 ntz_levels["weekly_high"] = wh
                 ntz_levels["weekly_low"] = wl
 
             mn_df = data_by_tf.get("MN")
-            mh, ml = _prev_candle_hl(mn_df, "MN")
+            mh, ml, _ = _prev_candle_hlc(mn_df, "MN")
             if mh is not None:
                 ntz_levels["monthly_high"] = mh
                 ntz_levels["monthly_low"] = ml
@@ -2396,9 +2398,11 @@ def main() -> None:
             ntz_filter.update_levels(**ntz_levels)
 
             if ntz_filter.use_fib_pivots:
-                pdh = trial7_daily_state.get("prev_day_high")
-                pdl = trial7_daily_state.get("prev_day_low")
-                pdc = trial7_daily_state.get("prev_day_close")
+                # Use D candle data fetched this poll as the primary source for fib inputs.
+                # Fall back to trial7_daily_state only if D candle data is unavailable.
+                pdh = dh if dh is not None else trial7_daily_state.get("prev_day_high")
+                pdl = dl if dl is not None else trial7_daily_state.get("prev_day_low")
+                pdc = dc if dc is not None else trial7_daily_state.get("prev_day_close")
                 if pdh is not None and pdl is not None and pdc is not None:
                     try:
                         from core.fib_pivots import compute_daily_fib_pivots
