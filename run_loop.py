@@ -2187,6 +2187,12 @@ def main() -> None:
             and getattr(p, "ntz_enabled", False)
             for p in profile.execution.policies
         )
+        has_trial9_fib_pivots = any(
+            getattr(p, "type", None) == "kt_cg_trial_9"
+            and getattr(p, "enabled", True)
+            and getattr(p, "ntz_use_fib_pivots", False)
+            for p in profile.execution.policies
+        )
         has_m15_swing_filter = any(
             getattr(p, "type", None) in ("kt_cg_counter_trend_pullback", "kt_cg_hybrid")
             and getattr(p, "enabled", True)
@@ -2212,6 +2218,7 @@ def main() -> None:
             or has_trial8_daily_filter
             or has_trial9_daily_filter
             or has_trial9_ntz
+            or has_trial9_fib_pivots
         )
         oanda_trial79_only = (
             getattr(profile, "broker_type", None) == "oanda"

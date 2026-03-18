@@ -3251,14 +3251,14 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                             return {k: row.get(k) for k in ("high", "low", "close")}
 
                         def _prev_candle_hl(df: pd.DataFrame | None) -> tuple[float | None, float | None]:
-                            if df is None or df.empty or len(df) < 2:
+                            if df is None or df.empty:
                                 return None, None
                             local = df.copy()
                             local["time"] = pd.to_datetime(local["time"], utc=True, errors="coerce")
                             local = local.dropna(subset=["time"]).sort_values("time")
-                            if len(local) < 2:
+                            if local.empty:
                                 return None, None
-                            row = local.iloc[-2]
+                            row = local.iloc[-1]
                             try:
                                 return float(row["high"]), float(row["low"])
                             except Exception:
@@ -3284,7 +3284,11 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                                 ntz_levels["ML"] = ml
 
                         fib_levels: dict[str, float] = {}
-                        if bool(getattr(_policy, "ntz_use_fib_pivots", False)) and prev_daily is not None:
+                        _d_df_debug = data_by_tf.get("D")
+                        _d_len = len(_d_df_debug) if _d_df_debug is not None else "None"
+                        _fib_enabled = bool(getattr(_policy, "ntz_use_fib_pivots", False))
+                        print(f"[NTZ-API-DEBUG] fib_enabled={_fib_enabled} prev_daily={prev_daily} d_df_len={_d_len}")
+                        if _fib_enabled and prev_daily is not None:
                             try:
                                 fib_raw = compute_daily_fib_pivots(
                                     float(prev_daily["high"]),
@@ -3315,17 +3319,20 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                                     if fib_toggle_map.get(label, False)
                                 }
                                 ntz_levels.update(fib_levels)
-                            except Exception:
+                                print(f"[NTZ-API-DEBUG] fib computed: {list(fib_levels.keys())}")
+                            except Exception as _fib_ex:
+                                print(f"[NTZ-API-DEBUG] fib exception: {_fib_ex}")
                                 fib_levels = {}
 
                         ntz_filter_snapshot = {
                             "enabled": bool(getattr(_policy, "ntz_enabled", False)),
                             "buffer_pips": float(getattr(_policy, "ntz_buffer_pips", 10.0)),
                             "levels": ntz_levels,
-                            "fib_pivots_enabled": bool(getattr(_policy, "ntz_use_fib_pivots", False)),
+                            "fib_pivots_enabled": _fib_enabled,
                             "fib_levels": fib_levels,
                         }
-                    except Exception:
+                    except Exception as _ntz_ex:
+                        print(f"[NTZ-API-DEBUG] outer exception: {_ntz_ex}")
                         ntz_filter_snapshot = None
             # Compute Trial #6 M3 trend for filter display
             t6_eval_result = None
