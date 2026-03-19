@@ -1663,6 +1663,7 @@ def _build_and_write_dashboard(
     temp_overrides: dict | None = None,
     daily_level_filter=None,
     ntz_filter=None,
+    intraday_fib_corridor_filter=None,
     phase3_state: dict | None = None,
     open_positions_snapshot: list | None = None,
     positions_snapshot: list[PositionInfo] | None = None,
@@ -1713,6 +1714,7 @@ def _build_and_write_dashboard(
             temp_overrides=temp_overrides,
             daily_level_filter_snapshot=(daily_level_filter.get_state_snapshot() if daily_level_filter is not None else None),
             ntz_filter_snapshot=(ntz_filter.get_levels_snapshot() if ntz_filter is not None else None),
+            intraday_fib_corridor_snapshot=(intraday_fib_corridor_filter.get_snapshot() if intraday_fib_corridor_filter is not None else None),
             phase3_state=phase3_state,
         )
 
@@ -1748,6 +1750,7 @@ def _build_and_write_dashboard(
                 policy_for_context, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
                 exhaustion_result=exhaustion_result,
                 ntz_snapshot=(ntz_filter.get_levels_snapshot() if ntz_filter is not None else None),
+                intraday_fib_snapshot=(intraday_fib_corridor_filter.get_snapshot() if intraday_fib_corridor_filter is not None else None),
             )
         elif policy_type == "kt_cg_hybrid":
             context_items = collect_trial_2_context(policy, data_by_tf, tick, pip_size)
@@ -1933,6 +1936,11 @@ def _append_phase3_minute_diagnostics(
             ny_mode = sd.get("session_mode")
             ny_eff = sd.get("session_efficiency_avg")
             ny_hist = sd.get("session_efficiency_hist_len")
+            ny_news_status = sd.get("news_status")
+            ny_news_wait = sd.get("news_wait_minutes")
+            ny_news_confirm = sd.get("news_confirm_progress")
+            ny_news_side = sd.get("news_trend_side")
+            ny_news_event = sd.get("news_event_time")
             extras = []
             if ny_mode is not None:
                 extras.append(f"ny_mode={ny_mode}")
@@ -1940,6 +1948,16 @@ def _append_phase3_minute_diagnostics(
                 extras.append(f"ny_eff_avg={float(ny_eff):.3f}")
             if ny_hist is not None:
                 extras.append(f"ny_eff_n={int(ny_hist)}")
+            if ny_news_status is not None:
+                extras.append(f"ny_news_status={ny_news_status}")
+            if ny_news_wait is not None:
+                extras.append(f"ny_news_wait={float(ny_news_wait):.1f}m")
+            if ny_news_confirm:
+                extras.append(f"ny_news_confirm={ny_news_confirm}")
+            if ny_news_side:
+                extras.append(f"ny_news_side={ny_news_side}")
+            if ny_news_event:
+                extras.append(f"ny_news_event={ny_news_event}")
             session_extra = "\t" + "\t".join(extras) if extras else ""
         elif session == "tokyo":
             session_key = f"session_tokyo_{bar_ts.date().isoformat()}"
@@ -2193,6 +2211,11 @@ def main() -> None:
             and getattr(p, "ntz_use_fib_pivots", False)
             for p in profile.execution.policies
         )
+        has_trial9_intraday_fib = any(
+            getattr(p, "type", None) == "kt_cg_trial_9"
+            and getattr(p, "enabled", True)
+            for p in profile.execution.policies
+        )
         has_m15_swing_filter = any(
             getattr(p, "type", None) in ("kt_cg_counter_trend_pullback", "kt_cg_hybrid")
             and getattr(p, "enabled", True)
@@ -2211,7 +2234,7 @@ def main() -> None:
         # Phase 3 now derives H4/M15/H1/M5/D from M1, so it should not force
         # extra broker timeframe fetches by itself.
         needs_h4_data = has_trial7_reversal_risk or needs_alignment_context
-        needs_m15_data = needs_h4_data or has_m15_swing_filter
+        needs_m15_data = needs_h4_data or has_m15_swing_filter or has_kt_cg_trial_9
         needs_daily_data = (
             has_kt_cg_trial_4
             or has_kt_cg_trial_5
@@ -2335,6 +2358,23 @@ def main() -> None:
                     use_fib_s3=bool(getattr(_t9_pol, "ntz_use_fib_s3", True)),
                 )
 
+        # Intraday Fibonacci Corridor filter for Trial #9
+        # Always create when Trial #9 is present so it can be enabled live
+        # without restarting the loop.
+        intraday_fib_corridor_filter = None
+        if has_kt_cg_trial_9 and _t9_pol is not None:
+            from core.no_trade_zone import IntradayFibCorridorFilter
+            intraday_fib_corridor_filter = IntradayFibCorridorFilter(
+                enabled=bool(getattr(_t9_pol, "intraday_fib_enabled", False)),
+                lower_level=str(getattr(_t9_pol, "intraday_fib_lower_level", "S1")),
+                upper_level=str(getattr(_t9_pol, "intraday_fib_upper_level", "R1")),
+                timeframe=str(getattr(_t9_pol, "intraday_fib_timeframe", "M15")),
+                lookback_bars=int(getattr(_t9_pol, "intraday_fib_lookback_bars", 16)),
+                boundary_buffer_pips=float(getattr(_t9_pol, "intraday_fib_boundary_buffer_pips", 1.0)),
+                hysteresis_pips=float(getattr(_t9_pol, "intraday_fib_hysteresis_pips", 1.0)),
+                pip_size=float(profile.pip_size),
+            )
+
         # Phase 3 Integrated state (pivots, session counters, open trade tracking)
         phase3_state: dict = {}
         if has_phase3_integrated:
@@ -2443,6 +2483,83 @@ def main() -> None:
                     ntz_filter.update_fib_levels(None)
             else:
                 ntz_filter.update_fib_levels(None)
+
+        def _refresh_trial9_intraday_fib_levels() -> None:
+            """Refresh Trial #9 Intraday Fibonacci Corridor levels from M15 (or M5) data."""
+            nonlocal intraday_fib_corridor_filter
+            if intraday_fib_corridor_filter is None:
+                return
+
+            # Sync settings from saved profile on disk (same pattern as NTZ fib).
+            # This is what makes the feature live-configurable without loop restart.
+            try:
+                _live_data = json.loads(Path(args.profile).read_text(encoding="utf-8"))
+                _live_t9 = next(
+                    (p for p in _live_data.get("execution", {}).get("policies", [])
+                     if p.get("type") == "kt_cg_trial_9" and p.get("enabled", True)),
+                    None,
+                )
+                if _live_t9 is not None:
+                    new_enabled = bool(_live_t9.get("intraday_fib_enabled", False))
+                    new_lower = str(_live_t9.get("intraday_fib_lower_level", "S1"))
+                    new_upper = str(_live_t9.get("intraday_fib_upper_level", "R1"))
+                    new_tf = str(_live_t9.get("intraday_fib_timeframe", intraday_fib_corridor_filter.timeframe))
+                    if new_tf not in ("M15", "M5"):
+                        new_tf = "M15"
+                    try:
+                        new_lookback = max(1, int(_live_t9.get("intraday_fib_lookback_bars", intraday_fib_corridor_filter.lookback_bars)))
+                    except Exception:
+                        new_lookback = intraday_fib_corridor_filter.lookback_bars
+                    new_buffer = float(_live_t9.get("intraday_fib_boundary_buffer_pips", 1.0))
+                    new_hysteresis = float(_live_t9.get("intraday_fib_hysteresis_pips", 1.0))
+                    # Reset hysteresis if bounds changed
+                    if (new_lower != intraday_fib_corridor_filter.lower_level
+                            or new_upper != intraday_fib_corridor_filter.upper_level
+                            or new_enabled != intraday_fib_corridor_filter.enabled
+                            or new_tf != intraday_fib_corridor_filter.timeframe
+                            or new_lookback != intraday_fib_corridor_filter.lookback_bars
+                            or new_buffer != intraday_fib_corridor_filter.boundary_buffer_pips
+                            or new_hysteresis != intraday_fib_corridor_filter.hysteresis_pips):
+                        intraday_fib_corridor_filter.reset_state()
+                    intraday_fib_corridor_filter.enabled = new_enabled
+                    intraday_fib_corridor_filter.lower_level = new_lower
+                    intraday_fib_corridor_filter.upper_level = new_upper
+                    intraday_fib_corridor_filter.timeframe = new_tf
+                    intraday_fib_corridor_filter.lookback_bars = new_lookback
+                    intraday_fib_corridor_filter.boundary_buffer_pips = new_buffer
+                    intraday_fib_corridor_filter.hysteresis_pips = new_hysteresis
+            except Exception:
+                pass
+
+            if not intraday_fib_corridor_filter.enabled:
+                intraday_fib_corridor_filter.update_levels(None)
+                return
+
+            # Use the filter's live-synced attributes (not stale startup values)
+            _ifc_tf = intraday_fib_corridor_filter.timeframe
+            _ifc_lookback = intraday_fib_corridor_filter.lookback_bars
+            df = data_by_tf.get(_ifc_tf)
+            if df is None or df.empty:
+                _log(f"Intraday Fib: no {_ifc_tf} data available", "WARN")
+                intraday_fib_corridor_filter.update_levels(None)
+                return
+
+            try:
+                from core.fib_pivots import compute_rolling_intraday_fib_levels
+                result = compute_rolling_intraday_fib_levels(df, lookback_bars=_ifc_lookback)
+                if result is not None:
+                    # Extract rolling range for reporting
+                    completed = df.iloc[:-1] if len(df) > 1 else df
+                    window = completed.iloc[-_ifc_lookback:]
+                    r_high = float(window["high"].max())
+                    r_low = float(window["low"].min())
+                    intraday_fib_corridor_filter.update_levels(result, rolling_high=r_high, rolling_low=r_low)
+                else:
+                    _log(f"Intraday Fib: insufficient {_ifc_tf} data ({len(df)} bars, need {_ifc_lookback})", "WARN")
+                    intraday_fib_corridor_filter.update_levels(None)
+            except Exception as e:
+                _log(f"Intraday Fib compute error: {e}", "ERROR")
+                intraday_fib_corridor_filter.update_levels(None)
 
         trades_df_cache: pd.DataFrame | None = None
 
@@ -2916,6 +3033,10 @@ def main() -> None:
                             _refresh_trial9_ntz_levels()
                         except Exception as _ntz_err:
                             _log(f"NTZ level update error: {_ntz_err}", "ERROR")
+                        try:
+                            _refresh_trial9_intraday_fib_levels()
+                        except Exception as _ifib_err:
+                            _log(f"Intraday Fib level update error: {_ifib_err}", "ERROR")
                         exec_result = execute_kt_cg_trial_9_policy_demo_only(
                             adapter=adapter,
                             profile=profile,
@@ -2933,6 +3054,7 @@ def main() -> None:
                             daily_state=trial7_daily_state,
                             open_positions=open_positions_snapshot,
                             ntz_filter=ntz_filter,
+                            intraday_fib_corridor_filter=intraday_fib_corridor_filter,
                         )
                     elif pol_type == "kt_cg_trial_8":
                         exec_result = execute_kt_cg_trial_8_policy_demo_only(
@@ -3057,6 +3179,7 @@ def main() -> None:
                         exhaustion_result=exec_result.get("exhaustion_result"),
                         daily_level_filter=daily_level_filter if pol_type == "kt_cg_trial_8" else None,
                         ntz_filter=ntz_filter if pol_type == "kt_cg_trial_9" else None,
+                        intraday_fib_corridor_filter=intraday_fib_corridor_filter if pol_type == "kt_cg_trial_9" else None,
                         open_positions_snapshot=open_positions_snapshot,
                         positions_snapshot=dashboard_positions_snapshot,
                         daily_summary_snapshot=dashboard_daily_snapshot,
@@ -4175,6 +4298,10 @@ def main() -> None:
                             _refresh_trial9_ntz_levels()
                         except Exception as _ntz_err:
                             _log(f"NTZ level update error: {_ntz_err}", "ERROR")
+                        try:
+                            _refresh_trial9_intraday_fib_levels()
+                        except Exception as _ifib_err:
+                            _log(f"Intraday Fib level update error: {_ifib_err}", "ERROR")
                         exec_result = execute_kt_cg_trial_9_policy_demo_only(
                             adapter=adapter,
                             profile=profile,
@@ -4192,6 +4319,7 @@ def main() -> None:
                             daily_state=trial7_daily_state,
                             open_positions=open_positions_snapshot,
                             ntz_filter=ntz_filter,
+                            intraday_fib_corridor_filter=intraday_fib_corridor_filter,
                         )
                     elif pol_type == "kt_cg_trial_8":
                         exec_result = execute_kt_cg_trial_8_policy_demo_only(
@@ -4311,6 +4439,7 @@ def main() -> None:
                         exhaustion_result=exec_result.get("exhaustion_result"),
                         daily_level_filter=daily_level_filter if pol_type == "kt_cg_trial_8" else None,
                         ntz_filter=ntz_filter if pol_type == "kt_cg_trial_9" else None,
+                        intraday_fib_corridor_filter=intraday_fib_corridor_filter if pol_type == "kt_cg_trial_9" else None,
                         open_positions_snapshot=open_positions_snapshot,
                         positions_snapshot=dashboard_positions_snapshot,
                         daily_summary_snapshot=dashboard_daily_snapshot,

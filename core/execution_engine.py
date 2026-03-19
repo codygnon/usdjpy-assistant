@@ -4825,6 +4825,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
     daily_level_filter: Optional[DailyLevelFilter] = None,
     daily_state: Optional[dict] = None,
     ntz_filter=None,
+    intraday_fib_corridor_filter=None,
     open_positions: Optional[list] = None,
 ) -> dict:
     """Evaluate and execute KT/CG Trial #7 or #8 (demo only). T8: no EMA zone/reversal risk; daily level filter optional."""
@@ -5148,6 +5149,32 @@ def execute_kt_cg_trial_7_policy_demo_only(
                 )
             return _result_payload(
                 ExecutionDecision(attempted=True, placed=False, reason=ntz_reason),
+            )
+
+    # Intraday Fib Corridor filter (Trial #9): block entries outside selected corridor
+    if policy_type == "kt_cg_trial_9" and intraday_fib_corridor_filter is not None:
+        current_price = (tick.bid + tick.ask) / 2.0
+        corridor_ok, corridor_reason = intraday_fib_corridor_filter.check_corridor(current_price)
+        if not corridor_ok:
+            print(f"[{profile.profile_name}] kt_cg_trial_9 {corridor_reason}")
+            if store is not None:
+                store.insert_execution(
+                    {
+                        "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                        "profile": profile.profile_name,
+                        "symbol": profile.symbol,
+                        "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                        "mode": mode,
+                        "attempted": 1,
+                        "placed": 0,
+                        "reason": corridor_reason,
+                        "mt5_retcode": None,
+                        "mt5_order_id": None,
+                        "mt5_deal_id": None,
+                    }
+                )
+            return _result_payload(
+                ExecutionDecision(attempted=True, placed=False, reason=corridor_reason),
             )
 
     # Kill Switch entry block (Trial #9): block new entries when M5 trend opposes M1 EMA200 position.
@@ -5627,6 +5654,7 @@ def execute_kt_cg_trial_8_policy_demo_only(
     daily_state: Optional[dict] = None,
     open_positions: Optional[list] = None,
     ntz_filter=None,
+    intraday_fib_corridor_filter=None,
 ) -> dict:
     """Trial #8: delegates to Trial #7 flow with daily_level_filter and daily_state (no EMA zone, no reversal risk)."""
     return execute_kt_cg_trial_7_policy_demo_only(
@@ -5646,6 +5674,7 @@ def execute_kt_cg_trial_8_policy_demo_only(
         daily_state=daily_state,
         open_positions=open_positions,
         ntz_filter=ntz_filter,
+        intraday_fib_corridor_filter=intraday_fib_corridor_filter,
     )
 
 
@@ -5667,6 +5696,7 @@ def execute_kt_cg_trial_9_policy_demo_only(
     daily_state: Optional[dict] = None,
     open_positions: Optional[list] = None,
     ntz_filter=None,
+    intraday_fib_corridor_filter=None,
 ) -> dict:
     """Trial #9: carbon copy of Trial #8 (delegates to Trial #7 flow with daily_level_filter and daily_state)."""
     return execute_kt_cg_trial_8_policy_demo_only(
@@ -5686,6 +5716,7 @@ def execute_kt_cg_trial_9_policy_demo_only(
         daily_state=daily_state,
         open_positions=open_positions,
         ntz_filter=ntz_filter,
+        intraday_fib_corridor_filter=intraday_fib_corridor_filter,
     )
 
 

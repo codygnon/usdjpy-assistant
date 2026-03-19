@@ -3765,6 +3765,14 @@ interface EditedSettings {
   t9_ntz_use_fib_s1: boolean;
   t9_ntz_use_fib_s2: boolean;
   t9_ntz_use_fib_s3: boolean;
+  // Trial #9: Intraday Fibonacci Corridor
+  t9_intraday_fib_enabled: boolean;
+  t9_intraday_fib_timeframe: 'M15' | 'M5';
+  t9_intraday_fib_lookback_bars: number;
+  t9_intraday_fib_lower_level: 'S3' | 'S2' | 'S1' | 'PP' | 'R1' | 'R2' | 'R3';
+  t9_intraday_fib_upper_level: 'S3' | 'S2' | 'S1' | 'PP' | 'R1' | 'R2' | 'R3';
+  t9_intraday_fib_boundary_buffer_pips: number;
+  t9_intraday_fib_hysteresis_pips: number;
   // Trial #9: Kill Switch
   t9_kill_switch_enabled: boolean;
   t9_kill_switch_zone_entry_action: 'kill' | 'hold';
@@ -4039,6 +4047,14 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t9NtzUseFibS1 = true;
       let t9NtzUseFibS2 = true;
       let t9NtzUseFibS3 = true;
+      // Trial #9: Intraday Fibonacci Corridor
+      let t9IntradayFibEnabled = false;
+      let t9IntradayFibTimeframe: 'M15' | 'M5' = 'M15';
+      let t9IntradayFibLookbackBars = 16;
+      let t9IntradayFibLowerLevel: 'S3' | 'S2' | 'S1' | 'PP' | 'R1' | 'R2' | 'R3' = 'S1';
+      let t9IntradayFibUpperLevel: 'S3' | 'S2' | 'S1' | 'PP' | 'R1' | 'R2' | 'R3' = 'R1';
+      let t9IntradayFibBoundaryBufferPips = 1.0;
+      let t9IntradayFibHysteresisPips = 1.0;
       let t9KillSwitchEnabled = false;
       let t9KillSwitchZoneEntryAction: 'kill' | 'hold' = 'hold';
       let t9ExitStrategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail' = 'tp1_be_m5_trail';
@@ -4469,6 +4485,17 @@ function PresetsPage({ profile }: { profile: Profile }) {
               t9NtzUseFibS1 = (pol.ntz_use_fib_s1 as boolean) ?? true;
               t9NtzUseFibS2 = (pol.ntz_use_fib_s2 as boolean) ?? true;
               t9NtzUseFibS3 = (pol.ntz_use_fib_s3 as boolean) ?? true;
+              // Intraday Fibonacci Corridor
+              t9IntradayFibEnabled = (pol.intraday_fib_enabled as boolean) ?? false;
+              const rawIFibTf = (pol.intraday_fib_timeframe as string) ?? 'M15';
+              t9IntradayFibTimeframe = (rawIFibTf === 'M5' ? 'M5' : 'M15') as typeof t9IntradayFibTimeframe;
+              t9IntradayFibLookbackBars = (pol.intraday_fib_lookback_bars as number) ?? 16;
+              const rawIFibLower = (pol.intraday_fib_lower_level as string) ?? 'S1';
+              t9IntradayFibLowerLevel = (['S3','S2','S1','PP','R1','R2','R3'].includes(rawIFibLower) ? rawIFibLower : 'S1') as typeof t9IntradayFibLowerLevel;
+              const rawIFibUpper = (pol.intraday_fib_upper_level as string) ?? 'R1';
+              t9IntradayFibUpperLevel = (['S3','S2','S1','PP','R1','R2','R3'].includes(rawIFibUpper) ? rawIFibUpper : 'R1') as typeof t9IntradayFibUpperLevel;
+              t9IntradayFibBoundaryBufferPips = (pol.intraday_fib_boundary_buffer_pips as number) ?? 1.0;
+              t9IntradayFibHysteresisPips = (pol.intraday_fib_hysteresis_pips as number) ?? 1.0;
               t9KillSwitchEnabled = (pol.kill_switch_enabled as boolean) ?? false;
               const ksAction = (pol.kill_switch_zone_entry_action as string) ?? 'hold';
               t9KillSwitchZoneEntryAction = (ksAction === 'kill' || ksAction === 'hold') ? ksAction : 'hold';
@@ -4494,6 +4521,13 @@ function PresetsPage({ profile }: { profile: Profile }) {
               t9NtzUseFibS1 = true;
               t9NtzUseFibS2 = true;
               t9NtzUseFibS3 = true;
+              t9IntradayFibEnabled = false;
+              t9IntradayFibTimeframe = 'M15';
+              t9IntradayFibLookbackBars = 16;
+              t9IntradayFibLowerLevel = 'S1';
+              t9IntradayFibUpperLevel = 'R1';
+              t9IntradayFibBoundaryBufferPips = 1.0;
+              t9IntradayFibHysteresisPips = 1.0;
               t9KillSwitchEnabled = false;
               t9KillSwitchZoneEntryAction = 'hold';
             }
@@ -4705,6 +4739,14 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t9_ntz_use_fib_s1: t9NtzUseFibS1,
         t9_ntz_use_fib_s2: t9NtzUseFibS2,
         t9_ntz_use_fib_s3: t9NtzUseFibS3,
+        // Trial #9: Intraday Fibonacci Corridor
+        t9_intraday_fib_enabled: t9IntradayFibEnabled,
+        t9_intraday_fib_timeframe: t9IntradayFibTimeframe,
+        t9_intraday_fib_lookback_bars: t9IntradayFibLookbackBars,
+        t9_intraday_fib_lower_level: t9IntradayFibLowerLevel,
+        t9_intraday_fib_upper_level: t9IntradayFibUpperLevel,
+        t9_intraday_fib_boundary_buffer_pips: t9IntradayFibBoundaryBufferPips,
+        t9_intraday_fib_hysteresis_pips: t9IntradayFibHysteresisPips,
         t9_kill_switch_enabled: t9KillSwitchEnabled,
         t9_kill_switch_zone_entry_action: t9KillSwitchZoneEntryAction,
         t9_exit_strategy: (() => {
@@ -5128,6 +5170,14 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.ntz_use_fib_s1 = editedSettings.t9_ntz_use_fib_s1;
           updates.ntz_use_fib_s2 = editedSettings.t9_ntz_use_fib_s2;
           updates.ntz_use_fib_s3 = editedSettings.t9_ntz_use_fib_s3;
+          // T9: Intraday Fibonacci Corridor
+          updates.intraday_fib_enabled = editedSettings.t9_intraday_fib_enabled;
+          updates.intraday_fib_timeframe = editedSettings.t9_intraday_fib_timeframe;
+          updates.intraday_fib_lookback_bars = Math.max(4, Math.min(200, editedSettings.t9_intraday_fib_lookback_bars));
+          updates.intraday_fib_lower_level = editedSettings.t9_intraday_fib_lower_level;
+          updates.intraday_fib_upper_level = editedSettings.t9_intraday_fib_upper_level;
+          updates.intraday_fib_boundary_buffer_pips = Math.max(0, editedSettings.t9_intraday_fib_boundary_buffer_pips);
+          updates.intraday_fib_hysteresis_pips = Math.max(0, editedSettings.t9_intraday_fib_hysteresis_pips);
         }
         // Update Uncle Parsh H1 Breakout settings (Major Extremes Momentum Breakout)
         if (pol.type === 'uncle_parsh_h1_breakout') {
@@ -6129,6 +6179,82 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       })}
                     </div>
                     )}
+                  </div>
+                  )}
+                  {/* Trial #9: Intraday Fibonacci Corridor */}
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_9') && (
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Trial #9 Intraday Fibonacci Corridor
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Allows entries only while price is inside a selected fib corridor computed from rolling intraday data.
+                      Different from the daily Fib NTZ above — this uses a rolling intraday range, not daily pivots.
+                      OFF by default — does not affect current behavior until enabled.
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 12 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={editedSettings.t9_intraday_fib_enabled}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t9_intraday_fib_enabled: e.target.checked })}
+                            style={{ width: 18, height: 18, cursor: 'pointer' }} />
+                          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: editedSettings.t9_intraday_fib_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                            {editedSettings.t9_intraday_fib_enabled ? 'Corridor ON' : 'Corridor OFF'}
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+                    {editedSettings.t9_intraday_fib_enabled && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Timeframe</div>
+                        <select value={editedSettings.t9_intraday_fib_timeframe}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t9_intraday_fib_timeframe: e.target.value as 'M15' | 'M5' })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}>
+                          <option value="M15">M15</option>
+                          <option value="M5">M5</option>
+                        </select>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Lookback bars</div>
+                        <input type="number" step="1" min="4" max="200" value={editedSettings.t9_intraday_fib_lookback_bars}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t9_intraday_fib_lookback_bars: parseInt(e.target.value) || 16 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Lower bound</div>
+                        <select value={editedSettings.t9_intraday_fib_lower_level}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t9_intraday_fib_lower_level: e.target.value as typeof editedSettings.t9_intraday_fib_lower_level })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}>
+                          {['S3','S2','S1','PP','R1','R2','R3'].map(lv => <option key={lv} value={lv}>{lv}</option>)}
+                        </select>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Upper bound</div>
+                        <select value={editedSettings.t9_intraday_fib_upper_level}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t9_intraday_fib_upper_level: e.target.value as typeof editedSettings.t9_intraday_fib_upper_level })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}>
+                          {['S3','S2','S1','PP','R1','R2','R3'].map(lv => <option key={lv} value={lv}>{lv}</option>)}
+                        </select>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Boundary buffer (pips)</div>
+                        <input type="number" step="0.5" min="0" max="10" value={editedSettings.t9_intraday_fib_boundary_buffer_pips}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t9_intraday_fib_boundary_buffer_pips: parseFloat(e.target.value) || 1.0 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Hysteresis (pips)</div>
+                        <input type="number" step="0.5" min="0" max="10" value={editedSettings.t9_intraday_fib_hysteresis_pips}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t9_intraday_fib_hysteresis_pips: parseFloat(e.target.value) || 1.0 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                      </div>
+                    </div>
+                    )}
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
+                      Computes fib levels from rolling M15/M5 high-low range. Entries allowed only inside the selected corridor (e.g. S1–R1).
+                      Hysteresis prevents rapid allow/block flipping near boundaries.
+                    </div>
                   </div>
                   )}
                   {/* Trend Extension Exhaustion (Trial #5 only) */}

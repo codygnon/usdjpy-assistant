@@ -995,6 +995,17 @@ class ExecutionPolicyKtCgTrial9(BaseModel):
     kill_switch_enabled: bool = False
     kill_switch_zone_entry_action: Literal["kill", "hold"] = "hold"
 
+    # Intraday Fibonacci Corridor filter
+    # "off" = no fib filter (current default), "daily_ntz" = existing daily fib NTZ,
+    # "intraday_corridor" = rolling intraday fib corridor mode
+    intraday_fib_enabled: bool = False
+    intraday_fib_timeframe: Literal["M15", "M5"] = "M15"
+    intraday_fib_lookback_bars: int = 16
+    intraday_fib_lower_level: Literal["S3", "S2", "S1", "PP", "R1", "R2", "R3"] = "S1"
+    intraday_fib_upper_level: Literal["S3", "S2", "S1", "PP", "R1", "R2", "R3"] = "R1"
+    intraday_fib_boundary_buffer_pips: float = 1.0
+    intraday_fib_hysteresis_pips: float = 1.0
+
     # Trend exhaustion (same fields as T8)
     trend_exhaustion_enabled: bool = False
     trend_exhaustion_mode: Literal["global", "session", "session_and_side"] = "session_and_side"

@@ -1678,6 +1678,31 @@ def _v44_news_trend_active_event(
     return None
 
 
+def _v44_most_recent_news_event(
+    now_utc: datetime,
+    events: tuple[pd.Timestamp, ...],
+) -> Optional[pd.Timestamp]:
+    if not events:
+        return None
+    now_ts = pd.Timestamp(now_utc)
+    if now_ts.tzinfo is None:
+        now_ts = now_ts.tz_localize("UTC")
+    else:
+        now_ts = now_ts.tz_convert("UTC")
+    latest: Optional[pd.Timestamp] = None
+    for ev in events:
+        ev_ts = pd.Timestamp(ev)
+        if ev_ts.tzinfo is None:
+            ev_ts = ev_ts.tz_localize("UTC")
+        else:
+            ev_ts = ev_ts.tz_convert("UTC")
+        if ev_ts <= now_ts:
+            latest = ev_ts
+        else:
+            break
+    return latest
+
+
 def execute_london_v2_entry(
     *,
     adapter,
@@ -2462,9 +2487,22 @@ def execute_v44_ny_entry(
 
     news_events: tuple[pd.Timestamp, ...] = tuple()
     in_news_window = False
+    sdat["news_filter_enabled"] = int(v44_news_filter_enabled)
+    sdat["news_trend_enabled"] = int(v44_news_trend_enabled)
+    sdat["news_calendar_path"] = v44_news_calendar_path
+    sdat["news_status"] = "disabled"
+    sdat["news_event_time"] = None
+    sdat["news_wait_minutes"] = None
+    sdat["news_confirm_progress"] = None
+    sdat["news_trend_side"] = None
     if v44_news_filter_enabled:
         news_events = _load_news_events_cached(v44_news_calendar_path, v44_news_impact_min)
+        sdat["news_events_loaded"] = int(len(news_events))
         in_news_window = bool(is_in_news_window(now_utc, news_events, v44_news_before, v44_news_after))
+        latest_ev = _v44_most_recent_news_event(now_utc, news_events)
+        if latest_ev is not None:
+            sdat["news_event_time"] = latest_ev.isoformat()
+        sdat["news_status"] = "in_window" if in_news_window else "clear"
         if in_news_window and not v44_news_trend_enabled:
             no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: news window block", side=None)
             no_trade["phase3_state_updates"] = {session_key: sdat}
@@ -2564,6 +2602,20 @@ def execute_v44_ny_entry(
     if side is None:
         # Optional post-news trend workflow parity.
         if v44_news_filter_enabled and v44_news_trend_enabled and news_events:
+            latest_ev = _v44_most_recent_news_event(now_utc, news_events)
+            if latest_ev is not None:
+                delay_start = latest_ev + pd.Timedelta(minutes=max(0, v44_news_trend_delay_minutes))
+                delay_end = delay_start + pd.Timedelta(minutes=max(1, v44_news_trend_window_minutes))
+                now_ts = pd.Timestamp(now_utc)
+                if now_ts.tzinfo is None:
+                    now_ts = now_ts.tz_localize("UTC")
+                else:
+                    now_ts = now_ts.tz_convert("UTC")
+                if latest_ev <= now_ts < delay_start:
+                    sdat["news_status"] = "waiting_delay"
+                    sdat["news_wait_minutes"] = max(0.0, (delay_start - now_ts) / pd.Timedelta(minutes=1))
+                elif delay_start <= now_ts <= delay_end:
+                    sdat["news_status"] = "waiting_confirm"
             ev = _v44_news_trend_active_event(
                 now_utc,
                 news_events,
@@ -2571,11 +2623,14 @@ def execute_v44_ny_entry(
                 window_minutes=v44_news_trend_window_minutes,
             )
             if ev is not None and len(m1_df) >= int(v44_news_trend_confirm_bars):
+                sdat["news_event_time"] = pd.Timestamp(ev).isoformat()
                 h1_tr = compute_v44_h1_trend(h1_df, v44_h1_ema_fast, v44_h1_ema_slow)
                 if h1_tr in {"up", "down"}:
                     nt_side = "buy" if h1_tr == "up" else "sell"
+                    sdat["news_trend_side"] = nt_side
                     confirm_ok = True
                     conf_n = int(v44_news_trend_confirm_bars)
+                    progress = 0
                     for j in range(len(m1_df) - conf_n, len(m1_df)):
                         oj = float(m1_df.iloc[j]["open"])
                         cj = float(m1_df.iloc[j]["close"])
@@ -2584,6 +2639,8 @@ def execute_v44_ny_entry(
                         if (not dir_ok) or (body < float(v44_news_trend_min_body_pips)):
                             confirm_ok = False
                             break
+                        progress += 1
+                    sdat["news_confirm_progress"] = f"{progress}/{conf_n}"
                     if confirm_ok:
                         if v44_news_trend_require_ema_align:
                             cser = m5_df["close"].astype(float)
@@ -2591,12 +2648,18 @@ def execute_v44_ny_entry(
                             es = _compute_ema(cser, v44_m5_ema_slow)
                             ema_ok = float(ef.iloc[-1]) > float(es.iloc[-1]) if nt_side == "buy" else float(ef.iloc[-1]) < float(es.iloc[-1])
                             if not ema_ok:
+                                sdat["news_status"] = "ema_misaligned"
                                 no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: news-trend EMA misaligned", side=None)
                                 no_trade["phase3_state_updates"] = {session_key: sdat}
                                 return no_trade
+                        sdat["news_status"] = "ready"
                         side = nt_side
                         strength = "strong"
                         reason = "v44: news trend confirmation"
+                    else:
+                        sdat["news_status"] = "waiting_confirm"
+                else:
+                    sdat["news_status"] = "waiting_h1_trend"
         if side is None:
             no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=reason, side=None)
             no_trade["phase3_state_updates"] = {session_key: sdat}

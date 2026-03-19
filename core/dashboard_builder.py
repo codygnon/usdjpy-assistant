@@ -36,6 +36,7 @@ from core.dashboard_reporters import (
     report_t8_exit_strategy,
     report_daily_level_filter,
     report_ntz_status,
+    report_intraday_fib_corridor,
     report_kill_switch_status,
     report_h1_levels,
     report_m5_trend_alignment,
@@ -249,6 +250,7 @@ def build_dashboard_filters(
     temp_overrides: Optional[dict[str, int]] = None,
     daily_level_filter_snapshot: Optional[dict] = None,
     ntz_filter_snapshot: Optional[dict] = None,
+    intraday_fib_corridor_snapshot: Optional[dict] = None,
     phase3_state: Optional[dict] = None,
 ) -> list[FilterReport]:
     """Build the filter report list the same way the run loop does.
@@ -510,6 +512,7 @@ def build_dashboard_filters(
             filters.append(report_trend_exhaustion(exhaustion_result))
         filters.append(report_trial7_adaptive_tp(policy, exhaustion_result))
         filters.append(report_ntz_status(ntz_filter_snapshot, tick, pip_size))
+        filters.append(report_intraday_fib_corridor(intraday_fib_corridor_snapshot, tick, pip_size))
         filters.append(report_kill_switch_status(policy, data_by_tf, tick, pip_size, side))
         cap_multiplier = 1.0
         cap_min = 1

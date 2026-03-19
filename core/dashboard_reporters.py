@@ -1227,6 +1227,92 @@ def collect_trial_7_context(
     return items
 
 
+def report_intraday_fib_corridor(snapshot: Optional[dict], tick, pip_size: float) -> FilterReport:
+    """Report Trial #9 Intraday Fibonacci Corridor status."""
+    if snapshot is None or not snapshot.get("enabled", False):
+        return FilterReport(
+            filter_id="intraday_fib_corridor", display_name="Intraday Fib Corridor",
+            enabled=False, is_clear=True,
+        )
+
+    lower_level = snapshot.get("lower_level", "S1")
+    upper_level = snapshot.get("upper_level", "R1")
+    timeframe = snapshot.get("timeframe", "M15")
+    lookback_bars = snapshot.get("lookback_bars", 16)
+    lower_val = snapshot.get("lower_value")
+    upper_val = snapshot.get("upper_value")
+    corridor_state = snapshot.get("corridor_state")
+    rolling_high = snapshot.get("rolling_high")
+    rolling_low = snapshot.get("rolling_low")
+    buffer_pips = snapshot.get("boundary_buffer_pips", 1.0)
+    hysteresis_pips = snapshot.get("hysteresis_pips", 1.0)
+
+    current_price = (tick.bid + tick.ask) / 2.0
+
+    if lower_val is None or upper_val is None:
+        return FilterReport(
+            filter_id="intraday_fib_corridor", display_name="Intraday Fib Corridor",
+            enabled=True, is_clear=True,
+            current_value=f"{timeframe} x{lookback_bars} | Awaiting data",
+            explanation="No intraday fib levels computed yet",
+        )
+
+    if lower_val >= upper_val:
+        return FilterReport(
+            filter_id="intraday_fib_corridor", display_name="Intraday Fib Corridor",
+            enabled=True, is_clear=False,
+            current_value=f"{lower_level}={lower_val:.3f} >= {upper_level}={upper_val:.3f}",
+            block_reason=f"Invalid bounds: {lower_level} >= {upper_level}",
+        )
+
+    is_inside = corridor_state is True
+    price_vs = ""
+    if current_price > upper_val:
+        price_vs = f"above {upper_level}"
+    elif current_price < lower_val:
+        price_vs = f"below {lower_level}"
+    else:
+        price_vs = "inside corridor"
+
+    current_str = (
+        f"{timeframe} x{lookback_bars} | Price {current_price:.3f} | "
+        f"{lower_level}={lower_val:.3f} .. {upper_level}={upper_val:.3f} | {price_vs}"
+    )
+    block_reason = None if is_inside else f"Price {price_vs} — entries blocked"
+    explanation = (
+        f"{'ALLOWED' if is_inside else 'BLOCKED'}: {price_vs}"
+        + (f" (hysteresis holding)" if corridor_state is False and lower_val <= current_price <= upper_val else "")
+    )
+
+    meta: dict[str, Any] = {
+        "lower_level": lower_level,
+        "upper_level": upper_level,
+        "timeframe": timeframe,
+        "lookback_bars": lookback_bars,
+        "lower_value": lower_val,
+        "upper_value": upper_val,
+        "rolling_high": rolling_high,
+        "rolling_low": rolling_low,
+        "corridor_state": "inside" if is_inside else ("outside" if corridor_state is False else "undecided"),
+        "boundary_buffer_pips": buffer_pips,
+        "hysteresis_pips": hysteresis_pips,
+    }
+    # Include all fib levels in metadata
+    fib_levels = snapshot.get("fib_levels")
+    if fib_levels:
+        meta["fib_levels"] = fib_levels
+
+    return FilterReport(
+        filter_id="intraday_fib_corridor", display_name="Intraday Fib Corridor",
+        enabled=True, is_clear=is_inside,
+        current_value=current_str,
+        threshold=f"Buffer: {buffer_pips}p | Hysteresis: {hysteresis_pips}p",
+        block_reason=block_reason,
+        explanation=explanation,
+        metadata=meta,
+    )
+
+
 def collect_trial_9_context(
     policy,
     data_by_tf: dict,
@@ -1237,6 +1323,7 @@ def collect_trial_9_context(
     *,
     exhaustion_result: Optional[dict] = None,
     ntz_snapshot: Optional[dict] = None,
+    intraday_fib_snapshot: Optional[dict] = None,
 ) -> list[ContextItem]:
     """Collect Trial #9 dashboard context, including NTZ/Fibonacci details."""
     items = collect_trial_7_context(
@@ -1300,6 +1387,35 @@ def collect_trial_9_context(
             items.append(ContextItem("NTZ Blocking", f"{blocked_label} ({blocked_dist_pips:.1f}p)", "filters"))
         else:
             items.append(ContextItem("NTZ Blocking", "clear", "filters"))
+
+    # Intraday Fibonacci Corridor context
+    ifib = intraday_fib_snapshot or {}
+    ifib_enabled = bool(ifib.get("enabled", False))
+    items.append(ContextItem("Intraday Fib Corridor", "ON" if ifib_enabled else "OFF", "filters"))
+    if ifib_enabled:
+        tf = str(ifib.get("timeframe") or getattr(policy, "intraday_fib_timeframe", "M15"))
+        lookback = int(ifib.get("lookback_bars") or getattr(policy, "intraday_fib_lookback_bars", 16))
+        items.append(ContextItem("IFC Timeframe", tf, "filters"))
+        items.append(ContextItem("IFC Lookback", str(lookback), "filters"))
+        lower_level = ifib.get("lower_level", "S1")
+        upper_level = ifib.get("upper_level", "R1")
+        lower_val = ifib.get("lower_value")
+        upper_val = ifib.get("upper_value")
+        items.append(ContextItem("IFC Bounds", f"{lower_level} .. {upper_level}", "filters"))
+        if lower_val is not None and upper_val is not None:
+            items.append(ContextItem(f"IFC {lower_level}", f"{lower_val:.3f}", "filters"))
+            items.append(ContextItem(f"IFC {upper_level}", f"{upper_val:.3f}", "filters"))
+        r_high = ifib.get("rolling_high")
+        r_low = ifib.get("rolling_low")
+        if r_high is not None and r_low is not None:
+            items.append(ContextItem("IFC Range", f"{r_low:.3f} - {r_high:.3f}", "filters"))
+        corridor_state = ifib.get("corridor_state")
+        if corridor_state is True:
+            items.append(ContextItem("IFC Status", "INSIDE — entries allowed", "filters"))
+        elif corridor_state is False:
+            items.append(ContextItem("IFC Status", "OUTSIDE — entries blocked", "filters"))
+        else:
+            items.append(ContextItem("IFC Status", "Awaiting data", "filters"))
 
     return items
 
@@ -1678,6 +1794,37 @@ def collect_phase3_context(
         else:
             items.append(ContextItem("Session mode", session_mode, "v44"))
             items.append(ContextItem("Efficiency avg", f"n={eff_hist_len}", "v44"))
+        news_filter_enabled = bool(sd.get("news_filter_enabled", False))
+        news_trend_enabled = bool(sd.get("news_trend_enabled", False))
+        news_status = str(sd.get("news_status") or ("disabled" if not news_filter_enabled else "clear"))
+        news_event_time = sd.get("news_event_time")
+        news_wait_minutes = sd.get("news_wait_minutes")
+        news_confirm_progress = sd.get("news_confirm_progress")
+        news_trend_side = sd.get("news_trend_side")
+        news_mode = "disabled"
+        if news_filter_enabled and news_trend_enabled:
+            news_mode = "block + trend"
+        elif news_filter_enabled:
+            news_mode = "block only"
+        items.append(ContextItem("News mode", news_mode, "v44"))
+        news_status_detail = news_status
+        if news_trend_side:
+            news_status_detail += f" ({news_trend_side})"
+        items.append(ContextItem("News status", news_status_detail, "v44"))
+        if news_wait_minutes is not None:
+            items.append(ContextItem("News wait", f"{float(news_wait_minutes):.1f}m", "v44"))
+        if news_confirm_progress:
+            items.append(ContextItem("News confirm", str(news_confirm_progress), "v44"))
+        if news_event_time:
+            try:
+                ev_ts = pd.Timestamp(news_event_time)
+                if ev_ts.tzinfo is None:
+                    ev_ts = ev_ts.tz_localize("UTC")
+                else:
+                    ev_ts = ev_ts.tz_convert("UTC")
+                items.append(ContextItem("News event UTC", ev_ts.strftime("%Y-%m-%d %H:%M"), "v44"))
+            except Exception:
+                items.append(ContextItem("News event UTC", str(news_event_time), "v44"))
         trade_count = int(sd.get("trade_count", 0))
         consec_losses = int(sd.get("consecutive_losses", 0))
         wins_closed = int(sd.get("wins_closed", 0))

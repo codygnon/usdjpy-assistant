@@ -3146,6 +3146,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         data_by_tf["D"] = _get_bars_cached(_adapter, profile.symbol, "D", 5)
                         data_by_tf["H1"] = _get_bars_cached(_adapter, profile.symbol, "H1", 200)
                     if _policy_type == "kt_cg_trial_9":
+                        data_by_tf["M15"] = _get_bars_cached(_adapter, profile.symbol, "M15", 2000)
                         data_by_tf["W"] = _get_bars_cached(_adapter, profile.symbol, "W", 2)
                         data_by_tf["MN"] = _get_bars_cached(_adapter, profile.symbol, "MN", 2)
                 except Exception:
@@ -3227,113 +3228,152 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 except Exception:
                     temp_overrides_api = None
                     pass
-                if _policy_type == "kt_cg_trial_9":
-                    try:
-                        from core.fib_pivots import compute_daily_fib_pivots
+            intraday_fib_corridor_snapshot = None
+            if _policy_type == "kt_cg_trial_9":
+                try:
+                    from core.fib_pivots import compute_daily_fib_pivots
 
-                        def _prev_d_row(d_df: pd.DataFrame | None) -> dict[str, Any] | None:
-                            if d_df is None or d_df.empty:
+                    def _prev_d_row(d_df: pd.DataFrame | None) -> dict[str, Any] | None:
+                        if d_df is None or d_df.empty:
+                            return None
+                        d_local = d_df.copy()
+                        d_local["time"] = pd.to_datetime(d_local["time"], utc=True, errors="coerce")
+                        d_local = d_local.dropna(subset=["time"]).sort_values("time")
+                        if d_local.empty:
+                            return None
+                        now_date = now_utc.date().isoformat()
+                        if str(d_local.iloc[-1]["time"].date().isoformat()) == now_date:
+                            # Last bar is today's forming candle; take the previous completed day
+                            if len(d_local) < 2:
                                 return None
-                            d_local = d_df.copy()
-                            d_local["time"] = pd.to_datetime(d_local["time"], utc=True, errors="coerce")
-                            d_local = d_local.dropna(subset=["time"]).sort_values("time")
-                            if d_local.empty:
-                                return None
-                            now_date = now_utc.date().isoformat()
-                            if str(d_local.iloc[-1]["time"].date().isoformat()) == now_date:
-                                # Last bar is today's forming candle; take the previous completed day
-                                if len(d_local) < 2:
-                                    return None
-                                row = d_local.iloc[-2]
+                            row = d_local.iloc[-2]
+                        else:
+                            # Last bar is a completed previous day (e.g. only completed bars returned)
+                            row = d_local.iloc[-1]
+                        return {k: row.get(k) for k in ("high", "low", "close")}
+
+                    def _prev_candle_hl(df: pd.DataFrame | None) -> tuple[float | None, float | None]:
+                        if df is None or df.empty:
+                            return None, None
+                        local = df.copy()
+                        local["time"] = pd.to_datetime(local["time"], utc=True, errors="coerce")
+                        local = local.dropna(subset=["time"]).sort_values("time")
+                        if local.empty:
+                            return None, None
+                        row = local.iloc[-1]
+                        try:
+                            return float(row["high"]), float(row["low"])
+                        except Exception:
+                            return None, None
+
+                    ntz_levels: dict[str, float] = {}
+                    prev_daily = _prev_d_row(data_by_tf.get("D"))
+                    if getattr(_policy, "ntz_use_prev_day_hl", True) and prev_daily is not None:
+                        try:
+                            ntz_levels["PDH"] = float(prev_daily["high"])
+                            ntz_levels["PDL"] = float(prev_daily["low"])
+                        except Exception:
+                            pass
+                    if getattr(_policy, "ntz_use_weekly_hl", True):
+                        wh, wl = _prev_candle_hl(data_by_tf.get("W"))
+                        if wh is not None and wl is not None:
+                            ntz_levels["WH"] = wh
+                            ntz_levels["WL"] = wl
+                    if getattr(_policy, "ntz_use_monthly_hl", True):
+                        mh, ml = _prev_candle_hl(data_by_tf.get("MN"))
+                        if mh is not None and ml is not None:
+                            ntz_levels["MH"] = mh
+                            ntz_levels["ML"] = ml
+
+                    fib_levels: dict[str, float] = {}
+                    _d_df_debug = data_by_tf.get("D")
+                    _d_len = len(_d_df_debug) if _d_df_debug is not None else "None"
+                    _fib_enabled = bool(getattr(_policy, "ntz_use_fib_pivots", False))
+                    print(f"[NTZ-API-DEBUG] fib_enabled={_fib_enabled} prev_daily={prev_daily} d_df_len={_d_len}")
+                    if _fib_enabled and prev_daily is not None:
+                        try:
+                            fib_raw = compute_daily_fib_pivots(
+                                float(prev_daily["high"]),
+                                float(prev_daily["low"]),
+                                float(prev_daily["close"]),
+                            )
+                            fib_toggle_map = {
+                                "Fib-PP": bool(getattr(_policy, "ntz_use_fib_pp", True)),
+                                "Fib-R1": bool(getattr(_policy, "ntz_use_fib_r1", True)),
+                                "Fib-R2": bool(getattr(_policy, "ntz_use_fib_r2", True)),
+                                "Fib-R3": bool(getattr(_policy, "ntz_use_fib_r3", True)),
+                                "Fib-S1": bool(getattr(_policy, "ntz_use_fib_s1", True)),
+                                "Fib-S2": bool(getattr(_policy, "ntz_use_fib_s2", True)),
+                                "Fib-S3": bool(getattr(_policy, "ntz_use_fib_s3", True)),
+                            }
+                            fib_value_map = {
+                                "Fib-PP": float(fib_raw["P"]),
+                                "Fib-R1": float(fib_raw["R1"]),
+                                "Fib-R2": float(fib_raw["R2"]),
+                                "Fib-R3": float(fib_raw["R3"]),
+                                "Fib-S1": float(fib_raw["S1"]),
+                                "Fib-S2": float(fib_raw["S2"]),
+                                "Fib-S3": float(fib_raw["S3"]),
+                            }
+                            fib_levels = {
+                                label: value
+                                for label, value in fib_value_map.items()
+                                if fib_toggle_map.get(label, False)
+                            }
+                            ntz_levels.update(fib_levels)
+                            print(f"[NTZ-API-DEBUG] fib computed: {list(fib_levels.keys())}")
+                        except Exception as _fib_ex:
+                            print(f"[NTZ-API-DEBUG] fib exception: {_fib_ex}")
+                            fib_levels = {}
+
+                    ntz_filter_snapshot = {
+                        "enabled": bool(getattr(_policy, "ntz_enabled", False)),
+                        "buffer_pips": float(getattr(_policy, "ntz_buffer_pips", 10.0)),
+                        "levels": ntz_levels,
+                        "fib_pivots_enabled": _fib_enabled,
+                        "fib_levels": fib_levels,
+                    }
+                except Exception as _ntz_ex:
+                    print(f"[NTZ-API-DEBUG] outer exception: {_ntz_ex}")
+                    ntz_filter_snapshot = None
+                try:
+                    from core.fib_pivots import compute_rolling_intraday_fib_levels
+                    from core.no_trade_zone import IntradayFibCorridorFilter
+
+                    ifib_enabled = bool(getattr(_policy, "intraday_fib_enabled", False))
+                    ifib_timeframe = str(getattr(_policy, "intraday_fib_timeframe", "M15"))
+                    if ifib_timeframe not in ("M15", "M5"):
+                        ifib_timeframe = "M15"
+                    ifib_lookback = max(1, int(getattr(_policy, "intraday_fib_lookback_bars", 16)))
+                    ifib_filter = IntradayFibCorridorFilter(
+                        enabled=ifib_enabled,
+                        lower_level=str(getattr(_policy, "intraday_fib_lower_level", "S1")),
+                        upper_level=str(getattr(_policy, "intraday_fib_upper_level", "R1")),
+                        timeframe=ifib_timeframe,
+                        lookback_bars=ifib_lookback,
+                        boundary_buffer_pips=float(getattr(_policy, "intraday_fib_boundary_buffer_pips", 1.0)),
+                        hysteresis_pips=float(getattr(_policy, "intraday_fib_hysteresis_pips", 1.0)),
+                        pip_size=pip_size,
+                    )
+                    if ifib_enabled:
+                        ifib_df = data_by_tf.get(ifib_timeframe)
+                        if ifib_df is not None and not ifib_df.empty:
+                            ifib_levels = compute_rolling_intraday_fib_levels(ifib_df, lookback_bars=ifib_lookback)
+                            if ifib_levels is not None:
+                                completed = ifib_df.iloc[:-1] if len(ifib_df) > 1 else ifib_df
+                                window = completed.iloc[-ifib_lookback:]
+                                r_high = float(window["high"].max())
+                                r_low = float(window["low"].min())
+                                ifib_filter.update_levels(ifib_levels, rolling_high=r_high, rolling_low=r_low)
+                                ifib_filter.check_corridor((_tick.bid + _tick.ask) / 2.0)
                             else:
-                                # Last bar is a completed previous day (e.g. only completed bars returned)
-                                row = d_local.iloc[-1]
-                            return {k: row.get(k) for k in ("high", "low", "close")}
-
-                        def _prev_candle_hl(df: pd.DataFrame | None) -> tuple[float | None, float | None]:
-                            if df is None or df.empty:
-                                return None, None
-                            local = df.copy()
-                            local["time"] = pd.to_datetime(local["time"], utc=True, errors="coerce")
-                            local = local.dropna(subset=["time"]).sort_values("time")
-                            if local.empty:
-                                return None, None
-                            row = local.iloc[-1]
-                            try:
-                                return float(row["high"]), float(row["low"])
-                            except Exception:
-                                return None, None
-
-                        ntz_levels: dict[str, float] = {}
-                        prev_daily = _prev_d_row(data_by_tf.get("D"))
-                        if getattr(_policy, "ntz_use_prev_day_hl", True) and prev_daily is not None:
-                            try:
-                                ntz_levels["PDH"] = float(prev_daily["high"])
-                                ntz_levels["PDL"] = float(prev_daily["low"])
-                            except Exception:
-                                pass
-                        if getattr(_policy, "ntz_use_weekly_hl", True):
-                            wh, wl = _prev_candle_hl(data_by_tf.get("W"))
-                            if wh is not None and wl is not None:
-                                ntz_levels["WH"] = wh
-                                ntz_levels["WL"] = wl
-                        if getattr(_policy, "ntz_use_monthly_hl", True):
-                            mh, ml = _prev_candle_hl(data_by_tf.get("MN"))
-                            if mh is not None and ml is not None:
-                                ntz_levels["MH"] = mh
-                                ntz_levels["ML"] = ml
-
-                        fib_levels: dict[str, float] = {}
-                        _d_df_debug = data_by_tf.get("D")
-                        _d_len = len(_d_df_debug) if _d_df_debug is not None else "None"
-                        _fib_enabled = bool(getattr(_policy, "ntz_use_fib_pivots", False))
-                        print(f"[NTZ-API-DEBUG] fib_enabled={_fib_enabled} prev_daily={prev_daily} d_df_len={_d_len}")
-                        if _fib_enabled and prev_daily is not None:
-                            try:
-                                fib_raw = compute_daily_fib_pivots(
-                                    float(prev_daily["high"]),
-                                    float(prev_daily["low"]),
-                                    float(prev_daily["close"]),
-                                )
-                                fib_toggle_map = {
-                                    "Fib-PP": bool(getattr(_policy, "ntz_use_fib_pp", True)),
-                                    "Fib-R1": bool(getattr(_policy, "ntz_use_fib_r1", True)),
-                                    "Fib-R2": bool(getattr(_policy, "ntz_use_fib_r2", True)),
-                                    "Fib-R3": bool(getattr(_policy, "ntz_use_fib_r3", True)),
-                                    "Fib-S1": bool(getattr(_policy, "ntz_use_fib_s1", True)),
-                                    "Fib-S2": bool(getattr(_policy, "ntz_use_fib_s2", True)),
-                                    "Fib-S3": bool(getattr(_policy, "ntz_use_fib_s3", True)),
-                                }
-                                fib_value_map = {
-                                    "Fib-PP": float(fib_raw["P"]),
-                                    "Fib-R1": float(fib_raw["R1"]),
-                                    "Fib-R2": float(fib_raw["R2"]),
-                                    "Fib-R3": float(fib_raw["R3"]),
-                                    "Fib-S1": float(fib_raw["S1"]),
-                                    "Fib-S2": float(fib_raw["S2"]),
-                                    "Fib-S3": float(fib_raw["S3"]),
-                                }
-                                fib_levels = {
-                                    label: value
-                                    for label, value in fib_value_map.items()
-                                    if fib_toggle_map.get(label, False)
-                                }
-                                ntz_levels.update(fib_levels)
-                                print(f"[NTZ-API-DEBUG] fib computed: {list(fib_levels.keys())}")
-                            except Exception as _fib_ex:
-                                print(f"[NTZ-API-DEBUG] fib exception: {_fib_ex}")
-                                fib_levels = {}
-
-                        ntz_filter_snapshot = {
-                            "enabled": bool(getattr(_policy, "ntz_enabled", False)),
-                            "buffer_pips": float(getattr(_policy, "ntz_buffer_pips", 10.0)),
-                            "levels": ntz_levels,
-                            "fib_pivots_enabled": _fib_enabled,
-                            "fib_levels": fib_levels,
-                        }
-                    except Exception as _ntz_ex:
-                        print(f"[NTZ-API-DEBUG] outer exception: {_ntz_ex}")
-                        ntz_filter_snapshot = None
+                                ifib_filter.update_levels(None)
+                        else:
+                            ifib_filter.update_levels(None)
+                    intraday_fib_corridor_snapshot = ifib_filter.get_snapshot()
+                except Exception as _ifib_ex:
+                    print(f"[api] intraday fib corridor snapshot error for '{profile_name}': {_ifib_ex}")
+                    intraday_fib_corridor_snapshot = None
             # Compute Trial #6 M3 trend for filter display
             t6_eval_result = None
             if _policy_type == "kt_cg_trial_6" and _policy is not None:
@@ -3360,6 +3400,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 adapter=_adapter if '_adapter' in locals() else None,
                 temp_overrides=temp_overrides_api,
                 ntz_filter_snapshot=ntz_filter_snapshot,
+                intraday_fib_corridor_snapshot=intraday_fib_corridor_snapshot,
                 phase3_state=phase3_state_for_filters,
             )
             filters.extend(asdict(f) for f in filter_reports)
@@ -3399,6 +3440,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         policy_for_context, data_by_tf, _tick, {}, None, pip_size,
                         exhaustion_result=exhaustion_result,
                         ntz_snapshot=ntz_filter_snapshot,
+                        intraday_fib_snapshot=intraday_fib_corridor_snapshot,
                     )
                 context = [asdict(item) for item in context_items]
             except Exception as e:
@@ -3596,6 +3638,15 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
                 "use_fib_s1": getattr(policy, "ntz_use_fib_s1", True),
                 "use_fib_s2": getattr(policy, "ntz_use_fib_s2", True),
                 "use_fib_s3": getattr(policy, "ntz_use_fib_s3", True),
+            }
+            filters["intraday_fib_corridor"] = {
+                "enabled": getattr(policy, "intraday_fib_enabled", False),
+                "timeframe": getattr(policy, "intraday_fib_timeframe", "M15"),
+                "lookback_bars": getattr(policy, "intraday_fib_lookback_bars", 16),
+                "lower_level": getattr(policy, "intraday_fib_lower_level", "S1"),
+                "upper_level": getattr(policy, "intraday_fib_upper_level", "R1"),
+                "boundary_buffer_pips": getattr(policy, "intraday_fib_boundary_buffer_pips", 1.0),
+                "hysteresis_pips": getattr(policy, "intraday_fib_hysteresis_pips", 1.0),
             }
             filters["kill_switch"] = {
                 "enabled": getattr(policy, "kill_switch_enabled", True),
