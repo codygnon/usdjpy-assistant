@@ -161,12 +161,17 @@ def _normalized_profit_for_dashboard_row(row: dict, symbol_hint: str) -> float |
         return est
     abs_raw = abs(raw)
     abs_est = abs(est)
-    if abs_raw >= 250 and abs_est >= 5:
-        ratio = abs_raw / abs_est if abs_est > 0 else float("inf")
-        if ratio >= 6.0:
-            return est
-    if abs_raw >= 250 and abs_est >= 20 and (raw * est) < 0:
-        return est
+    # Only override raw with est when they AGREE in sign.  The raw value
+    # comes from the broker's realizedPL (authoritative) while est is a
+    # rough price-based approximation that can be wrong for partially-closed
+    # trades (where exit_price is a weighted average or last-fill price).
+    if (raw * est) >= 0:
+        # Same sign — trust raw unless the magnitude ratio is extreme (>6×),
+        # which signals a unit/currency mismatch in stored data.
+        if abs_raw >= 250 and abs_est >= 5:
+            ratio = abs_raw / abs_est if abs_est > 0 else float("inf")
+            if ratio >= 6.0:
+                return est
     return raw
 
 
@@ -1660,6 +1665,11 @@ def _collect_dashboard_daily_summary(profile, store) -> DailySummary:
             d = dict(row)
             pips = _normalized_pips_for_dashboard_row(d, pip_size)
             profit = _normalized_profit_for_dashboard_row(d, profile.symbol)
+            raw_profit = d.get("profit")
+            raw_pips = d.get("pips")
+            print(f"[{profile.profile_name}] daily_summary trade: id={d.get('trade_id')}, side={d.get('side')}, "
+                  f"entry={d.get('entry_price')}, exit={d.get('exit_price')}, "
+                  f"raw_profit={raw_profit}, norm_profit={profit}, raw_pips={raw_pips}, norm_pips={pips}")
             if pips is not None:
                 daily.total_pips += float(pips)
             if profit is not None:
@@ -1674,10 +1684,12 @@ def _collect_dashboard_daily_summary(profile, store) -> DailySummary:
                     daily.wins += 1
                 else:
                     daily.losses += 1
+        print(f"[{profile.profile_name}] daily_summary: date={date_str}, trades={daily.trades_today}, "
+              f"wins={daily.wins}, losses={daily.losses}, pips={daily.total_pips:.1f}, profit={daily.total_profit:.2f}")
         if daily.trades_today > 0:
             daily.win_rate = round(daily.wins / daily.trades_today * 100, 1)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[{profile.profile_name}] daily_summary error: {e}")
     return daily
 
 
@@ -2684,11 +2696,10 @@ def main() -> None:
                     synced = sync_closed_trades(profile, store, log_dir=log_dir)
                     if synced > 0:
                         print(f"[{profile.profile_name}] synced {synced} externally closed trade(s)")
-                    # Import from broker history (MT5 only — OANDA places all trades via bot, already in DB)
-                    if getattr(profile, "broker_type", None) != "oanda":
-                        imported = import_mt5_history(profile, store, days_back=90)
-                        if imported > 0:
-                            print(f"[{profile.profile_name}] imported {imported} trade(s) from broker history")
+                    # Import from broker history (MT5 + OANDA — captures manually-placed trades)
+                    imported = import_mt5_history(profile, store, days_back=90)
+                    if imported > 0:
+                        print(f"[{profile.profile_name}] imported {imported} trade(s) from broker history")
                 except Exception as e:
                     print(f"[{profile.profile_name}] sync error: {e}")
                     if not _is_transient_broker_error(e):

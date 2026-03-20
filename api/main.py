@@ -336,14 +336,19 @@ def _normalized_trade_profit_usd(row: Any, symbol_hint: str | None = None) -> fl
     if abs(raw) <= 0.01 and abs(est) >= 0.5:
         return est
 
+    # Only override raw with est when they AGREE in sign.  The raw value
+    # comes from the broker's realizedPL (authoritative) while est is a
+    # rough price-based approximation that can be wrong for partially-closed
+    # trades (where exit_price is a weighted average or last-fill price).
     abs_raw = abs(raw)
     abs_est = abs(est)
-    if abs_raw >= 250 and abs_est >= 5:
-        ratio = abs_raw / abs_est if abs_est > 0 else float("inf")
-        if ratio >= 6.0:
-            return est
-    if abs_raw >= 250 and abs_est >= 20 and (raw * est) < 0:
-        return est
+    if (raw * est) >= 0:
+        # Same sign — trust raw unless the magnitude ratio is extreme (>6×),
+        # which signals a unit/currency mismatch in stored data.
+        if abs_raw >= 250 and abs_est >= 5:
+            ratio = abs_raw / abs_est if abs_est > 0 else float("inf")
+            if ratio >= 6.0:
+                return est
     return raw
 
 
@@ -3521,6 +3526,11 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 d,
                 symbol_hint=str(getattr(profile, "symbol", "") or ""),
             )
+            raw_profit = d.get("profit")
+            raw_pips = d.get("pips")
+            print(f"[api] daily_summary trade: id={d.get('trade_id')}, side={d.get('side')}, "
+                  f"entry={d.get('entry_price')}, exit={d.get('exit_price')}, "
+                  f"raw_profit={raw_profit}, norm_profit={profit}, raw_pips={raw_pips}, norm_pips={pips}")
             if pips is not None:
                 total_pips += float(pips)
             if profit is not None:
@@ -3535,6 +3545,9 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                     wins += 1
                 else:
                     losses += 1
+        print(f"[api] daily_summary result: date={date_str}, profile={active_profile_name}, "
+              f"trades={trades_today}, wins={wins}, losses={losses}, "
+              f"total_pips={total_pips:.1f}, total_profit={total_profit:.2f}")
         win_rate = round(wins / trades_today * 100, 1) if trades_today > 0 else 0.0
         daily_summary = {
             "trades_today": trades_today,
@@ -3863,6 +3876,152 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
     return {"preset_name": profile.active_preset_name or "", "filters": filters}
 
 
+def _compute_daily_summary_from_store(
+    profile_name: str,
+    log_dir: Optional[Path] = None,
+    profile_path: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """Compute daily summary directly from the DB — lightweight, no broker connection needed."""
+    from datetime import datetime, timezone
+
+    resolved_path: Optional[Path] = None
+    if profile_path:
+        try:
+            p = _resolve_profile_path(profile_path)
+            if p.exists():
+                resolved_path = p
+        except Exception:
+            pass
+    if resolved_path is None:
+        for p in _list_profile_paths():
+            if p.stem == profile_name:
+                resolved_path = p
+                break
+    if resolved_path is None:
+        return None
+
+    try:
+        profile = load_profile_v1(str(resolved_path))
+    except Exception:
+        return None
+
+    if log_dir is None:
+        log_dir = _pick_best_dashboard_log_dir(profile_name, profile_path)
+    active_profile_name = log_dir.name if log_dir is not None else str(
+        getattr(profile, "profile_name", profile_name) or profile_name
+    )
+
+    now_utc = datetime.now(timezone.utc)
+    date_str = now_utc.strftime("%Y-%m-%d")
+    pip_size = float(profile.pip_size) if profile else 0.01
+
+    store = _store_for(profile_name, log_dir=log_dir)
+    closed_today = store.get_trades_for_date(active_profile_name, date_str)
+    trades_today = len(closed_today)
+    wins = losses = 0
+    total_pips = total_profit = 0.0
+    for row in closed_today:
+        d = dict(row)
+        pips = _normalized_trade_pips(d, pip_size)
+        profit = _normalized_trade_profit_usd(
+            d, symbol_hint=str(getattr(profile, "symbol", "") or ""),
+        )
+        if pips is not None:
+            total_pips += float(pips)
+        if profit is not None:
+            total_profit += float(profit)
+        if profit is not None and abs(float(profit)) > 0.01:
+            if float(profit) > 0:
+                wins += 1
+            else:
+                losses += 1
+        elif pips is not None and abs(float(pips)) > 0.05:
+            if float(pips) > 0:
+                wins += 1
+            else:
+                losses += 1
+    win_rate = round(wins / trades_today * 100, 1) if trades_today > 0 else 0.0
+    return {
+        "trades_today": trades_today,
+        "wins": wins,
+        "losses": losses,
+        "total_pips": round(total_pips, 1),
+        "total_profit": round(total_profit, 2),
+        "win_rate": win_rate,
+    }
+
+
+@app.get("/api/data/{profile_name}/debug-daily-trades")
+def debug_daily_trades(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
+    """Debug endpoint: show raw trade data for today's daily summary calculation."""
+    from datetime import datetime, timezone
+
+    log_dir = _pick_best_dashboard_log_dir(profile_name, profile_path)
+    resolved_path: Optional[Path] = None
+    if profile_path:
+        try:
+            p = _resolve_profile_path(profile_path)
+            if p.exists():
+                resolved_path = p
+        except Exception:
+            pass
+    if resolved_path is None:
+        for p in _list_profile_paths():
+            if p.stem == profile_name:
+                resolved_path = p
+                break
+    if resolved_path is None:
+        return {"error": "profile not found"}
+
+    try:
+        profile = load_profile_v1(str(resolved_path))
+    except Exception as e:
+        return {"error": f"load profile: {e}"}
+
+    active_profile_name = log_dir.name if log_dir is not None else str(getattr(profile, "profile_name", profile_name) or profile_name)
+    now_utc = datetime.now(timezone.utc)
+    date_str = now_utc.strftime("%Y-%m-%d")
+    pip_size = float(profile.pip_size) if profile else 0.01
+
+    try:
+        store = _store_for(profile_name, log_dir=log_dir)
+        closed_today = store.get_trades_for_date(active_profile_name, date_str)
+        open_trades = store.list_open_trades(active_profile_name)
+    except Exception as e:
+        return {"error": f"store: {e}"}
+
+    trades = []
+    for row in closed_today:
+        d = dict(row)
+        pips = _normalized_trade_pips(d, pip_size)
+        profit = _normalized_trade_profit_usd(d, symbol_hint=str(getattr(profile, "symbol", "") or ""))
+        trades.append({
+            "trade_id": d.get("trade_id"),
+            "side": d.get("side"),
+            "entry_price": d.get("entry_price"),
+            "exit_price": d.get("exit_price"),
+            "exit_timestamp_utc": d.get("exit_timestamp_utc"),
+            "exit_reason": d.get("exit_reason"),
+            "size_lots": d.get("size_lots"),
+            "raw_profit": d.get("profit"),
+            "raw_pips": d.get("pips"),
+            "normalized_profit": profit,
+            "normalized_pips": pips,
+            "win": profit is not None and float(profit) > 0.01,
+        })
+
+    return {
+        "date_utc": date_str,
+        "profile_name_url": profile_name,
+        "active_profile_name": active_profile_name,
+        "log_dir": str(log_dir),
+        "db_path": str(log_dir / "assistant.db"),
+        "db_exists": (log_dir / "assistant.db").exists(),
+        "closed_today_count": len(closed_today),
+        "open_trades_count": len(open_trades),
+        "trades": trades,
+    }
+
 
 @app.get("/api/data/{profile_name}/dashboard")
 def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
@@ -3907,12 +4066,13 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
                     result["loop_log"] = []
             except Exception:
                 result["loop_log"] = []
+            # Always compute daily summary fresh from the DB (file state may be stale).
             try:
-                live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
-                if "error" not in live and live.get("daily_summary") is not None:
-                    result["daily_summary"] = live["daily_summary"]
-            except Exception:
-                pass
+                _ds_summary = _compute_daily_summary_from_store(profile_name, log_dir=log_dir, profile_path=profile_path)
+                if _ds_summary is not None:
+                    result["daily_summary"] = _ds_summary
+            except Exception as e:
+                print(f"[api] dashboard daily_summary override error: {e}")
             return result
 
         live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)

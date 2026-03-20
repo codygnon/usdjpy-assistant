@@ -690,15 +690,18 @@ class OandaAdapter:
                         "units": units,
                     }
                 # Close: tradeClosed or tradesClosed
+                # Track price*units sum for weighted-average exit price across partial closes.
                 closed = t.get("tradeClosed") or {}
                 if closed.get("tradeID"):
                     tid_str = str(closed.get("tradeID"))
                     pl = _realized_pl_for_closed_trade(t, closed)
                     units = abs(_to_int(closed.get("units"), 0))
+                    fill_price = _to_float(t.get("price"), 0.0)
                     existing = closes.get(tid_str)
                     if existing is None:
                         closes[tid_str] = {
-                            "price": _to_float(t.get("price"), 0.0),
+                            "price": fill_price,
+                            "price_units_sum": fill_price * units,
                             "time": str(t.get("time") or ""),
                             "pl": float(pl),
                             "units_closed": units,
@@ -706,20 +709,26 @@ class OandaAdapter:
                     else:
                         existing["pl"] = float(_to_float(existing.get("pl"), 0.0) + pl)
                         existing["units_closed"] = int(_to_int(existing.get("units_closed"), 0) + units)
+                        existing["price_units_sum"] = float(_to_float(existing.get("price_units_sum"), 0.0) + fill_price * units)
                         tx_time = str(t.get("time") or "")
                         if tx_time >= str(existing.get("time") or ""):
                             existing["time"] = tx_time
-                            existing["price"] = _to_float(t.get("price"), 0.0)
+                        # Recompute weighted-average exit price
+                        total_units = existing["units_closed"]
+                        if total_units > 0:
+                            existing["price"] = existing["price_units_sum"] / total_units
                 for tc in t.get("tradesClosed") or []:
                     tid_str = str(tc.get("tradeID") or "")
                     if not tid_str:
                         continue
                     pl = _realized_pl_for_closed_trade(t, tc)
                     units = abs(_to_int(tc.get("units"), 0))
+                    fill_price = _to_float(t.get("price"), 0.0)
                     existing = closes.get(tid_str)
                     if existing is None:
                         closes[tid_str] = {
-                            "price": _to_float(t.get("price"), 0.0),
+                            "price": fill_price,
+                            "price_units_sum": fill_price * units,
                             "time": str(t.get("time") or ""),
                             "pl": float(pl),
                             "units_closed": units,
@@ -727,10 +736,14 @@ class OandaAdapter:
                     else:
                         existing["pl"] = float(_to_float(existing.get("pl"), 0.0) + pl)
                         existing["units_closed"] = int(_to_int(existing.get("units_closed"), 0) + units)
+                        existing["price_units_sum"] = float(_to_float(existing.get("price_units_sum"), 0.0) + fill_price * units)
                         tx_time = str(t.get("time") or "")
                         if tx_time >= str(existing.get("time") or ""):
                             existing["time"] = tx_time
-                            existing["price"] = _to_float(t.get("price"), 0.0)
+                        # Recompute weighted-average exit price
+                        total_units = existing["units_closed"]
+                        if total_units > 0:
+                            existing["price"] = existing["price_units_sum"] / total_units
 
         def process_response_pages(data: dict) -> None:
             # Process initial response transactions if present (some APIs return first page in body)
