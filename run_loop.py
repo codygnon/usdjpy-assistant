@@ -2485,7 +2485,7 @@ def main() -> None:
                 ntz_filter.update_fib_levels(None)
 
         def _refresh_trial9_intraday_fib_levels() -> None:
-            """Refresh Trial #9 Intraday Fibonacci Corridor levels from M15 (or M5) data."""
+            """Refresh Trial #9 Intraday Fib Corridor levels from rolling or fixed sources."""
             nonlocal intraday_fib_corridor_filter
             if intraday_fib_corridor_filter is None:
                 return
@@ -2504,7 +2504,7 @@ def main() -> None:
                     new_lower = str(_live_t9.get("intraday_fib_lower_level", "S1"))
                     new_upper = str(_live_t9.get("intraday_fib_upper_level", "R1"))
                     new_tf = str(_live_t9.get("intraday_fib_timeframe", intraday_fib_corridor_filter.timeframe))
-                    if new_tf not in ("M15", "M5"):
+                    if new_tf not in ("M15", "M5", "H1", "H2", "H3"):
                         new_tf = "M15"
                     try:
                         new_lookback = max(1, int(_live_t9.get("intraday_fib_lookback_bars", intraday_fib_corridor_filter.lookback_bars)))
@@ -2538,25 +2538,60 @@ def main() -> None:
             # Use the filter's live-synced attributes (not stale startup values)
             _ifc_tf = intraday_fib_corridor_filter.timeframe
             _ifc_lookback = intraday_fib_corridor_filter.lookback_bars
-            df = data_by_tf.get(_ifc_tf)
-            if df is None or df.empty:
-                _log(f"Intraday Fib: no {_ifc_tf} data available", "WARN")
-                intraday_fib_corridor_filter.update_levels(None)
-                return
-
             try:
-                from core.fib_pivots import compute_rolling_intraday_fib_levels
-                result = compute_rolling_intraday_fib_levels(df, lookback_bars=_ifc_lookback)
-                if result is not None:
-                    # Extract rolling range for reporting
-                    completed = df.iloc[:-1] if len(df) > 1 else df
-                    window = completed.iloc[-_ifc_lookback:]
-                    r_high = float(window["high"].max())
-                    r_low = float(window["low"].min())
-                    intraday_fib_corridor_filter.update_levels(result, rolling_high=r_high, rolling_low=r_low)
+                from core.fib_pivots import (
+                    compute_previous_candle_fib_levels,
+                    compute_rolling_intraday_fib_levels,
+                    is_fixed_intraday_fib_timeframe,
+                    resample_intraday_ohlc,
+                )
+
+                if is_fixed_intraday_fib_timeframe(_ifc_tf):
+                    m1_df = data_by_tf.get("M1")
+                    if m1_df is None or m1_df.empty:
+                        _log(f"Intraday Fib: no M1 data available to derive {_ifc_tf}", "WARN")
+                        intraday_fib_corridor_filter.update_levels(None, calculation_mode="previous_candle")
+                        return
+                    source_df = resample_intraday_ohlc(m1_df, _ifc_tf)
+                    if source_df is None or source_df.empty:
+                        _log(f"Intraday Fib: unable to derive {_ifc_tf} source candles", "WARN")
+                        intraday_fib_corridor_filter.update_levels(None, calculation_mode="previous_candle")
+                        return
+                    result = compute_previous_candle_fib_levels(source_df)
+                    completed = source_df.iloc[:-1] if len(source_df) > 1 else source_df
+                    if result is not None and completed is not None and not completed.empty:
+                        candle = completed.iloc[-1]
+                        intraday_fib_corridor_filter.update_levels(
+                            result,
+                            rolling_high=float(candle["high"]),
+                            rolling_low=float(candle["low"]),
+                            source_close=float(candle["close"]),
+                            calculation_mode="previous_candle",
+                        )
+                    else:
+                        _log(f"Intraday Fib: insufficient {_ifc_tf} source candles for previous-candle pivots", "WARN")
+                        intraday_fib_corridor_filter.update_levels(None, calculation_mode="previous_candle")
                 else:
-                    _log(f"Intraday Fib: insufficient {_ifc_tf} data ({len(df)} bars, need {_ifc_lookback})", "WARN")
-                    intraday_fib_corridor_filter.update_levels(None)
+                    df = data_by_tf.get(_ifc_tf)
+                    if df is None or df.empty:
+                        _log(f"Intraday Fib: no {_ifc_tf} data available", "WARN")
+                        intraday_fib_corridor_filter.update_levels(None, calculation_mode="rolling_window")
+                        return
+                    result = compute_rolling_intraday_fib_levels(df, lookback_bars=_ifc_lookback)
+                    if result is not None:
+                        completed = df.iloc[:-1] if len(df) > 1 else df
+                        window = completed.iloc[-_ifc_lookback:]
+                        r_high = float(window["high"].max())
+                        r_low = float(window["low"].min())
+                        intraday_fib_corridor_filter.update_levels(
+                            result,
+                            rolling_high=r_high,
+                            rolling_low=r_low,
+                            calculation_mode="rolling_window",
+                        )
+                    else:
+                        _log(f"Intraday Fib: insufficient {_ifc_tf} data ({len(df)} bars, need {_ifc_lookback})", "WARN")
+                        intraday_fib_corridor_filter.update_levels(None, calculation_mode="rolling_window")
             except Exception as e:
                 _log(f"Intraday Fib compute error: {e}", "ERROR")
                 intraday_fib_corridor_filter.update_levels(None)

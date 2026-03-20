@@ -5,7 +5,14 @@ import pytest
 import pandas as pd
 import numpy as np
 
-from core.fib_pivots import compute_rolling_intraday_fib_levels, resolve_fib_level, FIB_LEVEL_NAMES
+from core.fib_pivots import (
+    FIB_LEVEL_NAMES,
+    compute_previous_candle_fib_levels,
+    compute_rolling_intraday_fib_levels,
+    is_fixed_intraday_fib_timeframe,
+    resample_intraday_ohlc,
+    resolve_fib_level,
+)
 from core.no_trade_zone import IntradayFibCorridorFilter
 
 
@@ -19,6 +26,15 @@ def _make_m15_df(n: int, base_high: float = 150.5, base_low: float = 150.0) -> p
     opens = [(h + l) / 2 for h, l in zip(highs, lows)]
     closes = opens[:]
     return pd.DataFrame({"open": opens, "high": highs, "low": lows, "close": closes})
+
+
+def _make_m1_df(n: int, start: str = "2026-03-20 00:00:00+00:00", base: float = 158.0) -> pd.DataFrame:
+    times = pd.date_range(start=start, periods=n, freq="1min", tz="UTC")
+    opens = base + np.sin(np.arange(n) / 10.0) * 0.01
+    highs = opens + 0.02
+    lows = opens - 0.02
+    closes = opens + 0.005
+    return pd.DataFrame({"time": times, "open": opens, "high": highs, "low": lows, "close": closes})
 
 
 # ===========================================================================
@@ -67,6 +83,42 @@ class TestComputeRollingIntradayFibLevels:
         """Returns None when fewer bars than lookback."""
         df = _make_m15_df(5)
         assert compute_rolling_intraday_fib_levels(df, lookback_bars=16) is None
+
+
+class TestPreviousCandleFibLevels:
+    def test_previous_candle_matches_standard_fib_formula(self):
+        df = pd.DataFrame(
+            {
+                "open": [158.20, 158.30, 158.33],
+                "high": [158.28, 158.42, 158.40],
+                "low": [158.18, 158.30, 158.31],
+                "close": [158.24, 158.36, 158.35],
+            }
+        )
+        result = compute_previous_candle_fib_levels(df)
+        assert result is not None
+        assert round(result["PP"], 3) == 158.360
+        assert round(result["R1"], 3) == 158.406
+        assert round(result["R2"], 3) == 158.434
+        assert round(result["R3"], 3) == 158.480
+        assert round(result["S1"], 3) == 158.314
+        assert round(result["S2"], 3) == 158.286
+        assert round(result["S3"], 3) == 158.240
+
+    def test_h2_resample_uses_previous_completed_bucket(self):
+        df = _make_m1_df(400)
+        h2 = resample_intraday_ohlc(df, "H2")
+        assert h2 is not None
+        assert not h2.empty
+        levels = compute_previous_candle_fib_levels(h2)
+        assert levels is not None
+        assert levels["S3"] < levels["PP"] < levels["R3"]
+
+    def test_fixed_timeframe_detection(self):
+        assert is_fixed_intraday_fib_timeframe("H1") is True
+        assert is_fixed_intraday_fib_timeframe("H2") is True
+        assert is_fixed_intraday_fib_timeframe("H3") is True
+        assert is_fixed_intraday_fib_timeframe("M15") is False
 
     def test_excludes_current_bar(self):
         """Last row (in-progress) should not be used."""
@@ -322,3 +374,21 @@ class TestSnapshot:
         assert snap["rolling_low"] == 149.0
         assert snap["corridor_state"] is True
         assert snap["fib_levels"] is not None
+
+    def test_snapshot_contains_fixed_mode_metadata(self):
+        f = IntradayFibCorridorFilter(
+            enabled=True, lower_level="S1", upper_level="R1",
+            timeframe="H1", lookback_bars=1,
+            boundary_buffer_pips=1.0, hysteresis_pips=1.5, pip_size=0.01,
+        )
+        f.update_levels(
+            {"PP": 158.36, "S1": 158.314, "R1": 158.406},
+            rolling_high=158.42,
+            rolling_low=158.30,
+            source_close=158.36,
+            calculation_mode="previous_candle",
+        )
+        snap = f.get_snapshot()
+        assert snap["timeframe"] == "H1"
+        assert snap["calculation_mode"] == "previous_candle"
+        assert snap["source_close"] == 158.36

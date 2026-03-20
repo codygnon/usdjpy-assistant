@@ -3337,12 +3337,17 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                     print(f"[NTZ-API-DEBUG] outer exception: {_ntz_ex}")
                     ntz_filter_snapshot = None
                 try:
-                    from core.fib_pivots import compute_rolling_intraday_fib_levels
+                    from core.fib_pivots import (
+                        compute_previous_candle_fib_levels,
+                        compute_rolling_intraday_fib_levels,
+                        is_fixed_intraday_fib_timeframe,
+                        resample_intraday_ohlc,
+                    )
                     from core.no_trade_zone import IntradayFibCorridorFilter
 
                     ifib_enabled = bool(getattr(_policy, "intraday_fib_enabled", False))
                     ifib_timeframe = str(getattr(_policy, "intraday_fib_timeframe", "M15"))
-                    if ifib_timeframe not in ("M15", "M5"):
+                    if ifib_timeframe not in ("M15", "M5", "H1", "H2", "H3"):
                         ifib_timeframe = "M15"
                     ifib_lookback = max(1, int(getattr(_policy, "intraday_fib_lookback_bars", 16)))
                     ifib_filter = IntradayFibCorridorFilter(
@@ -3356,20 +3361,46 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         pip_size=pip_size,
                     )
                     if ifib_enabled:
-                        ifib_df = data_by_tf.get(ifib_timeframe)
-                        if ifib_df is not None and not ifib_df.empty:
-                            ifib_levels = compute_rolling_intraday_fib_levels(ifib_df, lookback_bars=ifib_lookback)
-                            if ifib_levels is not None:
-                                completed = ifib_df.iloc[:-1] if len(ifib_df) > 1 else ifib_df
-                                window = completed.iloc[-ifib_lookback:]
-                                r_high = float(window["high"].max())
-                                r_low = float(window["low"].min())
-                                ifib_filter.update_levels(ifib_levels, rolling_high=r_high, rolling_low=r_low)
-                                ifib_filter.check_corridor((_tick.bid + _tick.ask) / 2.0)
+                        if is_fixed_intraday_fib_timeframe(ifib_timeframe):
+                            m1_df = data_by_tf.get("M1")
+                            source_df = resample_intraday_ohlc(m1_df, ifib_timeframe) if m1_df is not None and not m1_df.empty else None
+                            if source_df is not None and not source_df.empty:
+                                ifib_levels = compute_previous_candle_fib_levels(source_df)
+                                completed = source_df.iloc[:-1] if len(source_df) > 1 else source_df
+                                if ifib_levels is not None and completed is not None and not completed.empty:
+                                    candle = completed.iloc[-1]
+                                    ifib_filter.update_levels(
+                                        ifib_levels,
+                                        rolling_high=float(candle["high"]),
+                                        rolling_low=float(candle["low"]),
+                                        source_close=float(candle["close"]),
+                                        calculation_mode="previous_candle",
+                                    )
+                                    ifib_filter.check_corridor((_tick.bid + _tick.ask) / 2.0)
+                                else:
+                                    ifib_filter.update_levels(None, calculation_mode="previous_candle")
                             else:
-                                ifib_filter.update_levels(None)
+                                ifib_filter.update_levels(None, calculation_mode="previous_candle")
                         else:
-                            ifib_filter.update_levels(None)
+                            ifib_df = data_by_tf.get(ifib_timeframe)
+                            if ifib_df is not None and not ifib_df.empty:
+                                ifib_levels = compute_rolling_intraday_fib_levels(ifib_df, lookback_bars=ifib_lookback)
+                                if ifib_levels is not None:
+                                    completed = ifib_df.iloc[:-1] if len(ifib_df) > 1 else ifib_df
+                                    window = completed.iloc[-ifib_lookback:]
+                                    r_high = float(window["high"].max())
+                                    r_low = float(window["low"].min())
+                                    ifib_filter.update_levels(
+                                        ifib_levels,
+                                        rolling_high=r_high,
+                                        rolling_low=r_low,
+                                        calculation_mode="rolling_window",
+                                    )
+                                    ifib_filter.check_corridor((_tick.bid + _tick.ask) / 2.0)
+                                else:
+                                    ifib_filter.update_levels(None, calculation_mode="rolling_window")
+                            else:
+                                ifib_filter.update_levels(None, calculation_mode="rolling_window")
                     intraday_fib_corridor_snapshot = ifib_filter.get_snapshot()
                 except Exception as _ifib_ex:
                     print(f"[api] intraday fib corridor snapshot error for '{profile_name}': {_ifib_ex}")

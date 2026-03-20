@@ -1244,16 +1244,19 @@ def report_intraday_fib_corridor(snapshot: Optional[dict], tick, pip_size: float
     corridor_state = snapshot.get("corridor_state")
     rolling_high = snapshot.get("rolling_high")
     rolling_low = snapshot.get("rolling_low")
+    source_close = snapshot.get("source_close")
+    calculation_mode = str(snapshot.get("calculation_mode") or "rolling_window")
     buffer_pips = snapshot.get("boundary_buffer_pips", 1.0)
     hysteresis_pips = snapshot.get("hysteresis_pips", 1.0)
 
     current_price = (tick.bid + tick.ask) / 2.0
 
     if lower_val is None or upper_val is None:
+        calc_str = f"{timeframe} prev candle" if calculation_mode == "previous_candle" else f"{timeframe} x{lookback_bars}"
         return FilterReport(
             filter_id="intraday_fib_corridor", display_name="Intraday Fib Corridor",
             enabled=True, is_clear=True,
-            current_value=f"{timeframe} x{lookback_bars} | Awaiting data",
+            current_value=f"{calc_str} | Awaiting data",
             explanation="No intraday fib levels computed yet",
         )
 
@@ -1274,8 +1277,9 @@ def report_intraday_fib_corridor(snapshot: Optional[dict], tick, pip_size: float
     else:
         price_vs = "inside corridor"
 
+    calc_label = f"{timeframe} prev candle" if calculation_mode == "previous_candle" else f"{timeframe} x{lookback_bars}"
     current_str = (
-        f"{timeframe} x{lookback_bars} | Price {current_price:.3f} | "
+        f"{calc_label} | Price {current_price:.3f} | "
         f"{lower_level}={lower_val:.3f} .. {upper_level}={upper_val:.3f} | {price_vs}"
     )
     block_reason = None if is_inside else f"Price {price_vs} — entries blocked"
@@ -1289,10 +1293,12 @@ def report_intraday_fib_corridor(snapshot: Optional[dict], tick, pip_size: float
         "upper_level": upper_level,
         "timeframe": timeframe,
         "lookback_bars": lookback_bars,
+        "calculation_mode": calculation_mode,
         "lower_value": lower_val,
         "upper_value": upper_val,
         "rolling_high": rolling_high,
         "rolling_low": rolling_low,
+        "source_close": source_close,
         "corridor_state": "inside" if is_inside else ("outside" if corridor_state is False else "undecided"),
         "boundary_buffer_pips": buffer_pips,
         "hysteresis_pips": hysteresis_pips,
@@ -1395,8 +1401,11 @@ def collect_trial_9_context(
     if ifib_enabled:
         tf = str(ifib.get("timeframe") or getattr(policy, "intraday_fib_timeframe", "M15"))
         lookback = int(ifib.get("lookback_bars") or getattr(policy, "intraday_fib_lookback_bars", 16))
+        calc_mode = str(ifib.get("calculation_mode") or "rolling_window")
+        items.append(ContextItem("IFC Calc", "Previous Candle Pivots" if calc_mode == "previous_candle" else "Rolling Window", "filters"))
         items.append(ContextItem("IFC Timeframe", tf, "filters"))
-        items.append(ContextItem("IFC Lookback", str(lookback), "filters"))
+        if calc_mode != "previous_candle":
+            items.append(ContextItem("IFC Lookback", str(lookback), "filters"))
         lower_level = ifib.get("lower_level", "S1")
         upper_level = ifib.get("upper_level", "R1")
         lower_val = ifib.get("lower_value")
@@ -1407,8 +1416,12 @@ def collect_trial_9_context(
             items.append(ContextItem(f"IFC {upper_level}", f"{upper_val:.3f}", "filters"))
         r_high = ifib.get("rolling_high")
         r_low = ifib.get("rolling_low")
+        src_close = ifib.get("source_close")
         if r_high is not None and r_low is not None:
-            items.append(ContextItem("IFC Range", f"{r_low:.3f} - {r_high:.3f}", "filters"))
+            label = "IFC Source H/L" if calc_mode == "previous_candle" else "IFC Range"
+            items.append(ContextItem(label, f"{r_low:.3f} - {r_high:.3f}", "filters"))
+        if src_close is not None and calc_mode == "previous_candle":
+            items.append(ContextItem("IFC Source Close", f"{float(src_close):.3f}", "filters"))
         corridor_state = ifib.get("corridor_state")
         if corridor_state is True:
             items.append(ContextItem("IFC Status", "INSIDE — entries allowed", "filters"))

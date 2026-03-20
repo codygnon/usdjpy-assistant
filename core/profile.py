@@ -999,7 +999,7 @@ class ExecutionPolicyKtCgTrial9(BaseModel):
     # "off" = no fib filter (current default), "daily_ntz" = existing daily fib NTZ,
     # "intraday_corridor" = rolling intraday fib corridor mode
     intraday_fib_enabled: bool = False
-    intraday_fib_timeframe: Literal["M15", "M5"] = "M15"
+    intraday_fib_timeframe: Literal["M15", "M5", "H1", "H2", "H3"] = "M15"
     intraday_fib_lookback_bars: int = 16
     intraday_fib_lower_level: Literal["S3", "S2", "S1", "PP", "R1", "R2", "R3"] = "S1"
     intraday_fib_upper_level: Literal["S3", "S2", "S1", "PP", "R1", "R2", "R3"] = "R1"

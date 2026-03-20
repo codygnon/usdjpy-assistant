@@ -8,6 +8,98 @@ import pandas as pd
 
 # Ordered list of all fib level names from lowest to highest
 FIB_LEVEL_NAMES = ("S3", "S2", "S1", "PP", "R1", "R2", "R3")
+ROLLING_INTRADAY_FIB_TIMEFRAMES = ("M15", "M5")
+FIXED_INTRADAY_FIB_TIMEFRAMES = ("H1", "H2", "H3")
+SUPPORTED_INTRADAY_FIB_TIMEFRAMES = ROLLING_INTRADAY_FIB_TIMEFRAMES + FIXED_INTRADAY_FIB_TIMEFRAMES
+
+
+def is_fixed_intraday_fib_timeframe(timeframe: str) -> bool:
+    """Return True when the timeframe uses previous completed candle pivots."""
+    return str(timeframe).upper() in FIXED_INTRADAY_FIB_TIMEFRAMES
+
+
+def _standard_fib_levels_from_hlc(high: float, low: float, close: float) -> Optional[dict[str, float]]:
+    """Compute standard Fibonacci pivot levels using PP/R1..R3/S1..S3 keys."""
+    rng = float(high) - float(low)
+    if rng <= 0:
+        return None
+    pp = (float(high) + float(low) + float(close)) / 3.0
+    return {
+        "PP": pp,
+        "R1": pp + 0.382 * rng,
+        "R2": pp + 0.618 * rng,
+        "R3": pp + 1.000 * rng,
+        "S1": pp - 0.382 * rng,
+        "S2": pp - 0.618 * rng,
+        "S3": pp - 1.000 * rng,
+    }
+
+
+def _prepare_time_index(df: pd.DataFrame) -> Optional[pd.DataFrame]:
+    """Normalize OHLC data to a UTC DatetimeIndex."""
+    if df is None or df.empty:
+        return None
+    out = df.copy()
+    if "time" in out.columns:
+        idx = pd.to_datetime(out["time"], utc=True, errors="coerce")
+        mask = idx.notna()
+        out = out.loc[mask].copy()
+        if out.empty:
+            return None
+        out.index = idx[mask]
+    elif isinstance(out.index, pd.DatetimeIndex):
+        out.index = pd.to_datetime(out.index, utc=True, errors="coerce")
+        out = out.loc[out.index.notna()].copy()
+        if out.empty:
+            return None
+    else:
+        return None
+    return out.sort_index()
+
+
+def resample_intraday_ohlc(df: pd.DataFrame, timeframe: str) -> Optional[pd.DataFrame]:
+    """Resample intraday OHLC data to the requested timeframe."""
+    timeframe = str(timeframe).upper()
+    rule_map = {
+        "H1": "1h",
+        "H2": "2h",
+        "H3": "3h",
+    }
+    rule = rule_map.get(timeframe)
+    if rule is None:
+        return None
+
+    prepared = _prepare_time_index(df)
+    if prepared is None or prepared.empty:
+        return None
+
+    # Drop the potentially forming base bar before resampling.
+    completed_base = prepared.iloc[:-1] if len(prepared) > 1 else prepared
+    if completed_base.empty:
+        return None
+
+    resampled = (
+        completed_base[["open", "high", "low", "close"]]
+        .resample(rule)
+        .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
+        .dropna(subset=["open", "high", "low", "close"])
+    )
+    return resampled if not resampled.empty else None
+
+
+def compute_previous_candle_fib_levels(df: pd.DataFrame) -> Optional[dict[str, float]]:
+    """Compute Fibonacci pivots from the previous completed candle in the DataFrame."""
+    if df is None or df.empty:
+        return None
+    completed = df.iloc[:-1] if len(df) > 1 else df
+    if completed.empty:
+        return None
+    candle = completed.iloc[-1]
+    return _standard_fib_levels_from_hlc(
+        float(candle["high"]),
+        float(candle["low"]),
+        float(candle["close"]),
+    )
 
 
 def compute_rolling_intraday_fib_levels(

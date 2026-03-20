@@ -6,9 +6,10 @@ Blocks entries when price is within a configurable buffer of major liquidity lev
 - Monthly High/Low (MN candle)
 - Fibonacci Pivot levels (PP/R1/R2/R3/S1/S2/S3) computed from previous daily H/L/C
 
-Also provides IntradayFibCorridorFilter: an allowed-corridor mode using rolling
-intraday fib levels (M15/M5).  Entries are permitted only while price is inside the
-selected fib corridor (e.g. S1–R1), with hysteresis to prevent flapping.
+Also provides IntradayFibCorridorFilter: an allowed-corridor mode using either
+rolling intraday fib levels (M15/M5) or fixed previous-candle fib pivots
+(H1/H2/H3). Entries are permitted only while price is inside the selected fib
+corridor (e.g. S1–R1), with hysteresis to prevent flapping.
 """
 from __future__ import annotations
 
@@ -183,8 +184,9 @@ class NoTradeZoneFilter:
 class IntradayFibCorridorFilter:
     """Allow entries only while price is inside a selected fib corridor.
 
-    Uses rolling intraday fib levels (M15 or M5) to define a lower and upper
-    boundary.  Entries are allowed when price is between them, blocked otherwise.
+    Uses rolling intraday fib levels (M15/M5) or fixed previous-candle fib pivots
+    (H1/H2/H3) to define a lower and upper boundary. Entries are allowed when
+    price is between them, blocked otherwise.
 
     Hysteresis prevents rapid flapping: once allowed, price must move *beyond*
     the boundary by ``hysteresis_pips`` before switching to blocked (and vice
@@ -214,9 +216,11 @@ class IntradayFibCorridorFilter:
 
         # Current computed fib levels (set via update_levels)
         self.fib_levels: Optional[dict[str, float]] = None
-        # Rolling range used for computation (for reporting)
+        # Source range used for computation (rolling window or source candle)
         self.rolling_high: Optional[float] = None
         self.rolling_low: Optional[float] = None
+        self.source_close: Optional[float] = None
+        self.calculation_mode: str = "rolling_window"
 
         # Hysteresis state: None = undecided, True = inside/allowed, False = outside/blocked
         self._corridor_state: Optional[bool] = None
@@ -226,11 +230,17 @@ class IntradayFibCorridorFilter:
         fib_levels: Optional[dict[str, float]],
         rolling_high: Optional[float] = None,
         rolling_low: Optional[float] = None,
+        *,
+        source_close: Optional[float] = None,
+        calculation_mode: Optional[str] = None,
     ) -> None:
         """Update the computed intraday fib levels. Called each poll cycle."""
         self.fib_levels = dict(fib_levels) if fib_levels else None
         self.rolling_high = rolling_high
         self.rolling_low = rolling_low
+        self.source_close = source_close
+        if calculation_mode:
+            self.calculation_mode = calculation_mode
 
     def _resolve_bounds(self) -> tuple[Optional[float], Optional[float]]:
         """Resolve the lower and upper corridor boundaries from fib level names."""
@@ -326,6 +336,8 @@ class IntradayFibCorridorFilter:
             "hysteresis_pips": self.hysteresis_pips,
             "rolling_high": self.rolling_high,
             "rolling_low": self.rolling_low,
+            "source_close": self.source_close,
+            "calculation_mode": self.calculation_mode,
             "corridor_state": self._corridor_state,  # True=inside, False=outside, None=undecided
             "fib_levels": dict(self.fib_levels) if self.fib_levels else None,
         }

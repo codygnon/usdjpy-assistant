@@ -3767,7 +3767,7 @@ interface EditedSettings {
   t9_ntz_use_fib_s3: boolean;
   // Trial #9: Intraday Fibonacci Corridor
   t9_intraday_fib_enabled: boolean;
-  t9_intraday_fib_timeframe: 'M15' | 'M5';
+  t9_intraday_fib_timeframe: 'M15' | 'M5' | 'H1' | 'H2' | 'H3';
   t9_intraday_fib_lookback_bars: number;
   t9_intraday_fib_lower_level: 'S3' | 'S2' | 'S1' | 'PP' | 'R1' | 'R2' | 'R3';
   t9_intraday_fib_upper_level: 'S3' | 'S2' | 'S1' | 'PP' | 'R1' | 'R2' | 'R3';
@@ -4049,7 +4049,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t9NtzUseFibS3 = true;
       // Trial #9: Intraday Fibonacci Corridor
       let t9IntradayFibEnabled = false;
-      let t9IntradayFibTimeframe: 'M15' | 'M5' = 'M15';
+      let t9IntradayFibTimeframe: 'M15' | 'M5' | 'H1' | 'H2' | 'H3' = 'M15';
       let t9IntradayFibLookbackBars = 16;
       let t9IntradayFibLowerLevel: 'S3' | 'S2' | 'S1' | 'PP' | 'R1' | 'R2' | 'R3' = 'S1';
       let t9IntradayFibUpperLevel: 'S3' | 'S2' | 'S1' | 'PP' | 'R1' | 'R2' | 'R3' = 'R1';
@@ -4488,7 +4488,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
               // Intraday Fibonacci Corridor
               t9IntradayFibEnabled = (pol.intraday_fib_enabled as boolean) ?? false;
               const rawIFibTf = (pol.intraday_fib_timeframe as string) ?? 'M15';
-              t9IntradayFibTimeframe = (rawIFibTf === 'M5' ? 'M5' : 'M15') as typeof t9IntradayFibTimeframe;
+              t9IntradayFibTimeframe = ((['M15', 'M5', 'H1', 'H2', 'H3'].includes(rawIFibTf) ? rawIFibTf : 'M15')) as typeof t9IntradayFibTimeframe;
               t9IntradayFibLookbackBars = (pol.intraday_fib_lookback_bars as number) ?? 16;
               const rawIFibLower = (pol.intraday_fib_lower_level as string) ?? 'S1';
               t9IntradayFibLowerLevel = (['S3','S2','S1','PP','R1','R2','R3'].includes(rawIFibLower) ? rawIFibLower : 'S1') as typeof t9IntradayFibLowerLevel;
@@ -5173,7 +5173,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
           // T9: Intraday Fibonacci Corridor
           updates.intraday_fib_enabled = editedSettings.t9_intraday_fib_enabled;
           updates.intraday_fib_timeframe = editedSettings.t9_intraday_fib_timeframe;
-          updates.intraday_fib_lookback_bars = Math.max(4, Math.min(200, editedSettings.t9_intraday_fib_lookback_bars));
+          updates.intraday_fib_lookback_bars = Math.max(1, Math.min(200, editedSettings.t9_intraday_fib_lookback_bars));
           updates.intraday_fib_lower_level = editedSettings.t9_intraday_fib_lower_level;
           updates.intraday_fib_upper_level = editedSettings.t9_intraday_fib_upper_level;
           updates.intraday_fib_boundary_buffer_pips = Math.max(0, editedSettings.t9_intraday_fib_boundary_buffer_pips);
@@ -6188,8 +6188,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       Trial #9 Intraday Fibonacci Corridor
                     </div>
                     <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                      Allows entries only while price is inside a selected fib corridor computed from rolling intraday data.
-                      Different from the daily Fib NTZ above — this uses a rolling intraday range, not daily pivots.
+                      Allows entries only while price is inside a selected fib corridor. M15/M5 use a rolling intraday range.
+                      H1/H2/H3 use fixed pivots from the previous completed candle and refresh only when the next source candle closes.
                       OFF by default — does not affect current behavior until enabled.
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 12 }}>
@@ -6209,17 +6209,44 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Timeframe</div>
                         <select value={editedSettings.t9_intraday_fib_timeframe}
-                          onChange={(e) => setEditedSettings({ ...editedSettings, t9_intraday_fib_timeframe: e.target.value as 'M15' | 'M5' })}
+                          onChange={(e) => {
+                            const nextTf = e.target.value as typeof editedSettings.t9_intraday_fib_timeframe;
+                            const usesFixedPivots = nextTf === 'H1' || nextTf === 'H2' || nextTf === 'H3';
+                            const nextLookback = usesFixedPivots ? 1 : (editedSettings.t9_intraday_fib_lookback_bars <= 1 ? 16 : editedSettings.t9_intraday_fib_lookback_bars);
+                            const nextHysteresis = usesFixedPivots ? 1.5 : editedSettings.t9_intraday_fib_hysteresis_pips;
+                            setEditedSettings({
+                              ...editedSettings,
+                              t9_intraday_fib_timeframe: nextTf,
+                              t9_intraday_fib_lookback_bars: nextLookback,
+                              t9_intraday_fib_lower_level: 'S1',
+                              t9_intraday_fib_upper_level: 'R1',
+                              t9_intraday_fib_boundary_buffer_pips: 1.0,
+                              t9_intraday_fib_hysteresis_pips: nextHysteresis,
+                            });
+                          }}
                           style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}>
                           <option value="M15">M15</option>
                           <option value="M5">M5</option>
+                          <option value="H1">H1</option>
+                          <option value="H2">H2</option>
+                          <option value="H3">H3</option>
                         </select>
                       </div>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Lookback bars</div>
-                        <input type="number" step="1" min="4" max="200" value={editedSettings.t9_intraday_fib_lookback_bars}
-                          onChange={(e) => setEditedSettings({ ...editedSettings, t9_intraday_fib_lookback_bars: parseInt(e.target.value) || 16 })}
-                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>
+                          {editedSettings.t9_intraday_fib_timeframe === 'H1' || editedSettings.t9_intraday_fib_timeframe === 'H2' || editedSettings.t9_intraday_fib_timeframe === 'H3'
+                            ? 'Source candle'
+                            : 'Lookback bars'}
+                        </div>
+                        {(editedSettings.t9_intraday_fib_timeframe === 'H1' || editedSettings.t9_intraday_fib_timeframe === 'H2' || editedSettings.t9_intraday_fib_timeframe === 'H3') ? (
+                          <div style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}>
+                            Previous completed {editedSettings.t9_intraday_fib_timeframe} candle
+                          </div>
+                        ) : (
+                          <input type="number" step="1" min="1" max="200" value={editedSettings.t9_intraday_fib_lookback_bars}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t9_intraday_fib_lookback_bars: parseInt(e.target.value) || 16 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        )}
                       </div>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Lower bound</div>
@@ -6252,8 +6279,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     </div>
                     )}
                     <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
-                      Computes fib levels from rolling M15/M5 high-low range. Entries allowed only inside the selected corridor (e.g. S1–R1).
-                      Hysteresis prevents rapid allow/block flipping near boundaries.
+                      M15/M5 compute fib levels from a rolling high-low range. H1/H2/H3 compute fixed pivots from the previous completed candle and hold them until the next source candle closes.
+                      Entries are allowed only inside the selected corridor (for example S1–R1). Hysteresis prevents rapid allow/block flipping near boundaries.
                     </div>
                   </div>
                   )}
