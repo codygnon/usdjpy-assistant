@@ -333,6 +333,8 @@ def _normalized_trade_profit_usd(row: Any, symbol_hint: str | None = None) -> fl
         return est
     if est is None:
         return raw
+    if abs(raw) <= 0.01 and abs(est) >= 0.5:
+        return est
 
     abs_raw = abs(raw)
     abs_est = abs(est)
@@ -341,6 +343,27 @@ def _normalized_trade_profit_usd(row: Any, symbol_hint: str | None = None) -> fl
         if ratio >= 6.0:
             return est
     if abs_raw >= 250 and abs_est >= 20 and (raw * est) < 0:
+        return est
+    return raw
+
+
+def _normalized_trade_pips(row: Any, pip_size: float) -> float | None:
+    """Prefer stored pips, but repair missing/zero values from entry/exit prices."""
+    raw = _float_or_none(_row_get(row, "pips"))
+    entry = _float_or_none(_row_get(row, "entry_price"))
+    exit_ = _float_or_none(_row_get(row, "exit_price"))
+    side = str(_row_get(row, "side") or "").lower()
+
+    est = None
+    if entry is not None and exit_ is not None and pip_size > 0 and side in ("buy", "sell"):
+        diff = (exit_ - entry) if side == "buy" else (entry - exit_)
+        est = round(diff / pip_size, 1)
+
+    if raw is None:
+        return est
+    if est is None:
+        return raw
+    if abs(raw) <= 0.05 and abs(est) >= 0.2:
         return est
     return raw
 
@@ -3488,21 +3511,28 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
         trades_today = len(closed_today)
         wins = losses = 0
         total_pips = total_profit = 0.0
+        pip_size = float(profile.pip_size) if profile else 0.01
         for row in closed_today:
             d = dict(row)
-            pips = d.get("pips")
+            pips = _normalized_trade_pips(d, pip_size)
             profit = _normalized_trade_profit_usd(
                 d,
                 symbol_hint=str(getattr(profile, "symbol", "") or ""),
             )
             if pips is not None:
                 total_pips += float(pips)
+            if profit is not None:
+                total_profit += float(profit)
+            if profit is not None and abs(float(profit)) > 0.01:
+                if float(profit) > 0:
+                    wins += 1
+                else:
+                    losses += 1
+            elif pips is not None and abs(float(pips)) > 0.05:
                 if float(pips) > 0:
                     wins += 1
                 else:
                     losses += 1
-            if profit is not None:
-                total_profit += float(profit)
         win_rate = round(wins / trades_today * 100, 1) if trades_today > 0 else 0.0
         daily_summary = {
             "trades_today": trades_today,

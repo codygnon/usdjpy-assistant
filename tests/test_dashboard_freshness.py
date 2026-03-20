@@ -136,3 +136,30 @@ def test_get_trades_for_date_uses_exit_date_semantics(tmp_path: Path) -> None:
     rows = store.get_trades_for_date("demo-profile", "2026-03-16")
 
     assert [row["trade_id"] for row in rows] == ["t-opened-yesterday-closed-today"]
+
+
+def test_dashboard_daily_summary_repairs_zero_pips_and_profit_from_prices() -> None:
+    class DummyStore:
+        def get_trades_for_date(self, _profile_name: str, _date_str: str):
+            return [
+                {
+                    "trade_id": "t1",
+                    "side": "buy",
+                    "symbol": "USDJPY",
+                    "entry_price": 150.00,
+                    "exit_price": 149.80,
+                    "size_lots": 0.10,
+                    "pips": 0.0,
+                    "profit": 0.0,
+                }
+            ]
+
+    profile = SimpleNamespace(profile_name="demo-profile", symbol="USDJPY", pip_size=0.01)
+
+    daily = run_loop._collect_dashboard_daily_summary(profile, DummyStore())
+
+    assert daily.trades_today == 1
+    assert daily.wins == 0
+    assert daily.losses == 1
+    assert daily.total_pips == -20.0
+    assert daily.total_profit < 0

@@ -157,6 +157,8 @@ def _normalized_profit_for_dashboard_row(row: dict, symbol_hint: str) -> float |
         return est
     if est is None:
         return raw
+    if abs(raw) <= 0.01 and abs(est) >= 0.5:
+        return est
     abs_raw = abs(raw)
     abs_est = abs(est)
     if abs_raw >= 250 and abs_est >= 5:
@@ -164,6 +166,34 @@ def _normalized_profit_for_dashboard_row(row: dict, symbol_hint: str) -> float |
         if ratio >= 6.0:
             return est
     if abs_raw >= 250 and abs_est >= 20 and (raw * est) < 0:
+        return est
+    return raw
+
+
+def _normalized_pips_for_dashboard_row(row: dict, pip_size: float) -> float | None:
+    """Use stored pips unless missing/zero while price-based pips are available."""
+    def _f(v):
+        try:
+            if v is None:
+                return None
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    raw = _f(row.get("pips"))
+    entry = _f(row.get("entry_price"))
+    exit_ = _f(row.get("exit_price"))
+    side = str(row.get("side") or "").lower()
+    est = None
+    if entry is not None and exit_ is not None and pip_size > 0 and side in ("buy", "sell"):
+        diff = (exit_ - entry) if side == "buy" else (entry - exit_)
+        est = round(diff / pip_size, 1)
+
+    if raw is None:
+        return est
+    if est is None:
+        return raw
+    if abs(raw) <= 0.05 and abs(est) >= 0.2:
         return est
     return raw
 
@@ -1625,18 +1655,25 @@ def _collect_dashboard_daily_summary(profile, store) -> DailySummary:
         date_str = now_utc.strftime("%Y-%m-%d")
         closed_today = store.get_trades_for_date(profile.profile_name, date_str)
         daily.trades_today = len(closed_today)
+        pip_size = float(profile.pip_size)
         for row in closed_today:
             d = dict(row)
-            pips = d.get("pips")
+            pips = _normalized_pips_for_dashboard_row(d, pip_size)
             profit = _normalized_profit_for_dashboard_row(d, profile.symbol)
             if pips is not None:
                 daily.total_pips += float(pips)
+            if profit is not None:
+                daily.total_profit += float(profit)
+            if profit is not None and abs(float(profit)) > 0.01:
+                if float(profit) > 0:
+                    daily.wins += 1
+                else:
+                    daily.losses += 1
+            elif pips is not None and abs(float(pips)) > 0.05:
                 if float(pips) > 0:
                     daily.wins += 1
                 else:
                     daily.losses += 1
-            if profit is not None:
-                daily.total_profit += float(profit)
         if daily.trades_today > 0:
             daily.win_rate = round(daily.wins / daily.trades_today * 100, 1)
     except Exception:
