@@ -163,3 +163,53 @@ def test_dashboard_daily_summary_repairs_zero_pips_and_profit_from_prices() -> N
     assert daily.losses == 1
     assert daily.total_pips == -20.0
     assert daily.total_profit < 0
+
+
+def test_trade_event_hydration_uses_selected_log_dir(tmp_path: Path) -> None:
+    wrong_dir = tmp_path / "alias-profile"
+    right_dir = tmp_path / "real-profile"
+    wrong_store = SqliteStore(wrong_dir / "assistant.db")
+    right_store = SqliteStore(right_dir / "assistant.db")
+    wrong_store.init_db()
+    right_store.init_db()
+
+    wrong_store.insert_trade(
+        {
+            "trade_id": "t-close-1",
+            "timestamp_utc": "2026-03-20T12:00:00+00:00",
+            "profile": "alias-profile",
+            "symbol": "USDJPY",
+            "side": "buy",
+            "entry_price": 150.0,
+            "exit_price": 150.0,
+            "exit_timestamp_utc": "2026-03-20T12:05:00+00:00",
+            "pips": 0.0,
+            "profit": 0.0,
+        }
+    )
+    right_store.insert_trade(
+        {
+            "trade_id": "t-close-1",
+            "timestamp_utc": "2026-03-20T12:00:00+00:00",
+            "profile": "real-profile",
+            "symbol": "USDJPY",
+            "side": "buy",
+            "entry_price": 150.0,
+            "exit_price": 149.8,
+            "exit_timestamp_utc": "2026-03-20T12:05:00+00:00",
+            "pips": -20.0,
+            "profit": -13.35,
+        }
+    )
+
+    events = [{
+        "event_type": "close",
+        "trade_id": "t-close-1",
+        "pips": 0.0,
+        "profit": 0.0,
+    }]
+
+    hydrated = api_main._hydrate_trade_event_close_financials("alias-profile", events, log_dir=right_dir)
+
+    assert hydrated[0]["pips"] == -20.0
+    assert hydrated[0]["profit"] == -13.35

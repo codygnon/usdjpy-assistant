@@ -147,8 +147,8 @@ def _list_profile_paths() -> list[Path]:
     return sorted([p for p in PROFILES_DIR.rglob("*.json") if p.is_file()])
 
 
-def _store_for(profile_name: str) -> SqliteStore:
-    log_dir = LOGS_DIR / profile_name
+def _store_for(profile_name: str, log_dir: Optional[Path] = None) -> SqliteStore:
+    log_dir = log_dir or (LOGS_DIR / profile_name)
     log_dir.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(log_dir / "assistant.db")
     store.init_db()
@@ -3037,7 +3037,7 @@ def _fetch_live_positions(profile_name: str, profile_path: Optional[str] = None)
     return positions
 
 
-def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
+def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] = None, log_dir: Optional[Path] = None) -> dict[str, Any]:
     """Build a live dashboard state directly from the broker (no run-loop file required)."""
     from datetime import datetime, timezone
 
@@ -3063,6 +3063,8 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
     except Exception as e:
         print(f"[api] dashboard: failed to load profile '{profile_name}': {e}")
         return {"error": "no_dashboard_data", "timestamp_utc": None}
+
+    active_profile_name = log_dir.name if log_dir is not None else str(getattr(profile, "profile_name", profile_name) or profile_name)
 
     runtime = load_state(_runtime_state_path(profile_name))
     now_utc = datetime.now(timezone.utc)
@@ -3439,7 +3441,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         t6_eval_result = {"trend_result": trend_result}
                 except Exception:
                     pass
-            store = _store_for(profile_name)
+            store = _store_for(profile_name, log_dir=log_dir)
             filter_reports = build_dashboard_filters(
                 profile=profile,
                 tick=_tick,
@@ -3505,9 +3507,9 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
     # --- Daily summary from store ---
     daily_summary = None
     try:
-        store = _store_for(profile_name)
+        store = _store_for(profile_name, log_dir=log_dir)
         date_str = now_utc.strftime("%Y-%m-%d")
-        closed_today = store.get_trades_for_date(profile_name, date_str)
+        closed_today = store.get_trades_for_date(active_profile_name, date_str)
         trades_today = len(closed_today)
         wins = losses = 0
         total_pips = total_profit = 0.0
@@ -3905,9 +3907,15 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
                     result["loop_log"] = []
             except Exception:
                 result["loop_log"] = []
+            try:
+                live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
+                if "error" not in live and live.get("daily_summary") is not None:
+                    result["daily_summary"] = live["daily_summary"]
+            except Exception:
+                pass
             return result
 
-        live = _build_live_dashboard_state(profile_name, profile_path)
+        live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
         if "error" not in live:
             live["stale"] = True
             live["stale_age_seconds"] = None
@@ -3947,11 +3955,11 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
     if cached and (now - cached[0]) < _DASHBOARD_LIVE_TTL:
         return cached[1]
 
-    live = _build_live_dashboard_state(profile_name, profile_path)
+    log_dir = _pick_best_dashboard_log_dir(profile_name, profile_path)
+    live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
     if "error" in live:
         return live
 
-    log_dir = LOGS_DIR / profile_name
     file_state = read_dashboard_state(log_dir)
 
     if file_state is not None:
@@ -4000,10 +4008,10 @@ def get_trade_events(profile_name: str, limit: int = 50, profile_path: Optional[
     log_dir = _pick_best_trade_events_log_dir(profile_name, profile_path)
     _backfill_trade_event_tier_labels(profile_name, log_dir)
     events = read_trade_events(log_dir, limit=limit)
-    return _hydrate_trade_event_close_financials(profile_name, events)
+    return _hydrate_trade_event_close_financials(profile_name, events, log_dir=log_dir)
 
 
-def _hydrate_trade_event_close_financials(profile_name: str, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _hydrate_trade_event_close_financials(profile_name: str, events: list[dict[str, Any]], log_dir: Optional[Path] = None) -> list[dict[str, Any]]:
     """Prefer DB close-trade pips/profit in trade-events for corrected historical display."""
     if not events:
         return events
@@ -4015,8 +4023,9 @@ def _hydrate_trade_event_close_financials(profile_name: str, events: list[dict[s
     if not close_ids:
         return events
     try:
-        store = _store_for(profile_name)
-        trades_df = store.read_trades_df(profile_name)
+        active_profile_name = log_dir.name if log_dir is not None else profile_name
+        store = _store_for(profile_name, log_dir=log_dir)
+        trades_df = store.read_trades_df(active_profile_name)
         if trades_df is None or trades_df.empty:
             return events
         if "trade_id" not in trades_df.columns:
@@ -4090,8 +4099,9 @@ def _backfill_trade_event_tier_labels(profile_name: str, log_dir: Path) -> None:
         return
 
     try:
-        store = _store_for(profile_name)
-        execs = store.read_executions_df(profile_name)
+        active_profile_name = log_dir.name if log_dir is not None else profile_name
+        store = _store_for(profile_name, log_dir=log_dir)
+        execs = store.read_executions_df(active_profile_name)
     except Exception:
         return
     if execs is None or execs.empty:
