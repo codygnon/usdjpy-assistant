@@ -868,6 +868,49 @@ class OandaAdapter:
             print(f"[oanda] get_closed_positions_from_history: {len(opens)} opens, {len(closes)} closes -> 0 matched (check symbol filter or open/close pairing)")
         return results
 
+    def get_closed_trades_today(self, symbol: str | None = None) -> list[dict]:
+        """Fetch today's closed trades directly from OANDA /v3/accounts/{id}/trades?state=CLOSED.
+
+        Returns list of dicts with: trade_id, side, entry_price, exit_price, pips,
+        profit (realizedPL from OANDA), volume, close_time.
+        """
+        aid = self._get_account_id()
+        inst = _symbol_to_instrument(symbol) if symbol else None
+        params: dict = {"state": "CLOSED", "count": 500}
+        if inst:
+            params["instrument"] = inst
+
+        try:
+            data = self._req("GET", f"/v3/accounts/{aid}/trades", params=params)
+        except Exception as e:
+            print(f"[oanda] get_closed_trades_today error: {e}")
+            return []
+
+        trades = data.get("trades", [])
+        today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        results: list[dict] = []
+        for t in trades:
+            close_time = str(t.get("closeTime") or "")
+            # Filter to today only
+            if not close_time.startswith(today_utc):
+                continue
+            initial_units = _to_int(t.get("initialUnits"), 0)
+            side = "buy" if initial_units > 0 else "sell"
+            entry_price = _to_float(t.get("price"), 0.0)
+            exit_price = _to_float(t.get("averageClosePrice"), 0.0)
+            realized_pl = _to_float(t.get("realizedPL"), 0.0)
+            volume = abs(initial_units) / 100_000.0
+            results.append({
+                "trade_id": str(t.get("id", "")),
+                "side": side,
+                "entry_price": entry_price,
+                "exit_price": exit_price,
+                "profit": realized_pl,
+                "volume": volume,
+                "close_time": close_time,
+            })
+        return results
+
     def get_order_book(self, instrument: str) -> dict:
         """GET /v3/instruments/{inst}/orderBook — returns price bucket array."""
         inst = _symbol_to_instrument(instrument)

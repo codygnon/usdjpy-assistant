@@ -1650,26 +1650,53 @@ def _collect_dashboard_positions(
     return positions
 
 
-def _collect_dashboard_daily_summary(profile, store) -> DailySummary:
-    """Build dashboard daily summary once per loop iteration and reuse it across writes."""
+def _collect_dashboard_daily_summary(profile, store, adapter=None) -> DailySummary:
+    """Build dashboard daily summary from OANDA closed trades today.
+
+    Queries the broker directly for today's closed trades — no DB normalization needed.
+    Falls back to DB if broker query fails.
+    """
     from datetime import datetime, timezone
 
     now_utc = datetime.now(timezone.utc)
     daily = DailySummary()
+    pip_size = float(profile.pip_size)
+
+    # Try OANDA direct query first
+    if adapter is not None and hasattr(adapter, "get_closed_trades_today"):
+        try:
+            closed_today = adapter.get_closed_trades_today(symbol=profile.symbol)
+            daily.trades_today = len(closed_today)
+            for t in closed_today:
+                profit = float(t.get("profit") or 0.0)
+                entry = float(t.get("entry_price") or 0.0)
+                exit_ = float(t.get("exit_price") or 0.0)
+                side = str(t.get("side") or "").lower()
+                pips = 0.0
+                if entry > 0 and exit_ > 0 and pip_size > 0 and side in ("buy", "sell"):
+                    pips = ((exit_ - entry) / pip_size) if side == "buy" else ((entry - exit_) / pip_size)
+                daily.total_pips += pips
+                daily.total_profit += profit
+                if abs(profit) > 0.01:
+                    if profit > 0:
+                        daily.wins += 1
+                    else:
+                        daily.losses += 1
+            if daily.trades_today > 0:
+                daily.win_rate = round(daily.wins / daily.trades_today * 100, 1)
+            return daily
+        except Exception as e:
+            print(f"[{profile.profile_name}] daily_summary broker query failed, falling back to DB: {e}")
+
+    # Fallback: use local DB
     try:
         date_str = now_utc.strftime("%Y-%m-%d")
         closed_today = store.get_trades_for_date(profile.profile_name, date_str)
         daily.trades_today = len(closed_today)
-        pip_size = float(profile.pip_size)
         for row in closed_today:
             d = dict(row)
             pips = _normalized_pips_for_dashboard_row(d, pip_size)
             profit = _normalized_profit_for_dashboard_row(d, profile.symbol)
-            raw_profit = d.get("profit")
-            raw_pips = d.get("pips")
-            print(f"[{profile.profile_name}] daily_summary trade: id={d.get('trade_id')}, side={d.get('side')}, "
-                  f"entry={d.get('entry_price')}, exit={d.get('exit_price')}, "
-                  f"raw_profit={raw_profit}, norm_profit={profit}, raw_pips={raw_pips}, norm_pips={pips}")
             if pips is not None:
                 daily.total_pips += float(pips)
             if profit is not None:
@@ -1684,12 +1711,10 @@ def _collect_dashboard_daily_summary(profile, store) -> DailySummary:
                     daily.wins += 1
                 else:
                     daily.losses += 1
-        print(f"[{profile.profile_name}] daily_summary: date={date_str}, trades={daily.trades_today}, "
-              f"wins={daily.wins}, losses={daily.losses}, pips={daily.total_pips:.1f}, profit={daily.total_profit:.2f}")
         if daily.trades_today > 0:
             daily.win_rate = round(daily.wins / daily.trades_today * 100, 1)
     except Exception as e:
-        print(f"[{profile.profile_name}] daily_summary error: {e}")
+        print(f"[{profile.profile_name}] daily_summary DB fallback error: {e}")
     return daily
 
 
@@ -1868,7 +1893,7 @@ def _build_and_write_dashboard(
             open_positions_snapshot=open_positions_snapshot,
         )
 
-        daily = daily_summary_snapshot if daily_summary_snapshot is not None else _collect_dashboard_daily_summary(profile, store)
+        daily = daily_summary_snapshot if daily_summary_snapshot is not None else _collect_dashboard_daily_summary(profile, store, adapter=adapter)
 
         # --- Assemble state ---
         state = DashboardState(
@@ -2927,7 +2952,7 @@ def main() -> None:
                 adapter=adapter,
                 open_positions_snapshot=open_positions_snapshot,
             )
-            dashboard_daily_snapshot = _collect_dashboard_daily_summary(profile, store)
+            dashboard_daily_snapshot = _collect_dashboard_daily_summary(profile, store, adapter=adapter)
             _phase_done("snapshot_build", _snapshot_started)
             _tm_started = time.perf_counter()
             _run_trade_management(

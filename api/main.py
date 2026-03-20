@@ -3889,14 +3889,15 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
     return {"preset_name": profile.active_preset_name or "", "filters": filters}
 
 
-def _compute_daily_summary_from_store(
+def _compute_daily_summary_from_broker(
     profile_name: str,
-    log_dir: Optional[Path] = None,
     profile_path: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
-    """Compute daily summary directly from the DB — lightweight, no broker connection needed."""
-    from datetime import datetime, timezone
+    """Compute daily summary by querying OANDA directly for today's closed trades.
 
+    This is the single source of truth — no DB normalization, no stale file state.
+    Uses OANDA's realizedPL for profit and averageClosePrice for pips.
+    """
     resolved_path: Optional[Path] = None
     if profile_path:
         try:
@@ -3918,38 +3919,36 @@ def _compute_daily_summary_from_store(
     except Exception:
         return None
 
-    if log_dir is None:
-        log_dir = _pick_best_dashboard_log_dir(profile_name, profile_path)
-    active_profile_name = log_dir.name if log_dir is not None else str(
-        getattr(profile, "profile_name", profile_name) or profile_name
-    )
+    try:
+        adapter = _get_dashboard_adapter(profile)
+    except Exception:
+        return None
 
-    now_utc = datetime.now(timezone.utc)
-    date_str = now_utc.strftime("%Y-%m-%d")
     pip_size = float(profile.pip_size) if profile else 0.01
 
-    store = _store_for(profile_name, log_dir=log_dir)
-    closed_today = store.get_trades_for_date(active_profile_name, date_str)
+    try:
+        closed_today = adapter.get_closed_trades_today(symbol=profile.symbol)
+    except Exception as e:
+        print(f"[api] daily summary broker query failed: {e}")
+        return None
+
     trades_today = len(closed_today)
     wins = losses = 0
     total_pips = total_profit = 0.0
-    for row in closed_today:
-        d = dict(row)
-        pips = _normalized_trade_pips(d, pip_size)
-        profit = _normalized_trade_profit_usd(
-            d, symbol_hint=str(getattr(profile, "symbol", "") or ""),
-        )
-        if pips is not None:
-            total_pips += float(pips)
-        if profit is not None:
-            total_profit += float(profit)
-        if profit is not None and abs(float(profit)) > 0.01:
-            if float(profit) > 0:
-                wins += 1
-            else:
-                losses += 1
-        elif pips is not None and abs(float(pips)) > 0.05:
-            if float(pips) > 0:
+    for t in closed_today:
+        profit = float(t.get("profit") or 0.0)
+        entry = float(t.get("entry_price") or 0.0)
+        exit_ = float(t.get("exit_price") or 0.0)
+        side = str(t.get("side") or "").lower()
+        # Pips from actual OANDA prices
+        pips = 0.0
+        if entry > 0 and exit_ > 0 and pip_size > 0 and side in ("buy", "sell"):
+            pips = ((exit_ - entry) / pip_size) if side == "buy" else ((entry - exit_) / pip_size)
+        total_pips += pips
+        total_profit += profit
+        # Use OANDA realizedPL directly — no normalization needed
+        if abs(profit) > 0.01:
+            if profit > 0:
                 wins += 1
             else:
                 losses += 1
@@ -3966,10 +3965,9 @@ def _compute_daily_summary_from_store(
 
 @app.get("/api/data/{profile_name}/debug-daily-trades")
 def debug_daily_trades(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
-    """Debug endpoint: show raw trade data for today's daily summary calculation."""
+    """Debug endpoint: show OANDA's actual closed trades for today."""
     from datetime import datetime, timezone
 
-    log_dir = _pick_best_dashboard_log_dir(profile_name, profile_path)
     resolved_path: Optional[Path] = None
     if profile_path:
         try:
@@ -3991,48 +3989,27 @@ def debug_daily_trades(profile_name: str, profile_path: Optional[str] = None) ->
     except Exception as e:
         return {"error": f"load profile: {e}"}
 
-    active_profile_name = log_dir.name if log_dir is not None else str(getattr(profile, "profile_name", profile_name) or profile_name)
     now_utc = datetime.now(timezone.utc)
     date_str = now_utc.strftime("%Y-%m-%d")
-    pip_size = float(profile.pip_size) if profile else 0.01
 
+    # Query OANDA directly
+    oanda_trades: list[dict] = []
+    oanda_error: str | None = None
     try:
-        store = _store_for(profile_name, log_dir=log_dir)
-        closed_today = store.get_trades_for_date(active_profile_name, date_str)
-        open_trades = store.list_open_trades(active_profile_name)
+        adapter = _get_dashboard_adapter(profile)
+        oanda_trades = adapter.get_closed_trades_today(symbol=profile.symbol)
     except Exception as e:
-        return {"error": f"store: {e}"}
+        oanda_error = str(e)
 
-    trades = []
-    for row in closed_today:
-        d = dict(row)
-        pips = _normalized_trade_pips(d, pip_size)
-        profit = _normalized_trade_profit_usd(d, symbol_hint=str(getattr(profile, "symbol", "") or ""))
-        trades.append({
-            "trade_id": d.get("trade_id"),
-            "side": d.get("side"),
-            "entry_price": d.get("entry_price"),
-            "exit_price": d.get("exit_price"),
-            "exit_timestamp_utc": d.get("exit_timestamp_utc"),
-            "exit_reason": d.get("exit_reason"),
-            "size_lots": d.get("size_lots"),
-            "raw_profit": d.get("profit"),
-            "raw_pips": d.get("pips"),
-            "normalized_profit": profit,
-            "normalized_pips": pips,
-            "win": profit is not None and float(profit) > 0.01,
-        })
+    # Also compute the summary
+    broker_summary = _compute_daily_summary_from_broker(profile_name, profile_path=profile_path)
 
     return {
         "date_utc": date_str,
-        "profile_name_url": profile_name,
-        "active_profile_name": active_profile_name,
-        "log_dir": str(log_dir),
-        "db_path": str(log_dir / "assistant.db"),
-        "db_exists": (log_dir / "assistant.db").exists(),
-        "closed_today_count": len(closed_today),
-        "open_trades_count": len(open_trades),
-        "trades": trades,
+        "oanda_closed_today": oanda_trades,
+        "oanda_count": len(oanda_trades),
+        "oanda_error": oanda_error,
+        "computed_summary": broker_summary,
     }
 
 
@@ -4079,9 +4056,9 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
                     result["loop_log"] = []
             except Exception:
                 result["loop_log"] = []
-            # Always compute daily summary fresh from the DB (file state may be stale).
+            # Always compute daily summary fresh from OANDA (file state may be stale).
             try:
-                _ds_summary = _compute_daily_summary_from_store(profile_name, log_dir=log_dir, profile_path=profile_path)
+                _ds_summary = _compute_daily_summary_from_broker(profile_name, profile_path=profile_path)
                 if _ds_summary is not None:
                     result["daily_summary"] = _ds_summary
             except Exception as e:
