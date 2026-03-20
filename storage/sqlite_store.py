@@ -406,3 +406,26 @@ class SqliteStore:
                 [profile, mt5_position_id],
             )
             return cur.fetchone() is not None
+
+    def delete_duplicate_oanda_imports(self, profile: str) -> int:
+        """Remove oanda_ prefixed trades that duplicate bot-placed trades (same mt5_position_id).
+
+        This cleans up duplicates created when OANDA history import runs alongside bot trade tracking.
+        Returns count of deleted rows.
+        """
+        with self.connect() as conn:
+            # Find oanda_ trades where a non-oanda_ trade exists with the same mt5_position_id
+            cur = conn.execute(
+                """DELETE FROM trades WHERE profile=? AND trade_id LIKE 'oanda_%'
+                   AND mt5_position_id IN (
+                       SELECT mt5_position_id FROM trades
+                       WHERE profile=? AND trade_id NOT LIKE 'oanda_%'
+                       AND mt5_position_id IS NOT NULL
+                   )""",
+                [profile, profile],
+            )
+            deleted = cur.rowcount
+            if deleted > 0:
+                conn.commit()
+                print(f"[sqlite_store] Deleted {deleted} duplicate oanda_ import(s) for profile '{profile}'")
+            return deleted

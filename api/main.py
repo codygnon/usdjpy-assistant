@@ -147,11 +147,24 @@ def _list_profile_paths() -> list[Path]:
     return sorted([p for p in PROFILES_DIR.rglob("*.json") if p.is_file()])
 
 
+_oanda_cleanup_done: set[str] = set()
+
 def _store_for(profile_name: str, log_dir: Optional[Path] = None) -> SqliteStore:
     log_dir = log_dir or (LOGS_DIR / profile_name)
     log_dir.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(log_dir / "assistant.db")
     store.init_db()
+    # One-time cleanup of duplicate oanda_ imports (once per profile per process)
+    _cleanup_key = str(log_dir)
+    if _cleanup_key not in _oanda_cleanup_done:
+        _oanda_cleanup_done.add(_cleanup_key)
+        try:
+            _active = log_dir.name
+            deleted = store.delete_duplicate_oanda_imports(_active)
+            if deleted > 0:
+                print(f"[api] cleaned up {deleted} duplicate oanda_ import(s) for '{_active}'")
+        except Exception:
+            pass
     return store
 
 

@@ -2085,6 +2085,14 @@ def main() -> None:
     store = SqliteStore(log_dir / "assistant.db")
     store.init_db()
 
+    # One-time cleanup: remove duplicate oanda_ imports that may have been created
+    try:
+        _dup_deleted = store.delete_duplicate_oanda_imports(profile.profile_name)
+        if _dup_deleted > 0:
+            print(f"[{profile.profile_name}] cleaned up {_dup_deleted} duplicate oanda_ import(s)")
+    except Exception as e:
+        print(f"[{profile.profile_name}] duplicate cleanup error: {e}")
+
     # Loop log ring buffer — captures last 200 log entries for dashboard display
     _loop_log: collections.deque = collections.deque(maxlen=200)
     _loop_log_path = log_dir / "loop_log.json"
@@ -2696,10 +2704,12 @@ def main() -> None:
                     synced = sync_closed_trades(profile, store, log_dir=log_dir)
                     if synced > 0:
                         print(f"[{profile.profile_name}] synced {synced} externally closed trade(s)")
-                    # Import from broker history (MT5 + OANDA — captures manually-placed trades)
-                    imported = import_mt5_history(profile, store, days_back=90)
-                    if imported > 0:
-                        print(f"[{profile.profile_name}] imported {imported} trade(s) from broker history")
+                    # Import from broker history (MT5 only — OANDA bot trades are already in DB
+                    # and importing from history would create duplicates for partially-closed trades)
+                    if getattr(profile, "broker_type", None) != "oanda":
+                        imported = import_mt5_history(profile, store, days_back=90)
+                        if imported > 0:
+                            print(f"[{profile.profile_name}] imported {imported} trade(s) from broker history")
                 except Exception as e:
                     print(f"[{profile.profile_name}] sync error: {e}")
                     if not _is_transient_broker_error(e):
