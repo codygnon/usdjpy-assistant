@@ -4571,6 +4571,40 @@ def evaluate_kt_cg_trial_10_conditions(
                                 "tier": tier,
                             }
                         continue
+                    # --- Shallow resumption gate (17/21 in normal M5 only) ---
+                    _resumption_gate: dict = {"resumption_gate_applicable": False}
+                    if _tc == "shallow" and m5_bucket == "normal":
+                        _reclaim_high = float(m1_df["high"].iloc[-1])
+                        _reclaim_low = float(m1_df["low"].iloc[-1])
+                        _reclaim_range = _reclaim_high - _reclaim_low
+                        # Strong reclaim: close in top third of reclaim bar range
+                        _strong_reclaim = (_reclaim_range > 0) and ((last_close - _reclaim_low) / _reclaim_range >= 0.67)
+                        # Next-bar continuation: reclaim bar close above touch bar high
+                        _next_bar_cont = last_close > prev_high
+                        _resumption_gate = {
+                            "resumption_gate_applicable": True,
+                            "resumption_gate_passed": _strong_reclaim or _next_bar_cont,
+                            "resumption_gate_mode": "strong_reclaim_or_next_bar",
+                            "reclaim_strength_passed": _strong_reclaim,
+                            "next_bar_continuation_passed": _next_bar_cont,
+                            "reclaim_bar_position": round((last_close - _reclaim_low) / _reclaim_range, 3) if _reclaim_range > 0 else 0.0,
+                        }
+                        if not (_strong_reclaim or _next_bar_cont):
+                            tier_updates[tier] = True  # mark fired to prevent re-touch
+                            _resume_msg = (
+                                f"Shallow tier {tier} blocked: normal M5 requires strong reclaim or next-bar continuation "
+                                f"(bar_pos={_resumption_gate['reclaim_bar_position']:.2f}, cont={'Y' if _next_bar_cont else 'N'})"
+                            )
+                            reasons.append(_resume_msg)
+                            if trial10_entry_gates["tier"]["status"] == "idle":
+                                trial10_entry_gates["tier"] = {
+                                    **trial10_entry_gates["tier"],
+                                    "status": "blocked",
+                                    "message": _resume_msg,
+                                    "tier": tier,
+                                    "resumption_gate": _resumption_gate,
+                                }
+                            continue
                     _ec = _trial10_entry_class("tiered_pullback", tier)
                     reasons.append(
                         f"TIER RECLAIM: BULL prev_low ({prev_low:.3f}) touched EMA{tier} ({ema_prev:.3f}) and close ({last_close:.3f}) reclaimed EMA{tier_reclaim_period} ({reclaim_now:.3f}) -> BUY"
@@ -4581,6 +4615,9 @@ def evaluate_kt_cg_trial_10_conditions(
                             f"({latest_pullback_quality.get('pullback_bar_count', 0)} bars, "
                             f"ratio={latest_pullback_quality.get('structure_ratio', 0.0):.2f})"
                         )
+                    if _resumption_gate.get("resumption_gate_applicable"):
+                        _rg_mode = "strong reclaim" if _resumption_gate.get("reclaim_strength_passed") else "next-bar continuation"
+                        reasons.append(f"Resumption gate passed via {_rg_mode}")
                     tier_updates[tier] = True
                     return {
                         "passed": True,
@@ -4594,6 +4631,7 @@ def evaluate_kt_cg_trial_10_conditions(
                         "trial10_tier_class": _tc,
                         "trial10_entry_class": _ec,
                         "trial10_setup_state": "clean",
+                        "trial10_resumption_gate": _resumption_gate,
                         "trial10_entry_gates": {
                             **trial10_entry_gates,
                             "tier": {
@@ -4608,8 +4646,14 @@ def evaluate_kt_cg_trial_10_conditions(
                                         if latest_pullback_quality
                                         else ""
                                     )
+                                    + (
+                                        f" | Resumption: {'strong reclaim' if _resumption_gate.get('reclaim_strength_passed') else 'next-bar continuation'}"
+                                        if _resumption_gate.get("resumption_gate_applicable")
+                                        else ""
+                                    )
                                 ),
                                 "tier": tier,
+                                "resumption_gate": _resumption_gate,
                             },
                         },
                     }
@@ -4676,7 +4720,7 @@ def evaluate_kt_cg_trial_10_conditions(
                     _pb_label = str((latest_pullback_quality or {}).get("label", "neutral")).lower()
                     _pb_applicable = bool((latest_pullback_quality or {}).get("applicable", False))
                     if _tc == "shallow" and _pb_label == "sloppy" and _pb_applicable:
-                        tier_updates[tier] = True  # still mark fired to prevent re-touch
+                        tier_updates[tier] = True
                         _sloppy_msg = (
                             f"Sloppy shallow pullback blocked: tier {tier} "
                             f"({latest_pullback_quality.get('pullback_bar_count', 0)} bars, "
@@ -4691,6 +4735,40 @@ def evaluate_kt_cg_trial_10_conditions(
                                 "tier": tier,
                             }
                         continue
+                    # --- Shallow resumption gate (17/21 in normal M5 only) ---
+                    _resumption_gate = {"resumption_gate_applicable": False}
+                    if _tc == "shallow" and m5_bucket == "normal":
+                        _reclaim_high = float(m1_df["high"].iloc[-1])
+                        _reclaim_low = float(m1_df["low"].iloc[-1])
+                        _reclaim_range = _reclaim_high - _reclaim_low
+                        # Strong reclaim: close in bottom third of reclaim bar range (bear)
+                        _strong_reclaim = (_reclaim_range > 0) and ((_reclaim_high - last_close) / _reclaim_range >= 0.67)
+                        # Next-bar continuation: reclaim bar close below touch bar low
+                        _next_bar_cont = last_close < prev_low
+                        _resumption_gate = {
+                            "resumption_gate_applicable": True,
+                            "resumption_gate_passed": _strong_reclaim or _next_bar_cont,
+                            "resumption_gate_mode": "strong_reclaim_or_next_bar",
+                            "reclaim_strength_passed": _strong_reclaim,
+                            "next_bar_continuation_passed": _next_bar_cont,
+                            "reclaim_bar_position": round((_reclaim_high - last_close) / _reclaim_range, 3) if _reclaim_range > 0 else 0.0,
+                        }
+                        if not (_strong_reclaim or _next_bar_cont):
+                            tier_updates[tier] = True
+                            _resume_msg = (
+                                f"Shallow tier {tier} blocked: normal M5 requires strong reclaim or next-bar continuation "
+                                f"(bar_pos={_resumption_gate['reclaim_bar_position']:.2f}, cont={'Y' if _next_bar_cont else 'N'})"
+                            )
+                            reasons.append(_resume_msg)
+                            if trial10_entry_gates["tier"]["status"] == "idle":
+                                trial10_entry_gates["tier"] = {
+                                    **trial10_entry_gates["tier"],
+                                    "status": "blocked",
+                                    "message": _resume_msg,
+                                    "tier": tier,
+                                    "resumption_gate": _resumption_gate,
+                                }
+                            continue
                     _ec = _trial10_entry_class("tiered_pullback", tier)
                     reasons.append(
                         f"TIER RECLAIM: BEAR prev_high ({prev_high:.3f}) touched EMA{tier} ({ema_prev:.3f}) and close ({last_close:.3f}) reclaimed EMA{tier_reclaim_period} ({reclaim_now:.3f}) -> SELL"
@@ -4701,6 +4779,9 @@ def evaluate_kt_cg_trial_10_conditions(
                             f"({latest_pullback_quality.get('pullback_bar_count', 0)} bars, "
                             f"ratio={latest_pullback_quality.get('structure_ratio', 0.0):.2f})"
                         )
+                    if _resumption_gate.get("resumption_gate_applicable"):
+                        _rg_mode = "strong reclaim" if _resumption_gate.get("reclaim_strength_passed") else "next-bar continuation"
+                        reasons.append(f"Resumption gate passed via {_rg_mode}")
                     tier_updates[tier] = True
                     return {
                         "passed": True,
@@ -4714,6 +4795,7 @@ def evaluate_kt_cg_trial_10_conditions(
                         "trial10_tier_class": _tc,
                         "trial10_entry_class": _ec,
                         "trial10_setup_state": "clean",
+                        "trial10_resumption_gate": _resumption_gate,
                         "trial10_entry_gates": {
                             **trial10_entry_gates,
                             "tier": {
@@ -4728,8 +4810,14 @@ def evaluate_kt_cg_trial_10_conditions(
                                         if latest_pullback_quality
                                         else ""
                                     )
+                                    + (
+                                        f" | Resumption: {'strong reclaim' if _resumption_gate.get('reclaim_strength_passed') else 'next-bar continuation'}"
+                                        if _resumption_gate.get("resumption_gate_applicable")
+                                        else ""
+                                    )
                                 ),
                                 "tier": tier,
+                                "resumption_gate": _resumption_gate,
                             },
                         },
                     }

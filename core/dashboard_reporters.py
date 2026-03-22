@@ -760,6 +760,10 @@ def report_trial10_entry_gates(eval_result: Optional[dict]) -> FilterReport:
         explanation=zone_msg,
         metadata={"status": zone_status, "mode": zone.get("mode")},
     )
+    resumption_gate = dict(tier.get("resumption_gate") or (eval_result or {}).get("trial10_resumption_gate") or {})
+    tier_meta: dict = {"status": tier_status, "tier": tier.get("tier")}
+    if resumption_gate.get("resumption_gate_applicable"):
+        tier_meta["resumption_gate"] = resumption_gate
     tier_filter = FilterReport(
         filter_id="trial10_tier_gate",
         display_name="Tier Gate",
@@ -769,7 +773,7 @@ def report_trial10_entry_gates(eval_result: Optional[dict]) -> FilterReport:
         threshold=tier_threshold,
         block_reason=tier_msg if tier_status == "blocked" else None,
         explanation=tier_msg,
-        metadata={"status": tier_status, "tier": tier.get("tier")},
+        metadata=tier_meta,
     )
 
     blocking_msgs = [msg for status, msg in ((zone_status, zone_msg), (tier_status, tier_msg)) if status == "blocked"]
