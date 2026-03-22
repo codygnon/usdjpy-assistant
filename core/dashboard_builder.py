@@ -16,6 +16,7 @@ from core.dashboard_reporters import (
     report_session_boundary_block,
     report_spread,
     report_tiered_atr_trial_4,
+    report_trial10_stop_loss,
     report_daily_hl_filter,
     report_ema_zone_filter,
     report_rolling_danger_zone,
@@ -32,6 +33,9 @@ from core.dashboard_reporters import (
     report_trial7_m5_ema_distance_gate,
     report_trial7_adaptive_tp,
     report_trial7_reversal_risk,
+    report_trial10_entry_gates,
+    report_trial10_pullback_quality,
+    report_regime_gate,
     report_open_trade_cap_by_entry_type,
     report_t8_exit_strategy,
     report_daily_level_filter,
@@ -56,13 +60,28 @@ _TEMP_OVERRIDE_ATTRS = (
     "m5_trend_ema_slow",
     "m1_zone_entry_ema_slow",
     "m1_pullback_cross_ema_slow",
+    "zone_entry_require_recent_cross",
+    "zone_entry_max_cross_lookback_bars",
+    "tier_reclaim_confirmation_enabled",
+    "tier_reclaim_ema_period",
+    "regime_gate_enabled",
+    "regime_london_sell_veto",
+    "regime_london_start_hour_et",
+    "regime_london_end_hour_et",
+    "regime_boost_multiplier",
+    "regime_buy_base_multiplier",
+    "regime_sell_base_multiplier",
+    "regime_chop_pause_enabled",
+    "regime_chop_pause_minutes",
+    "regime_chop_pause_stop_count",
+    "tier17_nonboost_multiplier",
 )
 
 
 class _EffectivePolicy:
     """Wraps a policy and applies temp_overrides so dashboard uses same EMAs as execution."""
 
-    def __init__(self, policy: Any, overrides: dict[str, int]) -> None:
+    def __init__(self, policy: Any, overrides: dict[str, Any]) -> None:
         self._policy = policy
         self._overrides = overrides
 
@@ -76,7 +95,7 @@ def effective_policy_for_dashboard(policy: Any, temp_overrides: Optional[dict]) 
     """Return a policy wrapper that applies temp_overrides (Apply Temporary Settings), or policy unchanged."""
     if policy is None or not temp_overrides:
         return policy
-    overrides_clean = {k: int(v) for k, v in temp_overrides.items() if v is not None and k in _TEMP_OVERRIDE_ATTRS}
+    overrides_clean = {k: v for k, v in temp_overrides.items() if v is not None and k in _TEMP_OVERRIDE_ATTRS}
     if not overrides_clean:
         return policy
     return _EffectivePolicy(policy, overrides_clean)
@@ -248,11 +267,12 @@ def build_dashboard_filters(
     store: Optional[Any] = None,
     adapter: Optional[Any] = None,
     live_positions_snapshot: Optional[list[Any]] = None,
-    temp_overrides: Optional[dict[str, int]] = None,
+    temp_overrides: Optional[dict[str, Any]] = None,
     daily_level_filter_snapshot: Optional[dict] = None,
     ntz_filter_snapshot: Optional[dict] = None,
     intraday_fib_corridor_snapshot: Optional[dict] = None,
     conviction_snapshot: Optional[dict] = None,
+    regime_snapshot: Optional[dict] = None,
     phase3_state: Optional[dict] = None,
 ) -> list[FilterReport]:
     """Build the filter report list the same way the run loop does.
@@ -506,10 +526,15 @@ def build_dashboard_filters(
             except Exception:
                 pass
 
-    elif policy_type == "kt_cg_trial_9" and policy is not None:
+    elif policy_type in ("kt_cg_trial_9", "kt_cg_trial_10") and policy is not None:
         filters.append(report_t8_exit_strategy(policy))
         m5_df = data_by_tf.get("M5")
         filters.append(report_trial7_m5_ema_distance_gate(policy, m5_df, pip_size))
+        if policy_type == "kt_cg_trial_10":
+            filters.append(report_regime_gate(regime_snapshot))
+            filters.append(report_trial10_entry_gates(eval_result))
+            filters.append(report_trial10_pullback_quality(eval_result))
+            filters.append(report_trial10_stop_loss(profile, policy, data_by_tf, pip_size))
         if getattr(policy, "trend_exhaustion_enabled", False):
             filters.append(report_trend_exhaustion(exhaustion_result))
         filters.append(report_trial7_adaptive_tp(policy, exhaustion_result))

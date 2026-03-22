@@ -10,8 +10,10 @@ import re
 import signal
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException
@@ -472,6 +474,22 @@ class TempEmaSettingsUpdate(BaseModel):
     t8_m1_exit_ema_slow: Optional[int] = None
     t8_scale_out_pct: Optional[float] = None
     t8_initial_sl_spread_plus_pips: Optional[float] = None
+    # Trial #10 proof / regime fields
+    t10_zone_entry_require_recent_cross: Optional[bool] = None
+    t10_zone_entry_max_cross_lookback_bars: Optional[int] = None
+    t10_tier_reclaim_confirmation_enabled: Optional[bool] = None
+    t10_tier_reclaim_ema_period: Optional[int] = None
+    t10_regime_gate_enabled: Optional[bool] = None
+    t10_regime_london_sell_veto: Optional[bool] = None
+    t10_regime_london_start_hour_et: Optional[int] = None
+    t10_regime_london_end_hour_et: Optional[int] = None
+    t10_regime_boost_multiplier: Optional[float] = None
+    t10_regime_buy_base_multiplier: Optional[float] = None
+    t10_regime_sell_base_multiplier: Optional[float] = None
+    t10_regime_chop_pause_enabled: Optional[bool] = None
+    t10_regime_chop_pause_minutes: Optional[int] = None
+    t10_regime_chop_pause_stop_count: Optional[int] = None
+    t10_tier17_nonboost_multiplier: Optional[float] = None
 
 
 
@@ -745,28 +763,10 @@ def update_runtime_state(profile_name: str, req: RuntimeStateUpdate) -> dict[str
     """Update runtime state for a profile."""
     state_path = _runtime_state_path(profile_name)
     old = load_state(state_path)
-    new_state = RuntimeState(
-        mode=req.mode,  # type: ignore
-        kill_switch=req.kill_switch,
-        last_processed_bar_time_utc=old.last_processed_bar_time_utc,
-        temp_m5_trend_ema_fast=old.temp_m5_trend_ema_fast,
-        temp_m5_trend_ema_slow=old.temp_m5_trend_ema_slow,
-        temp_m1_zone_entry_ema_slow=old.temp_m1_zone_entry_ema_slow,
-        temp_m1_pullback_cross_ema_slow=old.temp_m1_pullback_cross_ema_slow,
-        tier_fired=old.tier_fired,
-        divergence_block_buy_until=old.divergence_block_buy_until,
-        divergence_block_sell_until=old.divergence_block_sell_until,
-        daily_reset_date=old.daily_reset_date,
-        daily_reset_high=old.daily_reset_high,
-        daily_reset_low=old.daily_reset_low,
-        daily_reset_block_active=old.daily_reset_block_active,
-        daily_reset_settled=old.daily_reset_settled,
-        trend_flip_price=old.trend_flip_price,
-        trend_flip_direction=old.trend_flip_direction,
-        bb_tier_fired=old.bb_tier_fired,
-        temp_up_m5_ema_fast=old.temp_up_m5_ema_fast,
-        temp_up_m5_ema_slow=old.temp_up_m5_ema_slow,
-    )
+    new_data = dict(old.__dict__)
+    new_data["mode"] = req.mode
+    new_data["kill_switch"] = req.kill_switch
+    new_state = RuntimeState(**new_data)  # type: ignore[arg-type]
     save_state(state_path, new_state)
     return {"status": "saved"}
 
@@ -810,6 +810,21 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
         "t8_m1_exit_ema_slow": state.temp_t8_m1_exit_ema_slow,
         "t8_scale_out_pct": state.temp_t8_scale_out_pct,
         "t8_initial_sl_spread_plus_pips": state.temp_t8_initial_sl_spread_plus_pips,
+        "t10_zone_entry_require_recent_cross": state.temp_t10_zone_entry_require_recent_cross,
+        "t10_zone_entry_max_cross_lookback_bars": state.temp_t10_zone_entry_max_cross_lookback_bars,
+        "t10_tier_reclaim_confirmation_enabled": state.temp_t10_tier_reclaim_confirmation_enabled,
+        "t10_tier_reclaim_ema_period": state.temp_t10_tier_reclaim_ema_period,
+        "t10_regime_gate_enabled": state.temp_t10_regime_gate_enabled,
+        "t10_regime_london_sell_veto": state.temp_t10_regime_london_sell_veto,
+        "t10_regime_london_start_hour_et": state.temp_t10_regime_london_start_hour_et,
+        "t10_regime_london_end_hour_et": state.temp_t10_regime_london_end_hour_et,
+        "t10_regime_boost_multiplier": state.temp_t10_regime_boost_multiplier,
+        "t10_regime_buy_base_multiplier": state.temp_t10_regime_buy_base_multiplier,
+        "t10_regime_sell_base_multiplier": state.temp_t10_regime_sell_base_multiplier,
+        "t10_regime_chop_pause_enabled": state.temp_t10_regime_chop_pause_enabled,
+        "t10_regime_chop_pause_minutes": state.temp_t10_regime_chop_pause_minutes,
+        "t10_regime_chop_pause_stop_count": state.temp_t10_regime_chop_pause_stop_count,
+        "t10_tier17_nonboost_multiplier": state.temp_t10_tier17_nonboost_multiplier,
     }
 
 
@@ -818,61 +833,59 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
     """Update temporary EMA settings for Apply Temporary Settings menu."""
     state_path = _runtime_state_path(profile_name)
     old = load_state(state_path)
-    new_state = RuntimeState(
-        mode=old.mode,
-        kill_switch=old.kill_switch,
-        last_processed_bar_time_utc=old.last_processed_bar_time_utc,
-        temp_m5_trend_ema_fast=req.m5_trend_ema_fast,
-        temp_m5_trend_ema_slow=req.m5_trend_ema_slow,
-        temp_m1_zone_entry_ema_slow=req.m1_zone_entry_ema_slow,
-        temp_m1_pullback_cross_ema_slow=req.m1_pullback_cross_ema_slow,
-        temp_m3_trend_ema_fast=req.m3_trend_ema_fast,
-        temp_m3_trend_ema_slow=req.m3_trend_ema_slow,
-        temp_m1_t4_zone_entry_ema_fast=req.m1_t4_zone_entry_ema_fast,
-        temp_m1_t4_zone_entry_ema_slow=req.m1_t4_zone_entry_ema_slow,
-        # Preserve tier state (not modified through temp settings API)
-        tier_fired=old.tier_fired,
-        # Preserve divergence block state (not modified through temp settings API)
-        divergence_block_buy_until=old.divergence_block_buy_until,
-        divergence_block_sell_until=old.divergence_block_sell_until,
-        # Preserve daily reset state (not modified through temp settings API)
-        daily_reset_date=old.daily_reset_date,
-        daily_reset_high=old.daily_reset_high,
-        daily_reset_low=old.daily_reset_low,
-        daily_reset_block_active=old.daily_reset_block_active,
-        daily_reset_settled=old.daily_reset_settled,
-        # Preserve exhaustion state (not modified through temp settings API)
-        trend_flip_price=old.trend_flip_price,
-        trend_flip_direction=old.trend_flip_direction,
-        trend_flip_time=old.trend_flip_time,
-        # Preserve BB tier state (Trial #6)
-        bb_tier_fired=old.bb_tier_fired,
-        # Uncle Parsh H1 Breakout temp overrides
-        temp_up_m5_ema_fast=req.up_m5_ema_fast,
-        temp_up_m5_ema_slow=req.up_m5_ema_slow,
-        temp_up_major_extremes_only=req.up_major_extremes_only,
-        temp_up_h1_lookback_hours=req.up_h1_lookback_hours,
-        temp_up_h1_swing_strength=req.up_h1_swing_strength,
-        temp_up_h1_cluster_tolerance_pips=req.up_h1_cluster_tolerance_pips,
-        temp_up_h1_min_touches_for_major=req.up_h1_min_touches_for_major,
-        temp_up_power_close_body_pct=req.up_power_close_body_pct,
-        temp_up_velocity_pips=req.up_velocity_pips,
-        temp_up_initial_sl_spread_plus_pips=req.up_initial_sl_spread_plus_pips,
-        temp_up_tp1_pips=req.up_tp1_pips,
-        temp_up_tp1_close_pct=req.up_tp1_close_pct,
-        temp_up_be_spread_plus_pips=req.up_be_spread_plus_pips,
-        temp_up_trail_ema_period=req.up_trail_ema_period,
-        temp_up_max_spread_pips=req.up_max_spread_pips,
-        temp_t8_exit_strategy=req.t8_exit_strategy,
-        temp_t8_tp1_pips=req.t8_tp1_pips,
-        temp_t8_tp1_close_pct=req.t8_tp1_close_pct,
-        temp_t8_be_spread_plus_pips=req.t8_be_spread_plus_pips,
-        temp_t8_trail_ema_period=req.t8_trail_ema_period,
-        temp_t8_m1_exit_ema_fast=req.t8_m1_exit_ema_fast,
-        temp_t8_m1_exit_ema_slow=req.t8_m1_exit_ema_slow,
-        temp_t8_scale_out_pct=req.t8_scale_out_pct,
-        temp_t8_initial_sl_spread_plus_pips=req.t8_initial_sl_spread_plus_pips,
+    new_data = dict(old.__dict__)
+    new_data.update(
+        {
+            "temp_m5_trend_ema_fast": req.m5_trend_ema_fast,
+            "temp_m5_trend_ema_slow": req.m5_trend_ema_slow,
+            "temp_m1_zone_entry_ema_slow": req.m1_zone_entry_ema_slow,
+            "temp_m1_pullback_cross_ema_slow": req.m1_pullback_cross_ema_slow,
+            "temp_m3_trend_ema_fast": req.m3_trend_ema_fast,
+            "temp_m3_trend_ema_slow": req.m3_trend_ema_slow,
+            "temp_m1_t4_zone_entry_ema_fast": req.m1_t4_zone_entry_ema_fast,
+            "temp_m1_t4_zone_entry_ema_slow": req.m1_t4_zone_entry_ema_slow,
+            "temp_up_m5_ema_fast": req.up_m5_ema_fast,
+            "temp_up_m5_ema_slow": req.up_m5_ema_slow,
+            "temp_up_major_extremes_only": req.up_major_extremes_only,
+            "temp_up_h1_lookback_hours": req.up_h1_lookback_hours,
+            "temp_up_h1_swing_strength": req.up_h1_swing_strength,
+            "temp_up_h1_cluster_tolerance_pips": req.up_h1_cluster_tolerance_pips,
+            "temp_up_h1_min_touches_for_major": req.up_h1_min_touches_for_major,
+            "temp_up_power_close_body_pct": req.up_power_close_body_pct,
+            "temp_up_velocity_pips": req.up_velocity_pips,
+            "temp_up_initial_sl_spread_plus_pips": req.up_initial_sl_spread_plus_pips,
+            "temp_up_tp1_pips": req.up_tp1_pips,
+            "temp_up_tp1_close_pct": req.up_tp1_close_pct,
+            "temp_up_be_spread_plus_pips": req.up_be_spread_plus_pips,
+            "temp_up_trail_ema_period": req.up_trail_ema_period,
+            "temp_up_max_spread_pips": req.up_max_spread_pips,
+            "temp_t8_exit_strategy": req.t8_exit_strategy,
+            "temp_t8_tp1_pips": req.t8_tp1_pips,
+            "temp_t8_tp1_close_pct": req.t8_tp1_close_pct,
+            "temp_t8_be_spread_plus_pips": req.t8_be_spread_plus_pips,
+            "temp_t8_trail_ema_period": req.t8_trail_ema_period,
+            "temp_t8_m1_exit_ema_fast": req.t8_m1_exit_ema_fast,
+            "temp_t8_m1_exit_ema_slow": req.t8_m1_exit_ema_slow,
+            "temp_t8_scale_out_pct": req.t8_scale_out_pct,
+            "temp_t8_initial_sl_spread_plus_pips": req.t8_initial_sl_spread_plus_pips,
+            "temp_t10_zone_entry_require_recent_cross": req.t10_zone_entry_require_recent_cross,
+            "temp_t10_zone_entry_max_cross_lookback_bars": req.t10_zone_entry_max_cross_lookback_bars,
+            "temp_t10_tier_reclaim_confirmation_enabled": req.t10_tier_reclaim_confirmation_enabled,
+            "temp_t10_tier_reclaim_ema_period": req.t10_tier_reclaim_ema_period,
+            "temp_t10_regime_gate_enabled": req.t10_regime_gate_enabled,
+            "temp_t10_regime_london_sell_veto": req.t10_regime_london_sell_veto,
+            "temp_t10_regime_london_start_hour_et": req.t10_regime_london_start_hour_et,
+            "temp_t10_regime_london_end_hour_et": req.t10_regime_london_end_hour_et,
+            "temp_t10_regime_boost_multiplier": req.t10_regime_boost_multiplier,
+            "temp_t10_regime_buy_base_multiplier": req.t10_regime_buy_base_multiplier,
+            "temp_t10_regime_sell_base_multiplier": req.t10_regime_sell_base_multiplier,
+            "temp_t10_regime_chop_pause_enabled": req.t10_regime_chop_pause_enabled,
+            "temp_t10_regime_chop_pause_minutes": req.t10_regime_chop_pause_minutes,
+            "temp_t10_regime_chop_pause_stop_count": req.t10_regime_chop_pause_stop_count,
+            "temp_t10_tier17_nonboost_multiplier": req.t10_tier17_nonboost_multiplier,
+        }
     )
+    new_state = RuntimeState(**new_data)  # type: ignore[arg-type]
     save_state(state_path, new_state)
     return {"status": "saved"}
 
@@ -3169,7 +3182,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 if not getattr(pol, "enabled", True):
                     continue
                 pt = getattr(pol, "type", "") or ""
-                if pt in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6", "kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9", "phase3_integrated"):
+                if pt in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6", "kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9", "kt_cg_trial_10", "phase3_integrated"):
                     _policy = pol
                     _policy_type = pt
                     break
@@ -3187,15 +3200,15 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                     data_by_tf["M1"] = _get_bars_cached(_adapter, profile.symbol, "M1", 3000)
                     if _policy_type in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6"):
                         data_by_tf["M3"] = _get_bars_cached(_adapter, profile.symbol, "M3", 3000)
-                    if _policy_type in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_8", "kt_cg_trial_9"):
+                    if _policy_type in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_8", "kt_cg_trial_9", "kt_cg_trial_10"):
                         data_by_tf["D"] = _get_bars_cached(_adapter, profile.symbol, "D", 3)
-                    if _policy_type in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9", "phase3_integrated"):
+                    if _policy_type in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9", "kt_cg_trial_10", "phase3_integrated"):
                         data_by_tf["M5"] = _get_bars_cached(_adapter, profile.symbol, "M5", 2000)
                     if _policy_type == "phase3_integrated":
                         data_by_tf["M15"] = _get_bars_cached(_adapter, profile.symbol, "M15", 2000)
                         data_by_tf["D"] = _get_bars_cached(_adapter, profile.symbol, "D", 5)
                         data_by_tf["H1"] = _get_bars_cached(_adapter, profile.symbol, "H1", 200)
-                    if _policy_type == "kt_cg_trial_9":
+                    if _policy_type in ("kt_cg_trial_9", "kt_cg_trial_10"):
                         data_by_tf["M15"] = _get_bars_cached(_adapter, profile.symbol, "M15", 2000)
                         data_by_tf["W"] = _get_bars_cached(_adapter, profile.symbol, "W", 2)
                         data_by_tf["MN"] = _get_bars_cached(_adapter, profile.symbol, "MN", 2)
@@ -3238,6 +3251,36 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         temp_overrides_api["m1_zone_entry_ema_slow"] = _state.temp_m1_zone_entry_ema_slow
                     if _state.temp_m1_pullback_cross_ema_slow is not None:
                         temp_overrides_api["m1_pullback_cross_ema_slow"] = _state.temp_m1_pullback_cross_ema_slow
+                    if _state.temp_t10_zone_entry_require_recent_cross is not None:
+                        temp_overrides_api["zone_entry_require_recent_cross"] = _state.temp_t10_zone_entry_require_recent_cross
+                    if _state.temp_t10_zone_entry_max_cross_lookback_bars is not None:
+                        temp_overrides_api["zone_entry_max_cross_lookback_bars"] = _state.temp_t10_zone_entry_max_cross_lookback_bars
+                    if _state.temp_t10_tier_reclaim_confirmation_enabled is not None:
+                        temp_overrides_api["tier_reclaim_confirmation_enabled"] = _state.temp_t10_tier_reclaim_confirmation_enabled
+                    if _state.temp_t10_tier_reclaim_ema_period is not None:
+                        temp_overrides_api["tier_reclaim_ema_period"] = _state.temp_t10_tier_reclaim_ema_period
+                    if _state.temp_t10_regime_gate_enabled is not None:
+                        temp_overrides_api["regime_gate_enabled"] = _state.temp_t10_regime_gate_enabled
+                    if _state.temp_t10_regime_london_sell_veto is not None:
+                        temp_overrides_api["regime_london_sell_veto"] = _state.temp_t10_regime_london_sell_veto
+                    if _state.temp_t10_regime_london_start_hour_et is not None:
+                        temp_overrides_api["regime_london_start_hour_et"] = _state.temp_t10_regime_london_start_hour_et
+                    if _state.temp_t10_regime_london_end_hour_et is not None:
+                        temp_overrides_api["regime_london_end_hour_et"] = _state.temp_t10_regime_london_end_hour_et
+                    if _state.temp_t10_regime_boost_multiplier is not None:
+                        temp_overrides_api["regime_boost_multiplier"] = _state.temp_t10_regime_boost_multiplier
+                    if _state.temp_t10_regime_buy_base_multiplier is not None:
+                        temp_overrides_api["regime_buy_base_multiplier"] = _state.temp_t10_regime_buy_base_multiplier
+                    if _state.temp_t10_regime_sell_base_multiplier is not None:
+                        temp_overrides_api["regime_sell_base_multiplier"] = _state.temp_t10_regime_sell_base_multiplier
+                    if _state.temp_t10_regime_chop_pause_enabled is not None:
+                        temp_overrides_api["regime_chop_pause_enabled"] = _state.temp_t10_regime_chop_pause_enabled
+                    if _state.temp_t10_regime_chop_pause_minutes is not None:
+                        temp_overrides_api["regime_chop_pause_minutes"] = _state.temp_t10_regime_chop_pause_minutes
+                    if _state.temp_t10_regime_chop_pause_stop_count is not None:
+                        temp_overrides_api["regime_chop_pause_stop_count"] = _state.temp_t10_regime_chop_pause_stop_count
+                    if _state.temp_t10_tier17_nonboost_multiplier is not None:
+                        temp_overrides_api["tier17_nonboost_multiplier"] = _state.temp_t10_tier17_nonboost_multiplier
                     if not temp_overrides_api:
                         temp_overrides_api = None
                     if _policy_type == "phase3_integrated":
@@ -3257,7 +3300,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                             exhaustion_result = _detect_trend_flip_and_compute_exhaustion(
                                 m3_df, mid, pip_size, exhaustion_state or {}, _policy
                             )
-                    if _policy_type in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9") and getattr(_policy, "trend_exhaustion_enabled", False):
+                    if _policy_type in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9", "kt_cg_trial_10") and getattr(_policy, "trend_exhaustion_enabled", False):
                         m5_df = data_by_tf.get("M5")
                         if m5_df is not None and not m5_df.empty:
                             from core.execution_engine import _compute_trial7_trend_exhaustion
@@ -3279,7 +3322,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                     temp_overrides_api = None
                     pass
             intraday_fib_corridor_snapshot = None
-            if _policy_type == "kt_cg_trial_9":
+            if _policy_type in ("kt_cg_trial_9", "kt_cg_trial_10"):
                 try:
                     from core.fib_pivots import compute_daily_fib_pivots
 
@@ -3469,14 +3512,16 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 except Exception:
                     pass
             store = _store_for(profile_name, log_dir=log_dir)
+            from core.dashboard_builder import effective_policy_for_dashboard
+            _policy_for_snapshot = effective_policy_for_dashboard(_policy, temp_overrides_api) if _policy is not None else None
             # Conviction sizing snapshot for dashboard
             _conviction_snap_api = None
-            if _policy_type == "kt_cg_trial_9" and _policy is not None:
+            if _policy_type in ("kt_cg_trial_9", "kt_cg_trial_10") and _policy_for_snapshot is not None:
                 try:
                     from core.conviction_sizing import compute_conviction as _compute_conv_api
                     from core.conviction_sizing import conviction_snapshot as _conv_snap_fn_api
                     from core.signal_engine import drop_incomplete_last_bar as _dilb_api
-                    _conv_enabled_api = bool(getattr(_policy, "conviction_sizing_enabled", False))
+                    _conv_enabled_api = bool(getattr(_policy_for_snapshot, "conviction_sizing_enabled", False))
                     _m5_api = data_by_tf.get("M5")
                     _m1_api = data_by_tf.get("M1")
                     _is_bull_api = False
@@ -3492,13 +3537,92 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         pip_size=pip_size,
                         is_bull=_is_bull_api,
                         enabled=_conv_enabled_api,
-                        base_lots=float(getattr(_policy, "conviction_base_lots", 0.05)),
-                        min_lots=float(getattr(_policy, "conviction_min_lots", 0.01)),
+                        base_lots=float(getattr(_policy_for_snapshot, "conviction_base_lots", 0.05)),
+                        min_lots=float(getattr(_policy_for_snapshot, "conviction_min_lots", 0.01)),
                         max_lots=float(get_effective_risk(profile).max_lots),
                     )
                     _conviction_snap_api = _conv_snap_fn_api(_conv_r_api)
                 except Exception as _conv_api_err:
                     print(f"[api] conviction sizing error: {_conv_api_err}")
+            # --- Regime gate snapshot (Trial 10) ---
+            _regime_snap_api: Optional[dict] = None
+            if _policy_type == "kt_cg_trial_10" and _policy_for_snapshot is not None:
+                try:
+                    from core.execution_engine import _resolve_trial10_m5_bucket
+                    from core.regime_gate import evaluate_regime_gate, regime_gate_snapshot, check_chop_pause
+                    from core.signal_engine import drop_incomplete_last_bar as _dilb_rg_api
+                    _hour_et_api = datetime.now(ZoneInfo("America/New_York")).hour
+                    # Derive likely side from M5 trend
+                    _rg_side_api = "buy"
+                    _rg_m5_bucket_api = "normal"
+                    _m5_rg = data_by_tf.get("M5")
+                    if _m5_rg is not None and len(_m5_rg) > 21:
+                        _m5c_rg = _dilb_rg_api(_m5_rg.copy(), "M5")
+                        _m5_close_rg = _m5c_rg["close"].astype(float)
+                        _e9_rg = _m5_close_rg.ewm(span=9, adjust=False).mean()
+                        _e21_rg = _m5_close_rg.ewm(span=21, adjust=False).mean()
+                        _rg_side_api = "buy" if float(_e9_rg.iloc[-1]) > float(_e21_rg.iloc[-1]) else "sell"
+                        _rg_m5_bucket_api, _, _ = _resolve_trial10_m5_bucket(
+                            _m5_close_rg,
+                            float(profile.pip_size),
+                            _rg_side_api == "buy",
+                        )
+                    _chop_start = _state.chop_pause_buy_start_utc if _rg_side_api == "buy" else _state.chop_pause_sell_start_utc
+                    _chop_reason = _state.chop_pause_buy_reason if _rg_side_api == "buy" else _state.chop_pause_sell_reason
+                    _chop_start_dt = pd.Timestamp(_chop_start).to_pydatetime() if _chop_start else None
+                    if _chop_start_dt is not None and _chop_start_dt.tzinfo is None:
+                        _chop_start_dt = _chop_start_dt.replace(tzinfo=timezone.utc)
+                    _closed_events = []
+                    if trades_df is not None and not trades_df.empty and "exit_timestamp_utc" in trades_df.columns:
+                        _closed_df = trades_df.copy()
+                        _closed_df["exit_dt"] = pd.to_datetime(_closed_df["exit_timestamp_utc"], utc=True, errors="coerce")
+                        if "policy_type" in _closed_df.columns:
+                            _closed_df = _closed_df[
+                                (_closed_df["policy_type"].astype(str) == "kt_cg_trial_10")
+                                & _closed_df["exit_dt"].notna()
+                            ]
+                        else:
+                            _closed_df = _closed_df[_closed_df["exit_dt"].notna()]
+                        for _, _row in _closed_df.tail(100).iterrows():
+                            _tier = _row.get("tier_number")
+                            _closed_events.append(
+                                {
+                                    "side": str(_row.get("side") or "").lower(),
+                                    "exit_reason": str(_row.get("exit_reason") or ""),
+                                    "close_time_utc": _row["exit_dt"].to_pydatetime(),
+                                    "pullback_label": None if pd.isna(_row.get("pullback_quality_label")) else str(_row.get("pullback_quality_label")).lower(),
+                                    "tier": None if pd.isna(_tier) else int(_tier),
+                                }
+                            )
+                    _chop_paused_api, _chop_reason_live = check_chop_pause(
+                        side=_rg_side_api,
+                        recent_trades=_closed_events,
+                        now_utc=datetime.now(timezone.utc),
+                        lookback_minutes=int(getattr(_policy_for_snapshot, "regime_chop_pause_lookback_minutes", 45)),
+                        stop_count_threshold=int(getattr(_policy_for_snapshot, "regime_chop_pause_stop_count", 1)),
+                        pause_minutes=int(getattr(_policy_for_snapshot, "regime_chop_pause_minutes", 45)),
+                        current_pause_start=_chop_start_dt,
+                        m5_bucket=_rg_m5_bucket_api,
+                    )
+                    _rg_result_api = evaluate_regime_gate(
+                        hour_et=_hour_et_api,
+                        side=_rg_side_api,
+                        m5_bucket=_rg_m5_bucket_api,
+                        enabled=getattr(_policy_for_snapshot, "regime_gate_enabled", True),
+                        london_sell_veto=getattr(_policy_for_snapshot, "regime_london_sell_veto", True),
+                        london_start_hour_et=getattr(_policy_for_snapshot, "regime_london_start_hour_et", 3),
+                        london_end_hour_et=getattr(_policy_for_snapshot, "regime_london_end_hour_et", 12),
+                        boost_hours_et=getattr(_policy_for_snapshot, "regime_boost_hours_et", (6, 7, 12, 13, 14, 15)),
+                        boost_multiplier=getattr(_policy_for_snapshot, "regime_boost_multiplier", 1.35),
+                        buy_base_multiplier=getattr(_policy_for_snapshot, "regime_buy_base_multiplier", 0.65),
+                        sell_base_multiplier=getattr(_policy_for_snapshot, "regime_sell_base_multiplier", 0.35),
+                        chop_paused=_chop_paused_api,
+                        chop_pause_reason=_chop_reason_live or _chop_reason or "",
+                    )
+                    _regime_snap_api = regime_gate_snapshot(_rg_result_api)
+                    _regime_snap_api["chop_pause_reason"] = _chop_reason_live or _chop_reason or ""
+                except Exception as _rg_err:
+                    print(f"[api] regime gate snapshot error: {_rg_err}")
             filter_reports = build_dashboard_filters(
                 profile=profile,
                 tick=_tick,
@@ -3515,11 +3639,11 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 ntz_filter_snapshot=ntz_filter_snapshot,
                 intraday_fib_corridor_snapshot=intraday_fib_corridor_snapshot,
                 conviction_snapshot=_conviction_snap_api,
+                regime_snapshot=_regime_snap_api,
                 phase3_state=phase3_state_for_filters,
             )
             filters.extend(asdict(f) for f in filter_reports)
             try:
-                from core.dashboard_builder import effective_policy_for_dashboard
                 from core.dashboard_reporters import (
                     collect_trial_4_context,
                     collect_trial_5_context,
@@ -3528,7 +3652,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                     collect_trial_9_context,
                 )
 
-                policy_for_context = effective_policy_for_dashboard(_policy, temp_overrides_api) if _policy is not None else None
+                policy_for_context = _policy_for_snapshot
                 context_items = []
                 if _policy_type == "kt_cg_trial_4" and policy_for_context is not None:
                     context_items = collect_trial_4_context(policy_for_context, data_by_tf, _tick, {}, None, pip_size)
@@ -3549,7 +3673,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         policy_for_context, data_by_tf, _tick, {}, None, pip_size,
                         exhaustion_result=exhaustion_result,
                     )
-                elif _policy_type == "kt_cg_trial_9" and policy_for_context is not None:
+                elif _policy_type in ("kt_cg_trial_9", "kt_cg_trial_10") and policy_for_context is not None:
                     context_items = collect_trial_9_context(
                         policy_for_context, data_by_tf, _tick, {}, None, pip_size,
                         exhaustion_result=exhaustion_result,
@@ -3671,7 +3795,7 @@ def get_filter_config(profile_name: str, profile_path: Optional[str] = None) -> 
     is_trial_4 = pol_type == "kt_cg_trial_4"
     is_trial_7 = pol_type == "kt_cg_trial_7"
     is_trial_8 = pol_type == "kt_cg_trial_8"
-    is_trial_9 = pol_type == "kt_cg_trial_9"
+    is_trial_9 = pol_type in ("kt_cg_trial_9", "kt_cg_trial_10")
 
     filters: dict[str, Any] = {}
 

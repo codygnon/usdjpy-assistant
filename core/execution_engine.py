@@ -18,6 +18,7 @@ from core.indicators import macd as macd_fn
 from core.indicators import rsi as rsi_fn
 from core.indicators import vwap as vwap_fn
 from core.models import MarketContext, TradeCandidate
+from core.pullback_quality import analyze_pullback_quality, pullback_quality_snapshot
 from core.profile import (
     ExecutionPolicyBollingerBands,
     ExecutionPolicyBreakout,
@@ -4098,9 +4099,15 @@ def evaluate_kt_cg_trial_7_conditions(
 
     is_bull = m5_ema_fast_val > m5_ema_slow_val
     trend = "bull" if is_bull else "bear"
+    m5_bucket, m5_spread_pips, m5_slope_pips_per_bar = _resolve_trial10_m5_bucket(
+        m5_close, float(profile.pip_size), is_bull
+    )
     reasons.append(
         f"M5 trend: {trend.upper()} (EMA{m5_ema_fast}={m5_ema_fast_val:.3f} vs EMA{m5_ema_slow}={m5_ema_slow_val:.3f}, gap={m5_ema_gap_pips:.2f}p >= {min_ema_gap_pips:.2f}p)"
     )
+    trial10_entry_gates["tier"]["m5_bucket"] = m5_bucket
+    trial10_entry_gates["tier"]["m5_spread_pips"] = round(m5_spread_pips, 3)
+    trial10_entry_gates["tier"]["m5_slope_pips_per_bar"] = round(m5_slope_pips_per_bar, 3)
 
     m1_df = data_by_tf.get("M1")
     if m1_df is None or m1_df.empty:
@@ -4278,6 +4285,516 @@ def evaluate_kt_cg_trial_7_conditions(
     }
 
 
+def _has_recent_alignment_cross(
+    fast_series: pd.Series,
+    slow_series: pd.Series,
+    is_bull: bool,
+    lookback_bars: int,
+) -> bool:
+    """Return True when the fast series crossed into the aligned state recently."""
+    lookback = max(1, int(lookback_bars))
+    if len(fast_series) < lookback + 2 or len(slow_series) < lookback + 2:
+        return False
+
+    max_offset = min(lookback, len(fast_series) - 1, len(slow_series) - 1)
+    for offset in range(1, max_offset + 1):
+        prev_fast = float(fast_series.iloc[-offset - 1])
+        prev_slow = float(slow_series.iloc[-offset - 1])
+        curr_fast = float(fast_series.iloc[-offset])
+        curr_slow = float(slow_series.iloc[-offset])
+        if is_bull:
+            if prev_fast <= prev_slow and curr_fast > curr_slow:
+                return True
+        else:
+            if prev_fast >= prev_slow and curr_fast < curr_slow:
+                return True
+    return False
+
+
+def _resolve_trial10_stop_pips(
+    profile: ProfileV1,
+    policy,
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+) -> float:
+    """Resolve Trial #10 broker SL distance, honoring ATR stop config when enabled."""
+    fallback_sl = getattr(policy, "sl_pips", None)
+    if fallback_sl is None:
+        fallback_sl = float(get_effective_risk(profile).min_stop_pips)
+    fallback_sl = float(fallback_sl)
+
+    sl_cfg = getattr(profile.trade_management, "stop_loss", None)
+    if sl_cfg is None or getattr(sl_cfg, "mode", None) != "atr":
+        return fallback_sl
+
+    m5_df = data_by_tf.get("M5")
+    if m5_df is None or m5_df.empty:
+        return fallback_sl
+
+    m5_local = drop_incomplete_last_bar(m5_df.copy(), "M5")
+    if len(m5_local) < 15:
+        return fallback_sl
+
+    pip = float(profile.pip_size)
+    atr_series = atr_fn(m5_local, 14)
+    if atr_series.empty or pd.isna(atr_series.iloc[-1]) or pip <= 0.0:
+        return fallback_sl
+
+    atr_val = float(atr_series.iloc[-1])
+    atr_pips = atr_val / pip
+    atr_stop = min(atr_pips * float(getattr(sl_cfg, "atr_multiplier", 1.5)), float(getattr(sl_cfg, "max_sl_pips", fallback_sl)))
+    atr_stop = max(atr_stop, float(get_effective_risk(profile).min_stop_pips))
+    return float(atr_stop)
+
+
+def _resolve_trial10_m5_bucket(
+    m5_close: pd.Series,
+    pip_size: float,
+    is_bull: bool,
+) -> tuple[str, float, float]:
+    """Return Trial #10 M5 regime bucket aligned with conviction sizing thresholds."""
+    from core.conviction_sizing import _compute_m5_bucket
+
+    bucket, spread_pips, slope_pips_per_bar, _aligned, _disagrees = _compute_m5_bucket(
+        m5_close.astype(float),
+        float(pip_size),
+        bool(is_bull),
+    )
+    return str(bucket), float(spread_pips), float(slope_pips_per_bar)
+
+
+def evaluate_kt_cg_trial_10_conditions(
+    profile: ProfileV1,
+    policy,  # ExecutionPolicyKtCgTrial10
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+    current_bid: float,
+    current_ask: float,
+    tier_state: dict[int, bool],
+    temp_overrides: Optional[dict] = None,
+) -> dict:
+    """Evaluate KT/CG Trial #10 conditions with stricter proof-based entries."""
+    reasons: list[str] = []
+    tier_updates: dict[int, bool] = {}
+    latest_pullback_quality = None
+
+    def _ov(field: str, default=None):
+        if temp_overrides and field in temp_overrides and temp_overrides[field] is not None:
+            return temp_overrides[field]
+        return getattr(policy, field, default)
+
+    m5_ema_fast = int(_ov("m5_trend_ema_fast", 9))
+    m5_ema_slow = int(_ov("m5_trend_ema_slow", 21))
+    min_ema_gap_pips = float(_ov("m5_min_ema_distance_pips", 1.0))
+    zone_entry_mode = str(_ov("zone_entry_mode", "ema_cross"))
+    if zone_entry_mode not in ("ema_cross", "price_vs_ema5"):
+        zone_entry_mode = "ema_cross"
+    zone_entry_enabled = bool(_ov("zone_entry_enabled", True))
+    zone_recent_cross_required = bool(_ov("zone_entry_require_recent_cross", True))
+    zone_cross_lookback = int(_ov("zone_entry_max_cross_lookback_bars", 2))
+
+    m1_zone_ema_fast = int(_ov("m1_zone_entry_ema_fast", 5))
+    m1_zone_ema_slow = int(_ov("m1_zone_entry_ema_slow", 9))
+    m1_price_ema_period = int(_ov("m1_zone_entry_price_ema_period", 5))
+    tier_reclaim_enabled = bool(_ov("tier_reclaim_confirmation_enabled", True))
+    tier_reclaim_period = int(_ov("tier_reclaim_ema_period", 5))
+    trial10_entry_gates = {
+        "zone": {
+            "enabled": zone_entry_enabled,
+            "mode": zone_entry_mode,
+            "status": "idle",
+            "message": "Awaiting alignment",
+            "recent_cross_required": zone_recent_cross_required,
+            "lookback_bars": zone_cross_lookback,
+        },
+        "tier": {
+            "enabled": bool(_ov("tiered_pullback_enabled", True)),
+            "status": "idle",
+            "message": "Awaiting tier touch",
+            "reclaim_enabled": tier_reclaim_enabled,
+            "reclaim_period": tier_reclaim_period,
+            "tier": None,
+            "pullback_quality": None,
+        },
+    }
+
+    m5_df = data_by_tf.get("M5")
+    if m5_df is None or m5_df.empty:
+        return {"passed": False, "side": None, "reasons": ["kt_cg_trial_10: no M5 data"], "trigger_type": "", "tiered_pullback_tier": None, "tier_updates": {}, "m5_trend": ""}
+    m5_df = drop_incomplete_last_bar(m5_df.copy(), "M5")
+    if len(m5_df) < m5_ema_slow + 1:
+        return {"passed": False, "side": None, "reasons": [f"kt_cg_trial_10: need at least {m5_ema_slow + 1} M5 bars"], "trigger_type": "", "tiered_pullback_tier": None, "tier_updates": {}, "m5_trend": ""}
+
+    m5_close = m5_df["close"]
+    m5_ema_gap_pips, m5_ema_fast_val, m5_ema_slow_val = _trial7_m5_ema_gap_pips(
+        m5_close, m5_ema_fast, m5_ema_slow, float(profile.pip_size)
+    )
+    if m5_ema_gap_pips < min_ema_gap_pips:
+        return {
+            "passed": False,
+            "side": None,
+            "reasons": [f"kt_cg_trial_10: blocked (M5 EMA gap {m5_ema_gap_pips:.2f}p < min {min_ema_gap_pips:.2f}p)"],
+            "trigger_type": "",
+            "tiered_pullback_tier": None,
+            "tier_updates": {},
+            "m5_trend": "",
+            "m5_ema_gap_pips": round(m5_ema_gap_pips, 3),
+            "m5_ema_gap_min_pips": round(min_ema_gap_pips, 3),
+        }
+
+    is_bull = m5_ema_fast_val > m5_ema_slow_val
+    trend = "bull" if is_bull else "bear"
+    m5_bucket, m5_spread_pips, m5_slope_pips_per_bar = _resolve_trial10_m5_bucket(
+        m5_close, float(profile.pip_size), is_bull
+    )
+    reasons.append(
+        f"M5 trend: {trend.upper()} (EMA{m5_ema_fast}={m5_ema_fast_val:.3f} vs EMA{m5_ema_slow}={m5_ema_slow_val:.3f}, gap={m5_ema_gap_pips:.2f}p >= {min_ema_gap_pips:.2f}p)"
+    )
+    trial10_entry_gates["tier"]["m5_bucket"] = m5_bucket
+    trial10_entry_gates["tier"]["m5_spread_pips"] = round(m5_spread_pips, 3)
+    trial10_entry_gates["tier"]["m5_slope_pips_per_bar"] = round(m5_slope_pips_per_bar, 3)
+
+    m1_df = data_by_tf.get("M1")
+    if m1_df is None or m1_df.empty:
+        return {"passed": False, "side": None, "reasons": ["kt_cg_trial_10: no M1 data"], "trigger_type": "", "tiered_pullback_tier": None, "tier_updates": {}, "m5_trend": ""}
+    m1_df = drop_incomplete_last_bar(m1_df.copy(), "M1")
+
+    tier_periods = tuple(int(x) for x in _ov("tier_ema_periods", (17, 21, 27, 33, 50)))
+    max_tier_period = max(tier_periods) if tier_periods else 50
+    min_m1_bars = max(m1_zone_ema_slow, max_tier_period, m1_price_ema_period, tier_reclaim_period) + 3
+    if len(m1_df) < min_m1_bars:
+        return {"passed": False, "side": None, "reasons": [f"kt_cg_trial_10: need at least {min_m1_bars} M1 bars"], "trigger_type": "", "tiered_pullback_tier": None, "tier_updates": {}, "m5_trend": ""}
+
+    m1_close = m1_df["close"].astype(float)
+    m1_ema_zone_fast = ema_fn(m1_close, m1_zone_ema_fast)
+    m1_ema_zone_slow = ema_fn(m1_close, m1_zone_ema_slow)
+    m1_price_ema = ema_fn(m1_close, m1_price_ema_period)
+    m1_reclaim_ema = ema_fn(m1_close, tier_reclaim_period)
+
+    last_close = float(m1_close.iloc[-1])
+    prev_close = float(m1_close.iloc[-2])
+    prev_low = float(m1_df["low"].iloc[-2])
+    prev_high = float(m1_df["high"].iloc[-2])
+    pip_size = float(profile.pip_size)
+
+    # Tier reclaim entries get first priority in Trial #10.
+    if bool(_ov("tiered_pullback_enabled", True)):
+        tier_emas: dict[int, pd.Series] = {period: ema_fn(m1_close, period) for period in tier_periods}
+        reset_buffer = float(_ov("tier_reset_buffer_pips", 1.0)) * pip_size
+        reclaim_now = float(m1_reclaim_ema.iloc[-1])
+        strong_only_tiers = {int(x) for x in _ov("strong_m5_only_tier_periods", tuple())}
+        pullback_shallow_tiers = tuple(int(x) for x in _ov("pullback_quality_shallow_tier_periods", (17, 21)))
+        trial10_entry_gates["tier"]["strong_only_tiers"] = sorted(strong_only_tiers)
+        trial10_entry_gates["tier"]["pullback_quality_shallow_tiers"] = list(pullback_shallow_tiers)
+        touch_index = len(m1_df) - 2
+
+        for tier in tier_periods:
+            ema_series = tier_emas[tier]
+            ema_now = float(ema_series.iloc[-1])
+            ema_prev = float(ema_series.iloc[-2])
+            tier_fired = tier_state.get(tier, False)
+            requires_strong_m5 = tier in strong_only_tiers
+            m5_regime_ok = (not requires_strong_m5) or m5_bucket == "strong"
+
+            if is_bull:
+                touched_prev = prev_low <= ema_prev
+                reclaim_ok = (not tier_reclaim_enabled) or (last_close > reclaim_now)
+                has_moved_away = last_close > ema_now + reset_buffer
+                pullback_quality = None
+                if touched_prev and not tier_fired:
+                    pullback_quality = analyze_pullback_quality(
+                        m1_df=m1_df,
+                        touch_index=touch_index,
+                        side="bull",
+                        tier=tier,
+                        enabled=bool(_ov("pullback_quality_enabled", True)),
+                        lookback_bars=int(_ov("pullback_quality_lookback_bars", 30)),
+                        orderly_bar_count_min=int(_ov("pullback_quality_orderly_bar_count_min", 6)),
+                        sloppy_bar_count_max=int(_ov("pullback_quality_sloppy_bar_count_max", 2)),
+                        orderly_structure_ratio_min=float(_ov("pullback_quality_orderly_structure_ratio_min", 0.6)),
+                        sloppy_structure_ratio_max=float(_ov("pullback_quality_sloppy_structure_ratio_max", 0.3)),
+                        shallow_tiers=pullback_shallow_tiers,
+                        sloppy_lot_multiplier=float(_ov("pullback_quality_sloppy_lot_multiplier", 0.5)),
+                    )
+                    latest_pullback_quality = pullback_quality_snapshot(pullback_quality)
+                    trial10_entry_gates["tier"]["pullback_quality"] = latest_pullback_quality
+                if touched_prev and not m5_regime_ok and not tier_fired and trial10_entry_gates["tier"]["status"] == "idle":
+                    trial10_entry_gates["tier"] = {
+                        **trial10_entry_gates["tier"],
+                        "status": "blocked",
+                        "message": (
+                            f"Tier {tier} requires strong M5 regime (current {m5_bucket.upper()})"
+                            + (
+                                f" | PB {latest_pullback_quality.get('label', 'neutral').upper()} "
+                                f"{latest_pullback_quality.get('pullback_bar_count', 0)}b/"
+                                f"{latest_pullback_quality.get('structure_ratio', 0.0):.2f}"
+                                if latest_pullback_quality
+                                else ""
+                            )
+                        ),
+                        "tier": tier,
+                    }
+                elif touched_prev and reclaim_ok and not tier_fired and m5_regime_ok:
+                    reasons.append(
+                        f"TIER RECLAIM: BULL prev_low ({prev_low:.3f}) touched EMA{tier} ({ema_prev:.3f}) and close ({last_close:.3f}) reclaimed EMA{tier_reclaim_period} ({reclaim_now:.3f}) -> BUY"
+                    )
+                    if latest_pullback_quality is not None:
+                        reasons.append(
+                            f"Pullback quality: {latest_pullback_quality.get('label', 'neutral').upper()} "
+                            f"({latest_pullback_quality.get('pullback_bar_count', 0)} bars, "
+                            f"ratio={latest_pullback_quality.get('structure_ratio', 0.0):.2f})"
+                        )
+                    tier_updates[tier] = True
+                    return {
+                        "passed": True,
+                        "side": "buy",
+                        "reasons": reasons,
+                        "trigger_type": "tiered_pullback",
+                        "tiered_pullback_tier": tier,
+                        "tier_updates": tier_updates,
+                        "m5_trend": trend,
+                        "trial10_pullback_quality": latest_pullback_quality,
+                        "trial10_entry_gates": {
+                            **trial10_entry_gates,
+                            "tier": {
+                                **trial10_entry_gates["tier"],
+                                "status": "passed",
+                                "message": (
+                                    f"EMA{tier} touch + reclaim confirmed"
+                                    + (
+                                        f" | PB {latest_pullback_quality.get('label', 'neutral').upper()} "
+                                        f"{latest_pullback_quality.get('pullback_bar_count', 0)}b/"
+                                        f"{latest_pullback_quality.get('structure_ratio', 0.0):.2f}"
+                                        if latest_pullback_quality
+                                        else ""
+                                    )
+                                ),
+                                "tier": tier,
+                            },
+                        },
+                    }
+                if touched_prev and not reclaim_ok and not tier_fired and trial10_entry_gates["tier"]["status"] == "idle":
+                    trial10_entry_gates["tier"] = {
+                        **trial10_entry_gates["tier"],
+                        "status": "blocked",
+                        "message": (
+                            f"Tier {tier} touched but reclaim EMA{tier_reclaim_period} failed"
+                            + (
+                                f" | PB {latest_pullback_quality.get('label', 'neutral').upper()} "
+                                f"{latest_pullback_quality.get('pullback_bar_count', 0)}b/"
+                                f"{latest_pullback_quality.get('structure_ratio', 0.0):.2f}"
+                                if latest_pullback_quality
+                                else ""
+                            )
+                        ),
+                        "tier": tier,
+                    }
+                if has_moved_away and tier_fired:
+                    tier_updates[tier] = False
+                    reasons.append(f"Tier {tier} RESET: close ({last_close:.3f}) > EMA{tier} ({ema_now:.3f}) + buffer")
+            else:
+                touched_prev = prev_high >= ema_prev
+                reclaim_ok = (not tier_reclaim_enabled) or (last_close < reclaim_now)
+                has_moved_away = last_close < ema_now - reset_buffer
+                pullback_quality = None
+                if touched_prev and not tier_fired:
+                    pullback_quality = analyze_pullback_quality(
+                        m1_df=m1_df,
+                        touch_index=touch_index,
+                        side="bear",
+                        tier=tier,
+                        enabled=bool(_ov("pullback_quality_enabled", True)),
+                        lookback_bars=int(_ov("pullback_quality_lookback_bars", 30)),
+                        orderly_bar_count_min=int(_ov("pullback_quality_orderly_bar_count_min", 6)),
+                        sloppy_bar_count_max=int(_ov("pullback_quality_sloppy_bar_count_max", 2)),
+                        orderly_structure_ratio_min=float(_ov("pullback_quality_orderly_structure_ratio_min", 0.6)),
+                        sloppy_structure_ratio_max=float(_ov("pullback_quality_sloppy_structure_ratio_max", 0.3)),
+                        shallow_tiers=pullback_shallow_tiers,
+                        sloppy_lot_multiplier=float(_ov("pullback_quality_sloppy_lot_multiplier", 0.5)),
+                    )
+                    latest_pullback_quality = pullback_quality_snapshot(pullback_quality)
+                    trial10_entry_gates["tier"]["pullback_quality"] = latest_pullback_quality
+                if touched_prev and not m5_regime_ok and not tier_fired and trial10_entry_gates["tier"]["status"] == "idle":
+                    trial10_entry_gates["tier"] = {
+                        **trial10_entry_gates["tier"],
+                        "status": "blocked",
+                        "message": (
+                            f"Tier {tier} requires strong M5 regime (current {m5_bucket.upper()})"
+                            + (
+                                f" | PB {latest_pullback_quality.get('label', 'neutral').upper()} "
+                                f"{latest_pullback_quality.get('pullback_bar_count', 0)}b/"
+                                f"{latest_pullback_quality.get('structure_ratio', 0.0):.2f}"
+                                if latest_pullback_quality
+                                else ""
+                            )
+                        ),
+                        "tier": tier,
+                    }
+                elif touched_prev and reclaim_ok and not tier_fired and m5_regime_ok:
+                    reasons.append(
+                        f"TIER RECLAIM: BEAR prev_high ({prev_high:.3f}) touched EMA{tier} ({ema_prev:.3f}) and close ({last_close:.3f}) reclaimed EMA{tier_reclaim_period} ({reclaim_now:.3f}) -> SELL"
+                    )
+                    if latest_pullback_quality is not None:
+                        reasons.append(
+                            f"Pullback quality: {latest_pullback_quality.get('label', 'neutral').upper()} "
+                            f"({latest_pullback_quality.get('pullback_bar_count', 0)} bars, "
+                            f"ratio={latest_pullback_quality.get('structure_ratio', 0.0):.2f})"
+                        )
+                    tier_updates[tier] = True
+                    return {
+                        "passed": True,
+                        "side": "sell",
+                        "reasons": reasons,
+                        "trigger_type": "tiered_pullback",
+                        "tiered_pullback_tier": tier,
+                        "tier_updates": tier_updates,
+                        "m5_trend": trend,
+                        "trial10_pullback_quality": latest_pullback_quality,
+                        "trial10_entry_gates": {
+                            **trial10_entry_gates,
+                            "tier": {
+                                **trial10_entry_gates["tier"],
+                                "status": "passed",
+                                "message": (
+                                    f"EMA{tier} touch + reclaim confirmed"
+                                    + (
+                                        f" | PB {latest_pullback_quality.get('label', 'neutral').upper()} "
+                                        f"{latest_pullback_quality.get('pullback_bar_count', 0)}b/"
+                                        f"{latest_pullback_quality.get('structure_ratio', 0.0):.2f}"
+                                        if latest_pullback_quality
+                                        else ""
+                                    )
+                                ),
+                                "tier": tier,
+                            },
+                        },
+                    }
+                if touched_prev and not reclaim_ok and not tier_fired and trial10_entry_gates["tier"]["status"] == "idle":
+                    trial10_entry_gates["tier"] = {
+                        **trial10_entry_gates["tier"],
+                        "status": "blocked",
+                        "message": (
+                            f"Tier {tier} touched but reclaim EMA{tier_reclaim_period} failed"
+                            + (
+                                f" | PB {latest_pullback_quality.get('label', 'neutral').upper()} "
+                                f"{latest_pullback_quality.get('pullback_bar_count', 0)}b/"
+                                f"{latest_pullback_quality.get('structure_ratio', 0.0):.2f}"
+                                if latest_pullback_quality
+                                else ""
+                            )
+                        ),
+                        "tier": tier,
+                    }
+                if has_moved_away and tier_fired:
+                    tier_updates[tier] = False
+                    reasons.append(f"Tier {tier} RESET: close ({last_close:.3f}) < EMA{tier} ({ema_now:.3f}) - buffer")
+
+    if zone_entry_enabled:
+        if zone_entry_mode == "ema_cross":
+            fast_now = float(m1_ema_zone_fast.iloc[-1])
+            slow_now = float(m1_ema_zone_slow.iloc[-1])
+            aligned_now = fast_now > slow_now if is_bull else fast_now < slow_now
+            recent_cross = _has_recent_alignment_cross(m1_ema_zone_fast, m1_ema_zone_slow, is_bull, zone_cross_lookback)
+            if aligned_now and (not zone_recent_cross_required or recent_cross):
+                reasons.append(
+                    f"ZONE ENTRY [fresh ema_cross]: {trend.upper()} + M1 EMA{m1_zone_ema_fast} ({fast_now:.3f}) "
+                    f"{'>' if is_bull else '<'} EMA{m1_zone_ema_slow} ({slow_now:.3f})"
+                    + (f" with cross in last {zone_cross_lookback} bars" if zone_recent_cross_required else "")
+                )
+                return {
+                    "passed": True,
+                    "side": "buy" if is_bull else "sell",
+                    "reasons": reasons,
+                    "trigger_type": "zone_entry",
+                    "tiered_pullback_tier": None,
+                    "tier_updates": tier_updates,
+                    "m5_trend": trend,
+                    "trial10_entry_gates": {
+                        **trial10_entry_gates,
+                        "zone": {
+                            **trial10_entry_gates["zone"],
+                            "status": "passed",
+                            "message": f"Fresh EMA cross confirmed within {zone_cross_lookback} bars" if zone_recent_cross_required else "EMA alignment confirmed",
+                        },
+                    },
+                }
+            if aligned_now and zone_recent_cross_required and not recent_cross:
+                trial10_entry_gates["zone"] = {
+                    **trial10_entry_gates["zone"],
+                    "status": "blocked",
+                    "message": f"Zone entry blocked: no fresh cross in last {zone_cross_lookback} bars",
+                }
+            elif not aligned_now:
+                trial10_entry_gates["zone"] = {
+                    **trial10_entry_gates["zone"],
+                    "status": "idle",
+                    "message": "Awaiting M1 EMA alignment",
+                }
+        else:
+            price_ema_now = float(m1_price_ema.iloc[-1])
+            recent_cross = _has_recent_alignment_cross(m1_close, m1_price_ema, is_bull, zone_cross_lookback)
+            aligned_now = last_close > price_ema_now if is_bull else last_close < price_ema_now
+            if aligned_now and (not zone_recent_cross_required or recent_cross):
+                reasons.append(
+                    f"ZONE ENTRY [fresh price_vs_ema]: {trend.upper()} + close ({last_close:.3f}) "
+                    f"{'>' if is_bull else '<'} EMA{m1_price_ema_period} ({price_ema_now:.3f})"
+                    + (f" with reclaim in last {zone_cross_lookback} bars" if zone_recent_cross_required else "")
+                )
+                return {
+                    "passed": True,
+                    "side": "buy" if is_bull else "sell",
+                    "reasons": reasons,
+                    "trigger_type": "zone_entry",
+                    "tiered_pullback_tier": None,
+                    "tier_updates": tier_updates,
+                    "m5_trend": trend,
+                    "trial10_entry_gates": {
+                        **trial10_entry_gates,
+                        "zone": {
+                            **trial10_entry_gates["zone"],
+                            "status": "passed",
+                            "message": f"Price reclaimed EMA{m1_price_ema_period} within {zone_cross_lookback} bars" if zone_recent_cross_required else f"Price aligned vs EMA{m1_price_ema_period}",
+                        },
+                    },
+                }
+            if aligned_now and zone_recent_cross_required and not recent_cross:
+                trial10_entry_gates["zone"] = {
+                    **trial10_entry_gates["zone"],
+                    "status": "blocked",
+                    "message": f"Zone entry blocked: no fresh reclaim in last {zone_cross_lookback} bars",
+                }
+            elif not aligned_now:
+                trial10_entry_gates["zone"] = {
+                    **trial10_entry_gates["zone"],
+                    "status": "idle",
+                    "message": f"Awaiting price alignment vs EMA{m1_price_ema_period}",
+                }
+    else:
+        reasons.append("ZONE ENTRY: disabled by zone_entry_enabled=False")
+        trial10_entry_gates["zone"] = {
+            **trial10_entry_gates["zone"],
+            "status": "disabled",
+            "message": "Zone entry disabled",
+        }
+
+    if zone_entry_mode == "ema_cross":
+        reasons.append(
+            f"No trigger: EMA{m1_zone_ema_fast}={float(m1_ema_zone_fast.iloc[-1]):.3f}, EMA{m1_zone_ema_slow}={float(m1_ema_zone_slow.iloc[-1]):.3f}, no reclaim tier"
+        )
+    else:
+        reasons.append(f"No trigger: close={last_close:.3f}, EMA{m1_price_ema_period}={float(m1_price_ema.iloc[-1]):.3f}, no reclaim tier")
+
+    return {
+        "passed": False,
+        "side": None,
+        "reasons": reasons,
+        "trigger_type": "",
+        "tiered_pullback_tier": None,
+        "tier_updates": tier_updates,
+        "m5_trend": trend,
+        "trial10_entry_gates": trial10_entry_gates,
+        "trial10_pullback_quality": latest_pullback_quality,
+    }
+
+
 def _evaluate_kt_cg_trial_7_zone_only_candidate(
     profile: ProfileV1,
     policy,
@@ -4289,6 +4806,15 @@ def _evaluate_kt_cg_trial_7_zone_only_candidate(
     original_tiered_enabled = bool(getattr(policy, "tiered_pullback_enabled", True))
     try:
         object.__setattr__(policy, "tiered_pullback_enabled", False)
+        if getattr(policy, "type", None) == "kt_cg_trial_10":
+            return evaluate_kt_cg_trial_10_conditions(
+                profile,
+                policy,
+                data_by_tf,
+                current_bid=tick.bid,
+                current_ask=tick.ask,
+                tier_state=tier_state,
+            )
         return evaluate_kt_cg_trial_7_conditions(
             profile,
             policy,
@@ -4828,8 +5354,12 @@ def execute_kt_cg_trial_7_policy_demo_only(
     intraday_fib_corridor_filter=None,
     open_positions: Optional[list] = None,
     conviction_lots: Optional[float] = None,
+    temp_overrides: Optional[dict] = None,
+    trial10_regime_multiplier: Optional[float] = None,
+    trial10_regime_label: Optional[str] = None,
+    trial10_regime_reason: Optional[str] = None,
 ) -> dict:
-    """Evaluate and execute KT/CG Trial #7 or #8 (demo only). T8: no EMA zone/reversal risk; daily level filter optional."""
+    """Evaluate and execute KT/CG Trial #7/#8/#9/#10 style policies."""
     candidate_side: Optional[str] = None
     candidate_trigger: Optional[str] = None
     if mode not in ("ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"):
@@ -4859,6 +5389,9 @@ def execute_kt_cg_trial_7_policy_demo_only(
 
     exhaustion_result = None
     tier_updates: dict[int, bool] = {}
+    trial10_entry_gates = None
+    trial10_pullback_quality = None
+    trial10_lot_chain = None
     effective_tiers = _canonical_trial7_tier_periods(getattr(policy, "tier_ema_periods", tuple(range(9, 35))))
     # Trial #8 / #9: only allow tiers 17, 21, 27, 33, 50, 75, 100 (never 9-16)
     if policy_type in ("kt_cg_trial_8", "kt_cg_trial_9"):
@@ -4883,7 +5416,14 @@ def execute_kt_cg_trial_7_policy_demo_only(
             "candidate_trigger": candidate_trigger,
             "side": candidate_side,
             "exhaustion_result": exhaustion_result,
+            "tiered_pullback_tier": tiered_pullback_tier,
         }
+        if trial10_entry_gates is not None:
+            payload["trial10_entry_gates"] = trial10_entry_gates
+        if trial10_pullback_quality is not None:
+            payload["trial10_pullback_quality"] = trial10_pullback_quality
+        if trial10_lot_chain is not None:
+            payload["trial10_lot_chain"] = trial10_lot_chain
         if extra:
             payload.update(extra)
         return payload
@@ -4935,12 +5475,21 @@ def execute_kt_cg_trial_7_policy_demo_only(
 
     try:
         object.__setattr__(policy, "tier_ema_periods", tuple(int(x) for x in effective_tiers))
-        result = evaluate_kt_cg_trial_7_conditions(
-            profile, policy, data_by_tf,
-            current_bid=tick.bid,
-            current_ask=tick.ask,
-            tier_state=tier_state,
-        )
+        if policy_type == "kt_cg_trial_10":
+            result = evaluate_kt_cg_trial_10_conditions(
+                profile, policy, data_by_tf,
+                current_bid=tick.bid,
+                current_ask=tick.ask,
+                tier_state=tier_state,
+                temp_overrides=temp_overrides,
+            )
+        else:
+            result = evaluate_kt_cg_trial_7_conditions(
+                profile, policy, data_by_tf,
+                current_bid=tick.bid,
+                current_ask=tick.ask,
+                tier_state=tier_state,
+            )
     finally:
         object.__setattr__(policy, "tier_ema_periods", original_tiers)
     passed = result["passed"]
@@ -4949,6 +5498,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
     trigger_type = str(result.get("trigger_type") or "")
     tier_updates = result.get("tier_updates", {})
     tiered_pullback_tier = result.get("tiered_pullback_tier")
+    trial10_entry_gates = result.get("trial10_entry_gates")
+    trial10_pullback_quality = result.get("trial10_pullback_quality")
     if side in ("buy", "sell"):
         candidate_side = side
     candidate_trigger = trigger_type or None
@@ -4984,7 +5535,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
             return cooldown_reason or "zone_entry_cooldown"
 
         ema_zone_filter_enabled = getattr(policy, "ema_zone_filter_enabled", False)
-        if ema_zone_filter_enabled and policy_type not in ("kt_cg_trial_8", "kt_cg_trial_9"):
+        if ema_zone_filter_enabled and policy_type not in ("kt_cg_trial_8", "kt_cg_trial_9", "kt_cg_trial_10"):
             m1_df_zone = data_by_tf.get("M1")
             if m1_df_zone is not None and not m1_df_zone.empty:
                 ok, reason, _details = _passes_ema_zone_slope_filter_trial_7(
@@ -5127,11 +5678,11 @@ def execute_kt_cg_trial_7_policy_demo_only(
             print(f"[{profile.profile_name}] kt_cg_trial_8 daily_level_filter state: {snap}")
 
     # No-Trade Zone filter (Trial #9): applies to both zone_entry and tiered_pullback
-    if policy_type == "kt_cg_trial_9" and ntz_filter is not None:
+    if policy_type in ("kt_cg_trial_9", "kt_cg_trial_10") and ntz_filter is not None:
         current_price = (tick.bid + tick.ask) / 2.0
         blocked, ntz_reason = ntz_filter.is_in_no_trade_zone(current_price)
         if blocked:
-            print(f"[{profile.profile_name}] kt_cg_trial_9 {ntz_reason}")
+            print(f"[{profile.profile_name}] {policy_type} {ntz_reason}")
             if store is not None:
                 store.insert_execution(
                     {
@@ -5153,11 +5704,11 @@ def execute_kt_cg_trial_7_policy_demo_only(
             )
 
     # Intraday Fib Corridor filter (Trial #9): block entries outside selected corridor
-    if policy_type == "kt_cg_trial_9" and intraday_fib_corridor_filter is not None:
+    if policy_type in ("kt_cg_trial_9", "kt_cg_trial_10") and intraday_fib_corridor_filter is not None:
         current_price = (tick.bid + tick.ask) / 2.0
         corridor_ok, corridor_reason = intraday_fib_corridor_filter.check_corridor(current_price)
         if not corridor_ok:
-            print(f"[{profile.profile_name}] kt_cg_trial_9 {corridor_reason}")
+            print(f"[{profile.profile_name}] {policy_type} {corridor_reason}")
             if store is not None:
                 store.insert_execution(
                     {
@@ -5222,7 +5773,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
                             f"> EMA200 {_ks_last_ema200:.3f} — blocked until M1 closes below or M5 trend changes"
                         )
                     if ks_entry_blocked and ks_entry_reason:
-                        print(f"[{profile.profile_name}] kt_cg_trial_9 {ks_entry_reason}")
+                        print(f"[{profile.profile_name}] {policy_type} {ks_entry_reason}")
                         if store is not None:
                             store.insert_execution(
                                 {
@@ -5292,7 +5843,12 @@ def execute_kt_cg_trial_7_policy_demo_only(
                             trade_ext = pos.get("tradeClientExtensions")
                             if isinstance(trade_ext, dict):
                                 comment = str(trade_ext.get("comment") or "").strip()
-                        if comment and not (comment.startswith("kt_cg_trial_7:") or comment.startswith("kt_cg_trial_8:") or comment.startswith("kt_cg_trial_9:")):
+                        if comment and not (
+                            comment.startswith("kt_cg_trial_7:")
+                            or comment.startswith("kt_cg_trial_8:")
+                            or comment.startswith("kt_cg_trial_9:")
+                            or comment.startswith("kt_cg_trial_10:")
+                        ):
                             continue
                         units = float(pos.get("currentUnits") or pos.get("initialUnits") or 0)
                         if units > 0:
@@ -5459,12 +6015,12 @@ def execute_kt_cg_trial_7_policy_demo_only(
         )
 
     entry_price = tick.ask if side == "buy" else tick.bid
-    # For TP-based exits (including Trial #9 when not using ema_scale_runner), we keep a copy of the
+    # For TP-based exits (including Trial #9/#10 when not using ema_scale_runner), we keep a copy of the
     # original tp_pips so we can log it and attach it to the dashboard payload.
     original_tp_pips: float | None = None
 
-    # Trial #9 is carbon copy of T8 — use same exit_strategy as T8
-    if policy_type == "kt_cg_trial_9":
+    # Trial #9 / Trial #10 use the same managed exit family.
+    if policy_type in ("kt_cg_trial_9", "kt_cg_trial_10"):
         default_exit = "tp1_be_trail"
         exit_strategy = str(getattr(policy, "exit_strategy", default_exit) or default_exit)
     # Trial #7 / Trial #8 ema_scale_runner: no broker TP, SL = spread + initial_sl_spread_plus_pips (H1 breakout style)
@@ -5475,13 +6031,16 @@ def execute_kt_cg_trial_7_policy_demo_only(
     else:
         exit_strategy = ""
 
-    if policy_type == "kt_cg_trial_9" and exit_strategy != "ema_scale_runner":
-        # Trial #9 carbon copy of T8: use same SL/TP and exit as T8 (tp1_be_trail or none)
+    if policy_type in ("kt_cg_trial_9", "kt_cg_trial_10") and exit_strategy != "ema_scale_runner":
+        # Trial #9 / Trial #10 use the TP1 + BE + runner path with broker SL protection.
         original_tp_pips = float(getattr(policy, "tp_pips", 4.0))
         pip = float(profile.pip_size)
-        sl_pips = getattr(policy, "sl_pips", None)
-        if sl_pips is None:
-            sl_pips = float(get_effective_risk(profile).min_stop_pips)
+        if policy_type == "kt_cg_trial_10":
+            sl_pips = _resolve_trial10_stop_pips(profile, policy, data_by_tf)
+        else:
+            sl_pips = getattr(policy, "sl_pips", None)
+            if sl_pips is None:
+                sl_pips = float(get_effective_risk(profile).min_stop_pips)
         if side == "buy":
             tp_price = entry_price + effective_tp_pips * pip
             sl_price = entry_price - sl_pips * pip
@@ -5491,6 +6050,50 @@ def execute_kt_cg_trial_7_policy_demo_only(
         if getattr(policy, "trail_after_tp1", False):
             tp_price = None
         _effective_lots = float(conviction_lots) if conviction_lots is not None else float(get_effective_risk(profile).max_lots)
+        _lot_chain = {
+            "conviction_lots": round(float(_effective_lots), 4),
+            "pullback_quality_multiplier": 1.0,
+            "regime_multiplier": float(trial10_regime_multiplier) if trial10_regime_multiplier is not None else 1.0,
+            "tier17_nonboost_multiplier": 1.0,
+            "final_lots_pre_clamp": round(float(_effective_lots), 4),
+            "final_lots": round(float(_effective_lots), 4),
+            "regime_label": str(trial10_regime_label or ""),
+            "regime_reason": str(trial10_regime_reason or ""),
+        }
+        if (
+            policy_type == "kt_cg_trial_10"
+            and trigger_type == "tiered_pullback"
+            and conviction_lots is not None
+            and isinstance(trial10_pullback_quality, dict)
+            and bool(trial10_pullback_quality.get("applicable", False))
+            and str(trial10_pullback_quality.get("label", "")).lower() == "sloppy"
+        ):
+            _pq_mult = max(0.0, float(trial10_pullback_quality.get("dampener_multiplier", 1.0)))
+            _pq_min = float(getattr(policy, "conviction_min_lots", 0.01))
+            _effective_lots = round(max(_pq_min, _effective_lots * _pq_mult), 2)
+            _lot_chain["pullback_quality_multiplier"] = _pq_mult
+            eval_reasons.append(
+                f"pullback_quality: sloppy shallow tier -> lot dampener {_pq_mult:.2f}x applied ({_effective_lots:.2f} lots)"
+            )
+        if policy_type == "kt_cg_trial_10" and trial10_regime_multiplier is not None:
+            _pq_min = float(getattr(policy, "conviction_min_lots", 0.01))
+            _effective_lots = _effective_lots * float(trial10_regime_multiplier)
+            if trigger_type == "tiered_pullback" and int(tiered_pullback_tier or 0) == 17:
+                _regime_label = str(trial10_regime_label or "").upper()
+                if _regime_label != "BUY_BOOST_HOUR":
+                    _tier17_mult = max(0.0, float(getattr(policy, "tier17_nonboost_multiplier", 0.35)))
+                    _effective_lots = _effective_lots * _tier17_mult
+                    _lot_chain["tier17_nonboost_multiplier"] = _tier17_mult
+                    eval_reasons.append(
+                        f"tier17_nonboost: outside buy boost -> lot multiplier {_tier17_mult:.2f}x applied"
+                    )
+            _lot_chain["final_lots_pre_clamp"] = round(float(_effective_lots), 4)
+            _effective_lots = round(
+                min(float(get_effective_risk(profile).max_lots), max(_pq_min, float(_effective_lots))),
+                2,
+            )
+            _lot_chain["final_lots"] = round(float(_effective_lots), 4)
+        trial10_lot_chain = _lot_chain if policy_type == "kt_cg_trial_10" else None
         candidate = TradeCandidate(
             symbol=profile.symbol,
             side=side,
@@ -5499,7 +6102,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
             target_price=tp_price,
             size_lots=_effective_lots,
         )
-    elif policy_type in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9") and exit_strategy == "ema_scale_runner":
+    elif policy_type in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9", "kt_cg_trial_10") and exit_strategy == "ema_scale_runner":
         pip = float(profile.pip_size)
         current_spread = tick.ask - tick.bid
         initial_sl_pips = float(getattr(policy, "initial_sl_spread_plus_pips", 5.0))
@@ -5606,7 +6209,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
     if placed:
         tier_info = f" tier_{tiered_pullback_tier}" if tiered_pullback_tier else ""
         # When using ema_scale_runner (Trial #7 or #8), log SL style instead of TP.
-        if policy_type in ("kt_cg_trial_7", "kt_cg_trial_8") and str(getattr(policy, "exit_strategy", "")) == "ema_scale_runner":
+        if policy_type in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9", "kt_cg_trial_10") and str(getattr(policy, "exit_strategy", "")) == "ema_scale_runner":
             print(
                 f"[{profile.profile_name}] TRADE PLACED: {policy_type}:{trigger_type}{tier_info} "
                 f"| SL=spread+pips (ema_scale_runner), no TP | {'; '.join(eval_reasons)}"
@@ -5621,7 +6224,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
 
     extra = {}
     # Only attach TP metadata when we are actually using TP-based exits (i.e. not ema_scale_runner).
-    if not (policy_type in ("kt_cg_trial_7", "kt_cg_trial_8") and str(getattr(policy, "exit_strategy", "")) == "ema_scale_runner"):
+    if not (policy_type in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9", "kt_cg_trial_10") and str(getattr(policy, "exit_strategy", "")) == "ema_scale_runner"):
         if original_tp_pips is not None:
             extra = {"tp_pips_effective": float(effective_tp_pips), "tp_pips_base": float(original_tp_pips)}
     return _result_payload(
@@ -5703,6 +6306,10 @@ def execute_kt_cg_trial_9_policy_demo_only(
     ntz_filter=None,
     intraday_fib_corridor_filter=None,
     conviction_lots: Optional[float] = None,
+    temp_overrides: Optional[dict] = None,
+    trial10_regime_multiplier: Optional[float] = None,
+    trial10_regime_label: Optional[str] = None,
+    trial10_regime_reason: Optional[str] = None,
 ) -> dict:
     """Trial #9: carbon copy of Trial #8 (delegates to Trial #7 flow with daily_level_filter and daily_state)."""
     return execute_kt_cg_trial_8_policy_demo_only(
@@ -5724,6 +6331,58 @@ def execute_kt_cg_trial_9_policy_demo_only(
         ntz_filter=ntz_filter,
         intraday_fib_corridor_filter=intraday_fib_corridor_filter,
         conviction_lots=conviction_lots,
+    )
+
+
+def execute_kt_cg_trial_10_policy_demo_only(
+    *,
+    adapter,
+    profile: ProfileV1,
+    log_dir: Path,
+    policy,
+    context,
+    data_by_tf,
+    tick,
+    trades_df,
+    mode: str,
+    bar_time_utc: str,
+    tier_state: dict[int, bool],
+    store=None,
+    daily_level_filter: Optional[DailyLevelFilter] = None,
+    daily_state: Optional[dict] = None,
+    open_positions: Optional[list] = None,
+    ntz_filter=None,
+    intraday_fib_corridor_filter=None,
+    conviction_lots: Optional[float] = None,
+    temp_overrides: Optional[dict] = None,
+    trial10_regime_multiplier: Optional[float] = None,
+    trial10_regime_label: Optional[str] = None,
+    trial10_regime_reason: Optional[str] = None,
+) -> dict:
+    """Trial #10: Trial #9 foundation with proof-based entries and tighter caps."""
+    return execute_kt_cg_trial_7_policy_demo_only(
+        adapter=adapter,
+        profile=profile,
+        log_dir=log_dir,
+        policy=policy,
+        context=context,
+        data_by_tf=data_by_tf,
+        tick=tick,
+        trades_df=trades_df,
+        mode=mode,
+        bar_time_utc=bar_time_utc,
+        tier_state=tier_state,
+        store=store,
+        daily_level_filter=daily_level_filter,
+        daily_state=daily_state,
+        open_positions=open_positions,
+        ntz_filter=ntz_filter,
+        intraday_fib_corridor_filter=intraday_fib_corridor_filter,
+        conviction_lots=conviction_lots,
+        temp_overrides=temp_overrides,
+        trial10_regime_multiplier=trial10_regime_multiplier,
+        trial10_regime_label=trial10_regime_label,
+        trial10_regime_reason=trial10_regime_reason,
     )
 
 

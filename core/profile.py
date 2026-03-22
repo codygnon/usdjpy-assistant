@@ -1053,6 +1053,72 @@ class ExecutionPolicyKtCgTrial9(BaseModel):
     max_tiered_pullback_open: Optional[int] = 8
 
 
+class ExecutionPolicyKtCgTrial10(ExecutionPolicyKtCgTrial9):
+    """KT/CG Trial #10: Trial #9 with proof-based entries and tighter defaults."""
+
+    type: Literal["kt_cg_trial_10"] = "kt_cg_trial_10"
+    id: str = "kt_cg_trial_10_default"
+
+    # Trial #10 defaults bias toward confirmed continuation instead of permissive touch entries.
+    zone_entry_mode: Literal["ema_cross", "price_vs_ema5"] = "ema_cross"
+    tier_ema_periods: tuple[int, ...] = (17, 21, 27, 33, 50)
+
+    zone_entry_require_recent_cross: bool = True
+    zone_entry_max_cross_lookback_bars: int = 2
+
+    tier_reclaim_confirmation_enabled: bool = True
+    tier_reclaim_ema_period: int = 5
+    strong_m5_only_tier_periods: tuple[int, ...] = (50,)
+
+    pullback_quality_enabled: bool = True
+    pullback_quality_lookback_bars: int = 30
+    pullback_quality_orderly_bar_count_min: int = 6
+    pullback_quality_sloppy_bar_count_max: int = 2
+    pullback_quality_orderly_structure_ratio_min: float = 0.6
+    pullback_quality_sloppy_structure_ratio_max: float = 0.3
+    pullback_quality_shallow_tier_periods: tuple[int, ...] = (17, 21)
+    pullback_quality_sloppy_lot_multiplier: float = 0.5
+
+    # Regime gate: operator-style activity filter
+    regime_gate_enabled: bool = True
+    regime_london_sell_veto: bool = True
+    regime_london_start_hour_et: int = 3
+    regime_london_end_hour_et: int = 12
+    regime_boost_hours_et: tuple[int, ...] = (6, 7, 12, 13, 14, 15)
+    regime_boost_multiplier: float = 1.35
+    regime_buy_base_multiplier: float = 0.65
+    regime_sell_base_multiplier: float = 0.35
+    regime_worst_hours_et: tuple[int, ...] = (3, 4, 8, 9, 10, 11)
+    regime_worst_multiplier: float = 0.35
+    regime_weak_multiplier: float = 0.5
+    regime_chop_pause_enabled: bool = True
+    regime_chop_pause_lookback_minutes: int = 45
+    regime_chop_pause_stop_count: int = 1
+    regime_chop_pause_minutes: int = 45
+    tier17_nonboost_multiplier: float = 0.35
+
+    ntz_enabled: bool = True
+    ntz_buffer_pips: float = 5.0
+    ntz_use_weekly_hl: bool = False
+    ntz_use_monthly_hl: bool = False
+
+    conviction_sizing_enabled: bool = True
+    conviction_base_lots: float = 0.07
+    conviction_min_lots: float = 0.03
+
+    kill_switch_enabled: bool = False
+    kill_switch_zone_entry_action: Literal["kill", "hold"] = "hold"
+
+    intraday_fib_enabled: bool = True
+    use_daily_level_filter: bool = False
+
+    tp1_close_pct: float = 70.0
+
+    max_open_trades_per_side: Optional[int] = 3
+    max_zone_entry_open: Optional[int] = 1
+    max_tiered_pullback_open: Optional[int] = 2
+
+
 class ExecutionPolicyKtCgTrial6(BaseModel):
     """KT/CG Trial #6 (BB Slope Trend + EMA Tier Pullback + BB Reversal).
 
@@ -1201,6 +1267,7 @@ ExecutionPolicy = Annotated[
         ExecutionPolicyKtCgTrial7,
         ExecutionPolicyKtCgTrial8,
         ExecutionPolicyKtCgTrial9,
+        ExecutionPolicyKtCgTrial10,
         ExecutionPolicyKtCgTrial6,
         ExecutionPolicyUncleParshH1Breakout,
         ExecutionPolicyPhase3Integrated,

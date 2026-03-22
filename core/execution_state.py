@@ -88,6 +88,29 @@ class RuntimeState:
     temp_t8_scale_out_pct: Optional[float] = None
     temp_t8_initial_sl_spread_plus_pips: Optional[float] = None
 
+    # Trial #10 proof / regime temp overrides
+    temp_t10_zone_entry_require_recent_cross: Optional[bool] = None
+    temp_t10_zone_entry_max_cross_lookback_bars: Optional[int] = None
+    temp_t10_tier_reclaim_confirmation_enabled: Optional[bool] = None
+    temp_t10_tier_reclaim_ema_period: Optional[int] = None
+    temp_t10_regime_gate_enabled: Optional[bool] = None
+    temp_t10_regime_london_sell_veto: Optional[bool] = None
+    temp_t10_regime_london_start_hour_et: Optional[int] = None
+    temp_t10_regime_london_end_hour_et: Optional[int] = None
+    temp_t10_regime_boost_multiplier: Optional[float] = None
+    temp_t10_regime_buy_base_multiplier: Optional[float] = None
+    temp_t10_regime_sell_base_multiplier: Optional[float] = None
+    temp_t10_regime_chop_pause_enabled: Optional[bool] = None
+    temp_t10_regime_chop_pause_minutes: Optional[int] = None
+    temp_t10_regime_chop_pause_stop_count: Optional[int] = None
+    temp_t10_tier17_nonboost_multiplier: Optional[float] = None
+
+    # Trial #10 live chop-pause state
+    chop_pause_buy_start_utc: Optional[str] = None
+    chop_pause_buy_reason: Optional[str] = None
+    chop_pause_sell_start_utc: Optional[str] = None
+    chop_pause_sell_reason: Optional[str] = None
+
 
 def _load_tier_fired(data: dict) -> dict:
     """Load tier_fired from JSON data with backward compat for old tier_X_fired keys."""
@@ -159,6 +182,25 @@ def load_state(path: str | Path) -> RuntimeState:
         temp_t8_m1_exit_ema_slow=data.get("temp_t8_m1_exit_ema_slow"),
         temp_t8_scale_out_pct=data.get("temp_t8_scale_out_pct"),
         temp_t8_initial_sl_spread_plus_pips=data.get("temp_t8_initial_sl_spread_plus_pips"),
+        temp_t10_zone_entry_require_recent_cross=data.get("temp_t10_zone_entry_require_recent_cross"),
+        temp_t10_zone_entry_max_cross_lookback_bars=data.get("temp_t10_zone_entry_max_cross_lookback_bars"),
+        temp_t10_tier_reclaim_confirmation_enabled=data.get("temp_t10_tier_reclaim_confirmation_enabled"),
+        temp_t10_tier_reclaim_ema_period=data.get("temp_t10_tier_reclaim_ema_period"),
+        temp_t10_regime_gate_enabled=data.get("temp_t10_regime_gate_enabled"),
+        temp_t10_regime_london_sell_veto=data.get("temp_t10_regime_london_sell_veto"),
+        temp_t10_regime_london_start_hour_et=data.get("temp_t10_regime_london_start_hour_et"),
+        temp_t10_regime_london_end_hour_et=data.get("temp_t10_regime_london_end_hour_et"),
+        temp_t10_regime_boost_multiplier=data.get("temp_t10_regime_boost_multiplier"),
+        temp_t10_regime_buy_base_multiplier=data.get("temp_t10_regime_buy_base_multiplier"),
+        temp_t10_regime_sell_base_multiplier=data.get("temp_t10_regime_sell_base_multiplier"),
+        temp_t10_regime_chop_pause_enabled=data.get("temp_t10_regime_chop_pause_enabled"),
+        temp_t10_regime_chop_pause_minutes=data.get("temp_t10_regime_chop_pause_minutes"),
+        temp_t10_regime_chop_pause_stop_count=data.get("temp_t10_regime_chop_pause_stop_count"),
+        temp_t10_tier17_nonboost_multiplier=data.get("temp_t10_tier17_nonboost_multiplier"),
+        chop_pause_buy_start_utc=data.get("chop_pause_buy_start_utc"),
+        chop_pause_buy_reason=data.get("chop_pause_buy_reason"),
+        chop_pause_sell_start_utc=data.get("chop_pause_sell_start_utc"),
+        chop_pause_sell_reason=data.get("chop_pause_sell_reason"),
     )
 
 
@@ -215,6 +257,25 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "temp_t8_m1_exit_ema_slow": state.temp_t8_m1_exit_ema_slow,
                 "temp_t8_scale_out_pct": state.temp_t8_scale_out_pct,
                 "temp_t8_initial_sl_spread_plus_pips": state.temp_t8_initial_sl_spread_plus_pips,
+                "temp_t10_zone_entry_require_recent_cross": state.temp_t10_zone_entry_require_recent_cross,
+                "temp_t10_zone_entry_max_cross_lookback_bars": state.temp_t10_zone_entry_max_cross_lookback_bars,
+                "temp_t10_tier_reclaim_confirmation_enabled": state.temp_t10_tier_reclaim_confirmation_enabled,
+                "temp_t10_tier_reclaim_ema_period": state.temp_t10_tier_reclaim_ema_period,
+                "temp_t10_regime_gate_enabled": state.temp_t10_regime_gate_enabled,
+                "temp_t10_regime_london_sell_veto": state.temp_t10_regime_london_sell_veto,
+                "temp_t10_regime_london_start_hour_et": state.temp_t10_regime_london_start_hour_et,
+                "temp_t10_regime_london_end_hour_et": state.temp_t10_regime_london_end_hour_et,
+                "temp_t10_regime_boost_multiplier": state.temp_t10_regime_boost_multiplier,
+                "temp_t10_regime_buy_base_multiplier": state.temp_t10_regime_buy_base_multiplier,
+                "temp_t10_regime_sell_base_multiplier": state.temp_t10_regime_sell_base_multiplier,
+                "temp_t10_regime_chop_pause_enabled": state.temp_t10_regime_chop_pause_enabled,
+                "temp_t10_regime_chop_pause_minutes": state.temp_t10_regime_chop_pause_minutes,
+                "temp_t10_regime_chop_pause_stop_count": state.temp_t10_regime_chop_pause_stop_count,
+                "temp_t10_tier17_nonboost_multiplier": state.temp_t10_tier17_nonboost_multiplier,
+                "chop_pause_buy_start_utc": state.chop_pause_buy_start_utc,
+                "chop_pause_buy_reason": state.chop_pause_buy_reason,
+                "chop_pause_sell_start_utc": state.chop_pause_sell_start_utc,
+                "chop_pause_sell_reason": state.chop_pause_sell_reason,
             },
             indent=2,
             sort_keys=False,
@@ -222,4 +283,3 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
         + "\n",
         encoding="utf-8",
     )
-

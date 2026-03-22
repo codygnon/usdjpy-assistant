@@ -196,6 +196,8 @@ class SqliteStore:
             self._ensure_column(conn, "trades", "peak_price", "REAL")
             # v2.7: sticky TP1 trigger — price hit TP1 but close may have been rejected
             self._ensure_column(conn, "trades", "tp1_triggered", "INTEGER")
+            # v2.8: Trial #10 pullback quality label for chop-pause / analytics
+            self._ensure_column(conn, "trades", "pullback_quality_label", "TEXT")
             conn.commit()
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, col: str, col_type: str) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import datetime
 import json
 import os
 import re
@@ -22,6 +23,7 @@ import pandas as pd
 from adapters.broker import get_adapter
 from core.context_engine import compute_tf_context
 from core.execution_engine import (
+    _resolve_trial10_m5_bucket,
     build_default_candidate_from_signal,
     execute_bollinger_policy_demo_only,
     execute_breakout_policy_demo_only,
@@ -36,6 +38,7 @@ from core.execution_engine import (
     execute_kt_cg_trial_7_policy_demo_only,
     execute_kt_cg_trial_8_policy_demo_only,
     execute_kt_cg_trial_9_policy_demo_only,
+    execute_kt_cg_trial_10_policy_demo_only,
     execute_price_level_policy_demo_only,
     execute_session_momentum_policy_demo_only,
     execute_signal_demo_only,
@@ -117,6 +120,110 @@ def _poll_seconds(profile, cli_poll: float | None) -> float:
     if use_fast and base > fast:
         return fast
     return max(0.25, base)
+
+
+_TRIAL10_TEMP_OVERRIDE_MAP: dict[str, str] = {
+    "temp_t10_zone_entry_require_recent_cross": "zone_entry_require_recent_cross",
+    "temp_t10_zone_entry_max_cross_lookback_bars": "zone_entry_max_cross_lookback_bars",
+    "temp_t10_tier_reclaim_confirmation_enabled": "tier_reclaim_confirmation_enabled",
+    "temp_t10_tier_reclaim_ema_period": "tier_reclaim_ema_period",
+    "temp_t10_regime_gate_enabled": "regime_gate_enabled",
+    "temp_t10_regime_london_sell_veto": "regime_london_sell_veto",
+    "temp_t10_regime_london_start_hour_et": "regime_london_start_hour_et",
+    "temp_t10_regime_london_end_hour_et": "regime_london_end_hour_et",
+    "temp_t10_regime_boost_multiplier": "regime_boost_multiplier",
+    "temp_t10_regime_buy_base_multiplier": "regime_buy_base_multiplier",
+    "temp_t10_regime_sell_base_multiplier": "regime_sell_base_multiplier",
+    "temp_t10_regime_chop_pause_enabled": "regime_chop_pause_enabled",
+    "temp_t10_regime_chop_pause_minutes": "regime_chop_pause_minutes",
+    "temp_t10_regime_chop_pause_stop_count": "regime_chop_pause_stop_count",
+    "temp_t10_tier17_nonboost_multiplier": "tier17_nonboost_multiplier",
+}
+
+
+def _read_state_json(state_path: Path) -> dict[str, Any]:
+    try:
+        return json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+    except Exception:
+        return {}
+
+
+def _write_state_updates(state_path: Path, updates: dict[str, Any]) -> None:
+    state_data = _read_state_json(state_path)
+    state_data.update(updates)
+    state_path.write_text(json.dumps(state_data, indent=2) + "\n", encoding="utf-8")
+
+
+def _trial10_temp_overrides_from_state(state_data: dict[str, Any]) -> dict[str, Any] | None:
+    overrides: dict[str, Any] = {}
+    for state_key, policy_key in _TRIAL10_TEMP_OVERRIDE_MAP.items():
+        value = state_data.get(state_key)
+        if value is not None:
+            overrides[policy_key] = value
+    return overrides or None
+
+
+def _policy_value(policy: Any, overrides: dict[str, Any] | None, field: str, default: Any = None) -> Any:
+    if overrides and field in overrides and overrides[field] is not None:
+        return overrides[field]
+    return getattr(policy, field, default)
+
+
+def _parse_runtime_timestamp(value: Any) -> datetime.datetime | None:
+    if not value:
+        return None
+    try:
+        ts = pd.Timestamp(value)
+        if ts.tzinfo is None:
+            ts = ts.tz_localize("UTC")
+        else:
+            ts = ts.tz_convert("UTC")
+        return ts.to_pydatetime()
+    except Exception:
+        return None
+
+
+def _trial10_recent_closed_trades(trades_df: pd.DataFrame | None, lookback_minutes: int) -> list[dict[str, Any]]:
+    if trades_df is None or trades_df.empty:
+        return []
+    df = trades_df.copy()
+    if "exit_timestamp_utc" not in df.columns or "side" not in df.columns:
+        return []
+    policy_col = df.get("policy_type")
+    note_col = df.get("notes")
+    policy_mask = pd.Series(False, index=df.index)
+    if policy_col is not None:
+        policy_mask = policy_mask | (policy_col.astype(str) == "kt_cg_trial_10")
+    if note_col is not None:
+        policy_mask = policy_mask | note_col.astype(str).str.contains("auto:kt_cg_trial_10:", regex=False, na=False)
+    df = df.loc[policy_mask].copy()
+    if df.empty:
+        return []
+    df["exit_dt"] = pd.to_datetime(df["exit_timestamp_utc"], utc=True, errors="coerce")
+    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(minutes=max(1, int(lookback_minutes)))
+    df = df.loc[df["exit_dt"].notna() & (df["exit_dt"] >= cutoff)].copy()
+    if df.empty:
+        return []
+    events: list[dict[str, Any]] = []
+    for _, row in df.iterrows():
+        tier = row.get("tier_number")
+        try:
+            tier_val = int(tier) if pd.notna(tier) else None
+        except Exception:
+            tier_val = None
+        pullback_label = row.get("pullback_quality_label")
+        if pd.isna(pullback_label):
+            pullback_label = None
+        events.append(
+            {
+                "side": str(row.get("side") or "").lower(),
+                "exit_reason": str(row.get("exit_reason") or ""),
+                "close_time_utc": row["exit_dt"].to_pydatetime(),
+                "pullback_label": str(pullback_label).lower() if pullback_label else None,
+                "tier": tier_val,
+            }
+        )
+    return events
 
 
 def _compute_mkt(profile, tick, data_by_tf) -> MarketContext:
@@ -220,6 +327,8 @@ def _insert_trade_for_policy(
     entry_type: str | None = None,
     entry_session: str | None = None,
     risk_usd_planned: float | None = None,
+    tier_number: int | None = None,
+    pullback_quality_label: str | None = None,
 ) -> None:
     """Store a trade in DB when a policy places an order. Ensures preset and position_id for Performance by Preset."""
     try:
@@ -270,6 +379,10 @@ def _insert_trade_for_policy(
             row["entry_session"] = entry_session
         if risk_usd_planned is not None:
             row["risk_usd_planned"] = float(risk_usd_planned)
+        if tier_number is not None:
+            row["tier_number"] = int(tier_number)
+        if pullback_quality_label:
+            row["pullback_quality_label"] = str(pullback_quality_label)
         # Capture entry slippage if fill_price available
         if getattr(dec, 'fill_price', None) is not None:
             slippage = abs(dec.fill_price - entry_price) / float(profile.pip_size)
@@ -368,12 +481,14 @@ def _run_trade_management(
                     pass
             break
 
-    # Find Trial #9 policy for managed exits (TP1 + BE + bar-close trail + Kill Switch)
-    t9_policy = None
+    # Find Trial #9 / #10 policies for managed exits (TP1 + BE + bar-close trail + Kill Switch)
+    t9_family_policies: dict[str, Any] = {}
     for pol in profile.execution.policies:
-        if getattr(pol, "type", None) == "kt_cg_trial_9" and getattr(pol, "enabled", True):
-            t9_policy = pol
-            break
+        pol_type = getattr(pol, "type", None)
+        if pol_type in ("kt_cg_trial_9", "kt_cg_trial_10") and getattr(pol, "enabled", True):
+            t9_family_policies[str(pol_type)] = pol
+    t9_policy = t9_family_policies.get("kt_cg_trial_9")
+    t10_policy = t9_family_policies.get("kt_cg_trial_10")
 
     # Find Trial #7 policy (if any) that uses ema_scale_runner exit (H1 breakout style).
     t7_ema_policy = None
@@ -387,7 +502,7 @@ def _run_trade_management(
     has_simple_be = breakeven and getattr(breakeven, "enabled", False)
     has_scaled = target and getattr(target, "mode", None) == "scaled" and getattr(target, "tp1_pips", None)
     has_t8_trail = t8_policy is not None
-    has_t9_trail = t9_policy is not None
+    has_t9_trail = bool(t9_family_policies)
     has_t7_ema = t7_ema_policy is not None
     has_phase3_trail = any(
         getattr(p, "type", None) == "phase3_integrated" and getattr(p, "enabled", True)
@@ -468,33 +583,34 @@ def _run_trade_management(
             _m5_ema_cache[period] = _ema_fn(_m5_close, period)
         return _m5_ema_cache[period]
 
-    _t9_kill_switch_snapshot: dict[str, float | bool | None] | None = None
+    _t9_kill_switch_snapshot: dict[str, dict[str, float | bool | None]] = {}
     if (
-        t9_policy is not None
-        and getattr(t9_policy, "kill_switch_enabled", True)
+        t9_family_policies
         and _m1_close is not None
         and _m5_close is not None
         and len(_m1_close) >= 202
         and len(_m5_close) >= 22
     ):
         ema200 = _m1_ema(200)
-        _ks_fast_p = int(getattr(t9_policy, "m5_trend_ema_fast", 9))
-        _ks_slow_p = int(getattr(t9_policy, "m5_trend_ema_slow", 21))
-        _ks_m5_fast = _m5_ema(_ks_fast_p)
-        _ks_m5_slow = _m5_ema(_ks_slow_p)
-        if (
-            ema200 is not None
-            and _ks_m5_fast is not None
-            and _ks_m5_slow is not None
-            and pd.notna(ema200.iloc[-2])
-            and pd.notna(_ks_m5_fast.iloc[-1])
-            and pd.notna(_ks_m5_slow.iloc[-1])
-        ):
-            _t9_kill_switch_snapshot = {
-                "last_ema200": float(ema200.iloc[-2]),
-                "last_m1_close": float(_m1_close.iloc[-2]),
-                "m5_is_bull": float(_ks_m5_fast.iloc[-1]) > float(_ks_m5_slow.iloc[-1]),
-            }
+        if ema200 is not None and pd.notna(ema200.iloc[-2]):
+            for pol_type, family_policy in t9_family_policies.items():
+                if not getattr(family_policy, "kill_switch_enabled", True):
+                    continue
+                _ks_fast_p = int(getattr(family_policy, "m5_trend_ema_fast", 9))
+                _ks_slow_p = int(getattr(family_policy, "m5_trend_ema_slow", 21))
+                _ks_m5_fast = _m5_ema(_ks_fast_p)
+                _ks_m5_slow = _m5_ema(_ks_slow_p)
+                if (
+                    _ks_m5_fast is not None
+                    and _ks_m5_slow is not None
+                    and pd.notna(_ks_m5_fast.iloc[-1])
+                    and pd.notna(_ks_m5_slow.iloc[-1])
+                ):
+                    _t9_kill_switch_snapshot[pol_type] = {
+                        "last_ema200": float(ema200.iloc[-2]),
+                        "last_m1_close": float(_m1_close.iloc[-2]),
+                        "m5_is_bull": float(_ks_m5_fast.iloc[-1]) > float(_ks_m5_slow.iloc[-1]),
+                    }
 
     for pos in open_positions:
         # OANDA: dict with "id", "currentUnits"; MT5: object with ticket, volume (lots)
@@ -839,13 +955,27 @@ def _run_trade_management(
                 except Exception as e:
                     print(f"[{profile.profile_name}] T8 trailing EMA error pos {position_id}: {e}")
 
-        # 2c) Trial #9: TP1 + BE + bar-close trail (M1 or M5 depending on exit_strategy) + Kill Switch
-        elif t9_policy is not None and entry_type in ("zone_entry", "tiered_pullback"):
-            t9_exit_strategy = str(getattr(t9_policy, "exit_strategy", "tp1_be_trail"))
+        # 2c) Trial #9 / #10: TP1 + BE + bar-close trail (M1 or M5 depending on exit_strategy) + Kill Switch
+        elif t9_family_policies and entry_type in ("zone_entry", "tiered_pullback"):
+            position_comment = ""
+            if isinstance(pos, dict):
+                ce = pos.get("clientExtensions")
+                if isinstance(ce, dict):
+                    position_comment = str(ce.get("comment") or "")
+                if not position_comment:
+                    te = pos.get("tradeClientExtensions")
+                    if isinstance(te, dict):
+                        position_comment = str(te.get("comment") or "")
+            family_type = "kt_cg_trial_10" if "kt_cg_trial_10" in position_comment else "kt_cg_trial_9"
+            family_policy = t9_family_policies.get(family_type) or t10_policy or t9_policy
+            if family_policy is None:
+                continue
+            family_label = "T10" if family_type == "kt_cg_trial_10" else "T9"
+            t9_exit_strategy = str(getattr(family_policy, "exit_strategy", "tp1_be_trail"))
             tp1_done = trade_row.get("tp1_partial_done") or 0
             tp1_triggered = trade_row.get("tp1_triggered") or 0
-            t9_tp1_pips = float(getattr(t9_policy, "tp1_pips", 6.0))
-            t9_tp1_pct = float(getattr(t9_policy, "tp1_close_pct", 80.0))
+            t9_tp1_pips = float(getattr(family_policy, "tp1_pips", 6.0))
+            t9_tp1_pct = float(getattr(family_policy, "tp1_close_pct", 80.0))
 
             if t9_exit_strategy == "tp1_be_m5_trail":
                 # --- Phase A: TP1 partial close ---
@@ -883,7 +1013,7 @@ def _run_trade_management(
                                 position_type=position_type,
                             )
                             partial_close_ok = True
-                            print(f"[{profile.profile_name}] T9 TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t9_tp1_pct}%)")
+                            print(f"[{profile.profile_name}] {family_label} TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t9_tp1_pct}%)")
                         except Exception as e:
                             _tp1_retry_last[position_id] = time.time()
                             print(f"[{profile.profile_name}] T9 TP1 partial close error pos {position_id}: {e}")
@@ -894,7 +1024,7 @@ def _run_trade_management(
                             _tp1_ts = pd.Timestamp.now(tz="UTC").isoformat()
                             store.update_trade(trade_id, {"tp1_partial_done": 1, "tp1_time_utc": _tp1_ts})
                             # --- Phase B: BE on TP1 hit ---
-                            _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 0.5))
+                            _t9_be_pips = float(getattr(family_policy, "be_spread_plus_pips", 0.5))
                             be_offset = current_spread + _t9_be_pips * pip
                             if side == "buy":
                                 be_sl = entry + be_offset
@@ -908,7 +1038,7 @@ def _run_trade_management(
                             try:
                                 adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
                                 store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 3)})
-                                print(f"[{profile.profile_name}] T9 BE: pos {position_id} SL->{be_sl:.3f}")
+                                print(f"[{profile.profile_name}] {family_label} BE: pos {position_id} SL->{be_sl:.3f}")
                             except Exception as e:
                                 print(f"[{profile.profile_name}] T9 BE error pos {position_id}: {e}")
 
@@ -918,7 +1048,7 @@ def _run_trade_management(
                     # Only attempt if position is still in profit (original be_sl is above ask for SELL / below bid for BUY).
                     _c_be_applied = trade_row.get("breakeven_applied") or 0
                     if not _c_be_applied:
-                        _t9_be_pips_c = float(getattr(t9_policy, "be_spread_plus_pips", 0.5))
+                        _t9_be_pips_c = float(getattr(family_policy, "be_spread_plus_pips", 0.5))
                         _be_offset_c = current_spread + _t9_be_pips_c * pip
                         if side == "buy":
                             _be_sl_c = entry + _be_offset_c
@@ -939,7 +1069,7 @@ def _run_trade_management(
                                 except Exception as e:
                                     print(f"[{profile.profile_name}] T9 BE retry error pos {position_id}: {e}")
                     try:
-                        _t9_m5_trail_period = int(getattr(t9_policy, "trail_m5_ema_period", 20))
+                        _t9_m5_trail_period = int(getattr(family_policy, "trail_m5_ema_period", 20))
                         if _m5_close is not None and len(_m5_close) > _t9_m5_trail_period + 1:
                             trail_ema = _m5_ema(_t9_m5_trail_period)
                             if not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):
@@ -981,7 +1111,7 @@ def _run_trade_management(
                                         vol = float(getattr(pos, "volume", 0) or 0)
                                     if vol > 0:
                                         adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
-                                        print(f"[{profile.profile_name}] T9 runner closed (BUY M5 bar-close < EMA{_t9_m5_trail_period}): pos {position_id}")
+                                    print(f"[{profile.profile_name}] {family_label} runner closed (BUY M5 bar-close < EMA{_t9_m5_trail_period}): pos {position_id}")
                                 elif side == "sell" and last_m5_close > ema_val and _bar_is_new:
                                     position_type = 1
                                     if isinstance(pos, dict):
@@ -990,9 +1120,9 @@ def _run_trade_management(
                                         vol = float(getattr(pos, "volume", 0) or 0)
                                     if vol > 0:
                                         adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
-                                        print(f"[{profile.profile_name}] T9 runner closed (SELL M5 bar-close > EMA{_t9_m5_trail_period}): pos {position_id}")
+                                        print(f"[{profile.profile_name}] {family_label} runner closed (SELL M5 bar-close > EMA{_t9_m5_trail_period}): pos {position_id}")
                     except Exception as e:
-                        print(f"[{profile.profile_name}] T9 M5 trailing EMA error pos {position_id}: {e}")
+                        print(f"[{profile.profile_name}] {family_label} M5 trailing EMA error pos {position_id}: {e}")
 
             elif t9_exit_strategy == "tp1_be_hwm_trail":
                 # --- Phase A: TP1 partial close ---
@@ -1028,7 +1158,7 @@ def _run_trade_management(
                                 position_type=position_type,
                             )
                             partial_close_ok = True
-                            print(f"[{profile.profile_name}] T9 HWM TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t9_tp1_pct}%)")
+                            print(f"[{profile.profile_name}] {family_label} HWM TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t9_tp1_pct}%)")
                         except Exception as e:
                             _tp1_retry_last[position_id] = time.time()
                             print(f"[{profile.profile_name}] T9 HWM TP1 partial close error pos {position_id}: {e}")
@@ -1037,7 +1167,7 @@ def _run_trade_management(
                             _tp1_ts = pd.Timestamp.now(tz="UTC").isoformat()
                             store.update_trade(trade_id, {"tp1_partial_done": 1, "tp1_time_utc": _tp1_ts})
                             # --- Phase B: BE on TP1 hit ---
-                            _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 0.5))
+                            _t9_be_pips = float(getattr(family_policy, "be_spread_plus_pips", 0.5))
                             be_offset = current_spread + _t9_be_pips * pip
                             if side == "buy":
                                 be_sl = entry + be_offset
@@ -1048,7 +1178,7 @@ def _run_trade_management(
                             try:
                                 adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
                                 store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 3)})
-                                print(f"[{profile.profile_name}] T9 HWM BE: pos {position_id} SL->{be_sl:.3f}")
+                                print(f"[{profile.profile_name}] {family_label} HWM BE: pos {position_id} SL->{be_sl:.3f}")
                             except Exception as e:
                                 print(f"[{profile.profile_name}] T9 HWM BE error pos {position_id}: {e}")
 
@@ -1057,7 +1187,7 @@ def _run_trade_management(
                     # Safety net: if Phase B (BE SL) failed for any reason, retry it now.
                     _c_be_applied = trade_row.get("breakeven_applied") or 0
                     if not _c_be_applied:
-                        _t9_be_pips_c = float(getattr(t9_policy, "be_spread_plus_pips", 0.5))
+                        _t9_be_pips_c = float(getattr(family_policy, "be_spread_plus_pips", 0.5))
                         _be_offset_c = current_spread + _t9_be_pips_c * pip
                         if side == "buy":
                             _be_sl_c = entry + _be_offset_c
@@ -1078,7 +1208,7 @@ def _run_trade_management(
                                 except Exception as e:
                                     print(f"[{profile.profile_name}] T9 HWM BE retry error pos {position_id}: {e}")
                     try:
-                        _hwm_trail_pips = float(getattr(t9_policy, "hwm_trail_pips", 3.0))
+                        _hwm_trail_pips = float(getattr(family_policy, "hwm_trail_pips", 3.0))
                         stored_peak = trade_row.get("peak_price")
                         prev_be_sl = trade_row.get("breakeven_sl_price")
                         if prev_be_sl is not None:
@@ -1145,7 +1275,7 @@ def _run_trade_management(
                                 position_type=position_type,
                             )
                             partial_close_ok = True
-                            print(f"[{profile.profile_name}] T9 TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t9_tp1_pct}%)")
+                            print(f"[{profile.profile_name}] {family_label} TP1 partial close: pos {position_id} {close_lots:.3f} lots ({t9_tp1_pct}%)")
                         except Exception as e:
                             _tp1_retry_last[position_id] = time.time()
                             print(f"[{profile.profile_name}] T9 TP1 partial close error pos {position_id}: {e}")
@@ -1153,7 +1283,7 @@ def _run_trade_management(
                             _tp1_retry_last.pop(position_id, None)
                             _tp1_ts = pd.Timestamp.now(tz="UTC").isoformat()
                             store.update_trade(trade_id, {"tp1_partial_done": 1, "tp1_time_utc": _tp1_ts})
-                            _t9_be_pips = float(getattr(t9_policy, "be_spread_plus_pips", 2.0))
+                            _t9_be_pips = float(getattr(family_policy, "be_spread_plus_pips", 2.0))
                             be_offset = current_spread + _t9_be_pips * pip
                             if side == "buy":
                                 be_sl = entry + be_offset
@@ -1164,7 +1294,7 @@ def _run_trade_management(
                             try:
                                 adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
                                 store.update_trade(trade_id, {"breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 3)})
-                                print(f"[{profile.profile_name}] T9 BE: pos {position_id} SL->{be_sl:.3f}")
+                                print(f"[{profile.profile_name}] {family_label} BE: pos {position_id} SL->{be_sl:.3f}")
                             except Exception as e:
                                 print(f"[{profile.profile_name}] T9 BE error pos {position_id}: {e}")
 
@@ -1173,7 +1303,7 @@ def _run_trade_management(
                     # Safety net: if Phase B (BE SL) failed for any reason, retry it now.
                     _c_be_applied = trade_row.get("breakeven_applied") or 0
                     if not _c_be_applied:
-                        _t9_be_pips_c = float(getattr(t9_policy, "be_spread_plus_pips", 2.0))
+                        _t9_be_pips_c = float(getattr(family_policy, "be_spread_plus_pips", 2.0))
                         _be_offset_c = current_spread + _t9_be_pips_c * pip
                         if side == "buy":
                             _be_sl_c = entry + _be_offset_c
@@ -1194,7 +1324,7 @@ def _run_trade_management(
                                 except Exception as e:
                                     print(f"[{profile.profile_name}] T9 BE retry error pos {position_id}: {e}")
                     try:
-                        _t9_trail_period = int(getattr(t9_policy, "trail_ema_period", 21))
+                        _t9_trail_period = int(getattr(family_policy, "trail_ema_period", 21))
                         if _m1_close is not None and len(_m1_close) > _t9_trail_period + 1:
                             trail_ema = _m1_ema(_t9_trail_period)
                             if not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):
@@ -1224,7 +1354,7 @@ def _run_trade_management(
                                         vol = float(getattr(pos, "volume", 0) or 0)
                                     if vol > 0:
                                         adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
-                                        print(f"[{profile.profile_name}] T9 runner closed (BUY bar-close < EMA{_t9_trail_period}): pos {position_id}")
+                                        print(f"[{profile.profile_name}] {family_label} runner closed (BUY bar-close < EMA{_t9_trail_period}): pos {position_id}")
                                 elif side == "sell" and last_m1_close > ema_val:
                                     position_type = 1
                                     if isinstance(pos, dict):
@@ -1233,70 +1363,54 @@ def _run_trade_management(
                                         vol = float(getattr(pos, "volume", 0) or 0)
                                     if vol > 0:
                                         adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
-                                        print(f"[{profile.profile_name}] T9 runner closed (SELL bar-close > EMA{_t9_trail_period}): pos {position_id}")
+                                        print(f"[{profile.profile_name}] {family_label} runner closed (SELL bar-close > EMA{_t9_trail_period}): pos {position_id}")
                     except Exception as e:
-                        print(f"[{profile.profile_name}] T9 trailing EMA error pos {position_id}: {e}")
+                        print(f"[{profile.profile_name}] {family_label} trailing EMA error pos {position_id}: {e}")
 
-            # Kill Switch (M5 trend + M1-200 EMA): check on every poll, act on completed M1 bar close
-            # Fires when M5 is Bull AND M1 bar close < EMA200 (BUY), or M5 is Bear AND M1 bar close > EMA200 (SELL)
-            # Closes ALL T9 trades (both tiered pullback and zone entry when kill_switch_zone_entry_action="kill")
-            if _t9_kill_switch_snapshot is not None:
+            # Kill Switch (M5 trend + M1-200 EMA): check on every poll, act on completed M1 bar close.
+            if family_type in _t9_kill_switch_snapshot:
                 try:
-                    last_ema200 = float(_t9_kill_switch_snapshot["last_ema200"])
-                    last_m1_close_ks = float(_t9_kill_switch_snapshot["last_m1_close"])
-                    m5_is_bull_ks = _t9_kill_switch_snapshot["m5_is_bull"]
-                    # Extract trade comment
-                    comment = ""
-                    if isinstance(pos, dict):
-                        ce = pos.get("clientExtensions")
-                        if isinstance(ce, dict):
-                            comment = str(ce.get("comment") or "")
-                        if not comment:
-                            te = pos.get("tradeClientExtensions")
-                            if isinstance(te, dict):
-                                comment = str(te.get("comment") or "")
-                    if "kt_cg_trial_9" not in comment:
-                        pass  # Not a T9 trade
+                    ks_snapshot = _t9_kill_switch_snapshot[family_type]
+                    last_ema200 = float(ks_snapshot["last_ema200"])
+                    last_m1_close_ks = float(ks_snapshot["last_m1_close"])
+                    m5_is_bull_ks = bool(ks_snapshot["m5_is_bull"])
+
+                    is_zone_entry = "zone_entry" in position_comment
+                    _tier_m = re.search(r"tier_(\d+)", position_comment)
+                    tier_num = int(_tier_m.group(1)) if _tier_m else None
+                    if is_zone_entry:
+                        label = "zone_entry"
+                    elif tier_num is not None:
+                        label = f"tier_{tier_num}"
                     else:
-                        is_zone_entry = "zone_entry" in comment
-                        import re
-                        _tier_m = re.search(r"tier_(\d+)", comment)
-                        tier_num = int(_tier_m.group(1)) if _tier_m else None
+                        label = "unknown"
+
+                    should_kill = False
+                    if side == "buy" and m5_is_bull_ks and last_m1_close_ks < last_ema200:
                         if is_zone_entry:
-                            label = "zone_entry"
-                        elif tier_num is not None:
-                            label = f"tier_{tier_num}"
+                            if str(getattr(family_policy, "kill_switch_zone_entry_action", "kill")) == "kill":
+                                should_kill = True
                         else:
-                            label = "unknown"
+                            should_kill = True
+                    elif side == "sell" and (not m5_is_bull_ks) and last_m1_close_ks > last_ema200:
+                        if is_zone_entry:
+                            if str(getattr(family_policy, "kill_switch_zone_entry_action", "kill")) == "kill":
+                                should_kill = True
+                        else:
+                            should_kill = True
 
-                        should_kill = False
-                        # Kill when M5 trend is Bull and M1 completed bar close < EMA200
-                        if side == "buy" and m5_is_bull_ks is True and last_m1_close_ks < last_ema200:
-                            if is_zone_entry:
-                                if str(getattr(t9_policy, "kill_switch_zone_entry_action", "kill")) == "kill":
-                                    should_kill = True
-                            else:
-                                should_kill = True  # All tiered pullback tiers killed
-                        # Kill when M5 trend is Bear and M1 completed bar close > EMA200
-                        elif side == "sell" and m5_is_bull_ks is False and last_m1_close_ks > last_ema200:
-                            if is_zone_entry:
-                                if str(getattr(t9_policy, "kill_switch_zone_entry_action", "kill")) == "kill":
-                                    should_kill = True
-                            else:
-                                should_kill = True  # All tiered pullback tiers killed
-
-                        if should_kill:
-                            position_type = 1 if side == "sell" else 0
-                            if isinstance(pos, dict):
-                                vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
-                            else:
-                                vol = float(getattr(pos, "volume", 0) or 0)
-                            if vol > 0:
-                                adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
-                                m5_trend_str = "Bull" if m5_is_bull_ks else "Bear"
-                                print(f"[{profile.profile_name}] T9 Kill Switch: closed {label} pos {position_id} (M5={m5_trend_str}, M1 close {last_m1_close_ks:.3f} vs EMA200 {last_ema200:.3f})")
+                    if should_kill:
+                        position_type = 1 if side == "sell" else 0
+                        if isinstance(pos, dict):
+                            vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                        else:
+                            vol = float(getattr(pos, "volume", 0) or 0)
+                        if vol > 0:
+                            adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                            m5_trend_str = "Bull" if m5_is_bull_ks else "Bear"
+                            print(f"[{profile.profile_name}] {family_label} Kill Switch: closed {label} pos {position_id} (M5={m5_trend_str}, M1 close {last_m1_close_ks:.3f} vs EMA200 {last_ema200:.3f})")
                 except Exception as e:
-                    print(f"[{profile.profile_name}] T9 Kill Switch error pos {position_id}: {e}")
+                    print(f"[{profile.profile_name}] {family_label} Kill Switch error pos {position_id}: {e}")
 
         # 2d) Phase 3 Integrated trade management
         elif entry_type is not None and str(entry_type).startswith("phase3:"):
@@ -1743,6 +1857,7 @@ def _build_and_write_dashboard(
     open_positions_snapshot: list | None = None,
     positions_snapshot: list[PositionInfo] | None = None,
     daily_summary_snapshot: DailySummary | None = None,
+    regime_snapshot: dict | None = None,
 ) -> None:
     """Assemble and write dashboard state JSON for the current poll cycle."""
     from datetime import datetime, timezone
@@ -1773,7 +1888,7 @@ def _build_and_write_dashboard(
 
         # --- Conviction sizing snapshot for dashboard ---
         _conviction_snap = None
-        if policy_type == "kt_cg_trial_9" and policy is not None:
+        if policy_type in ("kt_cg_trial_9", "kt_cg_trial_10") and policy is not None:
             try:
                 _conv_pol = policy
                 _conv_enabled_dash = bool(getattr(_conv_pol, "conviction_sizing_enabled", False))
@@ -1820,6 +1935,7 @@ def _build_and_write_dashboard(
             ntz_filter_snapshot=(ntz_filter.get_levels_snapshot() if ntz_filter is not None else None),
             intraday_fib_corridor_snapshot=(intraday_fib_corridor_filter.get_snapshot() if intraday_fib_corridor_filter is not None else None),
             conviction_snapshot=_conviction_snap,
+            regime_snapshot=regime_snapshot,
             phase3_state=phase3_state,
         )
 
@@ -1850,7 +1966,7 @@ def _build_and_write_dashboard(
                 policy_for_context, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
                 exhaustion_result=exhaustion_result,
             )
-        elif policy_type == "kt_cg_trial_9":
+        elif policy_type in ("kt_cg_trial_9", "kt_cg_trial_10"):
             context_items = collect_trial_9_context(
                 policy_for_context, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
                 exhaustion_result=exhaustion_result,
@@ -2275,6 +2391,10 @@ def main() -> None:
             getattr(p, "type", None) == "kt_cg_trial_9" and getattr(p, "enabled", True)
             for p in profile.execution.policies
         )
+        has_kt_cg_trial_10 = any(
+            getattr(p, "type", None) == "kt_cg_trial_10" and getattr(p, "enabled", True)
+            for p in profile.execution.policies
+        )
         has_phase3_integrated = any(
             getattr(p, "type", None) == "phase3_integrated" and getattr(p, "enabled", True)
             for p in profile.execution.policies
@@ -2313,20 +2433,26 @@ def main() -> None:
             and getattr(p, "use_daily_level_filter", False)
             for p in profile.execution.policies
         )
+        has_trial10_daily_filter = any(
+            getattr(p, "type", None) == "kt_cg_trial_10"
+            and getattr(p, "enabled", True)
+            and getattr(p, "use_daily_level_filter", False)
+            for p in profile.execution.policies
+        )
         has_trial9_ntz = any(
-            getattr(p, "type", None) == "kt_cg_trial_9"
+            getattr(p, "type", None) in ("kt_cg_trial_9", "kt_cg_trial_10")
             and getattr(p, "enabled", True)
             and getattr(p, "ntz_enabled", False)
             for p in profile.execution.policies
         )
         has_trial9_fib_pivots = any(
-            getattr(p, "type", None) == "kt_cg_trial_9"
+            getattr(p, "type", None) in ("kt_cg_trial_9", "kt_cg_trial_10")
             and getattr(p, "enabled", True)
             and getattr(p, "ntz_use_fib_pivots", False)
             for p in profile.execution.policies
         )
         has_trial9_intraday_fib = any(
-            getattr(p, "type", None) == "kt_cg_trial_9"
+            getattr(p, "type", None) in ("kt_cg_trial_9", "kt_cg_trial_10")
             and getattr(p, "enabled", True)
             for p in profile.execution.policies
         )
@@ -2348,18 +2474,19 @@ def main() -> None:
         # Phase 3 now derives H4/M15/H1/M5/D from M1, so it should not force
         # extra broker timeframe fetches by itself.
         needs_h4_data = has_trial7_reversal_risk or needs_alignment_context
-        needs_m15_data = needs_h4_data or has_m15_swing_filter or has_kt_cg_trial_9
+        needs_m15_data = needs_h4_data or has_m15_swing_filter or has_kt_cg_trial_9 or has_kt_cg_trial_10
         needs_daily_data = (
             has_kt_cg_trial_4
             or has_kt_cg_trial_5
             or has_trial8_daily_filter
             or has_trial9_daily_filter
+            or has_trial10_daily_filter
             or has_trial9_ntz
             or has_trial9_fib_pivots
         )
         oanda_trial79_only = (
             getattr(profile, "broker_type", None) == "oanda"
-            and (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9)
+            and (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_kt_cg_trial_10)
             and not (
                 has_confirmed_cross
                 or has_indicator
@@ -2433,14 +2560,15 @@ def main() -> None:
         except Exception as _e:
             print(f"[{profile.profile_name}] Could not restore trial7_daily_state: {_e}")
 
-        # Daily Level Filter for Trial #8 / Trial #9 (one instance per profile, state persists across iterations)
+        # Daily Level Filter for Trial #8 / Trial #9 / Trial #10 (one instance per profile).
         daily_level_filter = None
-        if has_kt_cg_trial_8 or has_kt_cg_trial_9:
+        if has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_kt_cg_trial_10:
             from core.daily_level_filter import DailyLevelFilter
-            # Prefer a Trial #9 policy if present; otherwise fall back to Trial #8.
+            # Prefer the highest-numbered trial if present; otherwise fall back to Trial #8.
             t8_policy = next((p for p in profile.execution.policies if getattr(p, "type", None) == "kt_cg_trial_8" and getattr(p, "enabled", True)), None)
             t9_policy = next((p for p in profile.execution.policies if getattr(p, "type", None) == "kt_cg_trial_9" and getattr(p, "enabled", True)), None)
-            _dl_policy = t9_policy or t8_policy
+            t10_policy = next((p for p in profile.execution.policies if getattr(p, "type", None) == "kt_cg_trial_10" and getattr(p, "enabled", True)), None)
+            _dl_policy = t10_policy or t9_policy or t8_policy
             if _dl_policy is not None:
                 daily_level_filter = DailyLevelFilter(
                     enabled=bool(getattr(_dl_policy, "use_daily_level_filter", False)),
@@ -2449,11 +2577,18 @@ def main() -> None:
                     pip_size=float(profile.pip_size),
                 )
 
-        # No-Trade Zone filter for Trial #9 (includes optional Fibonacci Pivot levels)
+        # No-Trade Zone filter for Trial #9 / Trial #10 (includes optional Fibonacci Pivot levels)
         ntz_filter = None
-        if has_kt_cg_trial_9:
+        _t9_pol = None
+        if has_kt_cg_trial_9 or has_kt_cg_trial_10:
             from core.no_trade_zone import NoTradeZoneFilter
-            _t9_pol = next((p for p in profile.execution.policies if getattr(p, "type", None) == "kt_cg_trial_9" and getattr(p, "enabled", True)), None)
+            _t9_pol = next(
+                (
+                    p for p in profile.execution.policies
+                    if getattr(p, "type", None) in ("kt_cg_trial_10", "kt_cg_trial_9") and getattr(p, "enabled", True)
+                ),
+                None,
+            )
             if _t9_pol is not None:
                 ntz_filter = NoTradeZoneFilter(
                     enabled=bool(getattr(_t9_pol, "ntz_enabled", False)),
@@ -2472,11 +2607,11 @@ def main() -> None:
                     use_fib_s3=bool(getattr(_t9_pol, "ntz_use_fib_s3", True)),
                 )
 
-        # Intraday Fibonacci Corridor filter for Trial #9
-        # Always create when Trial #9 is present so it can be enabled live
+        # Intraday Fibonacci Corridor filter for Trial #9 / Trial #10.
+        # Always create when one of these policies is present so it can be enabled live
         # without restarting the loop.
         intraday_fib_corridor_filter = None
-        if has_kt_cg_trial_9 and _t9_pol is not None:
+        if (has_kt_cg_trial_9 or has_kt_cg_trial_10) and _t9_pol is not None:
             from core.no_trade_zone import IntradayFibCorridorFilter
             intraday_fib_corridor_filter = IntradayFibCorridorFilter(
                 enabled=bool(getattr(_t9_pol, "intraday_fib_enabled", False)),
@@ -2510,7 +2645,7 @@ def main() -> None:
                 _live_data = json.loads(Path(args.profile).read_text(encoding="utf-8"))
                 _live_t9 = next(
                     (p for p in _live_data.get("execution", {}).get("policies", [])
-                     if p.get("type") == "kt_cg_trial_9" and p.get("enabled", True)),
+                     if p.get("type") in ("kt_cg_trial_10", "kt_cg_trial_9") and p.get("enabled", True)),
                     None,
                 )
                 if _live_t9 is not None:
@@ -2610,7 +2745,7 @@ def main() -> None:
                 _live_data = json.loads(Path(args.profile).read_text(encoding="utf-8"))
                 _live_t9 = next(
                     (p for p in _live_data.get("execution", {}).get("policies", [])
-                     if p.get("type") == "kt_cg_trial_9" and p.get("enabled", True)),
+                     if p.get("type") in ("kt_cg_trial_10", "kt_cg_trial_9") and p.get("enabled", True)),
                     None,
                 )
                 if _live_t9 is not None:
@@ -2881,7 +3016,7 @@ def main() -> None:
                     if needs_m15_data:
                         data_by_tf["M15"] = _get_bars_cached(profile.symbol, "M15", 2000)
                     # Fetch M5 only when needed.
-                    if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_uncle_parsh:
+                    if has_ema_pullback or has_m5_confirmed_cross or has_kt_cg_ctp or has_kt_cg_hybrid or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_kt_cg_trial_10 or has_uncle_parsh:
                         data_by_tf["M5"] = _get_bars_cached(
                             profile.symbol,
                             "M5",
@@ -2893,9 +3028,9 @@ def main() -> None:
                     # Fetch D1 data when needed by daily H/L filter (Trial #4/5/8/9).
                     if needs_daily_data:
                         data_by_tf["D"] = _get_bars_cached(profile.symbol, "D", 5)
-                    # Fetch W and MN data only when a T9 NTZ filter is actually enabled.
-                    if has_kt_cg_trial_9 and any(
-                        getattr(p, "type", None) == "kt_cg_trial_9"
+                    # Fetch W and MN data only when a Trial 9/10 NTZ filter is actually enabled.
+                    if (has_kt_cg_trial_9 or has_kt_cg_trial_10) and any(
+                        getattr(p, "type", None) in ("kt_cg_trial_9", "kt_cg_trial_10")
                         and getattr(p, "enabled", True)
                         and getattr(p, "ntz_enabled", False)
                         for p in profile.execution.policies
@@ -3062,7 +3197,7 @@ def main() -> None:
             used_clock_fallback = False
             # Clock-based fallback: if broker hasn't delivered the new bar yet (e.g. API delay),
             # treat current UTC minute as new once we're a few seconds in, so Trial 7/8 still runs.
-            if not is_new and (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9):
+            if not is_new and (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_kt_cg_trial_10):
                 try:
                     current_minute_iso = now_utc.floor("min").isoformat()
                     last_bar_minute_iso = last_bar_dt.floor("min").isoformat()
@@ -3092,7 +3227,7 @@ def main() -> None:
                     phase3_is_new = False
 
             # Update shared daily H/L state for Trial #7 / Trial #8 when we have a new M1 bar
-            if (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9) and is_new:
+            if (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_kt_cg_trial_10) and is_new:
                 now_date = pd.Timestamp.now(tz="UTC").date().isoformat()
                 mid_tick = (tick.bid + tick.ask) / 2.0
                 date_changed = trial7_daily_state.get("date_utc") != now_date
@@ -3141,11 +3276,11 @@ def main() -> None:
             # OANDA: run Trial 7/8/9 intrabar (tick-driven), not only on new M1 candles.
             intrabar_t78 = (
                 getattr(profile, "broker_type", None) == "oanda"
-                and (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9)
+                and (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_kt_cg_trial_10)
             )
 
             # Log when we skip Trial 7/8 due to no new M1 bar (so execution log shows why no evaluation)
-            if (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9) and not is_new and not args.once and not intrabar_t78:
+            if (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_kt_cg_trial_10) and not is_new and not args.once and not intrabar_t78:
                 try:
                     store.insert_execution(
                         {
@@ -3165,7 +3300,7 @@ def main() -> None:
                 except Exception:
                     pass
 
-            # Trial 7/8/9 intrabar execution (OANDA): evaluate every poll so zone-entry can fire within seconds.
+            # Trial 7/8/9/10 intrabar execution (OANDA): evaluate every poll so zone-entry can fire within seconds.
             if intrabar_t78 and not args.once:
                 _intrabar_t78_started = time.perf_counter()
                 t7_mkt = None
@@ -3192,11 +3327,11 @@ def main() -> None:
 
                 for pol in profile.execution.policies:
                     pol_type = getattr(pol, "type", None)
-                    if not getattr(pol, "enabled", True) or pol_type not in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9"):
+                    if not getattr(pol, "enabled", True) or pol_type not in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9", "kt_cg_trial_10"):
                         continue
                     # Use poll time for bar_time_utc so multiple evaluations within a minute are distinct.
                     bar_time_utc = now_utc.isoformat()
-                    if pol_type == "kt_cg_trial_9":
+                    if pol_type in ("kt_cg_trial_9", "kt_cg_trial_10"):
                         try:
                             _refresh_trial9_ntz_levels()
                         except Exception as _ntz_err:
@@ -3207,13 +3342,16 @@ def main() -> None:
                             _log(f"Intraday Fib level update error: {_ifib_err}", "ERROR")
                         # Conviction sizing: compute lot size based on M5/M1 EMA conviction
                         _conviction_lots_val = None
+                        _conv_result = None
+                        _is_bull_conv = False
+                        _regime_snapshot = None
+                        _trial10_temp_overrides = _trial10_temp_overrides_from_state(state_data) if pol_type == "kt_cg_trial_10" else None
                         try:
-                            _conv_enabled = bool(getattr(pol, "conviction_sizing_enabled", False))
+                            _conv_enabled = bool(_policy_value(pol, _trial10_temp_overrides, "conviction_sizing_enabled", False))
                             if _conv_enabled:
                                 _m5_df_conv = data_by_tf.get("M5")
                                 _m1_df_conv = data_by_tf.get("M1")
                                 _pip = float(profile.pip_size)
-                                _is_bull_conv = False
                                 if _m5_df_conv is not None and len(_m5_df_conv) > 21:
                                     _m5c = drop_incomplete_last_bar(_m5_df_conv.copy(), "M5")
                                     _m5_close = _m5c["close"].astype(float)
@@ -3226,33 +3364,121 @@ def main() -> None:
                                     pip_size=_pip,
                                     is_bull=_is_bull_conv,
                                     enabled=True,
-                                    base_lots=float(getattr(pol, "conviction_base_lots", 0.05)),
-                                    min_lots=float(getattr(pol, "conviction_min_lots", 0.01)),
+                                    base_lots=float(_policy_value(pol, _trial10_temp_overrides, "conviction_base_lots", 0.05)),
+                                    min_lots=float(_policy_value(pol, _trial10_temp_overrides, "conviction_min_lots", 0.01)),
                                     max_lots=float(get_effective_risk(profile).max_lots),
                                 )
                                 _conviction_lots_val = _conv_result.conviction_lots
                         except Exception as _conv_err:
                             _log(f"Conviction sizing error: {_conv_err}", "ERROR")
-                        exec_result = execute_kt_cg_trial_9_policy_demo_only(
-                            adapter=adapter,
-                            profile=profile,
-                            log_dir=log_dir,
-                            policy=pol,
-                            context=t7_mkt,
-                            data_by_tf=data_by_tf,
-                            tick=tick,
-                            trades_df=trades_df,
-                            mode=mode,
-                            bar_time_utc=bar_time_utc,
-                            tier_state=tier_state,
-                            store=store,
-                            daily_level_filter=daily_level_filter,
-                            daily_state=trial7_daily_state,
-                            open_positions=open_positions_snapshot,
-                            ntz_filter=ntz_filter,
-                            intraday_fib_corridor_filter=intraday_fib_corridor_filter,
-                            conviction_lots=_conviction_lots_val,
-                        )
+                        # Regime gate: operator-style activity filter (T10 only)
+                        _regime_blocked = False
+                        _regime_result = None
+                        if pol_type == "kt_cg_trial_10" and bool(_policy_value(pol, _trial10_temp_overrides, "regime_gate_enabled", False)):
+                            try:
+                                from core.regime_gate import evaluate_regime_gate, check_chop_pause, regime_gate_snapshot
+                                _hour_et = int(pd.Timestamp(now_utc).tz_convert("America/New_York").hour)
+                                _likely_side = "buy" if _is_bull_conv else "sell"
+                                _m5_bucket_rg = getattr(_conv_result, "m5_bucket", "normal") if _conv_result is not None and hasattr(_conv_result, "m5_bucket") else "normal"
+                                if _m5_bucket_rg == "normal":
+                                    _m5_df_rg = data_by_tf.get("M5")
+                                    if _m5_df_rg is not None and len(_m5_df_rg) > 21:
+                                        _m5c_rg = drop_incomplete_last_bar(_m5_df_rg.copy(), "M5")
+                                        _m5_close_rg = _m5c_rg["close"].astype(float)
+                                        _m5_bucket_rg, _, _ = _resolve_trial10_m5_bucket(
+                                            _m5_close_rg, float(profile.pip_size), _likely_side == "buy"
+                                        )
+                                _chop_paused = False
+                                _chop_reason = ""
+                                _chop_start_key = f"chop_pause_{_likely_side}_start_utc"
+                                _chop_reason_key = f"chop_pause_{_likely_side}_reason"
+                                _chop_start_dt = _parse_runtime_timestamp(state_data.get(_chop_start_key))
+                                if bool(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_enabled", False)):
+                                    _chop_paused, _chop_reason = check_chop_pause(
+                                        side=_likely_side,
+                                        recent_trades=_trial10_recent_closed_trades(
+                                            trades_df,
+                                            int(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_lookback_minutes", 45)),
+                                        ),
+                                        now_utc=now_utc,
+                                        lookback_minutes=int(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_lookback_minutes", 45)),
+                                        stop_count_threshold=int(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_stop_count", 1)),
+                                        pause_minutes=int(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_minutes", 45)),
+                                        current_pause_start=_chop_start_dt, m5_bucket=_m5_bucket_rg,
+                                    )
+                                    if _chop_paused and _chop_start_dt is None:
+                                        _write_state_updates(
+                                            state_path,
+                                            {
+                                                _chop_start_key: now_utc.isoformat(),
+                                                _chop_reason_key: _chop_reason,
+                                            },
+                                        )
+                                        state_data[_chop_start_key] = now_utc.isoformat()
+                                        state_data[_chop_reason_key] = _chop_reason
+                                    elif _chop_paused and _chop_reason and state_data.get(_chop_reason_key) != _chop_reason:
+                                        _write_state_updates(state_path, {_chop_reason_key: _chop_reason})
+                                        state_data[_chop_reason_key] = _chop_reason
+                                    elif not _chop_paused and _chop_start_dt is not None:
+                                        _write_state_updates(state_path, {_chop_start_key: None, _chop_reason_key: None})
+                                        state_data[_chop_start_key] = None
+                                        state_data[_chop_reason_key] = None
+                                _regime_result = evaluate_regime_gate(
+                                    hour_et=_hour_et, side=_likely_side, m5_bucket=_m5_bucket_rg,
+                                    enabled=True,
+                                    london_sell_veto=bool(_policy_value(pol, _trial10_temp_overrides, "regime_london_sell_veto", True)),
+                                    london_start_hour_et=int(_policy_value(pol, _trial10_temp_overrides, "regime_london_start_hour_et", 3)),
+                                    london_end_hour_et=int(_policy_value(pol, _trial10_temp_overrides, "regime_london_end_hour_et", 12)),
+                                    boost_hours_et=tuple(int(x) for x in getattr(pol, "regime_boost_hours_et", (6, 7, 12, 13, 14, 15))),
+                                    boost_multiplier=float(_policy_value(pol, _trial10_temp_overrides, "regime_boost_multiplier", 1.35)),
+                                    buy_base_multiplier=float(_policy_value(pol, _trial10_temp_overrides, "regime_buy_base_multiplier", 0.65)),
+                                    sell_base_multiplier=float(_policy_value(pol, _trial10_temp_overrides, "regime_sell_base_multiplier", 0.35)),
+                                    chop_paused=_chop_paused, chop_pause_reason=_chop_reason,
+                                )
+                                _regime_snapshot = regime_gate_snapshot(_regime_result)
+                                if not _regime_result.allowed:
+                                    _regime_blocked = True
+                                    _log(f"Regime gate BLOCKED: {_regime_result.reason}")
+                            except Exception as _rg_err:
+                                _log(f"Regime gate error: {_rg_err}", "ERROR")
+                        if _regime_blocked:
+                            exec_result = {
+                                "decision": ExecutionDecision(attempted=True, placed=False, reason="regime_gate_blocked"),
+                                "trigger_type": None,
+                                "candidate_side": None,
+                                "candidate_trigger": None,
+                                "tier_updates": {},
+                                "side": None,
+                                "exhaustion_result": None,
+                            }
+                        else:
+                            exec_result = (
+                                execute_kt_cg_trial_10_policy_demo_only if pol_type == "kt_cg_trial_10"
+                                else execute_kt_cg_trial_9_policy_demo_only
+                            )(
+                                adapter=adapter,
+                                profile=profile,
+                                log_dir=log_dir,
+                                policy=pol,
+                                context=t7_mkt,
+                                data_by_tf=data_by_tf,
+                                tick=tick,
+                                trades_df=trades_df,
+                                mode=mode,
+                                bar_time_utc=bar_time_utc,
+                                tier_state=tier_state,
+                                store=store,
+                                daily_level_filter=daily_level_filter,
+                                daily_state=trial7_daily_state,
+                                open_positions=open_positions_snapshot,
+                                ntz_filter=ntz_filter,
+                                intraday_fib_corridor_filter=intraday_fib_corridor_filter,
+                                conviction_lots=_conviction_lots_val,
+                                temp_overrides=_trial10_temp_overrides if pol_type == "kt_cg_trial_10" else None,
+                                trial10_regime_multiplier=(_regime_result.multiplier if pol_type == "kt_cg_trial_10" and _regime_result is not None else None),
+                                trial10_regime_label=(_regime_result.label if pol_type == "kt_cg_trial_10" and _regime_result is not None else None),
+                                trial10_regime_reason=(_regime_result.reason if pol_type == "kt_cg_trial_10" and _regime_result is not None else None),
+                            )
                     elif pol_type == "kt_cg_trial_8":
                         exec_result = execute_kt_cg_trial_8_policy_demo_only(
                             adapter=adapter,
@@ -3315,8 +3541,9 @@ def main() -> None:
                         if dec.placed:
                             side = dec.side or "buy"
                             entry_price = tick.ask if side == "buy" else tick.bid
+                            _trial10_pq = exec_result.get("trial10_pullback_quality") if pol_type == "kt_cg_trial_10" else None
                             pip = float(profile.pip_size)
-                            if pol_type == "kt_cg_trial_9":
+                            if pol_type in ("kt_cg_trial_9", "kt_cg_trial_10"):
                                 sl_price = None
                                 tp_price = None
                             else:
@@ -3329,7 +3556,7 @@ def main() -> None:
                                 else:
                                     tp_price = entry_price - pol.tp_pips * pip
                                     sl_price = entry_price + sl_pips * pip
-                                if pol_type == "kt_cg_trial_8" and getattr(pol, "trail_after_tp1", False):
+                                if pol_type in ("kt_cg_trial_8", "kt_cg_trial_9", "kt_cg_trial_10") and getattr(pol, "trail_after_tp1", False):
                                     tp_price = None
                             print(f"[{profile.profile_name}] TRADE PLACED: {pol_type}:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
@@ -3344,6 +3571,8 @@ def main() -> None:
                                 stop_price=sl_price,
                                 target_price=tp_price,
                                 entry_type=t7_trigger_type,
+                                tier_number=exec_result.get("tiered_pullback_tier"),
+                                pullback_quality_label=(_trial10_pq or {}).get("label"),
                             )
                             _invalidate_trades_df_cache()
                             _append_trade_open_event(
@@ -3367,6 +3596,10 @@ def main() -> None:
                                     print(f"[{profile.profile_name}] Failed to persist Trial #7 tier fires: {e}")
                         else:
                             print(f"[{profile.profile_name}] {pol_type} {pol.id} mode={mode} -> {dec.reason}")
+                    if pol_type == "kt_cg_trial_10" and _regime_snapshot is not None:
+                        _lot_chain = exec_result.get("trial10_lot_chain") or {}
+                        if isinstance(_lot_chain, dict):
+                            _regime_snapshot.update(_lot_chain)
 
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,
@@ -3374,12 +3607,14 @@ def main() -> None:
                         policy_type=pol_type, tier_state=tier_state,
                         eval_result=exec_result,
                         exhaustion_result=exec_result.get("exhaustion_result"),
+                        temp_overrides=_trial10_temp_overrides if pol_type == "kt_cg_trial_10" else None,
                         daily_level_filter=daily_level_filter if pol_type == "kt_cg_trial_8" else None,
-                        ntz_filter=ntz_filter if pol_type == "kt_cg_trial_9" else None,
-                        intraday_fib_corridor_filter=intraday_fib_corridor_filter if pol_type == "kt_cg_trial_9" else None,
+                        ntz_filter=ntz_filter if pol_type in ("kt_cg_trial_9", "kt_cg_trial_10") else None,
+                        intraday_fib_corridor_filter=intraday_fib_corridor_filter if pol_type in ("kt_cg_trial_9", "kt_cg_trial_10") else None,
                         open_positions_snapshot=open_positions_snapshot,
                         positions_snapshot=dashboard_positions_snapshot,
                         daily_summary_snapshot=dashboard_daily_snapshot,
+                        regime_snapshot=_regime_snapshot if pol_type == "kt_cg_trial_10" else None,
                     )
                 _phase_done("trial7_9_intrabar", _intrabar_t78_started)
 
@@ -3880,6 +4115,7 @@ def main() -> None:
                         if dec.placed:
                             side = dec.side or "buy"
                             entry_price = tick.ask if side == "buy" else tick.bid
+                            _trial10_pq = exec_result.get("trial10_pullback_quality") if pol_type == "kt_cg_trial_10" else None
                             pip = float(profile.pip_size)
                             sl_pips = getattr(pol, "sl_pips", None)
                             if sl_pips is None:
@@ -4457,8 +4693,8 @@ def main() -> None:
                         daily_summary_snapshot=dashboard_daily_snapshot,
                     )
 
-            # Trial #7 / Trial #8 execution — M5 Trend + Tiered Pullback (+ Daily Level Filter for T8)
-            if (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9) and not intrabar_t78:
+            # Trial #7 / #8 / #9 / #10 execution — M5 Trend + Tiered Pullback
+            if (has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_kt_cg_trial_10) and not intrabar_t78:
                 t7_mkt = mkt
                 if t7_mkt is None:
                     spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
@@ -4484,13 +4720,13 @@ def main() -> None:
 
                 for pol in profile.execution.policies:
                     pol_type = getattr(pol, "type", None)
-                    if not getattr(pol, "enabled", True) or pol_type not in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9"):
+                    if not getattr(pol, "enabled", True) or pol_type not in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9", "kt_cg_trial_10"):
                         continue
                     m1_df = data_by_tf.get("M1")
                     if m1_df is None or m1_df.empty:
                         continue
                     bar_time_utc = pd.to_datetime(m1_df["time"].iloc[-1], utc=True).isoformat()
-                    if pol_type == "kt_cg_trial_9":
+                    if pol_type in ("kt_cg_trial_9", "kt_cg_trial_10"):
                         try:
                             _refresh_trial9_ntz_levels()
                         except Exception as _ntz_err:
@@ -4501,13 +4737,16 @@ def main() -> None:
                             _log(f"Intraday Fib level update error: {_ifib_err}", "ERROR")
                         # Conviction sizing: compute lot size based on M5/M1 EMA conviction
                         _conviction_lots_val = None
+                        _conv_result = None
+                        _is_bull_conv = False
+                        _regime_snapshot = None
+                        _trial10_temp_overrides = _trial10_temp_overrides_from_state(state_data) if pol_type == "kt_cg_trial_10" else None
                         try:
-                            _conv_enabled = bool(getattr(pol, "conviction_sizing_enabled", False))
+                            _conv_enabled = bool(_policy_value(pol, _trial10_temp_overrides, "conviction_sizing_enabled", False))
                             if _conv_enabled:
                                 _m5_df_conv = data_by_tf.get("M5")
                                 _m1_df_conv = data_by_tf.get("M1")
                                 _pip = float(profile.pip_size)
-                                _is_bull_conv = False
                                 if _m5_df_conv is not None and len(_m5_df_conv) > 21:
                                     _m5c = drop_incomplete_last_bar(_m5_df_conv.copy(), "M5")
                                     _m5_close = _m5c["close"].astype(float)
@@ -4520,33 +4759,121 @@ def main() -> None:
                                     pip_size=_pip,
                                     is_bull=_is_bull_conv,
                                     enabled=True,
-                                    base_lots=float(getattr(pol, "conviction_base_lots", 0.05)),
-                                    min_lots=float(getattr(pol, "conviction_min_lots", 0.01)),
+                                    base_lots=float(_policy_value(pol, _trial10_temp_overrides, "conviction_base_lots", 0.05)),
+                                    min_lots=float(_policy_value(pol, _trial10_temp_overrides, "conviction_min_lots", 0.01)),
                                     max_lots=float(get_effective_risk(profile).max_lots),
                                 )
                                 _conviction_lots_val = _conv_result.conviction_lots
                         except Exception as _conv_err:
                             _log(f"Conviction sizing error: {_conv_err}", "ERROR")
-                        exec_result = execute_kt_cg_trial_9_policy_demo_only(
-                            adapter=adapter,
-                            profile=profile,
-                            log_dir=log_dir,
-                            policy=pol,
-                            context=t7_mkt,
-                            data_by_tf=data_by_tf,
-                            tick=tick,
-                            trades_df=trades_df,
-                            mode=mode,
-                            bar_time_utc=bar_time_utc,
-                            tier_state=tier_state,
-                            store=store,
-                            daily_level_filter=daily_level_filter,
-                            daily_state=trial7_daily_state,
-                            open_positions=open_positions_snapshot,
-                            ntz_filter=ntz_filter,
-                            intraday_fib_corridor_filter=intraday_fib_corridor_filter,
-                            conviction_lots=_conviction_lots_val,
-                        )
+                        # Regime gate: operator-style activity filter (T10 only)
+                        _regime_blocked = False
+                        _regime_result = None
+                        if pol_type == "kt_cg_trial_10" and bool(_policy_value(pol, _trial10_temp_overrides, "regime_gate_enabled", False)):
+                            try:
+                                from core.regime_gate import evaluate_regime_gate, check_chop_pause, regime_gate_snapshot
+                                _hour_et = int(pd.Timestamp(now_utc).tz_convert("America/New_York").hour)
+                                _likely_side = "buy" if _is_bull_conv else "sell"
+                                _m5_bucket_rg = getattr(_conv_result, "m5_bucket", "normal") if _conv_result is not None and hasattr(_conv_result, "m5_bucket") else "normal"
+                                if _m5_bucket_rg == "normal":
+                                    _m5_df_rg = data_by_tf.get("M5")
+                                    if _m5_df_rg is not None and len(_m5_df_rg) > 21:
+                                        _m5c_rg = drop_incomplete_last_bar(_m5_df_rg.copy(), "M5")
+                                        _m5_close_rg = _m5c_rg["close"].astype(float)
+                                        _m5_bucket_rg, _, _ = _resolve_trial10_m5_bucket(
+                                            _m5_close_rg, float(profile.pip_size), _likely_side == "buy"
+                                        )
+                                _chop_paused = False
+                                _chop_reason = ""
+                                _chop_start_key = f"chop_pause_{_likely_side}_start_utc"
+                                _chop_reason_key = f"chop_pause_{_likely_side}_reason"
+                                _chop_start_dt = _parse_runtime_timestamp(state_data.get(_chop_start_key))
+                                if bool(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_enabled", False)):
+                                    _chop_paused, _chop_reason = check_chop_pause(
+                                        side=_likely_side,
+                                        recent_trades=_trial10_recent_closed_trades(
+                                            trades_df,
+                                            int(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_lookback_minutes", 45)),
+                                        ),
+                                        now_utc=now_utc,
+                                        lookback_minutes=int(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_lookback_minutes", 45)),
+                                        stop_count_threshold=int(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_stop_count", 1)),
+                                        pause_minutes=int(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_minutes", 45)),
+                                        current_pause_start=_chop_start_dt, m5_bucket=_m5_bucket_rg,
+                                    )
+                                    if _chop_paused and _chop_start_dt is None:
+                                        _write_state_updates(
+                                            state_path,
+                                            {
+                                                _chop_start_key: now_utc.isoformat(),
+                                                _chop_reason_key: _chop_reason,
+                                            },
+                                        )
+                                        state_data[_chop_start_key] = now_utc.isoformat()
+                                        state_data[_chop_reason_key] = _chop_reason
+                                    elif _chop_paused and _chop_reason and state_data.get(_chop_reason_key) != _chop_reason:
+                                        _write_state_updates(state_path, {_chop_reason_key: _chop_reason})
+                                        state_data[_chop_reason_key] = _chop_reason
+                                    elif not _chop_paused and _chop_start_dt is not None:
+                                        _write_state_updates(state_path, {_chop_start_key: None, _chop_reason_key: None})
+                                        state_data[_chop_start_key] = None
+                                        state_data[_chop_reason_key] = None
+                                _regime_result = evaluate_regime_gate(
+                                    hour_et=_hour_et, side=_likely_side, m5_bucket=_m5_bucket_rg,
+                                    enabled=True,
+                                    london_sell_veto=bool(_policy_value(pol, _trial10_temp_overrides, "regime_london_sell_veto", True)),
+                                    london_start_hour_et=int(_policy_value(pol, _trial10_temp_overrides, "regime_london_start_hour_et", 3)),
+                                    london_end_hour_et=int(_policy_value(pol, _trial10_temp_overrides, "regime_london_end_hour_et", 12)),
+                                    boost_hours_et=tuple(int(x) for x in getattr(pol, "regime_boost_hours_et", (6, 7, 12, 13, 14, 15))),
+                                    boost_multiplier=float(_policy_value(pol, _trial10_temp_overrides, "regime_boost_multiplier", 1.35)),
+                                    buy_base_multiplier=float(_policy_value(pol, _trial10_temp_overrides, "regime_buy_base_multiplier", 0.65)),
+                                    sell_base_multiplier=float(_policy_value(pol, _trial10_temp_overrides, "regime_sell_base_multiplier", 0.35)),
+                                    chop_paused=_chop_paused, chop_pause_reason=_chop_reason,
+                                )
+                                _regime_snapshot = regime_gate_snapshot(_regime_result)
+                                if not _regime_result.allowed:
+                                    _regime_blocked = True
+                                    _log(f"Regime gate BLOCKED: {_regime_result.reason}")
+                            except Exception as _rg_err:
+                                _log(f"Regime gate error: {_rg_err}", "ERROR")
+                        if _regime_blocked:
+                            exec_result = {
+                                "decision": ExecutionDecision(attempted=True, placed=False, reason="regime_gate_blocked"),
+                                "trigger_type": None,
+                                "candidate_side": None,
+                                "candidate_trigger": None,
+                                "tier_updates": {},
+                                "side": None,
+                                "exhaustion_result": None,
+                            }
+                        else:
+                            exec_result = (
+                                execute_kt_cg_trial_10_policy_demo_only if pol_type == "kt_cg_trial_10"
+                                else execute_kt_cg_trial_9_policy_demo_only
+                            )(
+                                adapter=adapter,
+                                profile=profile,
+                                log_dir=log_dir,
+                                policy=pol,
+                                context=t7_mkt,
+                                data_by_tf=data_by_tf,
+                                tick=tick,
+                                trades_df=trades_df,
+                                mode=mode,
+                                bar_time_utc=bar_time_utc,
+                                tier_state=tier_state,
+                                store=store,
+                                daily_level_filter=daily_level_filter,
+                                daily_state=trial7_daily_state,
+                                open_positions=open_positions_snapshot,
+                                ntz_filter=ntz_filter,
+                                intraday_fib_corridor_filter=intraday_fib_corridor_filter,
+                                conviction_lots=_conviction_lots_val,
+                                temp_overrides=_trial10_temp_overrides if pol_type == "kt_cg_trial_10" else None,
+                                trial10_regime_multiplier=(_regime_result.multiplier if pol_type == "kt_cg_trial_10" and _regime_result is not None else None),
+                                trial10_regime_label=(_regime_result.label if pol_type == "kt_cg_trial_10" and _regime_result is not None else None),
+                                trial10_regime_reason=(_regime_result.reason if pol_type == "kt_cg_trial_10" and _regime_result is not None else None),
+                            )
                     elif pol_type == "kt_cg_trial_8":
                         exec_result = execute_kt_cg_trial_8_policy_demo_only(
                             adapter=adapter,
@@ -4617,8 +4944,8 @@ def main() -> None:
                             else:
                                 tp_price = entry_price - pol.tp_pips * pip
                                 sl_price = entry_price + sl_pips * pip
-                            # When T8/T9 trailing exit is on, do not set broker TP so loop can partial-close + trail
-                            if pol_type in ("kt_cg_trial_8", "kt_cg_trial_9") and getattr(pol, "trail_after_tp1", False):
+                            # When trailing exit is on, do not set broker TP so loop can partial-close + trail.
+                            if pol_type in ("kt_cg_trial_8", "kt_cg_trial_9", "kt_cg_trial_10") and getattr(pol, "trail_after_tp1", False):
                                 tp_price = None
                             print(f"[{profile.profile_name}] TRADE PLACED: {pol_type}:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _insert_trade_for_policy(
@@ -4633,6 +4960,8 @@ def main() -> None:
                                 stop_price=sl_price,
                                 target_price=tp_price,
                                 entry_type=t7_trigger_type,
+                                tier_number=exec_result.get("tiered_pullback_tier"),
+                                pullback_quality_label=(_trial10_pq or {}).get("label"),
                             )
                             _invalidate_trades_df_cache()
                             _append_trade_open_event(
@@ -4656,6 +4985,10 @@ def main() -> None:
                                     print(f"[{profile.profile_name}] Failed to persist Trial #7 tier fires: {e}")
                         else:
                             print(f"[{profile.profile_name}] {pol_type} {pol.id} mode={mode} -> {dec.reason}")
+                    if pol_type == "kt_cg_trial_10" and _regime_snapshot is not None:
+                        _lot_chain = exec_result.get("trial10_lot_chain") or {}
+                        if isinstance(_lot_chain, dict):
+                            _regime_snapshot.update(_lot_chain)
 
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,
@@ -4663,12 +4996,14 @@ def main() -> None:
                         policy_type=pol_type, tier_state=tier_state,
                         eval_result=exec_result,
                         exhaustion_result=exec_result.get("exhaustion_result"),
+                        temp_overrides=_trial10_temp_overrides if pol_type == "kt_cg_trial_10" else None,
                         daily_level_filter=daily_level_filter if pol_type == "kt_cg_trial_8" else None,
-                        ntz_filter=ntz_filter if pol_type == "kt_cg_trial_9" else None,
-                        intraday_fib_corridor_filter=intraday_fib_corridor_filter if pol_type == "kt_cg_trial_9" else None,
+                        ntz_filter=ntz_filter if pol_type in ("kt_cg_trial_9", "kt_cg_trial_10") else None,
+                        intraday_fib_corridor_filter=intraday_fib_corridor_filter if pol_type in ("kt_cg_trial_9", "kt_cg_trial_10") else None,
                         open_positions_snapshot=open_positions_snapshot,
                         positions_snapshot=dashboard_positions_snapshot,
                         daily_summary_snapshot=dashboard_daily_snapshot,
+                        regime_snapshot=_regime_snapshot if pol_type == "kt_cg_trial_10" else None,
                     )
                 # After Trial 7/8/9 block: mark this bar as seen so we don't re-run every poll for same bar.
                 # Always update (even when clock fallback was used) so we don't re-evaluate the same bar every poll.
@@ -5135,7 +5470,7 @@ def main() -> None:
 
             # Catch-all dashboard write for profiles not using KT/CG policy types.
             # Runs every poll cycle so positions + prices are always fresh.
-            if not (has_kt_cg_hybrid or has_kt_cg_ctp or has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6 or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_uncle_parsh or has_phase3_integrated):
+            if not (has_kt_cg_hybrid or has_kt_cg_ctp or has_kt_cg_trial_4 or has_kt_cg_trial_5 or has_kt_cg_trial_6 or has_kt_cg_trial_7 or has_kt_cg_trial_8 or has_kt_cg_trial_9 or has_kt_cg_trial_10 or has_uncle_parsh or has_phase3_integrated):
                 _dashboard_fallback_started = time.perf_counter()
                 if tick is not None and data_by_tf is not None:
                     _build_and_write_dashboard(

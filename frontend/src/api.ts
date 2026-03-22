@@ -219,6 +219,23 @@ export interface TempEmaSettings {
   t9_be_spread_plus_pips: number | null;
   t9_trail_ema_period: number | null;
   t9_trail_m5_ema_period: number | null;
+  // Trial #10: Proof-based continuation confirmation
+  t10_zone_entry_require_recent_cross: boolean | null;
+  t10_zone_entry_max_cross_lookback_bars: number | null;
+  t10_tier_reclaim_confirmation_enabled: boolean | null;
+  t10_tier_reclaim_ema_period: number | null;
+  // Trial #10: Regime Gate
+  t10_regime_gate_enabled: boolean | null;
+  t10_regime_london_sell_veto: boolean | null;
+  t10_regime_london_start_hour_et: number | null;
+  t10_regime_london_end_hour_et: number | null;
+  t10_regime_boost_multiplier: number | null;
+  t10_regime_buy_base_multiplier: number | null;
+  t10_regime_sell_base_multiplier: number | null;
+  t10_regime_chop_pause_enabled: boolean | null;
+  t10_regime_chop_pause_minutes: number | null;
+  t10_regime_chop_pause_stop_count: number | null;
+  t10_tier17_nonboost_multiplier: number | null;
 }
 
 export async function getTempSettings(profileName: string): Promise<TempEmaSettings> {

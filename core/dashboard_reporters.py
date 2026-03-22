@@ -98,6 +98,101 @@ def report_tiered_atr_trial_4(policy, m1_df, pip_size: float, trigger_type: str)
     )
 
 
+def report_regime_gate(regime_snapshot: Optional[dict]) -> FilterReport:
+    """Report Trial #10 regime gate status."""
+    if not regime_snapshot:
+        return FilterReport(
+            filter_id="trial10_regime_gate",
+            display_name="Trial #10 Regime Gate",
+            enabled=False,
+            is_clear=True,
+            current_value="Disabled",
+        )
+    label = str(regime_snapshot.get("label", "normal"))
+    allowed = bool(regime_snapshot.get("allowed", True))
+    mult = regime_snapshot.get("multiplier", 1.0)
+    reason = str(regime_snapshot.get("reason", ""))
+    final_lots = regime_snapshot.get("final_lots")
+    conviction_lots = regime_snapshot.get("conviction_lots")
+    is_blocked = not allowed
+    display = f"{label.upper()}"
+    if allowed:
+        display += f" ({mult}x)"
+    if final_lots is not None:
+        display += f" | {float(final_lots):.2f} lots"
+    explanation = reason
+    if conviction_lots is not None and final_lots is not None:
+        explanation = (
+            f"{reason} Conviction {float(conviction_lots):.2f} -> final {float(final_lots):.2f} lots."
+        ).strip()
+    return FilterReport(
+        filter_id="trial10_regime_gate",
+        display_name="Trial #10 Regime Gate",
+        enabled=True,
+        is_clear=not is_blocked,
+        current_value=display,
+        block_reason=reason if is_blocked else None,
+        explanation=explanation,
+        metadata=regime_snapshot,
+    )
+
+
+def report_trial10_stop_loss(profile, policy, data_by_tf: dict, pip_size: float) -> FilterReport:
+    """Report Trial #10 active stop-loss mode and current ATR-derived stop distance."""
+    from core.execution_engine import _resolve_trial10_stop_pips
+    from core.indicators import atr as atr_fn
+    from core.signal_engine import drop_incomplete_last_bar
+
+    sl_cfg = getattr(profile.trade_management, "stop_loss", None)
+    fallback_sl = float(getattr(policy, "sl_pips", 0.0) or getattr(profile.risk, "min_stop_pips", 0.0))
+    if sl_cfg is None:
+        return FilterReport(
+            filter_id="trial10_stop_loss",
+            display_name="Trial #10 Stop Loss",
+            enabled=False,
+            is_clear=True,
+            current_value=f"Fixed {fallback_sl:.1f}p",
+        )
+
+    mode = str(getattr(sl_cfg, "mode", "fixed_pips") or "fixed_pips")
+    if mode != "atr":
+        return FilterReport(
+            filter_id="trial10_stop_loss",
+            display_name="Trial #10 Stop Loss",
+            enabled=True,
+            is_clear=True,
+            current_value=f"Fixed {fallback_sl:.1f}p",
+            threshold="Manual/fixed stop",
+        )
+
+    m5_df = data_by_tf.get("M5")
+    atr_pips_str = "N/A"
+    if m5_df is not None and not m5_df.empty:
+        m5_local = drop_incomplete_last_bar(m5_df.copy(), "M5")
+        if len(m5_local) >= 15:
+            atr_series = atr_fn(m5_local, 14)
+            if not atr_series.empty and not pd.isna(atr_series.iloc[-1]) and pip_size > 0.0:
+                atr_pips_str = f"{float(atr_series.iloc[-1]) / pip_size:.1f}p"
+
+    effective_stop = _resolve_trial10_stop_pips(profile, policy, data_by_tf)
+    atr_mult = float(getattr(sl_cfg, "atr_multiplier", 1.5))
+    max_sl = float(getattr(sl_cfg, "max_sl_pips", fallback_sl))
+    return FilterReport(
+        filter_id="trial10_stop_loss",
+        display_name="Trial #10 Stop Loss",
+        enabled=True,
+        is_clear=True,
+        current_value=f"ATR {atr_pips_str} -> Stop {effective_stop:.1f}p",
+        threshold=f"ATR14 x {atr_mult:.2f}, cap {max_sl:.1f}p",
+        metadata={
+            "mode": mode,
+            "atr_multiplier": atr_mult,
+            "max_sl_pips": max_sl,
+            "effective_stop_pips": round(float(effective_stop), 3),
+        },
+    )
+
+
 def report_dual_atr_trial_5(policy, m1_df, m3_df, pip_size: float, trigger_type: str) -> FilterReport:
     """Report Dual ATR filter for Trial #5 with M1 and M3 sub-filters."""
     from core.execution_engine import _passes_atr_filter_trial_5, _get_current_sessions
@@ -621,6 +716,114 @@ def report_max_trades_by_side(side_counts: dict[str, int], max_allowed: Optional
             block_reason=f"{sell_open} >= {max_allowed}" if not sell_clear else None,
         ),
     ]
+
+def report_trial10_entry_gates(eval_result: Optional[dict]) -> FilterReport:
+    """Report Trial #10 proof-based zone/tier gate status from the latest evaluation."""
+    gate_data = dict((eval_result or {}).get("trial10_entry_gates") or {})
+    if not gate_data:
+        return FilterReport(
+            filter_id="trial10_entry_gates",
+            display_name="Trial #10 Entry Gates",
+            enabled=True,
+            is_clear=True,
+            current_value="Awaiting eval",
+            explanation="No recent Trial #10 evaluation available yet.",
+        )
+
+    zone = dict(gate_data.get("zone") or {})
+    tier = dict(gate_data.get("tier") or {})
+
+    def _status_clear(status: str) -> bool:
+        return status not in ("blocked", "failed")
+
+    zone_status = str(zone.get("status") or "idle")
+    tier_status = str(tier.get("status") or "idle")
+    zone_msg = str(zone.get("message") or "Awaiting alignment")
+    tier_msg = str(tier.get("message") or "Awaiting tier touch")
+
+    zone_threshold = ""
+    if bool(zone.get("recent_cross_required", False)):
+        zone_threshold = f"Cross/reclaim within {int(zone.get('lookback_bars') or 0)} bars"
+
+    tier_threshold = ""
+    if bool(tier.get("reclaim_enabled", False)):
+        tier_threshold = f"Touch then reclaim EMA{int(tier.get('reclaim_period') or 0)}"
+
+    zone_filter = FilterReport(
+        filter_id="trial10_zone_gate",
+        display_name="Zone Gate",
+        enabled=bool(zone.get("enabled", True)),
+        is_clear=_status_clear(zone_status),
+        current_value=zone_msg,
+        threshold=zone_threshold,
+        block_reason=zone_msg if zone_status == "blocked" else None,
+        explanation=zone_msg,
+        metadata={"status": zone_status, "mode": zone.get("mode")},
+    )
+    tier_filter = FilterReport(
+        filter_id="trial10_tier_gate",
+        display_name="Tier Gate",
+        enabled=bool(tier.get("enabled", True)),
+        is_clear=_status_clear(tier_status),
+        current_value=tier_msg,
+        threshold=tier_threshold,
+        block_reason=tier_msg if tier_status == "blocked" else None,
+        explanation=tier_msg,
+        metadata={"status": tier_status, "tier": tier.get("tier")},
+    )
+
+    blocking_msgs = [msg for status, msg in ((zone_status, zone_msg), (tier_status, tier_msg)) if status == "blocked"]
+    overall_clear = len(blocking_msgs) == 0
+    return FilterReport(
+        filter_id="trial10_entry_gates",
+        display_name="Trial #10 Entry Gates",
+        enabled=True,
+        is_clear=overall_clear,
+        current_value="Zone + Tier confirmation",
+        block_reason=" | ".join(blocking_msgs) if blocking_msgs else None,
+        explanation=" | ".join(blocking_msgs) if blocking_msgs else "Proof-based entry gates are clear.",
+        sub_filters=[zone_filter, tier_filter],
+        metadata={"zone_status": zone_status, "tier_status": tier_status},
+    )
+
+
+def report_trial10_pullback_quality(eval_result: Optional[dict]) -> FilterReport:
+    """Report Trial #10 pullback quality for the latest tier touch/reclaim evaluation."""
+    quality = dict((eval_result or {}).get("trial10_pullback_quality") or {})
+    if not quality:
+        return FilterReport(
+            filter_id="trial10_pullback_quality",
+            display_name="Pullback Quality",
+            enabled=True,
+            is_clear=True,
+            current_value="Awaiting tier touch",
+            explanation="No recent Trial #10 pullback-quality sample available yet.",
+        )
+
+    label = str(quality.get("label") or "neutral").lower()
+    tier = quality.get("tier")
+    bars = int(quality.get("pullback_bar_count") or 0)
+    ratio = float(quality.get("structure_ratio") or 0.0)
+    dampener = float(quality.get("dampener_multiplier") or 1.0)
+    applicable = bool(quality.get("applicable", False))
+
+    current_value = f"{label.upper()} | {bars} bars | ratio {ratio:.2f}"
+    threshold = f"Tier {tier}" if tier is not None else ""
+    explanation = str(quality.get("reason") or "").strip() or "Pullback quality measured from the touch bar."
+    if applicable and label == "sloppy":
+        explanation += f" Size dampener {dampener:.2f}x applies on shallow tiers."
+
+    return FilterReport(
+        filter_id="trial10_pullback_quality",
+        display_name="Pullback Quality",
+        enabled=bool(quality.get("enabled", True)),
+        is_clear=label != "sloppy",
+        current_value=current_value,
+        threshold=threshold,
+        block_reason=f"Sloppy pullback -> {dampener:.2f}x lots" if applicable and label == "sloppy" else None,
+        explanation=explanation,
+        metadata=quality,
+    )
 
 
 def report_open_trade_cap_by_entry_type(entry_type: str, open_count: int, max_allowed: int) -> FilterReport:
@@ -1488,6 +1691,20 @@ def collect_trial_9_context(
         items.append(ContextItem("M1 EMA Spread", f"{m1_spread:.2f}p", "sizing"))
         if conv.get("m1_compressing"):
             items.append(ContextItem("M1 Compressing", f"YES ({conv.get('m1_compression_bars_count', 0)} bars)", "sizing"))
+
+    gate_data = dict((eval_result or {}).get("trial10_entry_gates") or {})
+    if gate_data:
+        zone = dict(gate_data.get("zone") or {})
+        tier = dict(gate_data.get("tier") or {})
+        items.append(ContextItem("T10 Zone Gate", str(zone.get("message") or "Awaiting alignment"), "filters"))
+        items.append(ContextItem("T10 Tier Gate", str(tier.get("message") or "Awaiting tier touch"), "filters"))
+    quality = dict((eval_result or {}).get("trial10_pullback_quality") or {})
+    if quality:
+        items.append(ContextItem("PB Quality", str(quality.get("label", "neutral")).upper(), "filters"))
+        items.append(ContextItem("PB Bars", str(int(quality.get("pullback_bar_count") or 0)), "filters"))
+        items.append(ContextItem("PB Ratio", f"{float(quality.get('structure_ratio') or 0.0):.2f}", "filters"))
+        if bool(quality.get("applicable", False)) and str(quality.get("label", "")).lower() == "sloppy":
+            items.append(ContextItem("PB Dampener", f"{float(quality.get('dampener_multiplier') or 1.0):.2f}x", "filters"))
 
     return items
 
