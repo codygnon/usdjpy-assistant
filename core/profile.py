@@ -995,6 +995,11 @@ class ExecutionPolicyKtCgTrial9(BaseModel):
     kill_switch_enabled: bool = False
     kill_switch_zone_entry_action: Literal["kill", "hold"] = "hold"
 
+    # Conviction-based lot sizing
+    conviction_sizing_enabled: bool = False
+    conviction_base_lots: float = 0.05
+    conviction_min_lots: float = 0.01
+
     # Intraday Fibonacci Corridor filter
     # "off" = no fib filter (current default), "daily_ntz" = existing daily fib NTZ,
     # "intraday_corridor" = rolling intraday fib corridor mode

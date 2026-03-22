@@ -43,7 +43,14 @@ sys.path.insert(0, str(BASE_DIR))
 
 from core.execution_state import RuntimeState, load_state, save_state
 from core.presets import PresetId, apply_preset, get_preset_patch, list_presets
-from core.profile import ProfileV1, ProfileV1AllowExtra, default_profile_for_name, load_profile_v1, save_profile_v1
+from core.profile import (
+    ProfileV1,
+    ProfileV1AllowExtra,
+    default_profile_for_name,
+    get_effective_risk,
+    load_profile_v1,
+    save_profile_v1,
+)
 from storage.sqlite_store import SqliteStore
 
 # ---------------------------------------------------------------------------
@@ -3381,7 +3388,6 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                     ntz_filter_snapshot = None
                 try:
                     from core.fib_pivots import (
-                        compute_previous_candle_fib_levels,
                         compute_rolling_intraday_fib_levels,
                         is_fixed_intraday_fib_timeframe,
                         resample_intraday_ohlc,
@@ -3405,25 +3411,28 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                     )
                     if ifib_enabled:
                         if is_fixed_intraday_fib_timeframe(ifib_timeframe):
+                            # Resample M1 → H1/H2/H3, use rolling window (same
+                            # as M15/M5) so corridor covers multiple candles.
                             m1_df = data_by_tf.get("M1")
                             source_df = resample_intraday_ohlc(m1_df, ifib_timeframe) if m1_df is not None and not m1_df.empty else None
                             if source_df is not None and not source_df.empty:
-                                ifib_levels = compute_previous_candle_fib_levels(source_df)
-                                completed = source_df.iloc[:-1] if len(source_df) > 1 else source_df
-                                if ifib_levels is not None and completed is not None and not completed.empty:
-                                    candle = completed.iloc[-1]
+                                ifib_levels = compute_rolling_intraday_fib_levels(source_df, lookback_bars=ifib_lookback)
+                                if ifib_levels is not None:
+                                    completed = source_df.iloc[:-1] if len(source_df) > 1 else source_df
+                                    window = completed.iloc[-ifib_lookback:]
+                                    r_high = float(window["high"].max())
+                                    r_low = float(window["low"].min())
                                     ifib_filter.update_levels(
                                         ifib_levels,
-                                        rolling_high=float(candle["high"]),
-                                        rolling_low=float(candle["low"]),
-                                        source_close=float(candle["close"]),
-                                        calculation_mode="previous_candle",
+                                        rolling_high=r_high,
+                                        rolling_low=r_low,
+                                        calculation_mode="rolling_window",
                                     )
                                     ifib_filter.check_corridor((_tick.bid + _tick.ask) / 2.0)
                                 else:
-                                    ifib_filter.update_levels(None, calculation_mode="previous_candle")
+                                    ifib_filter.update_levels(None, calculation_mode="rolling_window")
                             else:
-                                ifib_filter.update_levels(None, calculation_mode="previous_candle")
+                                ifib_filter.update_levels(None, calculation_mode="rolling_window")
                         else:
                             ifib_df = data_by_tf.get(ifib_timeframe)
                             if ifib_df is not None and not ifib_df.empty:
@@ -3460,6 +3469,36 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 except Exception:
                     pass
             store = _store_for(profile_name, log_dir=log_dir)
+            # Conviction sizing snapshot for dashboard
+            _conviction_snap_api = None
+            if _policy_type == "kt_cg_trial_9" and _policy is not None:
+                try:
+                    from core.conviction_sizing import compute_conviction as _compute_conv_api
+                    from core.conviction_sizing import conviction_snapshot as _conv_snap_fn_api
+                    from core.signal_engine import drop_incomplete_last_bar as _dilb_api
+                    _conv_enabled_api = bool(getattr(_policy, "conviction_sizing_enabled", False))
+                    _m5_api = data_by_tf.get("M5")
+                    _m1_api = data_by_tf.get("M1")
+                    _is_bull_api = False
+                    if _m5_api is not None and len(_m5_api) > 21:
+                        _m5c_api = _dilb_api(_m5_api.copy(), "M5")
+                        _m5_close_api = _m5c_api["close"].astype(float)
+                        _e9_api = _m5_close_api.ewm(span=9, adjust=False).mean()
+                        _e21_api = _m5_close_api.ewm(span=21, adjust=False).mean()
+                        _is_bull_api = float(_e9_api.iloc[-1]) > float(_e21_api.iloc[-1])
+                    _conv_r_api = _compute_conv_api(
+                        m5_df=_dilb_api(_m5_api.copy(), "M5") if _m5_api is not None else None,
+                        m1_df=_dilb_api(_m1_api.copy(), "M1") if _m1_api is not None else None,
+                        pip_size=pip_size,
+                        is_bull=_is_bull_api,
+                        enabled=_conv_enabled_api,
+                        base_lots=float(getattr(_policy, "conviction_base_lots", 0.05)),
+                        min_lots=float(getattr(_policy, "conviction_min_lots", 0.01)),
+                        max_lots=float(get_effective_risk(profile).max_lots),
+                    )
+                    _conviction_snap_api = _conv_snap_fn_api(_conv_r_api)
+                except Exception as _conv_api_err:
+                    print(f"[api] conviction sizing error: {_conv_api_err}")
             filter_reports = build_dashboard_filters(
                 profile=profile,
                 tick=_tick,
@@ -3475,6 +3514,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 temp_overrides=temp_overrides_api,
                 ntz_filter_snapshot=ntz_filter_snapshot,
                 intraday_fib_corridor_snapshot=intraday_fib_corridor_snapshot,
+                conviction_snapshot=_conviction_snap_api,
                 phase3_state=phase3_state_for_filters,
             )
             filters.extend(asdict(f) for f in filter_reports)
@@ -3515,6 +3555,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         exhaustion_result=exhaustion_result,
                         ntz_snapshot=ntz_filter_snapshot,
                         intraday_fib_snapshot=intraday_fib_corridor_snapshot,
+                        conviction_snapshot=_conviction_snap_api,
                     )
                 context = [asdict(item) for item in context_items]
             except Exception as e:

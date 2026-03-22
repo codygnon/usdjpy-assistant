@@ -63,6 +63,7 @@ from core.dashboard_reporters import (
     collect_trial_6_context, collect_trial_7_context, collect_trial_9_context,
     collect_uncle_parsh_context,
 )
+from core.conviction_sizing import compute_conviction, conviction_snapshot as _conviction_snapshot_fn
 from storage.sqlite_store import SqliteStore
 
 
@@ -1770,6 +1771,35 @@ def _build_and_write_dashboard(
         spread_pips = (tick.ask - tick.bid) / pip_size
         previous_state = read_dashboard_state(log_dir) if not policy and not policy_type else None
 
+        # --- Conviction sizing snapshot for dashboard ---
+        _conviction_snap = None
+        if policy_type == "kt_cg_trial_9" and policy is not None:
+            try:
+                _conv_pol = policy
+                _conv_enabled_dash = bool(getattr(_conv_pol, "conviction_sizing_enabled", False))
+                _m5_df_dash = data_by_tf.get("M5")
+                _m1_df_dash = data_by_tf.get("M1")
+                _is_bull_dash = False
+                if _m5_df_dash is not None and len(_m5_df_dash) > 21:
+                    _m5c_dash = drop_incomplete_last_bar(_m5_df_dash.copy(), "M5")
+                    _m5_close_dash = _m5c_dash["close"].astype(float)
+                    _ema9_dash = _m5_close_dash.ewm(span=9, adjust=False).mean()
+                    _ema21_dash = _m5_close_dash.ewm(span=21, adjust=False).mean()
+                    _is_bull_dash = float(_ema9_dash.iloc[-1]) > float(_ema21_dash.iloc[-1])
+                _conv_result_dash = compute_conviction(
+                    m5_df=drop_incomplete_last_bar(_m5_df_dash.copy(), "M5") if _m5_df_dash is not None else None,
+                    m1_df=drop_incomplete_last_bar(_m1_df_dash.copy(), "M1") if _m1_df_dash is not None else None,
+                    pip_size=pip_size,
+                    is_bull=_is_bull_dash,
+                    enabled=_conv_enabled_dash,
+                    base_lots=float(getattr(_conv_pol, "conviction_base_lots", 0.05)),
+                    min_lots=float(getattr(_conv_pol, "conviction_min_lots", 0.01)),
+                    max_lots=float(get_effective_risk(profile).max_lots),
+                )
+                _conviction_snap = _conviction_snapshot_fn(_conv_result_dash)
+            except Exception:
+                pass
+
         # --- Filter reports (shared with API via core.dashboard_builder) ---
         from core.dashboard_builder import build_dashboard_filters, effective_policy_for_dashboard
         filters = build_dashboard_filters(
@@ -1789,6 +1819,7 @@ def _build_and_write_dashboard(
             daily_level_filter_snapshot=(daily_level_filter.get_state_snapshot() if daily_level_filter is not None else None),
             ntz_filter_snapshot=(ntz_filter.get_levels_snapshot() if ntz_filter is not None else None),
             intraday_fib_corridor_snapshot=(intraday_fib_corridor_filter.get_snapshot() if intraday_fib_corridor_filter is not None else None),
+            conviction_snapshot=_conviction_snap,
             phase3_state=phase3_state,
         )
 
@@ -1825,6 +1856,7 @@ def _build_and_write_dashboard(
                 exhaustion_result=exhaustion_result,
                 ntz_snapshot=(ntz_filter.get_levels_snapshot() if ntz_filter is not None else None),
                 intraday_fib_snapshot=(intraday_fib_corridor_filter.get_snapshot() if intraday_fib_corridor_filter is not None else None),
+                conviction_snapshot=_conviction_snap,
             )
         elif policy_type == "kt_cg_hybrid":
             context_items = collect_trial_2_context(policy, data_by_tf, tick, pip_size)
@@ -2622,37 +2654,40 @@ def main() -> None:
             _ifc_lookback = intraday_fib_corridor_filter.lookback_bars
             try:
                 from core.fib_pivots import (
-                    compute_previous_candle_fib_levels,
                     compute_rolling_intraday_fib_levels,
                     is_fixed_intraday_fib_timeframe,
                     resample_intraday_ohlc,
                 )
 
                 if is_fixed_intraday_fib_timeframe(_ifc_tf):
+                    # Resample M1 → H1/H2/H3, then use rolling window (same
+                    # approach as M15/M5) so the corridor reflects multiple
+                    # completed candles rather than just the single previous one.
                     m1_df = data_by_tf.get("M1")
                     if m1_df is None or m1_df.empty:
                         _log(f"Intraday Fib: no M1 data available to derive {_ifc_tf}", "WARN")
-                        intraday_fib_corridor_filter.update_levels(None, calculation_mode="previous_candle")
+                        intraday_fib_corridor_filter.update_levels(None, calculation_mode="rolling_window")
                         return
                     source_df = resample_intraday_ohlc(m1_df, _ifc_tf)
                     if source_df is None or source_df.empty:
                         _log(f"Intraday Fib: unable to derive {_ifc_tf} source candles", "WARN")
-                        intraday_fib_corridor_filter.update_levels(None, calculation_mode="previous_candle")
+                        intraday_fib_corridor_filter.update_levels(None, calculation_mode="rolling_window")
                         return
-                    result = compute_previous_candle_fib_levels(source_df)
-                    completed = source_df.iloc[:-1] if len(source_df) > 1 else source_df
-                    if result is not None and completed is not None and not completed.empty:
-                        candle = completed.iloc[-1]
+                    result = compute_rolling_intraday_fib_levels(source_df, lookback_bars=_ifc_lookback)
+                    if result is not None:
+                        completed = source_df.iloc[:-1] if len(source_df) > 1 else source_df
+                        window = completed.iloc[-_ifc_lookback:]
+                        r_high = float(window["high"].max())
+                        r_low = float(window["low"].min())
                         intraday_fib_corridor_filter.update_levels(
                             result,
-                            rolling_high=float(candle["high"]),
-                            rolling_low=float(candle["low"]),
-                            source_close=float(candle["close"]),
-                            calculation_mode="previous_candle",
+                            rolling_high=r_high,
+                            rolling_low=r_low,
+                            calculation_mode="rolling_window",
                         )
                     else:
-                        _log(f"Intraday Fib: insufficient {_ifc_tf} source candles for previous-candle pivots", "WARN")
-                        intraday_fib_corridor_filter.update_levels(None, calculation_mode="previous_candle")
+                        _log(f"Intraday Fib: insufficient {_ifc_tf} source candles ({len(source_df)} bars, need {_ifc_lookback})", "WARN")
+                        intraday_fib_corridor_filter.update_levels(None, calculation_mode="rolling_window")
                 else:
                     df = data_by_tf.get(_ifc_tf)
                     if df is None or df.empty:
@@ -2814,6 +2849,21 @@ def main() -> None:
             _log(f"Fetching market data (attempt loop={loop_count})")
             for _fetch_attempt in range(_MAX_FETCH_RETRIES):
                 try:
+                    # When H1/H2/H3 fib corridor is active, fetch deeper M1 history
+                    # so the resample produces enough source candles for the rolling lookback.
+                    _m1_count = oanda_m1_fetch_count
+                    if (
+                        intraday_fib_corridor_filter is not None
+                        and intraday_fib_corridor_filter.enabled
+                        and intraday_fib_corridor_filter.timeframe in ("H1", "H2", "H3")
+                    ):
+                        _tf_minutes = {"H1": 60, "H2": 120, "H3": 180}[intraday_fib_corridor_filter.timeframe]
+                        _lookback = max(1, int(intraday_fib_corridor_filter.lookback_bars))
+                        # Need one extra completed source candle because the corridor
+                        # logic drops the newest in-progress resampled candle.
+                        _needed_m1 = (_lookback + 2) * _tf_minutes
+                        if _m1_count < _needed_m1:
+                            _m1_count = _needed_m1
                     data_by_tf = {
                         # OANDA: request fewer bars (faster) and include forming candle for fresher timestamps.
                         "M1": _get_bars_cached(
@@ -2822,7 +2872,7 @@ def main() -> None:
                             # Phase 3 derives all higher TFs from M1. Use a deeper history so
                             # H4 ADX and daily pivots are built from full resampled bars.
                             # Other OANDA strategies keep the lighter 800-bar fetch.
-                            oanda_m1_fetch_count if getattr(profile, "broker_type", None) == "oanda" else 3000,
+                            _m1_count if getattr(profile, "broker_type", None) == "oanda" else 3000,
                             include_incomplete=(getattr(profile, "broker_type", None) == "oanda"),
                         ),
                     }
@@ -3155,6 +3205,34 @@ def main() -> None:
                             _refresh_trial9_intraday_fib_levels()
                         except Exception as _ifib_err:
                             _log(f"Intraday Fib level update error: {_ifib_err}", "ERROR")
+                        # Conviction sizing: compute lot size based on M5/M1 EMA conviction
+                        _conviction_lots_val = None
+                        try:
+                            _conv_enabled = bool(getattr(pol, "conviction_sizing_enabled", False))
+                            if _conv_enabled:
+                                _m5_df_conv = data_by_tf.get("M5")
+                                _m1_df_conv = data_by_tf.get("M1")
+                                _pip = float(profile.pip_size)
+                                _is_bull_conv = False
+                                if _m5_df_conv is not None and len(_m5_df_conv) > 21:
+                                    _m5c = drop_incomplete_last_bar(_m5_df_conv.copy(), "M5")
+                                    _m5_close = _m5c["close"].astype(float)
+                                    _ema9 = _m5_close.ewm(span=9, adjust=False).mean()
+                                    _ema21 = _m5_close.ewm(span=21, adjust=False).mean()
+                                    _is_bull_conv = float(_ema9.iloc[-1]) > float(_ema21.iloc[-1])
+                                _conv_result = compute_conviction(
+                                    m5_df=drop_incomplete_last_bar(_m5_df_conv.copy(), "M5") if _m5_df_conv is not None else None,
+                                    m1_df=drop_incomplete_last_bar(_m1_df_conv.copy(), "M1") if _m1_df_conv is not None else None,
+                                    pip_size=_pip,
+                                    is_bull=_is_bull_conv,
+                                    enabled=True,
+                                    base_lots=float(getattr(pol, "conviction_base_lots", 0.05)),
+                                    min_lots=float(getattr(pol, "conviction_min_lots", 0.01)),
+                                    max_lots=float(get_effective_risk(profile).max_lots),
+                                )
+                                _conviction_lots_val = _conv_result.conviction_lots
+                        except Exception as _conv_err:
+                            _log(f"Conviction sizing error: {_conv_err}", "ERROR")
                         exec_result = execute_kt_cg_trial_9_policy_demo_only(
                             adapter=adapter,
                             profile=profile,
@@ -3173,6 +3251,7 @@ def main() -> None:
                             open_positions=open_positions_snapshot,
                             ntz_filter=ntz_filter,
                             intraday_fib_corridor_filter=intraday_fib_corridor_filter,
+                            conviction_lots=_conviction_lots_val,
                         )
                     elif pol_type == "kt_cg_trial_8":
                         exec_result = execute_kt_cg_trial_8_policy_demo_only(
@@ -4420,6 +4499,34 @@ def main() -> None:
                             _refresh_trial9_intraday_fib_levels()
                         except Exception as _ifib_err:
                             _log(f"Intraday Fib level update error: {_ifib_err}", "ERROR")
+                        # Conviction sizing: compute lot size based on M5/M1 EMA conviction
+                        _conviction_lots_val = None
+                        try:
+                            _conv_enabled = bool(getattr(pol, "conviction_sizing_enabled", False))
+                            if _conv_enabled:
+                                _m5_df_conv = data_by_tf.get("M5")
+                                _m1_df_conv = data_by_tf.get("M1")
+                                _pip = float(profile.pip_size)
+                                _is_bull_conv = False
+                                if _m5_df_conv is not None and len(_m5_df_conv) > 21:
+                                    _m5c = drop_incomplete_last_bar(_m5_df_conv.copy(), "M5")
+                                    _m5_close = _m5c["close"].astype(float)
+                                    _ema9 = _m5_close.ewm(span=9, adjust=False).mean()
+                                    _ema21 = _m5_close.ewm(span=21, adjust=False).mean()
+                                    _is_bull_conv = float(_ema9.iloc[-1]) > float(_ema21.iloc[-1])
+                                _conv_result = compute_conviction(
+                                    m5_df=drop_incomplete_last_bar(_m5_df_conv.copy(), "M5") if _m5_df_conv is not None else None,
+                                    m1_df=drop_incomplete_last_bar(_m1_df_conv.copy(), "M1") if _m1_df_conv is not None else None,
+                                    pip_size=_pip,
+                                    is_bull=_is_bull_conv,
+                                    enabled=True,
+                                    base_lots=float(getattr(pol, "conviction_base_lots", 0.05)),
+                                    min_lots=float(getattr(pol, "conviction_min_lots", 0.01)),
+                                    max_lots=float(get_effective_risk(profile).max_lots),
+                                )
+                                _conviction_lots_val = _conv_result.conviction_lots
+                        except Exception as _conv_err:
+                            _log(f"Conviction sizing error: {_conv_err}", "ERROR")
                         exec_result = execute_kt_cg_trial_9_policy_demo_only(
                             adapter=adapter,
                             profile=profile,
@@ -4438,6 +4545,7 @@ def main() -> None:
                             open_positions=open_positions_snapshot,
                             ntz_filter=ntz_filter,
                             intraday_fib_corridor_filter=intraday_fib_corridor_filter,
+                            conviction_lots=_conviction_lots_val,
                         )
                     elif pol_type == "kt_cg_trial_8":
                         exec_result = execute_kt_cg_trial_8_policy_demo_only(

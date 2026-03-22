@@ -1319,6 +1319,41 @@ def report_intraday_fib_corridor(snapshot: Optional[dict], tick, pip_size: float
     )
 
 
+def report_conviction_sizing(snapshot: Optional[dict]) -> FilterReport:
+    """Report Trial #9 Conviction Sizing status."""
+    if snapshot is None or not snapshot.get("enabled", False):
+        return FilterReport(
+            filter_id="conviction_sizing", display_name="Conviction Sizing",
+            enabled=False, is_clear=True,
+        )
+
+    m5_bucket = snapshot.get("m5_bucket", "normal")
+    m1_bucket = snapshot.get("m1_bucket", "neutral")
+    multiplier = snapshot.get("multiplier", 1.0)
+    lots = snapshot.get("conviction_lots", 0.0)
+    base = snapshot.get("base_lots", 0.0)
+    m5_spread = snapshot.get("m5_spread_pips", 0.0)
+    m5_slope = snapshot.get("m5_slope_pips_per_bar", 0.0)
+    m1_spread = snapshot.get("m1_spread_pips", 0.0)
+    m1_compressing = snapshot.get("m1_compressing", False)
+
+    current_str = f"M5:{m5_bucket.upper()} M1:{m1_bucket.upper()} → {multiplier:.2f}x = {lots:.2f} lots"
+    threshold_str = f"Base: {base:.2f} lots"
+    explanation = (
+        f"M5 spread {m5_spread:.2f}p, slope {m5_slope:.2f}p/bar. "
+        f"M1 spread {m1_spread:.2f}p{', compressing' if m1_compressing else ''}."
+    )
+
+    return FilterReport(
+        filter_id="conviction_sizing", display_name="Conviction Sizing",
+        enabled=True, is_clear=True,  # conviction sizing never blocks, only adjusts lots
+        current_value=current_str,
+        threshold=threshold_str,
+        explanation=explanation,
+        metadata=dict(snapshot),
+    )
+
+
 def collect_trial_9_context(
     policy,
     data_by_tf: dict,
@@ -1330,8 +1365,9 @@ def collect_trial_9_context(
     exhaustion_result: Optional[dict] = None,
     ntz_snapshot: Optional[dict] = None,
     intraday_fib_snapshot: Optional[dict] = None,
+    conviction_snapshot: Optional[dict] = None,
 ) -> list[ContextItem]:
-    """Collect Trial #9 dashboard context, including NTZ/Fibonacci details."""
+    """Collect Trial #9 dashboard context, including NTZ/Fibonacci/Conviction details."""
     items = collect_trial_7_context(
         policy,
         data_by_tf,
@@ -1429,6 +1465,29 @@ def collect_trial_9_context(
             items.append(ContextItem("IFC Status", "OUTSIDE — entries blocked", "filters"))
         else:
             items.append(ContextItem("IFC Status", "Awaiting data", "filters"))
+
+    # Conviction Sizing context
+    conv = conviction_snapshot or {}
+    conv_enabled = bool(conv.get("enabled", False))
+    items.append(ContextItem("Conviction Sizing", "ON" if conv_enabled else "OFF", "sizing"))
+    if conv_enabled:
+        m5b = conv.get("m5_bucket", "normal")
+        m1b = conv.get("m1_bucket", "neutral")
+        mult = conv.get("multiplier", 1.0)
+        lots = conv.get("conviction_lots", 0.0)
+        base = conv.get("base_lots", 0.0)
+        items.append(ContextItem("M5 Regime", m5b.upper(), "sizing"))
+        items.append(ContextItem("M1 Health", m1b.upper(), "sizing"))
+        items.append(ContextItem("Multiplier", f"{mult:.2f}x", "sizing"))
+        items.append(ContextItem("Lots", f"{lots:.2f} (base {base:.2f})", "sizing"))
+        m5_spread = conv.get("m5_spread_pips", 0.0)
+        m5_slope = conv.get("m5_slope_pips_per_bar", 0.0)
+        m1_spread = conv.get("m1_spread_pips", 0.0)
+        items.append(ContextItem("M5 EMA Spread", f"{m5_spread:.2f}p", "sizing"))
+        items.append(ContextItem("M5 EMA9 Slope", f"{m5_slope:.2f}p/bar", "sizing"))
+        items.append(ContextItem("M1 EMA Spread", f"{m1_spread:.2f}p", "sizing"))
+        if conv.get("m1_compressing"):
+            items.append(ContextItem("M1 Compressing", f"YES ({conv.get('m1_compression_bars_count', 0)} bars)", "sizing"))
 
     return items
 

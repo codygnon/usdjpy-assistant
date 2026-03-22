@@ -4827,6 +4827,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
     ntz_filter=None,
     intraday_fib_corridor_filter=None,
     open_positions: Optional[list] = None,
+    conviction_lots: Optional[float] = None,
 ) -> dict:
     """Evaluate and execute KT/CG Trial #7 or #8 (demo only). T8: no EMA zone/reversal risk; daily level filter optional."""
     candidate_side: Optional[str] = None
@@ -5489,13 +5490,14 @@ def execute_kt_cg_trial_7_policy_demo_only(
             sl_price = entry_price + sl_pips * pip
         if getattr(policy, "trail_after_tp1", False):
             tp_price = None
+        _effective_lots = float(conviction_lots) if conviction_lots is not None else float(get_effective_risk(profile).max_lots)
         candidate = TradeCandidate(
             symbol=profile.symbol,
             side=side,
             entry_price=entry_price,
             stop_price=sl_price,
             target_price=tp_price,
-            size_lots=float(get_effective_risk(profile).max_lots),
+            size_lots=_effective_lots,
         )
     elif policy_type in ("kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9") and exit_strategy == "ema_scale_runner":
         pip = float(profile.pip_size)
@@ -5506,13 +5508,14 @@ def execute_kt_cg_trial_7_policy_demo_only(
             stop = entry_price - sl_distance
         else:
             stop = entry_price + sl_distance
+        _effective_lots = float(conviction_lots) if conviction_lots is not None else float(get_effective_risk(profile).max_lots)
         candidate = TradeCandidate(
             symbol=profile.symbol,
             side=side,
             entry_price=entry_price,
             stop_price=stop,
             target_price=None,
-            size_lots=float(get_effective_risk(profile).max_lots),
+            size_lots=_effective_lots,
         )
     else:
         original_tp_pips = float(getattr(policy, "tp_pips", 4.0))
@@ -5655,6 +5658,7 @@ def execute_kt_cg_trial_8_policy_demo_only(
     open_positions: Optional[list] = None,
     ntz_filter=None,
     intraday_fib_corridor_filter=None,
+    conviction_lots: Optional[float] = None,
 ) -> dict:
     """Trial #8: delegates to Trial #7 flow with daily_level_filter and daily_state (no EMA zone, no reversal risk)."""
     return execute_kt_cg_trial_7_policy_demo_only(
@@ -5675,6 +5679,7 @@ def execute_kt_cg_trial_8_policy_demo_only(
         open_positions=open_positions,
         ntz_filter=ntz_filter,
         intraday_fib_corridor_filter=intraday_fib_corridor_filter,
+        conviction_lots=conviction_lots,
     )
 
 
@@ -5697,6 +5702,7 @@ def execute_kt_cg_trial_9_policy_demo_only(
     open_positions: Optional[list] = None,
     ntz_filter=None,
     intraday_fib_corridor_filter=None,
+    conviction_lots: Optional[float] = None,
 ) -> dict:
     """Trial #9: carbon copy of Trial #8 (delegates to Trial #7 flow with daily_level_filter and daily_state)."""
     return execute_kt_cg_trial_8_policy_demo_only(
@@ -5717,6 +5723,7 @@ def execute_kt_cg_trial_9_policy_demo_only(
         open_positions=open_positions,
         ntz_filter=ntz_filter,
         intraday_fib_corridor_filter=intraday_fib_corridor_filter,
+        conviction_lots=conviction_lots,
     )
 
 

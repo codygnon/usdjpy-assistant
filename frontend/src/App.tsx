@@ -3776,6 +3776,10 @@ interface EditedSettings {
   // Trial #9: Kill Switch
   t9_kill_switch_enabled: boolean;
   t9_kill_switch_zone_entry_action: 'kill' | 'hold';
+  // Trial #9: Conviction Sizing
+  t9_conviction_sizing_enabled: boolean;
+  t9_conviction_base_lots: number;
+  t9_conviction_min_lots: number;
   // Trial #9: Exit Strategy + TP1/BE/Trail
   t9_exit_strategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail';
   t9_hwm_trail_pips: number;
@@ -4057,6 +4061,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t9IntradayFibHysteresisPips = 1.0;
       let t9KillSwitchEnabled = false;
       let t9KillSwitchZoneEntryAction: 'kill' | 'hold' = 'hold';
+      let t9ConvictionSizingEnabled = false;
+      let t9ConvictionBaseLots = 0.05;
+      let t9ConvictionMinLots = 0.01;
       let t9ExitStrategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail' = 'tp1_be_m5_trail';
       let t9HwmTrailPips = 3.0;
       let t9Tp1Pips = 6.0;
@@ -4499,6 +4506,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
               t9KillSwitchEnabled = (pol.kill_switch_enabled as boolean) ?? false;
               const ksAction = (pol.kill_switch_zone_entry_action as string) ?? 'hold';
               t9KillSwitchZoneEntryAction = (ksAction === 'kill' || ksAction === 'hold') ? ksAction : 'hold';
+              t9ConvictionSizingEnabled = (pol.conviction_sizing_enabled as boolean) ?? false;
+              t9ConvictionBaseLots = (pol.conviction_base_lots as number) ?? 0.05;
+              t9ConvictionMinLots = (pol.conviction_min_lots as number) ?? 0.01;
               const rawEs9 = (pol.exit_strategy as string) ?? 'tp1_be_m5_trail';
               t9ExitStrategy = (['none', 'tp1_be_trail', 'ema_scale_runner', 'tp1_be_m5_trail', 'tp1_be_hwm_trail'].includes(rawEs9) ? rawEs9 : 'tp1_be_m5_trail') as typeof t9ExitStrategy;
               t9HwmTrailPips = (pol.hwm_trail_pips as number) ?? 3.0;
@@ -4530,6 +4540,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
               t9IntradayFibHysteresisPips = 1.0;
               t9KillSwitchEnabled = false;
               t9KillSwitchZoneEntryAction = 'hold';
+              t9ConvictionSizingEnabled = false;
+              t9ConvictionBaseLots = 0.05;
+              t9ConvictionMinLots = 0.01;
             }
           }
           if (policyCooldown > 0 || policySlPips !== 20) break;
@@ -4749,6 +4762,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t9_intraday_fib_hysteresis_pips: t9IntradayFibHysteresisPips,
         t9_kill_switch_enabled: t9KillSwitchEnabled,
         t9_kill_switch_zone_entry_action: t9KillSwitchZoneEntryAction,
+        t9_conviction_sizing_enabled: t9ConvictionSizingEnabled,
+        t9_conviction_base_lots: t9ConvictionBaseLots,
+        t9_conviction_min_lots: t9ConvictionMinLots,
         t9_exit_strategy: (() => {
           const raw = (tempSettings?.t9_exit_strategy ?? t9ExitStrategy) as string;
           return (['none', 'tp1_be_trail', 'ema_scale_runner', 'tp1_be_m5_trail', 'tp1_be_hwm_trail'].includes(raw) ? raw : 'tp1_be_m5_trail') as 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail';
@@ -5170,6 +5186,10 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.ntz_use_fib_s1 = editedSettings.t9_ntz_use_fib_s1;
           updates.ntz_use_fib_s2 = editedSettings.t9_ntz_use_fib_s2;
           updates.ntz_use_fib_s3 = editedSettings.t9_ntz_use_fib_s3;
+          // T9: Conviction Sizing
+          updates.conviction_sizing_enabled = editedSettings.t9_conviction_sizing_enabled;
+          updates.conviction_base_lots = Math.max(0.01, editedSettings.t9_conviction_base_lots);
+          updates.conviction_min_lots = Math.max(0.01, editedSettings.t9_conviction_min_lots);
           // T9: Intraday Fibonacci Corridor
           updates.intraday_fib_enabled = editedSettings.t9_intraday_fib_enabled;
           updates.intraday_fib_timeframe = editedSettings.t9_intraday_fib_timeframe;
@@ -6143,6 +6163,62 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     </div>
                   </div>
                   )}
+                  {/* Trial #9: Conviction Sizing */}
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_9') && (
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Trial #9 Conviction Sizing
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Scales lot size based on M5 EMA 9/21 regime (spread + slope) and M1 EMA 5/9 health (alignment + compression).
+                      Strong conviction = larger lots, weak conviction = smaller lots. Base lots is the starting point; multiplier adjusts from 0.3x to 1.5x.
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 12 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={editedSettings.t9_conviction_sizing_enabled}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t9_conviction_sizing_enabled: e.target.checked })}
+                            style={{ width: 18, height: 18, cursor: 'pointer' }} />
+                          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: editedSettings.t9_conviction_sizing_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                            {editedSettings.t9_conviction_sizing_enabled ? 'Conviction ON' : 'Conviction OFF'}
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+                    {editedSettings.t9_conviction_sizing_enabled && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Base Lots</div>
+                        <input type="number" step="0.01" min="0.01" value={editedSettings.t9_conviction_base_lots}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t9_conviction_base_lots: parseFloat(e.target.value) || 0.05 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Starting lot size before conviction scaling</div>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Min Lots</div>
+                        <input type="number" step="0.01" min="0.01" value={editedSettings.t9_conviction_min_lots}
+                          onChange={(e) => setEditedSettings({ ...editedSettings, t9_conviction_min_lots: parseFloat(e.target.value) || 0.01 })}
+                          style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Floor (weak conviction minimum)</div>
+                      </div>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max Lots (ceiling)</div>
+                        <div style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}>
+                          {editedSettings.max_lots}
+                        </div>
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 2 }}>Uses Max Lots from risk settings above</div>
+                      </div>
+                    </div>
+                    )}
+                    {editedSettings.t9_conviction_sizing_enabled && (
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
+                      <strong>Multiplier matrix:</strong> Strong+Confirm=1.5x, Strong+Neutral=1.2x, Normal+Confirm=1.0x, Normal+Neutral=0.8x, Weak+Dampen=0.3x.
+                      M5 thresholds: weak&lt;1.1p spread, strong&gt;3.0p spread + slope&gt;0.80p/bar aligned.
+                      M1 dampen: crossing against or spread decreasing 3+ bars or &lt;0.23p.
+                    </div>
+                    )}
+                  </div>
+                  )}
                   {/* Trial #9: Fibonacci Pivot NTZ Extension */}
                   {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_9') && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
@@ -6240,7 +6316,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         </div>
                         {(editedSettings.t9_intraday_fib_timeframe === 'H1' || editedSettings.t9_intraday_fib_timeframe === 'H2' || editedSettings.t9_intraday_fib_timeframe === 'H3') ? (
                           <div style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}>
-                            Previous completed {editedSettings.t9_intraday_fib_timeframe} candle
+                            Rolling {editedSettings.t9_intraday_fib_timeframe} corridor
                           </div>
                         ) : (
                           <input type="number" step="1" min="1" max="200" value={editedSettings.t9_intraday_fib_lookback_bars}
@@ -6279,7 +6355,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     </div>
                     )}
                     <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
-                      M15/M5 compute fib levels from a rolling high-low range. H1/H2/H3 compute fixed pivots from the previous completed candle and hold them until the next source candle closes.
+                      M15/M5 compute fib levels from a rolling high-low range. H1/H2/H3 compute rolling fib pivots from resampled source candles of that timeframe, with enough M1 history fetched to support the selected lookback.
                       Entries are allowed only inside the selected corridor (for example S1–R1). Hysteresis prevents rapid allow/block flipping near boundaries.
                     </div>
                   </div>
