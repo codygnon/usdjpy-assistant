@@ -4362,6 +4362,24 @@ def _resolve_trial10_m5_bucket(
     return str(bucket), float(spread_pips), float(slope_pips_per_bar)
 
 
+def _trial10_tier_class(tier: int) -> str:
+    """Classify a tier as shallow / standard / deep for Trial #10."""
+    if tier in (17, 21):
+        return "shallow"
+    if tier in (27, 33):
+        return "standard"
+    return "deep"
+
+
+def _trial10_entry_class(trigger_type: str, tier: Optional[int]) -> str:
+    """Return a human-readable entry class label for Trial #10."""
+    if trigger_type == "zone_entry":
+        return "zone"
+    if tier is not None:
+        return f"{_trial10_tier_class(tier)}_tier"
+    return "unknown"
+
+
 def evaluate_kt_cg_trial_10_conditions(
     profile: ProfileV1,
     policy,  # ExecutionPolicyKtCgTrial10
@@ -4533,6 +4551,27 @@ def evaluate_kt_cg_trial_10_conditions(
                         "tier": tier,
                     }
                 elif touched_prev and reclaim_ok and not tier_fired and m5_regime_ok:
+                    # --- Sloppy shallow block (17/21): hard gate, not size dampener ---
+                    _tc = _trial10_tier_class(tier)
+                    _pb_label = str((latest_pullback_quality or {}).get("label", "neutral")).lower()
+                    _pb_applicable = bool((latest_pullback_quality or {}).get("applicable", False))
+                    if _tc == "shallow" and _pb_label == "sloppy" and _pb_applicable:
+                        tier_updates[tier] = True  # still mark fired to prevent re-touch
+                        _sloppy_msg = (
+                            f"Sloppy shallow pullback blocked: tier {tier} "
+                            f"({latest_pullback_quality.get('pullback_bar_count', 0)} bars, "
+                            f"ratio={latest_pullback_quality.get('structure_ratio', 0.0):.2f})"
+                        )
+                        reasons.append(_sloppy_msg)
+                        if trial10_entry_gates["tier"]["status"] == "idle":
+                            trial10_entry_gates["tier"] = {
+                                **trial10_entry_gates["tier"],
+                                "status": "blocked",
+                                "message": _sloppy_msg,
+                                "tier": tier,
+                            }
+                        continue
+                    _ec = _trial10_entry_class("tiered_pullback", tier)
                     reasons.append(
                         f"TIER RECLAIM: BULL prev_low ({prev_low:.3f}) touched EMA{tier} ({ema_prev:.3f}) and close ({last_close:.3f}) reclaimed EMA{tier_reclaim_period} ({reclaim_now:.3f}) -> BUY"
                     )
@@ -4552,6 +4591,9 @@ def evaluate_kt_cg_trial_10_conditions(
                         "tier_updates": tier_updates,
                         "m5_trend": trend,
                         "trial10_pullback_quality": latest_pullback_quality,
+                        "trial10_tier_class": _tc,
+                        "trial10_entry_class": _ec,
+                        "trial10_setup_state": "clean",
                         "trial10_entry_gates": {
                             **trial10_entry_gates,
                             "tier": {
@@ -4629,6 +4671,27 @@ def evaluate_kt_cg_trial_10_conditions(
                         "tier": tier,
                     }
                 elif touched_prev and reclaim_ok and not tier_fired and m5_regime_ok:
+                    # --- Sloppy shallow block (17/21): hard gate, not size dampener ---
+                    _tc = _trial10_tier_class(tier)
+                    _pb_label = str((latest_pullback_quality or {}).get("label", "neutral")).lower()
+                    _pb_applicable = bool((latest_pullback_quality or {}).get("applicable", False))
+                    if _tc == "shallow" and _pb_label == "sloppy" and _pb_applicable:
+                        tier_updates[tier] = True  # still mark fired to prevent re-touch
+                        _sloppy_msg = (
+                            f"Sloppy shallow pullback blocked: tier {tier} "
+                            f"({latest_pullback_quality.get('pullback_bar_count', 0)} bars, "
+                            f"ratio={latest_pullback_quality.get('structure_ratio', 0.0):.2f})"
+                        )
+                        reasons.append(_sloppy_msg)
+                        if trial10_entry_gates["tier"]["status"] == "idle":
+                            trial10_entry_gates["tier"] = {
+                                **trial10_entry_gates["tier"],
+                                "status": "blocked",
+                                "message": _sloppy_msg,
+                                "tier": tier,
+                            }
+                        continue
+                    _ec = _trial10_entry_class("tiered_pullback", tier)
                     reasons.append(
                         f"TIER RECLAIM: BEAR prev_high ({prev_high:.3f}) touched EMA{tier} ({ema_prev:.3f}) and close ({last_close:.3f}) reclaimed EMA{tier_reclaim_period} ({reclaim_now:.3f}) -> SELL"
                     )
@@ -4648,6 +4711,9 @@ def evaluate_kt_cg_trial_10_conditions(
                         "tier_updates": tier_updates,
                         "m5_trend": trend,
                         "trial10_pullback_quality": latest_pullback_quality,
+                        "trial10_tier_class": _tc,
+                        "trial10_entry_class": _ec,
+                        "trial10_setup_state": "clean",
                         "trial10_entry_gates": {
                             **trial10_entry_gates,
                             "tier": {
@@ -4707,6 +4773,9 @@ def evaluate_kt_cg_trial_10_conditions(
                     "tiered_pullback_tier": None,
                     "tier_updates": tier_updates,
                     "m5_trend": trend,
+                    "trial10_tier_class": None,
+                    "trial10_entry_class": "zone",
+                    "trial10_setup_state": "clean",
                     "trial10_entry_gates": {
                         **trial10_entry_gates,
                         "zone": {
@@ -4746,6 +4815,9 @@ def evaluate_kt_cg_trial_10_conditions(
                     "tiered_pullback_tier": None,
                     "tier_updates": tier_updates,
                     "m5_trend": trend,
+                    "trial10_tier_class": None,
+                    "trial10_entry_class": "zone",
+                    "trial10_setup_state": "clean",
                     "trial10_entry_gates": {
                         **trial10_entry_gates,
                         "zone": {
@@ -4782,6 +4854,31 @@ def evaluate_kt_cg_trial_10_conditions(
     else:
         reasons.append(f"No trigger: close={last_close:.3f}, EMA{m1_price_ema_period}={float(m1_price_ema.iloc[-1]):.3f}, no reclaim tier")
 
+    # Derive setup state and preserve the active candidate classification
+    # so blocked shallow-tier setups still show up correctly in the dashboard.
+    _zone_st = str(trial10_entry_gates.get("zone", {}).get("status", "idle"))
+    _tier_st = str(trial10_entry_gates.get("tier", {}).get("status", "idle"))
+    _tier_num = trial10_entry_gates.get("tier", {}).get("tier")
+    _trial10_tier_class = None
+    _trial10_entry_class = None
+    if _tier_num is not None:
+        try:
+            _tier_num_i = int(_tier_num)
+            _trial10_tier_class = _trial10_tier_class(_tier_num_i)
+            _trial10_entry_class = _trial10_entry_class("tiered_pullback", _tier_num_i)
+        except Exception:
+            _trial10_tier_class = None
+            _trial10_entry_class = None
+    elif _zone_st != "idle":
+        _trial10_entry_class = "zone"
+
+    if _zone_st == "blocked" or _tier_st == "blocked":
+        _setup_state = "blocked"
+    elif _zone_st == "idle" and _tier_st == "idle":
+        _setup_state = "borderline"
+    else:
+        _setup_state = "borderline"
+
     return {
         "passed": False,
         "side": None,
@@ -4792,6 +4889,9 @@ def evaluate_kt_cg_trial_10_conditions(
         "m5_trend": trend,
         "trial10_entry_gates": trial10_entry_gates,
         "trial10_pullback_quality": latest_pullback_quality,
+        "trial10_tier_class": _trial10_tier_class,
+        "trial10_entry_class": _trial10_entry_class,
+        "trial10_setup_state": _setup_state,
     }
 
 
@@ -6060,21 +6160,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
             "regime_label": str(trial10_regime_label or ""),
             "regime_reason": str(trial10_regime_reason or ""),
         }
-        if (
-            policy_type == "kt_cg_trial_10"
-            and trigger_type == "tiered_pullback"
-            and conviction_lots is not None
-            and isinstance(trial10_pullback_quality, dict)
-            and bool(trial10_pullback_quality.get("applicable", False))
-            and str(trial10_pullback_quality.get("label", "")).lower() == "sloppy"
-        ):
-            _pq_mult = max(0.0, float(trial10_pullback_quality.get("dampener_multiplier", 1.0)))
-            _pq_min = float(getattr(policy, "conviction_min_lots", 0.01))
-            _effective_lots = round(max(_pq_min, _effective_lots * _pq_mult), 2)
-            _lot_chain["pullback_quality_multiplier"] = _pq_mult
-            eval_reasons.append(
-                f"pullback_quality: sloppy shallow tier -> lot dampener {_pq_mult:.2f}x applied ({_effective_lots:.2f} lots)"
-            )
+        # NOTE: Sloppy shallow-tier pullback is now a hard block at eval time
+        # (evaluate_kt_cg_trial_10_conditions), not a lot dampener here.
         if policy_type == "kt_cg_trial_10" and trial10_regime_multiplier is not None:
             _pq_min = float(getattr(policy, "conviction_min_lots", 0.01))
             _effective_lots = _effective_lots * float(trial10_regime_multiplier)

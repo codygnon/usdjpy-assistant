@@ -774,16 +774,37 @@ def report_trial10_entry_gates(eval_result: Optional[dict]) -> FilterReport:
 
     blocking_msgs = [msg for status, msg in ((zone_status, zone_msg), (tier_status, tier_msg)) if status == "blocked"]
     overall_clear = len(blocking_msgs) == 0
+
+    # Extract Trial 10 classification fields from eval_result
+    tier_class = (eval_result or {}).get("trial10_tier_class")
+    entry_class = (eval_result or {}).get("trial10_entry_class")
+    setup_state = str((eval_result or {}).get("trial10_setup_state") or ("clean" if overall_clear else "blocked")).upper()
+
+    display_parts = []
+    if setup_state:
+        display_parts.append(f"Setup: {setup_state}")
+    if entry_class:
+        display_parts.append(f"Entry: {entry_class.replace('_', ' ')}")
+    if tier_class:
+        display_parts.append(f"Tier: {tier_class}")
+    current_display = " | ".join(display_parts) if display_parts else "Zone + Tier confirmation"
+
     return FilterReport(
         filter_id="trial10_entry_gates",
         display_name="Trial #10 Entry Gates",
         enabled=True,
         is_clear=overall_clear,
-        current_value="Zone + Tier confirmation",
+        current_value=current_display,
         block_reason=" | ".join(blocking_msgs) if blocking_msgs else None,
         explanation=" | ".join(blocking_msgs) if blocking_msgs else "Proof-based entry gates are clear.",
         sub_filters=[zone_filter, tier_filter],
-        metadata={"zone_status": zone_status, "tier_status": tier_status},
+        metadata={
+            "zone_status": zone_status,
+            "tier_status": tier_status,
+            "tier_class": tier_class,
+            "entry_class": entry_class,
+            "setup_state": setup_state,
+        },
     )
 
 
@@ -808,21 +829,30 @@ def report_trial10_pullback_quality(eval_result: Optional[dict]) -> FilterReport
     applicable = bool(quality.get("applicable", False))
 
     current_value = f"{label.upper()} | {bars} bars | ratio {ratio:.2f}"
-    threshold = f"Tier {tier}" if tier is not None else ""
+    tier_class = "shallow" if tier in (17, 21) else ("standard" if tier in (27, 33) else "deep") if tier else ""
+    threshold = f"Tier {tier} ({tier_class})" if tier is not None else ""
     explanation = str(quality.get("reason") or "").strip() or "Pullback quality measured from the touch bar."
-    if applicable and label == "sloppy":
-        explanation += f" Size dampener {dampener:.2f}x applies on shallow tiers."
+    is_blocked = False
+    block_reason_text = None
+    if applicable and label == "sloppy" and tier_class == "shallow":
+        explanation += f" BLOCKED: sloppy pullback on shallow tier {tier} ({bars} bars, ratio={ratio:.2f})."
+        is_blocked = True
+        block_reason_text = f"Sloppy shallow pullback blocked (tier {tier}, {bars}b, ratio={ratio:.2f})"
+    elif applicable and label == "sloppy":
+        explanation += f" Sloppy pullback on {tier_class} tier {tier} (telemetry only, no block)."
+    elif not applicable and label == "sloppy":
+        explanation += " Sloppy but not on an applicable tier (telemetry only)."
 
     return FilterReport(
         filter_id="trial10_pullback_quality",
         display_name="Pullback Quality",
         enabled=bool(quality.get("enabled", True)),
-        is_clear=label != "sloppy",
+        is_clear=not is_blocked,
         current_value=current_value,
         threshold=threshold,
-        block_reason=f"Sloppy pullback -> {dampener:.2f}x lots" if applicable and label == "sloppy" else None,
+        block_reason=block_reason_text,
         explanation=explanation,
-        metadata=quality,
+        metadata={**quality, "tier_class": tier_class},
     )
 
 
@@ -1703,8 +1733,6 @@ def collect_trial_9_context(
         items.append(ContextItem("PB Quality", str(quality.get("label", "neutral")).upper(), "filters"))
         items.append(ContextItem("PB Bars", str(int(quality.get("pullback_bar_count") or 0)), "filters"))
         items.append(ContextItem("PB Ratio", f"{float(quality.get('structure_ratio') or 0.0):.2f}", "filters"))
-        if bool(quality.get("applicable", False)) and str(quality.get("label", "")).lower() == "sloppy":
-            items.append(ContextItem("PB Dampener", f"{float(quality.get('dampener_multiplier') or 1.0):.2f}x", "filters"))
 
     return items
 
