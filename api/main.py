@@ -3500,8 +3500,9 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 except Exception as _ifib_ex:
                     print(f"[api] intraday fib corridor snapshot error for '{profile_name}': {_ifib_ex}")
                     intraday_fib_corridor_snapshot = None
-            # Compute Trial #6 M3 trend for filter display
+            # Compute policy-specific eval snapshot for filter display
             t6_eval_result = None
+            t10_eval_result = None
             if _policy_type == "kt_cg_trial_6" and _policy is not None:
                 try:
                     m3_df = data_by_tf.get("M3")
@@ -3514,6 +3515,24 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
             store = _store_for(profile_name, log_dir=log_dir)
             from core.dashboard_builder import effective_policy_for_dashboard
             _policy_for_snapshot = effective_policy_for_dashboard(_policy, temp_overrides_api) if _policy is not None else None
+            if _policy_type == "kt_cg_trial_10" and _policy_for_snapshot is not None:
+                try:
+                    from core.execution_engine import evaluate_kt_cg_trial_10_conditions
+                    _t10_tier_state = {}
+                    _tier_fired_raw = getattr(_state, "tier_fired", None)
+                    if isinstance(_tier_fired_raw, dict):
+                        _t10_tier_state = {int(k): bool(v) for k, v in _tier_fired_raw.items()}
+                    t10_eval_result = evaluate_kt_cg_trial_10_conditions(
+                        profile,
+                        _policy_for_snapshot,
+                        data_by_tf,
+                        float(_tick.bid),
+                        float(_tick.ask),
+                        _t10_tier_state,
+                        temp_overrides=temp_overrides_api,
+                    )
+                except Exception as _t10_eval_err:
+                    print(f"[api] trial10 eval snapshot error: {_t10_eval_err}")
             # Conviction sizing snapshot for dashboard
             _conviction_snap_api = None
             if _policy_type in ("kt_cg_trial_9", "kt_cg_trial_10") and _policy_for_snapshot is not None:
@@ -3623,13 +3642,54 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                     _regime_snap_api["chop_pause_reason"] = _chop_reason_live or _chop_reason or ""
                 except Exception as _rg_err:
                     print(f"[api] regime gate snapshot error: {_rg_err}")
+
+            # --- Runner Score (Trial #10 only, for dashboard) ---
+            _runner_snap_api: Optional[dict] = None
+            if _policy_type == "kt_cg_trial_10" and _policy_for_snapshot is not None:
+                try:
+                    from core.runner_score import compute_runner_score, compute_freshness, runner_score_snapshot
+                    from core.execution_engine import _resolve_trial10_stop_pips
+                    _rs_atr_api = _resolve_trial10_stop_pips(profile, _policy_for_snapshot, data_by_tf)
+                    _rs_regime_api = str(getattr(_rg_result_api, "label", "") if "_rg_result_api" in dir() and _rg_result_api is not None else "")
+                    _rs_m5_api = str((t10_eval_result or {}).get("trial10_m5_bucket") or (_rg_m5_bucket_api if "_rg_m5_bucket_api" in dir() else "normal"))
+                    _rs_pq_api = dict((t10_eval_result or {}).get("trial10_pullback_quality") or {})
+                    _rs_sr_api = _rs_pq_api.get("structure_ratio")
+                    _rs_bars_cross_api = None
+                    _rs_prior_ent_api = None
+                    _m1_rs_api = data_by_tf.get("M1")
+                    _m5_rs_api = data_by_tf.get("M5")
+                    _rs_side_api = str((t10_eval_result or {}).get("side") or _rg_side_api if "_rg_side_api" in locals() else "buy").lower()
+                    if _m1_rs_api is not None and _m5_rs_api is not None and not _m1_rs_api.empty and not _m5_rs_api.empty:
+                        from core.signal_engine import drop_incomplete_last_bar as _dilb_rs_api
+                        _m1c_rs_api = _dilb_rs_api(_m1_rs_api.copy(), "M1")["close"].astype(float)
+                        _m5c_rs_api = _dilb_rs_api(_m5_rs_api.copy(), "M5")["close"].astype(float)
+                        _rs_bars_cross_api, _rs_prior_ent_api = compute_freshness(
+                            m1_close=_m1c_rs_api,
+                            m5_close=_m5c_rs_api,
+                            side=_rs_side_api,
+                            trades_df=trades_df,
+                            policy_type="kt_cg_trial_10",
+                        )
+                    _rs_result_api = compute_runner_score(
+                        atr_stop_pips=_rs_atr_api,
+                        regime_label=_rs_regime_api,
+                        m5_bucket=_rs_m5_api,
+                        structure_ratio=float(_rs_sr_api) if _rs_sr_api is not None else None,
+                        bars_since_cross=_rs_bars_cross_api,
+                        prior_entries=_rs_prior_ent_api,
+                        freshness_mode="strict",
+                    )
+                    _runner_snap_api = runner_score_snapshot(_rs_result_api)
+                except Exception as _rs_err_api:
+                    print(f"[api] runner score snapshot error: {_rs_err_api}")
+
             filter_reports = build_dashboard_filters(
                 profile=profile,
                 tick=_tick,
                 data_by_tf=data_by_tf,
                 policy=_policy,
                 policy_type=_policy_type,
-                eval_result=t6_eval_result,
+                eval_result=t10_eval_result if _policy_type == "kt_cg_trial_10" else t6_eval_result,
                 divergence_state=divergence_state,
                 daily_reset_state=daily_reset_state,
                 exhaustion_result=exhaustion_result,
@@ -3640,6 +3700,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 intraday_fib_corridor_snapshot=intraday_fib_corridor_snapshot,
                 conviction_snapshot=_conviction_snap_api,
                 regime_snapshot=_regime_snap_api,
+                runner_snapshot=_runner_snap_api,
                 phase3_state=phase3_state_for_filters,
             )
             filters.extend(asdict(f) for f in filter_reports)

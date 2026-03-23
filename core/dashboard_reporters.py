@@ -1591,6 +1591,58 @@ def report_conviction_sizing(snapshot: Optional[dict]) -> FilterReport:
     )
 
 
+def report_runner_score(snapshot: Optional[dict]) -> FilterReport:
+    """Report Trial #10 Runner Score v2 status (logging/dashboard only)."""
+    if snapshot is None:
+        return FilterReport(
+            filter_id="runner_score", display_name="Runner Score",
+            enabled=False, is_clear=True,
+        )
+
+    bucket = str(snapshot.get("runner_bucket", "floor")).upper()
+    points = int(snapshot.get("runner_points", 0))
+    atr_eligible = bool(snapshot.get("atr_eligible", False))
+    atr_pips = float(snapshot.get("atr_stop_pips", 0.0))
+    regime_pt = bool(snapshot.get("regime_point", False))
+    m5_pt = bool(snapshot.get("m5_point", False))
+    struct_pt = bool(snapshot.get("structure_point", False))
+    fresh = bool(snapshot.get("fresh", False))
+    bars_cross = snapshot.get("bars_since_cross")
+    prior_ent = snapshot.get("prior_entries")
+    freshness_mode = str(snapshot.get("freshness_mode", "strict")).lower()
+
+    features = []
+    if regime_pt:
+        features.append("regime")
+    if m5_pt:
+        features.append("m5")
+    if struct_pt:
+        features.append("structure")
+    feature_str = ", ".join(features) if features else "none"
+
+    current_str = f"{bucket} ({points}pt)"
+    if fresh:
+        current_str += f" FRESH"
+    threshold_str = f"PRESS + fresh trend ({freshness_mode}) → ELITE"
+    explanation = (
+        f"ATR stop: {atr_pips:.1f}p ({'eligible' if atr_eligible else 'FLOOR — too wide'}). "
+        f"Features: {feature_str}. Freshness mode: {freshness_mode}."
+    )
+    if bars_cross is not None or prior_ent is not None:
+        bc_str = str(bars_cross) if bars_cross is not None else "?"
+        pe_str = str(prior_ent) if prior_ent is not None else "?"
+        explanation += f" Freshness: {bc_str} bars since cross, {pe_str} prior entries."
+
+    return FilterReport(
+        filter_id="runner_score", display_name="Runner Score",
+        enabled=True, is_clear=True,  # runner score never blocks, informational only
+        current_value=current_str,
+        threshold=threshold_str,
+        explanation=explanation,
+        metadata=dict(snapshot),
+    )
+
+
 def collect_trial_9_context(
     policy,
     data_by_tf: dict,

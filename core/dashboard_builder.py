@@ -43,6 +43,7 @@ from core.dashboard_reporters import (
     report_intraday_fib_corridor,
     report_kill_switch_status,
     report_conviction_sizing,
+    report_runner_score,
     report_h1_levels,
     report_m5_trend_alignment,
     report_m5_power_close_status,
@@ -273,6 +274,7 @@ def build_dashboard_filters(
     intraday_fib_corridor_snapshot: Optional[dict] = None,
     conviction_snapshot: Optional[dict] = None,
     regime_snapshot: Optional[dict] = None,
+    runner_snapshot: Optional[dict] = None,
     phase3_state: Optional[dict] = None,
 ) -> list[FilterReport]:
     """Build the filter report list the same way the run loop does.
@@ -535,6 +537,7 @@ def build_dashboard_filters(
             filters.append(report_trial10_entry_gates(eval_result))
             filters.append(report_trial10_pullback_quality(eval_result))
             filters.append(report_trial10_stop_loss(profile, policy, data_by_tf, pip_size))
+            filters.append(report_runner_score(runner_snapshot))
         if getattr(policy, "trend_exhaustion_enabled", False):
             filters.append(report_trend_exhaustion(exhaustion_result))
         filters.append(report_trial7_adaptive_tp(policy, exhaustion_result))

@@ -1858,6 +1858,7 @@ def _build_and_write_dashboard(
     positions_snapshot: list[PositionInfo] | None = None,
     daily_summary_snapshot: DailySummary | None = None,
     regime_snapshot: dict | None = None,
+    runner_snapshot: dict | None = None,
 ) -> None:
     """Assemble and write dashboard state JSON for the current poll cycle."""
     from datetime import datetime, timezone
@@ -1936,6 +1937,7 @@ def _build_and_write_dashboard(
             intraday_fib_corridor_snapshot=(intraday_fib_corridor_filter.get_snapshot() if intraday_fib_corridor_filter is not None else None),
             conviction_snapshot=_conviction_snap,
             regime_snapshot=regime_snapshot,
+            runner_snapshot=runner_snapshot,
             phase3_state=phase3_state,
         )
 
@@ -2848,6 +2850,11 @@ def main() -> None:
                 _log(f"Intraday Fib compute error: {e}", "ERROR")
                 intraday_fib_corridor_filter.update_levels(None)
 
+            # Keep hysteresis state current even when no trade candidate is evaluated.
+            if intraday_fib_corridor_filter.enabled and intraday_fib_corridor_filter.fib_levels:
+                _ifc_mid = (tick.bid + tick.ask) / 2.0
+                intraday_fib_corridor_filter.check_corridor(_ifc_mid)
+
         trades_df_cache: pd.DataFrame | None = None
 
         def _invalidate_trades_df_cache() -> None:
@@ -3601,6 +3608,50 @@ def main() -> None:
                         if isinstance(_lot_chain, dict):
                             _regime_snapshot.update(_lot_chain)
 
+                    # --- Runner Score (Trial #10 only, logging/dashboard) ---
+                    _runner_snapshot: Optional[dict] = None
+                    if pol_type == "kt_cg_trial_10":
+                        try:
+                            from core.runner_score import compute_runner_score, compute_freshness, runner_score_snapshot
+                            from core.signal_engine import drop_incomplete_last_bar as _dilb_rs
+                            _rs_lot_chain = exec_result.get("trial10_lot_chain") or {}
+                            _rs_atr = float(_rs_lot_chain.get("atr_stop_pips", 0.0))
+                            _rs_regime = str((_regime_result.label if _regime_result is not None else "") or "")
+                            _rs_gates = exec_result.get("trial10_entry_gates") or {}
+                            _rs_m5 = str(exec_result.get("trial10_m5_bucket") or (_rs_gates.get("tier") or {}).get("m5_bucket", ""))
+                            _rs_pq = exec_result.get("trial10_pullback_quality") or {}
+                            _rs_sr = _rs_pq.get("structure_ratio")
+                            _rs_side = str(exec_result.get("side") or exec_result.get("candidate_side") or "buy").lower()
+                            # Freshness computation
+                            _rs_bars_cross: Optional[int] = None
+                            _rs_prior_ent: Optional[int] = None
+                            _m1_rs = data_by_tf.get("M1")
+                            _m5_rs = data_by_tf.get("M5")
+                            if _m1_rs is not None and _m5_rs is not None and not _m1_rs.empty and not _m5_rs.empty:
+                                _m1c_rs = _dilb_rs(_m1_rs.copy(), "M1")["close"].astype(float)
+                                _m5c_rs = _dilb_rs(_m5_rs.copy(), "M5")["close"].astype(float)
+                                _rs_bars_cross, _rs_prior_ent = compute_freshness(
+                                    m1_close=_m1c_rs,
+                                    m5_close=_m5c_rs,
+                                    side=_rs_side,
+                                    trades_df=trades_df,
+                                    policy_type="kt_cg_trial_10",
+                                )
+                            _rs_result = compute_runner_score(
+                                atr_stop_pips=_rs_atr,
+                                regime_label=_rs_regime,
+                                m5_bucket=_rs_m5,
+                                structure_ratio=float(_rs_sr) if _rs_sr is not None else None,
+                                bars_since_cross=_rs_bars_cross,
+                                prior_entries=_rs_prior_ent,
+                                freshness_mode="strict",
+                            )
+                            _runner_snapshot = runner_score_snapshot(_rs_result)
+                            _fresh_tag = f" FRESH({_rs_bars_cross}b/{_rs_prior_ent}e)" if _rs_result.fresh else ""
+                            _log(f"Runner score: {_rs_result.bucket.upper()} ({_rs_result.points}pt) atr={_rs_atr:.1f}p{_fresh_tag}")
+                        except Exception as _rs_err:
+                            _log(f"Runner score error: {_rs_err}", "ERROR")
+
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,
                         data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
@@ -3615,6 +3666,7 @@ def main() -> None:
                         positions_snapshot=dashboard_positions_snapshot,
                         daily_summary_snapshot=dashboard_daily_snapshot,
                         regime_snapshot=_regime_snapshot if pol_type == "kt_cg_trial_10" else None,
+                        runner_snapshot=_runner_snapshot if pol_type == "kt_cg_trial_10" else None,
                     )
                 _phase_done("trial7_9_intrabar", _intrabar_t78_started)
 
@@ -4990,6 +5042,50 @@ def main() -> None:
                         if isinstance(_lot_chain, dict):
                             _regime_snapshot.update(_lot_chain)
 
+                    # --- Runner Score (Trial #10 only, logging/dashboard) ---
+                    _runner_snapshot: Optional[dict] = None
+                    if pol_type == "kt_cg_trial_10":
+                        try:
+                            from core.runner_score import compute_runner_score, compute_freshness, runner_score_snapshot
+                            from core.signal_engine import drop_incomplete_last_bar as _dilb_rs
+                            _rs_lot_chain = exec_result.get("trial10_lot_chain") or {}
+                            _rs_atr = float(_rs_lot_chain.get("atr_stop_pips", 0.0))
+                            _rs_regime = str((_regime_result.label if _regime_result is not None else "") or "")
+                            _rs_gates = exec_result.get("trial10_entry_gates") or {}
+                            _rs_m5 = str(exec_result.get("trial10_m5_bucket") or (_rs_gates.get("tier") or {}).get("m5_bucket", ""))
+                            _rs_pq = exec_result.get("trial10_pullback_quality") or {}
+                            _rs_sr = _rs_pq.get("structure_ratio")
+                            _rs_side = str(exec_result.get("side") or exec_result.get("candidate_side") or "buy").lower()
+                            # Freshness computation
+                            _rs_bars_cross: Optional[int] = None
+                            _rs_prior_ent: Optional[int] = None
+                            _m1_rs = data_by_tf.get("M1")
+                            _m5_rs = data_by_tf.get("M5")
+                            if _m1_rs is not None and _m5_rs is not None and not _m1_rs.empty and not _m5_rs.empty:
+                                _m1c_rs = _dilb_rs(_m1_rs.copy(), "M1")["close"].astype(float)
+                                _m5c_rs = _dilb_rs(_m5_rs.copy(), "M5")["close"].astype(float)
+                                _rs_bars_cross, _rs_prior_ent = compute_freshness(
+                                    m1_close=_m1c_rs,
+                                    m5_close=_m5c_rs,
+                                    side=_rs_side,
+                                    trades_df=trades_df,
+                                    policy_type="kt_cg_trial_10",
+                                )
+                            _rs_result = compute_runner_score(
+                                atr_stop_pips=_rs_atr,
+                                regime_label=_rs_regime,
+                                m5_bucket=_rs_m5,
+                                structure_ratio=float(_rs_sr) if _rs_sr is not None else None,
+                                bars_since_cross=_rs_bars_cross,
+                                prior_entries=_rs_prior_ent,
+                                freshness_mode="strict",
+                            )
+                            _runner_snapshot = runner_score_snapshot(_rs_result)
+                            _fresh_tag = f" FRESH({_rs_bars_cross}b/{_rs_prior_ent}e)" if _rs_result.fresh else ""
+                            _log(f"Runner score: {_rs_result.bucket.upper()} ({_rs_result.points}pt) atr={_rs_atr:.1f}p{_fresh_tag}")
+                        except Exception as _rs_err:
+                            _log(f"Runner score error: {_rs_err}", "ERROR")
+
                     _build_and_write_dashboard(
                         profile=profile, store=store, log_dir=log_dir, tick=tick,
                         data_by_tf=data_by_tf, mode=mode, adapter=adapter, policy=pol,
@@ -5004,6 +5100,7 @@ def main() -> None:
                         positions_snapshot=dashboard_positions_snapshot,
                         daily_summary_snapshot=dashboard_daily_snapshot,
                         regime_snapshot=_regime_snapshot if pol_type == "kt_cg_trial_10" else None,
+                        runner_snapshot=_runner_snapshot if pol_type == "kt_cg_trial_10" else None,
                     )
                 # After Trial 7/8/9 block: mark this bar as seen so we don't re-run every poll for same bar.
                 # Always update (even when clock fallback was used) so we don't re-evaluate the same bar every poll.
