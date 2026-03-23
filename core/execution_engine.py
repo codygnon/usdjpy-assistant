@@ -4105,9 +4105,6 @@ def evaluate_kt_cg_trial_7_conditions(
     reasons.append(
         f"M5 trend: {trend.upper()} (EMA{m5_ema_fast}={m5_ema_fast_val:.3f} vs EMA{m5_ema_slow}={m5_ema_slow_val:.3f}, gap={m5_ema_gap_pips:.2f}p >= {min_ema_gap_pips:.2f}p)"
     )
-    trial10_entry_gates["tier"]["m5_bucket"] = m5_bucket
-    trial10_entry_gates["tier"]["m5_spread_pips"] = round(m5_spread_pips, 3)
-    trial10_entry_gates["tier"]["m5_slope_pips_per_bar"] = round(m5_slope_pips_per_bar, 3)
 
     m1_df = data_by_tf.get("M1")
     if m1_df is None or m1_df.empty:
@@ -6258,6 +6255,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
             "pullback_quality_multiplier": 1.0,
             "regime_multiplier": float(trial10_regime_multiplier) if trial10_regime_multiplier is not None else 1.0,
             "tier17_nonboost_multiplier": 1.0,
+            "spread_gated": False,
+            "tier17_floor_applied": False,
             "final_lots_pre_clamp": round(float(_effective_lots), 4),
             "final_lots": round(float(_effective_lots), 4),
             "regime_label": str(trial10_regime_label or ""),
@@ -6267,17 +6266,26 @@ def execute_kt_cg_trial_7_policy_demo_only(
         # NOTE: Sloppy shallow-tier pullback is now a hard block at eval time
         # (evaluate_kt_cg_trial_10_conditions), not a lot dampener here.
         if policy_type == "kt_cg_trial_10" and trial10_regime_multiplier is not None:
-            _pq_min = float(getattr(policy, "conviction_min_lots", 0.01))
+            _runner_floor = float(getattr(policy, "runner_bucket_lots_floor", 0.03))
+            _pq_min = _runner_floor if bool(getattr(policy, "runner_score_sizing_enabled", False)) else float(getattr(policy, "conviction_min_lots", 0.01))
             _effective_lots = _effective_lots * float(trial10_regime_multiplier)
             if trigger_type == "tiered_pullback" and int(tiered_pullback_tier or 0) == 17:
                 _regime_label = str(trial10_regime_label or "").upper()
                 if _regime_label != "BUY_BOOST_HOUR":
-                    _tier17_mult = max(0.0, float(getattr(policy, "tier17_nonboost_multiplier", 0.35)))
-                    _effective_lots = _effective_lots * _tier17_mult
-                    _lot_chain["tier17_nonboost_multiplier"] = _tier17_mult
-                    eval_reasons.append(
-                        f"tier17_nonboost: outside buy boost -> lot multiplier {_tier17_mult:.2f}x applied"
-                    )
+                    if bool(getattr(policy, "runner_tier17_nonboost_force_floor", False)):
+                        _effective_lots = _runner_floor
+                        _lot_chain["tier17_nonboost_multiplier"] = 0.0
+                        _lot_chain["tier17_floor_applied"] = True
+                        eval_reasons.append(
+                            f"tier17_nonboost: outside buy boost -> forced to floor {_runner_floor:.2f} lots"
+                        )
+                    else:
+                        _tier17_mult = max(0.0, float(getattr(policy, "tier17_nonboost_multiplier", 0.35)))
+                        _effective_lots = _effective_lots * _tier17_mult
+                        _lot_chain["tier17_nonboost_multiplier"] = _tier17_mult
+                        eval_reasons.append(
+                            f"tier17_nonboost: outside buy boost -> lot multiplier {_tier17_mult:.2f}x applied"
+                        )
             _lot_chain["final_lots_pre_clamp"] = round(float(_effective_lots), 4)
             _effective_lots = round(
                 min(float(get_effective_risk(profile).max_lots), max(_pq_min, float(_effective_lots))),

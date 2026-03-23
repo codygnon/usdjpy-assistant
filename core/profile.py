@@ -1106,6 +1106,16 @@ class ExecutionPolicyKtCgTrial10(ExecutionPolicyKtCgTrial9):
     conviction_base_lots: float = 0.07
     conviction_min_lots: float = 0.03
 
+    runner_score_sizing_enabled: bool = False
+    runner_bucket_lots_floor: float = 0.03
+    runner_bucket_lots_base: float = 0.05
+    runner_bucket_lots_elevated: float = 0.07
+    runner_bucket_lots_press: float = 0.15
+    runner_bucket_lots_elite: float = 0.30
+    runner_spread_gate_pips: float = 3.0
+    runner_tier17_nonboost_force_floor: bool = True
+    tier_reset_on_tp1: bool = False
+
     kill_switch_enabled: bool = False
     kill_switch_zone_entry_action: Literal["kill", "hold"] = "hold"
 

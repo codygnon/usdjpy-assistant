@@ -1620,10 +1620,32 @@ def report_runner_score(snapshot: Optional[dict]) -> FilterReport:
         features.append("structure")
     feature_str = ", ".join(features) if features else "none"
 
+    # Lot sizing info from runner_score_to_lots audit trail
+    final_lots = snapshot.get("final_lots")
+    spread_gated = bool(snapshot.get("spread_gated", False))
+    tier17_floor = bool(snapshot.get("tier17_floor_applied", False))
+
     current_str = f"{bucket} ({points}pt)"
     if fresh:
-        current_str += f" FRESH"
-    threshold_str = f"PRESS + fresh trend ({freshness_mode}) → ELITE"
+        current_str += " FRESH"
+    if final_lots is not None:
+        current_str += f" -> {final_lots:.2f} lots"
+    if spread_gated:
+        current_str += " [SPREAD GATE]"
+    if tier17_floor:
+        current_str += " [T17 FLOOR]"
+    _floor = snapshot.get("bucket_lots_floor")
+    _base = snapshot.get("bucket_lots_base")
+    _elev = snapshot.get("bucket_lots_elevated")
+    _press = snapshot.get("bucket_lots_press")
+    _elite = snapshot.get("bucket_lots_elite")
+    if all(v is not None for v in (_floor, _base, _elev, _press, _elite)):
+        threshold_str = (
+            f"floor {_floor:.2f} | base {_base:.2f} | "
+            f"elevated {_elev:.2f} | press {_press:.2f} | elite {_elite:.2f}"
+        )
+    else:
+        threshold_str = "floor 0.03 | base 0.05 | elevated 0.07 | press 0.15 | elite 0.30"
     explanation = (
         f"ATR stop: {atr_pips:.1f}p ({'eligible' if atr_eligible else 'FLOOR — too wide'}). "
         f"Features: {feature_str}. Freshness mode: {freshness_mode}."
@@ -1635,7 +1657,7 @@ def report_runner_score(snapshot: Optional[dict]) -> FilterReport:
 
     return FilterReport(
         filter_id="runner_score", display_name="Runner Score",
-        enabled=True, is_clear=True,  # runner score never blocks, informational only
+        enabled=True, is_clear=True,
         current_value=current_str,
         threshold=threshold_str,
         explanation=explanation,

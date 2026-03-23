@@ -266,3 +266,57 @@ def runner_score_snapshot(result: RunnerScoreResult) -> dict:
         "m5_bucket": result.m5_bucket,
         "structure_ratio": result.structure_ratio,
     }
+
+
+def runner_score_to_lots(
+    *,
+    result: RunnerScoreResult,
+    bucket_lots: dict[str, float],
+    regime_multiplier: float = 1.0,
+    spread_pips: float = 0.0,
+    spread_gate_pips: float = 3.0,
+    tier: Optional[int] = None,
+    is_boost_hour: bool = False,
+    force_floor_tier17_nonboost: bool = True,
+    min_lots: float = 0.03,
+    max_lots: float = 0.50,
+) -> tuple[float, dict]:
+    """Map a RunnerScoreResult to lot size with spread gate and tier17 override.
+
+    Returns (final_lots, audit_dict) with full trail for logging/dashboard.
+    """
+    floor_lots = bucket_lots.get("floor", min_lots)
+    base_lots = bucket_lots.get(result.bucket, floor_lots)
+
+    spread_gated = False
+    tier17_floor_applied = False
+
+    # Spread gate: wide spread → force floor
+    if spread_pips > spread_gate_pips:
+        base_lots = floor_lots
+        spread_gated = True
+
+    # Tier 17 non-boost: force floor
+    if tier == 17 and not is_boost_hour and force_floor_tier17_nonboost:
+        base_lots = floor_lots
+        tier17_floor_applied = True
+
+    pre_clamp = round(base_lots * regime_multiplier, 4)
+    final = round(min(max_lots, max(min_lots, pre_clamp)), 2)
+
+    audit = {
+        "runner_bucket": result.bucket,
+        "bucket_base_lots": round(bucket_lots.get(result.bucket, floor_lots), 4),
+        "bucket_lots_floor": round(float(bucket_lots.get("floor", floor_lots)), 4),
+        "bucket_lots_base": round(float(bucket_lots.get("base", floor_lots)), 4),
+        "bucket_lots_elevated": round(float(bucket_lots.get("elevated", floor_lots)), 4),
+        "bucket_lots_press": round(float(bucket_lots.get("press", floor_lots)), 4),
+        "bucket_lots_elite": round(float(bucket_lots.get("elite", floor_lots)), 4),
+        "spread_gate_pips": round(float(spread_gate_pips), 4),
+        "spread_gated": spread_gated,
+        "tier17_floor_applied": tier17_floor_applied,
+        "regime_multiplier": round(regime_multiplier, 4),
+        "pre_clamp_lots": pre_clamp,
+        "final_lots": final,
+    }
+    return final, audit
