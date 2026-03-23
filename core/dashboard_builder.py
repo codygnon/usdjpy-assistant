@@ -44,6 +44,7 @@ from core.dashboard_reporters import (
     report_kill_switch_status,
     report_conviction_sizing,
     report_runner_score,
+    report_open_exposure,
     report_h1_levels,
     report_m5_trend_alignment,
     report_m5_power_close_status,
@@ -404,6 +405,28 @@ def build_dashboard_filters(
                     filters.append(report_max_trades(total_open, int(max_open_trades_total), side, side_counts))
                 if max_per_side is not None:
                     filters.extend(report_max_trades_by_side(side_counts, max_per_side))
+                buy_lots = 0.0
+                sell_lots = 0.0
+                for pos in live_positions_snapshot or []:
+                    try:
+                        if isinstance(pos, dict):
+                            units = float(pos.get("currentUnits") or pos.get("initialUnits") or 0)
+                            lots = abs(units) / 100000.0
+                            if units > 0:
+                                buy_lots += lots
+                            elif units < 0:
+                                sell_lots += lots
+                        else:
+                            volume = float(getattr(pos, "volume", 0.0) or 0.0)
+                            mt5_type = getattr(pos, "type", None)
+                            if mt5_type == 0:
+                                buy_lots += volume
+                            elif mt5_type == 1:
+                                sell_lots += volume
+                    except Exception:
+                        continue
+                if buy_lots > 0 or sell_lots > 0:
+                    filters.append(report_open_exposure(buy_lots + sell_lots, buy_lots, sell_lots))
                 open_trades = store.list_open_trades(profile.profile_name)
                 # Prefer live broker position ids so cap reflects actually open positions (not stale DB rows)
                 live_ids = _live_position_ids(profile, adapter, live_positions_snapshot)
@@ -473,6 +496,34 @@ def build_dashboard_filters(
                     filters.append(report_max_trades(total_open, int(max_open_trades_total), side, side_counts))
                 if max_per_side is not None:
                     filters.extend(report_max_trades_by_side(side_counts, max_per_side))
+                buy_lots = 0.0
+                sell_lots = 0.0
+                for pos in live_positions_snapshot or []:
+                    try:
+                        if isinstance(pos, dict):
+                            units = float(pos.get("currentUnits") or pos.get("initialUnits") or 0)
+                            lots = abs(units) / 100000.0
+                            if units > 0:
+                                buy_lots += lots
+                            elif units < 0:
+                                sell_lots += lots
+                        else:
+                            volume = float(getattr(pos, "volume", 0.0) or 0.0)
+                            mt5_type = getattr(pos, "type", None)
+                            if mt5_type == 0:
+                                buy_lots += volume
+                            elif mt5_type == 1:
+                                sell_lots += volume
+                    except Exception:
+                        continue
+                if buy_lots > 0 or sell_lots > 0:
+                    _dir_cap = None
+                    if policy_type == "kt_cg_trial_10":
+                        try:
+                            _dir_cap = float(getattr(policy, "max_directional_lots_per_side", 0.0) or 0.0)
+                        except Exception:
+                            _dir_cap = None
+                    filters.append(report_open_exposure(buy_lots + sell_lots, buy_lots, sell_lots, _dir_cap))
                 open_trades = store.list_open_trades(profile.profile_name)
                 live_ids = _live_position_ids(profile, adapter, live_positions_snapshot)
                 db_live_ids: set[int] = set()

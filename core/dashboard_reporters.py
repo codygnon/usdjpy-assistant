@@ -791,7 +791,7 @@ def report_trial10_entry_gates(eval_result: Optional[dict]) -> FilterReport:
         display_parts.append(f"Entry: {entry_class.replace('_', ' ')}")
     if tier_class:
         display_parts.append(f"Tier: {tier_class}")
-    current_display = " | ".join(display_parts) if display_parts else "Zone + Tier confirmation"
+    current_display = " | ".join(display_parts) if display_parts else "Zone + Tier flow"
 
     return FilterReport(
         filter_id="trial10_entry_gates",
@@ -800,7 +800,7 @@ def report_trial10_entry_gates(eval_result: Optional[dict]) -> FilterReport:
         is_clear=overall_clear,
         current_value=current_display,
         block_reason=" | ".join(blocking_msgs) if blocking_msgs else None,
-        explanation=" | ".join(blocking_msgs) if blocking_msgs else "Proof-based entry gates are clear.",
+        explanation=" | ".join(blocking_msgs) if blocking_msgs else "Trial #10 entry flow is clear; advisory overlays may still reduce size.",
         sub_filters=[zone_filter, tier_filter],
         metadata={
             "zone_status": zone_status,
@@ -836,12 +836,8 @@ def report_trial10_pullback_quality(eval_result: Optional[dict]) -> FilterReport
     tier_class = "shallow" if tier in (17, 21) else ("standard" if tier in (27, 33) else "deep") if tier else ""
     threshold = f"Tier {tier} ({tier_class})" if tier is not None else ""
     explanation = str(quality.get("reason") or "").strip() or "Pullback quality measured from the touch bar."
-    is_blocked = False
-    block_reason_text = None
     if applicable and label == "sloppy" and tier_class == "shallow":
-        explanation += f" BLOCKED: sloppy pullback on shallow tier {tier} ({bars} bars, ratio={ratio:.2f})."
-        is_blocked = True
-        block_reason_text = f"Sloppy shallow pullback blocked (tier {tier}, {bars}b, ratio={ratio:.2f})"
+        explanation += f" Advisory only: sloppy shallow tier {tier} will be floor-sized ({bars} bars, ratio={ratio:.2f})."
     elif applicable and label == "sloppy":
         explanation += f" Sloppy pullback on {tier_class} tier {tier} (telemetry only, no block)."
     elif not applicable and label == "sloppy":
@@ -851,10 +847,9 @@ def report_trial10_pullback_quality(eval_result: Optional[dict]) -> FilterReport
         filter_id="trial10_pullback_quality",
         display_name="Pullback Quality",
         enabled=bool(quality.get("enabled", True)),
-        is_clear=not is_blocked,
+        is_clear=True,
         current_value=current_value,
         threshold=threshold,
-        block_reason=block_reason_text,
         explanation=explanation,
         metadata={**quality, "tier_class": tier_class},
     )
@@ -953,7 +948,22 @@ def report_t6_bb_reversal_cap(policy, store, profile_name: str) -> FilterReport:
 def report_t8_exit_strategy(policy) -> FilterReport:
     """Report Trial #8/#9 exit strategy."""
     exit_strategy = str(getattr(policy, "exit_strategy", "tp1_be_trail") or "tp1_be_trail")
-    if exit_strategy == "ema_scale_runner":
+    if getattr(policy, "type", None) == "kt_cg_trial_10" and bool(getattr(policy, "bucketed_exit_enabled", False)):
+        q_tp1 = float(getattr(policy, "quick_tp1_pips", 4.0))
+        q_pct = float(getattr(policy, "quick_tp1_close_pct", 85.0))
+        q_be = float(getattr(policy, "quick_be_spread_plus_pips", 0.3))
+        s_tp1 = float(getattr(policy, "tp1_pips", 6.0))
+        s_pct = float(getattr(policy, "tp1_close_pct", 70.0))
+        s_be = float(getattr(policy, "be_spread_plus_pips", 0.5))
+        r_tp1 = float(getattr(policy, "runner_tp1_pips", 8.0))
+        r_pct = float(getattr(policy, "runner_tp1_close_pct", 55.0))
+        r_be = float(getattr(policy, "runner_be_spread_plus_pips", 0.5))
+        label = (
+            f"Quick {q_tp1:.0f}p/{q_pct:.0f}% + BE +{q_be:.1f}p + M1 trail | "
+            f"Std {s_tp1:.0f}p/{s_pct:.0f}% + BE +{s_be:.1f}p + M5 trail | "
+            f"Runner {r_tp1:.0f}p/{r_pct:.0f}% + BE +{r_be:.1f}p + M5 trail"
+        )
+    elif exit_strategy == "ema_scale_runner":
         ema_fast = getattr(policy, "m1_exit_ema_fast", 9)
         ema_slow = getattr(policy, "m1_exit_ema_slow", 21)
         scale_pct = getattr(policy, "scale_out_pct", 50.0)
@@ -1624,6 +1634,10 @@ def report_runner_score(snapshot: Optional[dict]) -> FilterReport:
     final_lots = snapshot.get("final_lots")
     spread_gated = bool(snapshot.get("spread_gated", False))
     tier17_floor = bool(snapshot.get("tier17_floor_applied", False))
+    sloppy_floor = bool(snapshot.get("sloppy_shallow_floor_applied", False))
+    deep_base_cap = bool(snapshot.get("deep_tier_base_cap_applied", False))
+    weak_zone_cap = bool(snapshot.get("weak_m5_zone_cap_applied", False))
+    directional_cap = bool(snapshot.get("directional_cap_applied", False))
 
     current_str = f"{bucket} ({points}pt)"
     if fresh:
@@ -1634,6 +1648,14 @@ def report_runner_score(snapshot: Optional[dict]) -> FilterReport:
         current_str += " [SPREAD GATE]"
     if tier17_floor:
         current_str += " [T17 FLOOR]"
+    if sloppy_floor:
+        current_str += " [PB FLOOR]"
+    if deep_base_cap:
+        current_str += " [DEEP BASE CAP]"
+    if weak_zone_cap:
+        current_str += " [WEAK ZONE CAP]"
+    if directional_cap:
+        current_str += " [DIR CAP]"
     _floor = snapshot.get("bucket_lots_floor")
     _base = snapshot.get("bucket_lots_base")
     _elev = snapshot.get("bucket_lots_elevated")
@@ -1662,6 +1684,30 @@ def report_runner_score(snapshot: Optional[dict]) -> FilterReport:
         threshold=threshold_str,
         explanation=explanation,
         metadata=dict(snapshot),
+    )
+
+
+def report_open_exposure(total_lots: float, buy_lots: float, sell_lots: float, directional_cap_lots: float | None = None) -> FilterReport:
+    is_clear = True
+    threshold = f"Buy {buy_lots:.2f} | Sell {sell_lots:.2f}"
+    if directional_cap_lots is not None:
+        cap = float(directional_cap_lots)
+        threshold = f"Buy {buy_lots:.2f} | Sell {sell_lots:.2f} | Cap {cap:.2f}/side"
+        is_clear = max(float(buy_lots), float(sell_lots)) < cap
+    return FilterReport(
+        filter_id="open_exposure",
+        display_name="Open Exposure",
+        enabled=True,
+        is_clear=is_clear,
+        current_value=f"{total_lots:.2f} lots",
+        threshold=threshold,
+        explanation="Total live directional exposure for operator visibility.",
+        metadata={
+            "total_open_lots": round(float(total_lots), 4),
+            "buy_open_lots": round(float(buy_lots), 4),
+            "sell_open_lots": round(float(sell_lots), 4),
+            "directional_cap_lots": round(float(directional_cap_lots), 4) if directional_cap_lots is not None else None,
+        },
     )
 
 

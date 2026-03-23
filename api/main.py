@@ -3517,12 +3517,12 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
             _policy_for_snapshot = effective_policy_for_dashboard(_policy, temp_overrides_api) if _policy is not None else None
             if _policy_type == "kt_cg_trial_10" and _policy_for_snapshot is not None:
                 try:
-                    from core.execution_engine import evaluate_kt_cg_trial_10_conditions
+                    from core.execution_engine import evaluate_trial10_advisory_state
                     _t10_tier_state = {}
                     _tier_fired_raw = getattr(_state, "tier_fired", None)
                     if isinstance(_tier_fired_raw, dict):
                         _t10_tier_state = {int(k): bool(v) for k, v in _tier_fired_raw.items()}
-                    t10_eval_result = evaluate_kt_cg_trial_10_conditions(
+                    t10_eval_result = evaluate_trial10_advisory_state(
                         profile,
                         _policy_for_snapshot,
                         data_by_tf,

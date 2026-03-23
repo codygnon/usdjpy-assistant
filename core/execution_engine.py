@@ -4161,6 +4161,9 @@ def evaluate_kt_cg_trial_7_conditions(
                 "tiered_pullback_tier": None,
                 "tier_updates": tier_updates,
                 "m5_trend": trend,
+                "trial10_m5_bucket": m5_bucket,
+                "trial10_m5_spread_pips": round(m5_spread_pips, 3),
+                "trial10_m5_slope_pips_per_bar": round(m5_slope_pips_per_bar, 3),
             }
 
     tiered_pullback_enabled = getattr(policy, "tiered_pullback_enabled", True)
@@ -4213,6 +4216,9 @@ def evaluate_kt_cg_trial_7_conditions(
             "tiered_pullback_tier": tiered_pullback_tier,
             "tier_updates": tier_updates,
             "m5_trend": trend,
+            "trial10_m5_bucket": m5_bucket,
+            "trial10_m5_spread_pips": round(m5_spread_pips, 3),
+            "trial10_m5_slope_pips_per_bar": round(m5_slope_pips_per_bar, 3),
         }
 
     zone_entry_triggered = False
@@ -4263,6 +4269,9 @@ def evaluate_kt_cg_trial_7_conditions(
             "tiered_pullback_tier": None,
             "tier_updates": tier_updates,
             "m5_trend": trend,
+            "trial10_m5_bucket": m5_bucket,
+            "trial10_m5_spread_pips": round(m5_spread_pips, 3),
+            "trial10_m5_slope_pips_per_bar": round(m5_slope_pips_per_bar, 3),
         }
 
     if zone_entry_mode == "price_vs_ema5":
@@ -4279,6 +4288,9 @@ def evaluate_kt_cg_trial_7_conditions(
         "tiered_pullback_tier": None,
         "tier_updates": tier_updates,
         "m5_trend": trend,
+        "trial10_m5_bucket": m5_bucket,
+        "trial10_m5_spread_pips": round(m5_spread_pips, 3),
+        "trial10_m5_slope_pips_per_bar": round(m5_slope_pips_per_bar, 3),
     }
 
 
@@ -4386,7 +4398,10 @@ def evaluate_kt_cg_trial_10_conditions(
     tier_state: dict[int, bool],
     temp_overrides: Optional[dict] = None,
 ) -> dict:
-    """Evaluate KT/CG Trial #10 conditions with stricter proof-based entries."""
+    """Legacy proof-gated Trial #10 evaluator kept for rollback/reference only.
+
+    The active Trial #10 path now uses evaluate_trial10_advisory_state().
+    """
     reasons: list[str] = []
     tier_updates: dict[int, bool] = {}
     latest_pullback_quality = None
@@ -4552,7 +4567,7 @@ def evaluate_kt_cg_trial_10_conditions(
                     _tc = _trial10_tier_class(tier)
                     _pb_label = str((latest_pullback_quality or {}).get("label", "neutral")).lower()
                     _pb_applicable = bool((latest_pullback_quality or {}).get("applicable", False))
-                    if _tc == "shallow" and _pb_label == "sloppy" and _pb_applicable:
+                    if bool(_ov("sloppy_shallow_block_enabled", True)) and _tc == "shallow" and _pb_label == "sloppy" and _pb_applicable:
                         tier_updates[tier] = True  # still mark fired to prevent re-touch
                         _sloppy_msg = (
                             f"Sloppy shallow pullback blocked: tier {tier} "
@@ -4570,7 +4585,7 @@ def evaluate_kt_cg_trial_10_conditions(
                         continue
                     # --- Shallow resumption gate (17/21 in normal M5 only) ---
                     _resumption_gate: dict = {"resumption_gate_applicable": False}
-                    if _tc == "shallow" and m5_bucket == "normal":
+                    if bool(_ov("shallow_resumption_gate_enabled", True)) and _tc == "shallow" and m5_bucket == "normal":
                         _reclaim_high = float(m1_df["high"].iloc[-1])
                         _reclaim_low = float(m1_df["low"].iloc[-1])
                         _reclaim_range = _reclaim_high - _reclaim_low
@@ -4719,7 +4734,7 @@ def evaluate_kt_cg_trial_10_conditions(
                     _tc = _trial10_tier_class(tier)
                     _pb_label = str((latest_pullback_quality or {}).get("label", "neutral")).lower()
                     _pb_applicable = bool((latest_pullback_quality or {}).get("applicable", False))
-                    if _tc == "shallow" and _pb_label == "sloppy" and _pb_applicable:
+                    if bool(_ov("sloppy_shallow_block_enabled", True)) and _tc == "shallow" and _pb_label == "sloppy" and _pb_applicable:
                         tier_updates[tier] = True
                         _sloppy_msg = (
                             f"Sloppy shallow pullback blocked: tier {tier} "
@@ -4737,7 +4752,7 @@ def evaluate_kt_cg_trial_10_conditions(
                         continue
                     # --- Shallow resumption gate (17/21 in normal M5 only) ---
                     _resumption_gate = {"resumption_gate_applicable": False}
-                    if _tc == "shallow" and m5_bucket == "normal":
+                    if bool(_ov("shallow_resumption_gate_enabled", True)) and _tc == "shallow" and m5_bucket == "normal":
                         _reclaim_high = float(m1_df["high"].iloc[-1])
                         _reclaim_low = float(m1_df["low"].iloc[-1])
                         _reclaim_range = _reclaim_high - _reclaim_low
@@ -4995,6 +5010,148 @@ def evaluate_kt_cg_trial_10_conditions(
     }
 
 
+def evaluate_trial10_advisory_state(
+    profile: ProfileV1,
+    policy,
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+    current_bid: float,
+    current_ask: float,
+    tier_state: dict[int, bool],
+    temp_overrides: Optional[dict] = None,
+) -> dict:
+    """Evaluate Trial #10 using Trial #9/7 entry flow, then attach Trial #10 advisory metadata."""
+    def _ov(field: str, default=None):
+        if temp_overrides and field in temp_overrides and temp_overrides[field] is not None:
+            return temp_overrides[field]
+        return getattr(policy, field, default)
+
+    base_result = evaluate_kt_cg_trial_7_conditions(
+        profile,
+        policy,
+        data_by_tf,
+        current_bid=current_bid,
+        current_ask=current_ask,
+        tier_state=tier_state,
+    )
+
+    result = dict(base_result)
+    reasons = list(result.get("reasons") or [])
+    side = str(result.get("side") or "").lower()
+    trigger_type = str(result.get("trigger_type") or "")
+    tier = result.get("tiered_pullback_tier")
+    trial10_pullback_quality = None
+    trial10_entry_gates = {
+        "zone": {
+            "enabled": bool(_ov("zone_entry_enabled", True)),
+            "mode": str(_ov("zone_entry_mode", "price_vs_ema5") or "price_vs_ema5"),
+            "status": "passed" if trigger_type == "zone_entry" else "idle",
+            "message": "Trial #9-style zone trigger active" if trigger_type == "zone_entry" else "Awaiting alignment",
+            "recent_cross_required": bool(_ov("zone_entry_require_recent_cross", False)),
+            "lookback_bars": int(_ov("zone_entry_max_cross_lookback_bars", 2)),
+        },
+        "tier": {
+            "enabled": bool(_ov("tiered_pullback_enabled", True)),
+            "status": "passed" if trigger_type == "tiered_pullback" else "idle",
+            "message": "Trial #9-style tier touch active" if trigger_type == "tiered_pullback" else "Awaiting tier touch",
+            "reclaim_enabled": bool(_ov("tier_reclaim_confirmation_enabled", False)),
+            "reclaim_period": int(_ov("tier_reclaim_ema_period", 5)),
+            "tier": tier,
+            "pullback_quality": None,
+        },
+    }
+
+    m5_bucket = str(result.get("trial10_m5_bucket") or "normal")
+    m5_spread_pips = float(result.get("trial10_m5_spread_pips") or 0.0)
+    m5_slope_pips_per_bar = float(result.get("trial10_m5_slope_pips_per_bar") or 0.0)
+    trial10_entry_gates["tier"]["m5_bucket"] = m5_bucket
+    trial10_entry_gates["tier"]["m5_spread_pips"] = round(m5_spread_pips, 3)
+    trial10_entry_gates["tier"]["m5_slope_pips_per_bar"] = round(m5_slope_pips_per_bar, 3)
+
+    advisory_flags: dict[str, bool] = {
+        "sloppy_shallow_floor": False,
+        "deep_tier_base_cap": False,
+        "weak_m5_zone_cap": False,
+    }
+    tier_class = None
+    entry_class = None
+    setup_state = "clean" if bool(result.get("passed")) else "borderline"
+    if trigger_type == "zone_entry":
+        entry_class = "zone"
+        if bool(_ov("runner_weak_m5_zone_cap_enabled", True)) and m5_bucket == "weak":
+            advisory_flags["weak_m5_zone_cap"] = True
+            reasons.append("Trial #10 advisory: weak M5 zone entry -> cap at elevated size")
+            trial10_entry_gates["zone"]["message"] = "Weak M5 zone trigger active -> elevated-size cap"
+    elif tier is not None:
+        try:
+            tier = int(tier)
+            tier_class = _trial10_tier_class(tier)
+            entry_class = _trial10_entry_class("tiered_pullback", tier)
+        except Exception:
+            tier_class = None
+            entry_class = None
+
+    if trigger_type == "tiered_pullback" and tier is not None and side in ("buy", "sell"):
+        m1_df = data_by_tf.get("M1")
+        if m1_df is not None and not m1_df.empty:
+            m1_df = drop_incomplete_last_bar(m1_df.copy(), "M1")
+            if len(m1_df) >= max(int(tier), int(_ov("m1_price_ema_period", 5)), 50) + 3:
+                touch_index = len(m1_df) - 2
+                _side = "bull" if side == "buy" else "bear"
+                pullback_quality = analyze_pullback_quality(
+                    m1_df=m1_df,
+                    touch_index=touch_index,
+                    side=_side,
+                    tier=int(tier),
+                    enabled=bool(_ov("pullback_quality_enabled", True)),
+                    lookback_bars=int(_ov("pullback_quality_lookback_bars", 30)),
+                    orderly_bar_count_min=int(_ov("pullback_quality_orderly_bar_count_min", 6)),
+                    sloppy_bar_count_max=int(_ov("pullback_quality_sloppy_bar_count_max", 2)),
+                    orderly_structure_ratio_min=float(_ov("pullback_quality_orderly_structure_ratio_min", 0.6)),
+                    sloppy_structure_ratio_max=float(_ov("pullback_quality_sloppy_structure_ratio_max", 0.3)),
+                    shallow_tiers=tuple(int(x) for x in _ov("pullback_quality_shallow_tier_periods", (17, 21))),
+                    sloppy_lot_multiplier=float(_ov("pullback_quality_sloppy_lot_multiplier", 0.5)),
+                )
+                trial10_pullback_quality = pullback_quality_snapshot(pullback_quality)
+                trial10_entry_gates["tier"]["pullback_quality"] = trial10_pullback_quality
+
+        if tier_class == "shallow":
+            label = str((trial10_pullback_quality or {}).get("label", "neutral")).lower()
+            applicable = bool((trial10_pullback_quality or {}).get("applicable", False))
+            if applicable and label == "sloppy":
+                advisory_flags["sloppy_shallow_floor"] = True
+                reasons.append(
+                    f"Trial #10 advisory: sloppy shallow tier {tier} -> floor sizing"
+                )
+                trial10_entry_gates["tier"]["message"] = (
+                    f"Shallow tier {tier}: sloppy pullback advisory -> floor sizing"
+                )
+        strong_only_tiers = {int(x) for x in _ov("strong_m5_only_tier_periods", tuple())}
+        if int(tier) in strong_only_tiers and m5_bucket != "strong":
+            advisory_flags["deep_tier_base_cap"] = True
+            reasons.append(
+                f"Trial #10 advisory: deep tier {tier} with {m5_bucket.upper()} M5 -> cap at base size"
+            )
+            trial10_entry_gates["tier"]["message"] = (
+                f"Deep tier {tier}: {m5_bucket.upper()} M5 advisory -> base-cap sizing"
+            )
+
+    result.update(
+        {
+            "reasons": reasons,
+            "trial10_m5_bucket": m5_bucket,
+            "trial10_m5_spread_pips": round(m5_spread_pips, 3),
+            "trial10_m5_slope_pips_per_bar": round(m5_slope_pips_per_bar, 3),
+            "trial10_pullback_quality": trial10_pullback_quality,
+            "trial10_tier_class": tier_class,
+            "trial10_entry_class": entry_class,
+            "trial10_setup_state": setup_state,
+            "trial10_entry_gates": trial10_entry_gates,
+            "trial10_advisory_flags": advisory_flags,
+        }
+    )
+    return result
+
+
 def _evaluate_kt_cg_trial_7_zone_only_candidate(
     profile: ProfileV1,
     policy,
@@ -5007,7 +5164,7 @@ def _evaluate_kt_cg_trial_7_zone_only_candidate(
     try:
         object.__setattr__(policy, "tiered_pullback_enabled", False)
         if getattr(policy, "type", None) == "kt_cg_trial_10":
-            return evaluate_kt_cg_trial_10_conditions(
+            return evaluate_trial10_advisory_state(
                 profile,
                 policy,
                 data_by_tf,
@@ -5676,7 +5833,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
     try:
         object.__setattr__(policy, "tier_ema_periods", tuple(int(x) for x in effective_tiers))
         if policy_type == "kt_cg_trial_10":
-            result = evaluate_kt_cg_trial_10_conditions(
+            result = evaluate_trial10_advisory_state(
                 profile, policy, data_by_tf,
                 current_bid=tick.bid,
                 current_ask=tick.ask,
@@ -5700,6 +5857,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
     tiered_pullback_tier = result.get("tiered_pullback_tier")
     trial10_entry_gates = result.get("trial10_entry_gates")
     trial10_pullback_quality = result.get("trial10_pullback_quality")
+    trial10_advisory_flags = dict(result.get("trial10_advisory_flags") or {})
     if side in ("buy", "sell"):
         candidate_side = side
     candidate_trigger = trigger_type or None
@@ -6078,6 +6236,9 @@ def execute_kt_cg_trial_7_policy_demo_only(
         except Exception:
             pass
 
+    open_trades: list[dict] = []
+    _same_side_open_lots = 0.0
+    _directional_cap_lots = None
     try:
         open_trades = store.list_open_trades(profile.profile_name)
         # sqlite3.Row doesn't support .get(); convert to plain dicts for safe access
@@ -6121,6 +6282,25 @@ def execute_kt_cg_trial_7_policy_demo_only(
                 return int(pid) in _live_pos_ids
             except (TypeError, ValueError):
                 return False
+
+        if policy_type == "kt_cg_trial_10":
+            try:
+                _directional_cap_raw = getattr(policy, "max_directional_lots_per_side", None)
+                if _directional_cap_raw is not None:
+                    _directional_cap_lots = max(0.0, float(_directional_cap_raw))
+                    _same_side_open_lots = sum(
+                        float(row.get("size_lots") or 0.0)
+                        for row in open_trades
+                        if str(row.get("side") or "").lower() == side
+                        and (
+                            str(row.get("policy_type") or "") == "kt_cg_trial_10"
+                            or str(row.get("notes") or "").startswith("auto:kt_cg_trial_10:")
+                        )
+                        and _row_still_open(dict(row) if hasattr(row, "keys") else row)
+                    )
+            except Exception:
+                _directional_cap_lots = None
+                _same_side_open_lots = 0.0
 
         while True:
             if trigger_type == "tiered_pullback":
@@ -6257,16 +6437,25 @@ def execute_kt_cg_trial_7_policy_demo_only(
             "tier17_nonboost_multiplier": 1.0,
             "spread_gated": False,
             "tier17_floor_applied": False,
+            "sloppy_shallow_floor_applied": False,
+            "deep_tier_base_cap_applied": False,
+            "weak_m5_zone_cap_applied": False,
+            "directional_cap_applied": False,
             "final_lots_pre_clamp": round(float(_effective_lots), 4),
             "final_lots": round(float(_effective_lots), 4),
             "regime_label": str(trial10_regime_label or ""),
             "regime_reason": str(trial10_regime_reason or ""),
             "atr_stop_pips": round(float(sl_pips), 2),
+            "directional_open_lots": round(float(_same_side_open_lots), 4),
+            "directional_cap_lots": round(float(_directional_cap_lots), 4) if _directional_cap_lots is not None else None,
+            "directional_available_lots": (
+                round(max(0.0, float(_directional_cap_lots) - float(_same_side_open_lots)), 4)
+                if _directional_cap_lots is not None else None
+            ),
         }
-        # NOTE: Sloppy shallow-tier pullback is now a hard block at eval time
-        # (evaluate_kt_cg_trial_10_conditions), not a lot dampener here.
         if policy_type == "kt_cg_trial_10" and trial10_regime_multiplier is not None:
             _runner_floor = float(getattr(policy, "runner_bucket_lots_floor", 0.03))
+            _runner_base = float(getattr(policy, "runner_bucket_lots_base", 0.05))
             _pq_min = _runner_floor if bool(getattr(policy, "runner_score_sizing_enabled", False)) else float(getattr(policy, "conviction_min_lots", 0.01))
             _effective_lots = _effective_lots * float(trial10_regime_multiplier)
             if trigger_type == "tiered_pullback" and int(tiered_pullback_tier or 0) == 17:
@@ -6286,11 +6475,51 @@ def execute_kt_cg_trial_7_policy_demo_only(
                         eval_reasons.append(
                             f"tier17_nonboost: outside buy boost -> lot multiplier {_tier17_mult:.2f}x applied"
                         )
+            if trigger_type == "tiered_pullback" and bool(trial10_advisory_flags.get("sloppy_shallow_floor", False)):
+                _effective_lots = min(float(_effective_lots), _runner_floor)
+                _lot_chain["sloppy_shallow_floor_applied"] = True
+                eval_reasons.append("trial10 advisory: sloppy shallow pullback -> floor sizing")
+            if trigger_type == "tiered_pullback" and bool(trial10_advisory_flags.get("deep_tier_base_cap", False)):
+                _effective_lots = min(float(_effective_lots), _runner_base)
+                _lot_chain["deep_tier_base_cap_applied"] = True
+                eval_reasons.append(
+                    f"trial10 advisory: deep tier outside strong M5 -> capped at base {_runner_base:.2f} lots"
+                )
+            if trigger_type == "zone_entry" and bool(trial10_advisory_flags.get("weak_m5_zone_cap", False)):
+                _runner_elevated = float(getattr(policy, "runner_bucket_lots_elevated", 0.07))
+                _effective_lots = min(float(_effective_lots), _runner_elevated)
+                _lot_chain["weak_m5_zone_cap_applied"] = True
+                eval_reasons.append(
+                    f"trial10 advisory: weak M5 zone entry -> capped at elevated {_runner_elevated:.2f} lots"
+                )
+            _directional_available_lots = None
+            if _directional_cap_lots is not None:
+                _directional_available_lots = max(0.0, float(_directional_cap_lots) - float(_same_side_open_lots))
+                _lot_chain["directional_available_lots"] = round(float(_directional_available_lots), 4)
+                if _directional_available_lots + 1e-9 < _pq_min:
+                    return _result_payload(
+                        ExecutionDecision(
+                            attempted=True,
+                            placed=False,
+                            reason=(
+                                f"max_directional_lots_per_side: {side} exposure "
+                                f"{_same_side_open_lots:.2f}/{float(_directional_cap_lots):.2f} lots"
+                            ),
+                        ),
+                    )
+                if float(_effective_lots) > float(_directional_available_lots):
+                    _effective_lots = float(_directional_available_lots)
+                    _lot_chain["directional_cap_applied"] = True
+                    eval_reasons.append(
+                        f"trial10 directional cap: {side} exposure {_same_side_open_lots:.2f}/{float(_directional_cap_lots):.2f} -> capped to {_directional_available_lots:.2f} lots"
+                    )
             _lot_chain["final_lots_pre_clamp"] = round(float(_effective_lots), 4)
             _effective_lots = round(
                 min(float(get_effective_risk(profile).max_lots), max(_pq_min, float(_effective_lots))),
                 2,
             )
+            if _directional_cap_lots is not None:
+                _effective_lots = round(min(float(_effective_lots), float(_lot_chain.get("directional_available_lots") or _effective_lots)), 2)
             _lot_chain["final_lots"] = round(float(_effective_lots), 4)
         trial10_lot_chain = _lot_chain if policy_type == "kt_cg_trial_10" else None
         candidate = TradeCandidate(

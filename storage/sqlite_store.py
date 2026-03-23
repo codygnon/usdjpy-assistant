@@ -198,6 +198,12 @@ class SqliteStore:
             self._ensure_column(conn, "trades", "tp1_triggered", "INTEGER")
             # v2.8: Trial #10 pullback quality label for chop-pause / analytics
             self._ensure_column(conn, "trades", "pullback_quality_label", "TEXT")
+            # v2.9: Trial #10 runner bucket + bucketed exit profile tracking
+            self._ensure_column(conn, "trades", "runner_bucket", "TEXT")
+            self._ensure_column(conn, "trades", "managed_tp1_pips", "REAL")
+            self._ensure_column(conn, "trades", "managed_tp1_close_pct", "REAL")
+            self._ensure_column(conn, "trades", "managed_be_plus_pips", "REAL")
+            self._ensure_column(conn, "trades", "managed_trail_mode", "TEXT")
             conn.commit()
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, col: str, col_type: str) -> None:

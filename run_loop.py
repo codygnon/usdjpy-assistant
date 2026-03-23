@@ -329,6 +329,11 @@ def _insert_trade_for_policy(
     risk_usd_planned: float | None = None,
     tier_number: int | None = None,
     pullback_quality_label: str | None = None,
+    runner_bucket: str | None = None,
+    managed_tp1_pips: float | None = None,
+    managed_tp1_close_pct: float | None = None,
+    managed_be_plus_pips: float | None = None,
+    managed_trail_mode: str | None = None,
 ) -> None:
     """Store a trade in DB when a policy places an order. Ensures preset and position_id for Performance by Preset."""
     try:
@@ -383,6 +388,16 @@ def _insert_trade_for_policy(
             row["tier_number"] = int(tier_number)
         if pullback_quality_label:
             row["pullback_quality_label"] = str(pullback_quality_label)
+        if runner_bucket:
+            row["runner_bucket"] = str(runner_bucket)
+        if managed_tp1_pips is not None:
+            row["managed_tp1_pips"] = float(managed_tp1_pips)
+        if managed_tp1_close_pct is not None:
+            row["managed_tp1_close_pct"] = float(managed_tp1_close_pct)
+        if managed_be_plus_pips is not None:
+            row["managed_be_plus_pips"] = float(managed_be_plus_pips)
+        if managed_trail_mode:
+            row["managed_trail_mode"] = str(managed_trail_mode)
         # Capture entry slippage if fill_price available
         if getattr(dec, 'fill_price', None) is not None:
             slippage = abs(dec.fill_price - entry_price) / float(profile.pip_size)
@@ -390,6 +405,53 @@ def _insert_trade_for_policy(
         store.insert_trade(row)
     except Exception:
         pass
+
+
+def _trial10_bucket_exit_profile(policy: Any, runner_bucket: str | None) -> dict[str, Any]:
+    """Resolve Trial #10 bucket-specific managed-exit settings for a placed trade."""
+    exit_strategy = str(getattr(policy, "exit_strategy", "tp1_be_m5_trail") or "tp1_be_m5_trail")
+    default_trail_mode = "m5"
+    if exit_strategy == "tp1_be_trail":
+        default_trail_mode = "m1"
+    elif exit_strategy == "tp1_be_hwm_trail":
+        default_trail_mode = "hwm"
+
+    profile = {
+        "runner_bucket": str(runner_bucket or "").lower() or "unclassified",
+        "exit_profile": "standard",
+        "tp1_pips": float(getattr(policy, "tp1_pips", 6.0)),
+        "tp1_close_pct": float(getattr(policy, "tp1_close_pct", 70.0)),
+        "be_plus_pips": float(getattr(policy, "be_spread_plus_pips", 0.5)),
+        "trail_mode": default_trail_mode,
+    }
+    if not bool(getattr(policy, "bucketed_exit_enabled", False)):
+        return profile
+
+    bucket = profile["runner_bucket"]
+    quick_buckets = {str(b).lower() for b in getattr(policy, "quick_exit_buckets", ("floor", "base"))}
+    runner_buckets = {str(b).lower() for b in getattr(policy, "runner_exit_buckets", ("press", "elite"))}
+
+    if bucket in quick_buckets:
+        profile.update(
+            {
+                "exit_profile": "quick",
+                "tp1_pips": float(getattr(policy, "quick_tp1_pips", 4.0)),
+                "tp1_close_pct": float(getattr(policy, "quick_tp1_close_pct", 85.0)),
+                "be_plus_pips": float(getattr(policy, "quick_be_spread_plus_pips", 0.3)),
+                "trail_mode": "m1",
+            }
+        )
+    elif bucket in runner_buckets:
+        profile.update(
+            {
+                "exit_profile": "runner",
+                "tp1_pips": float(getattr(policy, "runner_tp1_pips", 8.0)),
+                "tp1_close_pct": float(getattr(policy, "runner_tp1_close_pct", 55.0)),
+                "be_plus_pips": float(getattr(policy, "runner_be_spread_plus_pips", 0.5)),
+                "trail_mode": "m5",
+            }
+        )
+    return profile
 
 
 # Minimum partial-close size (lots). OANDA typically requires >= 1000 units = 0.01 lots.
@@ -976,8 +1038,12 @@ def _run_trade_management(
             t9_exit_strategy = str(getattr(family_policy, "exit_strategy", "tp1_be_trail"))
             tp1_done = trade_row.get("tp1_partial_done") or 0
             tp1_triggered = trade_row.get("tp1_triggered") or 0
-            t9_tp1_pips = float(getattr(family_policy, "tp1_pips", 6.0))
-            t9_tp1_pct = float(getattr(family_policy, "tp1_close_pct", 80.0))
+            t9_tp1_pips = float(trade_row.get("managed_tp1_pips") or getattr(family_policy, "tp1_pips", 6.0))
+            t9_tp1_pct = float(trade_row.get("managed_tp1_close_pct") or getattr(family_policy, "tp1_close_pct", 80.0))
+            t9_be_pips = float(trade_row.get("managed_be_plus_pips") or getattr(family_policy, "be_spread_plus_pips", 0.5))
+            t10_trail_mode = str(trade_row.get("managed_trail_mode") or "").lower()
+            if family_type == "kt_cg_trial_10" and t10_trail_mode not in ("m1", "m5", "hwm"):
+                t10_trail_mode = str(_trial10_bucket_exit_profile(family_policy, trade_row.get("runner_bucket")).get("trail_mode", "m5"))
 
             if t9_exit_strategy == "tp1_be_m5_trail":
                 # --- Phase A: TP1 partial close ---
@@ -1041,8 +1107,7 @@ def _run_trade_management(
                                     except Exception as _e:
                                         print(f"[{profile.profile_name}] Tier reset error: {_e}")
                             # --- Phase B: BE on TP1 hit ---
-                            _t9_be_pips = float(getattr(family_policy, "be_spread_plus_pips", 0.5))
-                            be_offset = current_spread + _t9_be_pips * pip
+                            be_offset = current_spread + t9_be_pips * pip
                             if side == "buy":
                                 be_sl = entry + be_offset
                                 be_sl = min(be_sl, tick.bid - pip * 0.5)
@@ -1062,8 +1127,7 @@ def _run_trade_management(
                     # Only attempt if position is still in profit (original be_sl is above ask for SELL / below bid for BUY).
                     _c_be_applied = trade_row.get("breakeven_applied") or 0
                     if not _c_be_applied:
-                        _t9_be_pips_c = float(getattr(family_policy, "be_spread_plus_pips", 0.5))
-                        _be_offset_c = current_spread + _t9_be_pips_c * pip
+                        _be_offset_c = current_spread + t9_be_pips * pip
                         if side == "buy":
                             _be_sl_c = entry + _be_offset_c
                             if _be_sl_c < tick.bid - pip * 0.1:
@@ -1082,61 +1146,104 @@ def _run_trade_management(
                                     print(f"[{profile.profile_name}] T9 BE retry (Phase C): pos {position_id} SL->{_be_sl_c:.3f}")
                                 except Exception as e:
                                     print(f"[{profile.profile_name}] T9 BE retry error pos {position_id}: {e}")
+                    _trail_mode = "m5"
+                    if family_type == "kt_cg_trial_10" and t10_trail_mode in ("m1", "m5"):
+                        _trail_mode = t10_trail_mode
                     try:
-                        _t9_m5_trail_period = int(getattr(family_policy, "trail_m5_ema_period", 20))
-                        if _m5_close is not None and len(_m5_close) > _t9_m5_trail_period + 1:
-                            trail_ema = _m5_ema(_t9_m5_trail_period)
-                            if not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):
-                                ema_val = float(trail_ema.iloc[-2])
-                                last_m5_close = float(_m5_close.iloc[-2])
-                                prev_be_sl = trade_row.get("breakeven_sl_price")
-                                if prev_be_sl is not None:
-                                    prev_be_sl = float(prev_be_sl)
-                                if side == "buy":
-                                    new_trail_sl = ema_val - (1.0 * pip)
+                        if _trail_mode == "m1":
+                            _t9_trail_period = int(getattr(family_policy, "trail_ema_period", 21))
+                            if _m1_close is not None and len(_m1_close) > _t9_trail_period + 1:
+                                trail_ema = _m1_ema(_t9_trail_period)
+                                if not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):
+                                    ema_val = float(trail_ema.iloc[-2])
+                                    last_m1_close = float(_m1_close.iloc[-2])
+                                    prev_be_sl = trade_row.get("breakeven_sl_price")
                                     if prev_be_sl is not None:
-                                        new_trail_sl = max(new_trail_sl, prev_be_sl)
-                                else:
-                                    new_trail_sl = ema_val + (1.0 * pip)
+                                        prev_be_sl = float(prev_be_sl)
+                                    if side == "buy":
+                                        new_trail_sl = ema_val - (1.0 * pip)
+                                        if prev_be_sl is not None:
+                                            new_trail_sl = max(new_trail_sl, prev_be_sl)
+                                    else:
+                                        new_trail_sl = ema_val + (1.0 * pip)
+                                        if prev_be_sl is not None:
+                                            new_trail_sl = min(new_trail_sl, prev_be_sl)
+                                    _safe_update_trail_sl(
+                                        adapter, store, position_id, trade_id, profile.symbol,
+                                        new_trail_sl, prev_be_sl, side, tick, pip,
+                                        profile.profile_name, label=f"{family_label} M1 trail",
+                                    )
+                                    if side == "buy" and last_m1_close < ema_val:
+                                        position_type = 0
+                                        if isinstance(pos, dict):
+                                            vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                        else:
+                                            vol = float(getattr(pos, "volume", 0) or 0)
+                                        if vol > 0:
+                                            adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                        print(f"[{profile.profile_name}] {family_label} runner closed (BUY M1 bar-close < EMA{_t9_trail_period}): pos {position_id}")
+                                    elif side == "sell" and last_m1_close > ema_val:
+                                        position_type = 1
+                                        if isinstance(pos, dict):
+                                            vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                        else:
+                                            vol = float(getattr(pos, "volume", 0) or 0)
+                                        if vol > 0:
+                                            adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                        print(f"[{profile.profile_name}] {family_label} runner closed (SELL M1 bar-close > EMA{_t9_trail_period}): pos {position_id}")
+                        else:
+                            _t9_m5_trail_period = int(getattr(family_policy, "trail_m5_ema_period", 20))
+                            if _m5_close is not None and len(_m5_close) > _t9_m5_trail_period + 1:
+                                trail_ema = _m5_ema(_t9_m5_trail_period)
+                                if not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):
+                                    ema_val = float(trail_ema.iloc[-2])
+                                    last_m5_close = float(_m5_close.iloc[-2])
+                                    prev_be_sl = trade_row.get("breakeven_sl_price")
                                     if prev_be_sl is not None:
-                                        new_trail_sl = min(new_trail_sl, prev_be_sl)
-                                _safe_update_trail_sl(
-                                    adapter, store, position_id, trade_id, profile.symbol,
-                                    new_trail_sl, prev_be_sl, side, tick, pip,
-                                    profile.profile_name, label="T9 M5 trail",
-                                )
-                                # Only fire runner close on an M5 bar that closed AFTER TP1 was taken.
-                                # Prevents the pre-TP1 pullback bar (already below EMA) from killing the runner instantly.
-                                _tp1_anchor = trade_row.get("tp1_time_utc")
-                                _m5_bar_close_time = None
-                                if _tm_m5_df is not None and "time" in _tm_m5_df.columns:
-                                    _m5_bar_open = _tm_m5_df["time"].iloc[-2]
-                                    _m5_bar_close_time = _m5_bar_open + pd.Timedelta(minutes=5)
-                                _bar_is_new = (
-                                    _tp1_anchor is None
-                                    or _m5_bar_close_time is None
-                                    or _m5_bar_close_time > pd.Timestamp(_tp1_anchor)
-                                )
-                                if side == "buy" and last_m5_close < ema_val and _bar_is_new:
-                                    position_type = 0
-                                    if isinstance(pos, dict):
-                                        vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                        prev_be_sl = float(prev_be_sl)
+                                    if side == "buy":
+                                        new_trail_sl = ema_val - (1.0 * pip)
+                                        if prev_be_sl is not None:
+                                            new_trail_sl = max(new_trail_sl, prev_be_sl)
                                     else:
-                                        vol = float(getattr(pos, "volume", 0) or 0)
-                                    if vol > 0:
-                                        adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
-                                    print(f"[{profile.profile_name}] {family_label} runner closed (BUY M5 bar-close < EMA{_t9_m5_trail_period}): pos {position_id}")
-                                elif side == "sell" and last_m5_close > ema_val and _bar_is_new:
-                                    position_type = 1
-                                    if isinstance(pos, dict):
-                                        vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
-                                    else:
-                                        vol = float(getattr(pos, "volume", 0) or 0)
-                                    if vol > 0:
-                                        adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
-                                        print(f"[{profile.profile_name}] {family_label} runner closed (SELL M5 bar-close > EMA{_t9_m5_trail_period}): pos {position_id}")
+                                        new_trail_sl = ema_val + (1.0 * pip)
+                                        if prev_be_sl is not None:
+                                            new_trail_sl = min(new_trail_sl, prev_be_sl)
+                                    _safe_update_trail_sl(
+                                        adapter, store, position_id, trade_id, profile.symbol,
+                                        new_trail_sl, prev_be_sl, side, tick, pip,
+                                        profile.profile_name, label=f"{family_label} M5 trail",
+                                    )
+                                    _tp1_anchor = trade_row.get("tp1_time_utc")
+                                    _m5_bar_close_time = None
+                                    if _tm_m5_df is not None and "time" in _tm_m5_df.columns:
+                                        _m5_bar_open = _tm_m5_df["time"].iloc[-2]
+                                        _m5_bar_close_time = _m5_bar_open + pd.Timedelta(minutes=5)
+                                    _bar_is_new = (
+                                        _tp1_anchor is None
+                                        or _m5_bar_close_time is None
+                                        or _m5_bar_close_time > pd.Timestamp(_tp1_anchor)
+                                    )
+                                    if side == "buy" and last_m5_close < ema_val and _bar_is_new:
+                                        position_type = 0
+                                        if isinstance(pos, dict):
+                                            vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                        else:
+                                            vol = float(getattr(pos, "volume", 0) or 0)
+                                        if vol > 0:
+                                            adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                        print(f"[{profile.profile_name}] {family_label} runner closed (BUY M5 bar-close < EMA{_t9_m5_trail_period}): pos {position_id}")
+                                    elif side == "sell" and last_m5_close > ema_val and _bar_is_new:
+                                        position_type = 1
+                                        if isinstance(pos, dict):
+                                            vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                        else:
+                                            vol = float(getattr(pos, "volume", 0) or 0)
+                                        if vol > 0:
+                                            adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                            print(f"[{profile.profile_name}] {family_label} runner closed (SELL M5 bar-close > EMA{_t9_m5_trail_period}): pos {position_id}")
                     except Exception as e:
-                        print(f"[{profile.profile_name}] {family_label} M5 trailing EMA error pos {position_id}: {e}")
+                        print(f"[{profile.profile_name}] {family_label} trailing EMA error pos {position_id}: {e}")
 
             elif t9_exit_strategy == "tp1_be_hwm_trail":
                 # --- Phase A: TP1 partial close ---
@@ -3501,10 +3608,10 @@ def main() -> None:
                             # Runner-score sizing: compute lots after regime gate, before execute
                             if _runner_sizing_active and not _regime_blocked:
                                 try:
-                                    from core.execution_engine import evaluate_kt_cg_trial_10_conditions
+                                    from core.execution_engine import evaluate_trial10_advisory_state
                                     from core.runner_score import compute_runner_score, compute_freshness, runner_score_to_lots
                                     from core.signal_engine import drop_incomplete_last_bar as _dilb_rs_pre
-                                    _preview_result = evaluate_kt_cg_trial_10_conditions(
+                                    _preview_result = evaluate_trial10_advisory_state(
                                         profile, pol, data_by_tf,
                                         current_bid=tick.bid,
                                         current_ask=tick.ask,
@@ -3649,6 +3756,19 @@ def main() -> None:
                             side = dec.side or "buy"
                             entry_price = tick.ask if side == "buy" else tick.bid
                             _trial10_pq = exec_result.get("trial10_pullback_quality") if pol_type == "kt_cg_trial_10" else None
+                            _t10_runner_bucket = None
+                            _t10_exit_profile = None
+                            if pol_type == "kt_cg_trial_10":
+                                try:
+                                    _lot_chain = exec_result.get("trial10_lot_chain") or {}
+                                    _t10_runner_bucket = (
+                                        (_lot_chain.get("runner_bucket") if isinstance(_lot_chain, dict) else None)
+                                        or (getattr(_rs_result_pre, "bucket", None) if _runner_sizing_active else None)
+                                    )
+                                    _t10_exit_profile = _trial10_bucket_exit_profile(pol, _t10_runner_bucket)
+                                except Exception:
+                                    _t10_runner_bucket = None
+                                    _t10_exit_profile = None
                             pip = float(profile.pip_size)
                             if pol_type in ("kt_cg_trial_9", "kt_cg_trial_10"):
                                 sl_price = None
@@ -3680,6 +3800,11 @@ def main() -> None:
                                 entry_type=t7_trigger_type,
                                 tier_number=exec_result.get("tiered_pullback_tier"),
                                 pullback_quality_label=(_trial10_pq or {}).get("label"),
+                                runner_bucket=_t10_runner_bucket,
+                                managed_tp1_pips=(_t10_exit_profile or {}).get("tp1_pips"),
+                                managed_tp1_close_pct=(_t10_exit_profile or {}).get("tp1_close_pct"),
+                                managed_be_plus_pips=(_t10_exit_profile or {}).get("be_plus_pips"),
+                                managed_trail_mode=(_t10_exit_profile or {}).get("trail_mode"),
                             )
                             _invalidate_trades_df_cache()
                             _append_trade_open_event(
@@ -4333,6 +4458,20 @@ def main() -> None:
                         if dec.placed:
                             side = dec.side or "buy"
                             entry_price = tick.ask if side == "buy" else tick.bid
+                            _trial10_pq = exec_result.get("trial10_pullback_quality") if pol_type == "kt_cg_trial_10" else None
+                            _t10_runner_bucket = None
+                            _t10_exit_profile = None
+                            if pol_type == "kt_cg_trial_10":
+                                try:
+                                    _lot_chain = exec_result.get("trial10_lot_chain") or {}
+                                    _t10_runner_bucket = (
+                                        (_lot_chain.get("runner_bucket") if isinstance(_lot_chain, dict) else None)
+                                        or (getattr(_rs_result_pre, "bucket", None) if _runner_sizing_active else None)
+                                    )
+                                    _t10_exit_profile = _trial10_bucket_exit_profile(pol, _t10_runner_bucket)
+                                except Exception:
+                                    _t10_runner_bucket = None
+                                    _t10_exit_profile = None
                             pip = float(profile.pip_size)
                             sl_pips = getattr(pol, "sl_pips", None)
                             if sl_pips is None:
@@ -5037,10 +5176,10 @@ def main() -> None:
                             # Runner-score sizing: compute lots after regime gate, before execute
                             if _runner_sizing_active and not _regime_blocked:
                                 try:
-                                    from core.execution_engine import evaluate_kt_cg_trial_10_conditions
+                                    from core.execution_engine import evaluate_trial10_advisory_state
                                     from core.runner_score import compute_runner_score, compute_freshness, runner_score_to_lots
                                     from core.signal_engine import drop_incomplete_last_bar as _dilb_rs_pre
-                                    _preview_result = evaluate_kt_cg_trial_10_conditions(
+                                    _preview_result = evaluate_trial10_advisory_state(
                                         profile, pol, data_by_tf,
                                         current_bid=tick.bid,
                                         current_ask=tick.ask,
@@ -5210,6 +5349,11 @@ def main() -> None:
                                 entry_type=t7_trigger_type,
                                 tier_number=exec_result.get("tiered_pullback_tier"),
                                 pullback_quality_label=(_trial10_pq or {}).get("label"),
+                                runner_bucket=_t10_runner_bucket,
+                                managed_tp1_pips=(_t10_exit_profile or {}).get("tp1_pips"),
+                                managed_tp1_close_pct=(_t10_exit_profile or {}).get("tp1_close_pct"),
+                                managed_be_plus_pips=(_t10_exit_profile or {}).get("be_plus_pips"),
+                                managed_trail_mode=(_t10_exit_profile or {}).get("trail_mode"),
                             )
                             _invalidate_trades_df_cache()
                             _append_trade_open_event(
