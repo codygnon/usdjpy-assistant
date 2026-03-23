@@ -5749,6 +5749,10 @@ def execute_kt_cg_trial_7_policy_demo_only(
     trial10_entry_gates = None
     trial10_pullback_quality = None
     trial10_lot_chain = None
+    def _ov(field: str, default=None):
+        if temp_overrides and field in temp_overrides and temp_overrides[field] is not None:
+            return temp_overrides[field]
+        return getattr(policy, field, default)
     effective_tiers = _canonical_trial7_tier_periods(getattr(policy, "tier_ema_periods", tuple(range(9, 35))))
     # Trial #8 / #9: only allow tiers 17, 21, 27, 33, 50, 75, 100 (never 9-16)
     if policy_type in ("kt_cg_trial_8", "kt_cg_trial_9"):
@@ -6285,7 +6289,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
 
         if policy_type == "kt_cg_trial_10":
             try:
-                _directional_cap_raw = getattr(policy, "max_directional_lots_per_side", None)
+                _directional_cap_raw = _ov("max_directional_lots_per_side", None)
                 if _directional_cap_raw is not None:
                     _directional_cap_lots = max(0.0, float(_directional_cap_raw))
                     _same_side_open_lots = sum(
@@ -6454,14 +6458,14 @@ def execute_kt_cg_trial_7_policy_demo_only(
             ),
         }
         if policy_type == "kt_cg_trial_10" and trial10_regime_multiplier is not None:
-            _runner_floor = float(getattr(policy, "runner_bucket_lots_floor", 0.03))
-            _runner_base = float(getattr(policy, "runner_bucket_lots_base", 0.05))
-            _pq_min = _runner_floor if bool(getattr(policy, "runner_score_sizing_enabled", False)) else float(getattr(policy, "conviction_min_lots", 0.01))
+            _runner_floor = float(_ov("runner_bucket_lots_floor", 0.03))
+            _runner_base = float(_ov("runner_bucket_lots_base", 0.05))
+            _pq_min = _runner_floor if bool(_ov("runner_score_sizing_enabled", False)) else float(_ov("conviction_min_lots", 0.01))
             _effective_lots = _effective_lots * float(trial10_regime_multiplier)
             if trigger_type == "tiered_pullback" and int(tiered_pullback_tier or 0) == 17:
                 _regime_label = str(trial10_regime_label or "").upper()
                 if _regime_label != "BUY_BOOST_HOUR":
-                    if bool(getattr(policy, "runner_tier17_nonboost_force_floor", False)):
+                    if bool(_ov("runner_tier17_nonboost_force_floor", False)):
                         _effective_lots = _runner_floor
                         _lot_chain["tier17_nonboost_multiplier"] = 0.0
                         _lot_chain["tier17_floor_applied"] = True
@@ -6469,7 +6473,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
                             f"tier17_nonboost: outside buy boost -> forced to floor {_runner_floor:.2f} lots"
                         )
                     else:
-                        _tier17_mult = max(0.0, float(getattr(policy, "tier17_nonboost_multiplier", 0.35)))
+                        _tier17_mult = max(0.0, float(_ov("tier17_nonboost_multiplier", 0.35)))
                         _effective_lots = _effective_lots * _tier17_mult
                         _lot_chain["tier17_nonboost_multiplier"] = _tier17_mult
                         eval_reasons.append(
@@ -6486,7 +6490,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
                     f"trial10 advisory: deep tier outside strong M5 -> capped at base {_runner_base:.2f} lots"
                 )
             if trigger_type == "zone_entry" and bool(trial10_advisory_flags.get("weak_m5_zone_cap", False)):
-                _runner_elevated = float(getattr(policy, "runner_bucket_lots_elevated", 0.07))
+                _runner_elevated = float(_ov("runner_bucket_lots_elevated", 0.07))
                 _effective_lots = min(float(_effective_lots), _runner_elevated)
                 _lot_chain["weak_m5_zone_cap_applied"] = True
                 eval_reasons.append(

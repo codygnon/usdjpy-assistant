@@ -3797,6 +3797,14 @@ interface EditedSettings {
   t10_regime_chop_pause_minutes: number;
   t10_regime_chop_pause_stop_count: number;
   t10_tier17_nonboost_multiplier: number;
+  t10_max_directional_lots_per_side: number;
+  t10_bucketed_exit_enabled: boolean;
+  t10_quick_tp1_pips: number;
+  t10_quick_tp1_close_pct: number;
+  t10_quick_be_spread_plus_pips: number;
+  t10_runner_tp1_pips: number;
+  t10_runner_tp1_close_pct: number;
+  t10_runner_be_spread_plus_pips: number;
   // Trial #9: Exit Strategy + TP1/BE/Trail
   t9_exit_strategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail';
   t9_hwm_trail_pips: number;
@@ -4112,6 +4120,14 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t10RegimeChopPauseMinutes = 45;
       let t10RegimeChopPauseStopCount = 1;
       let t10Tier17NonboostMultiplier = 0.35;
+      let t10MaxDirectionalLotsPerSide = 1.5;
+      let t10BucketedExitEnabled = true;
+      let t10QuickTp1Pips = 4.0;
+      let t10QuickTp1ClosePct = 85.0;
+      let t10QuickBeSpreadPlusPips = 0.3;
+      let t10RunnerTp1Pips = 8.0;
+      let t10RunnerTp1ClosePct = 55.0;
+      let t10RunnerBeSpreadPlusPips = 0.5;
       let t9ExitStrategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail' = 'tp1_be_m5_trail';
       let t9HwmTrailPips = 3.0;
       let t9Tp1Pips = 6.0;
@@ -4578,6 +4594,14 @@ function PresetsPage({ profile }: { profile: Profile }) {
               t10RegimeChopPauseMinutes = (pol.regime_chop_pause_minutes as number) ?? 45;
               t10RegimeChopPauseStopCount = (pol.regime_chop_pause_stop_count as number) ?? 1;
               t10Tier17NonboostMultiplier = (pol.tier17_nonboost_multiplier as number) ?? 0.35;
+              t10MaxDirectionalLotsPerSide = (pol.max_directional_lots_per_side as number) ?? 1.5;
+              t10BucketedExitEnabled = (pol.bucketed_exit_enabled as boolean) ?? true;
+              t10QuickTp1Pips = (pol.quick_tp1_pips as number) ?? 4.0;
+              t10QuickTp1ClosePct = (pol.quick_tp1_close_pct as number) ?? 85.0;
+              t10QuickBeSpreadPlusPips = (pol.quick_be_spread_plus_pips as number) ?? 0.3;
+              t10RunnerTp1Pips = (pol.runner_tp1_pips as number) ?? 8.0;
+              t10RunnerTp1ClosePct = (pol.runner_tp1_close_pct as number) ?? 55.0;
+              t10RunnerBeSpreadPlusPips = (pol.runner_be_spread_plus_pips as number) ?? 0.5;
               const rawEs9 = (pol.exit_strategy as string) ?? 'tp1_be_m5_trail';
               t9ExitStrategy = (['none', 'tp1_be_trail', 'ema_scale_runner', 'tp1_be_m5_trail', 'tp1_be_hwm_trail'].includes(rawEs9) ? rawEs9 : 'tp1_be_m5_trail') as typeof t9ExitStrategy;
               t9HwmTrailPips = (pol.hwm_trail_pips as number) ?? 3.0;
@@ -4849,6 +4873,14 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t10_regime_chop_pause_minutes: tempSettings?.t10_regime_chop_pause_minutes ?? t10RegimeChopPauseMinutes,
         t10_regime_chop_pause_stop_count: tempSettings?.t10_regime_chop_pause_stop_count ?? t10RegimeChopPauseStopCount,
         t10_tier17_nonboost_multiplier: tempSettings?.t10_tier17_nonboost_multiplier ?? t10Tier17NonboostMultiplier,
+        t10_max_directional_lots_per_side: tempSettings?.t10_max_directional_lots_per_side ?? t10MaxDirectionalLotsPerSide,
+        t10_bucketed_exit_enabled: tempSettings?.t10_bucketed_exit_enabled ?? t10BucketedExitEnabled,
+        t10_quick_tp1_pips: tempSettings?.t10_quick_tp1_pips ?? t10QuickTp1Pips,
+        t10_quick_tp1_close_pct: tempSettings?.t10_quick_tp1_close_pct ?? t10QuickTp1ClosePct,
+        t10_quick_be_spread_plus_pips: tempSettings?.t10_quick_be_spread_plus_pips ?? t10QuickBeSpreadPlusPips,
+        t10_runner_tp1_pips: tempSettings?.t10_runner_tp1_pips ?? t10RunnerTp1Pips,
+        t10_runner_tp1_close_pct: tempSettings?.t10_runner_tp1_close_pct ?? t10RunnerTp1ClosePct,
+        t10_runner_be_spread_plus_pips: tempSettings?.t10_runner_be_spread_plus_pips ?? t10RunnerBeSpreadPlusPips,
         t9_exit_strategy: (() => {
           const raw = (tempSettings?.t9_exit_strategy ?? t9ExitStrategy) as string;
           return (['none', 'tp1_be_trail', 'ema_scale_runner', 'tp1_be_m5_trail', 'tp1_be_hwm_trail'].includes(raw) ? raw : 'tp1_be_m5_trail') as 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail';
@@ -5292,6 +5324,14 @@ function PresetsPage({ profile }: { profile: Profile }) {
             updates.regime_chop_pause_minutes = Math.max(5, Math.min(120, editedSettings.t10_regime_chop_pause_minutes));
             updates.regime_chop_pause_stop_count = Math.max(1, Math.min(5, editedSettings.t10_regime_chop_pause_stop_count));
             updates.tier17_nonboost_multiplier = Math.max(0.1, Math.min(2.0, editedSettings.t10_tier17_nonboost_multiplier));
+            updates.max_directional_lots_per_side = Math.max(0.1, Math.min(10.0, editedSettings.t10_max_directional_lots_per_side));
+            updates.bucketed_exit_enabled = editedSettings.t10_bucketed_exit_enabled;
+            updates.quick_tp1_pips = Math.max(1.0, Math.min(20.0, editedSettings.t10_quick_tp1_pips));
+            updates.quick_tp1_close_pct = Math.max(10, Math.min(100, editedSettings.t10_quick_tp1_close_pct));
+            updates.quick_be_spread_plus_pips = Math.max(0.0, Math.min(5.0, editedSettings.t10_quick_be_spread_plus_pips));
+            updates.runner_tp1_pips = Math.max(1.0, Math.min(30.0, editedSettings.t10_runner_tp1_pips));
+            updates.runner_tp1_close_pct = Math.max(10, Math.min(100, editedSettings.t10_runner_tp1_close_pct));
+            updates.runner_be_spread_plus_pips = Math.max(0.0, Math.min(5.0, editedSettings.t10_runner_be_spread_plus_pips));
           }
           // T9: Intraday Fibonacci Corridor
           updates.intraday_fib_enabled = editedSettings.t9_intraday_fib_enabled;
@@ -5441,6 +5481,14 @@ function PresetsPage({ profile }: { profile: Profile }) {
           settings.t10_regime_chop_pause_minutes = editedSettings.t10_regime_chop_pause_minutes;
           settings.t10_regime_chop_pause_stop_count = editedSettings.t10_regime_chop_pause_stop_count;
           settings.t10_tier17_nonboost_multiplier = editedSettings.t10_tier17_nonboost_multiplier;
+          settings.t10_max_directional_lots_per_side = editedSettings.t10_max_directional_lots_per_side;
+          settings.t10_bucketed_exit_enabled = editedSettings.t10_bucketed_exit_enabled;
+          settings.t10_quick_tp1_pips = editedSettings.t10_quick_tp1_pips;
+          settings.t10_quick_tp1_close_pct = editedSettings.t10_quick_tp1_close_pct;
+          settings.t10_quick_be_spread_plus_pips = editedSettings.t10_quick_be_spread_plus_pips;
+          settings.t10_runner_tp1_pips = editedSettings.t10_runner_tp1_pips;
+          settings.t10_runner_tp1_close_pct = editedSettings.t10_runner_tp1_close_pct;
+          settings.t10_runner_be_spread_plus_pips = editedSettings.t10_runner_be_spread_plus_pips;
         }
         await api.updateTempSettings(profile.name, settings);
       }
@@ -6312,6 +6360,71 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
                         <strong>Boost hours (ET):</strong> 06-07, 12-15 (buy only). Other buys use Buy Base, non-veto sells use Sell Base, and Tier 17 gets the extra non-boost multiplier outside boost hours. London sell veto: hard block {editedSettings.t10_regime_london_start_hour_et}:00-{editedSettings.t10_regime_london_end_hour_et}:00 ET.
                       </div>
+                      <div style={{ marginTop: 12, fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Execution Discipline</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 12 }}>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Directional Cap (lots/side)</div>
+                          <input type="number" min={0.1} max={10.0} step={0.05} value={editedSettings.t10_max_directional_lots_per_side}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t10_max_directional_lots_per_side: parseFloat(e.target.value) || 1.5 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.8rem' }} />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={editedSettings.t10_bucketed_exit_enabled}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, t10_bucketed_exit_enabled: e.target.checked })}
+                              style={{ width: 18, height: 18, cursor: 'pointer' }} />
+                            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: editedSettings.t10_bucketed_exit_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                              {editedSettings.t10_bucketed_exit_enabled ? 'Bucketed Exits ON' : 'Bucketed Exits OFF'}
+                            </span>
+                          </label>
+                        </div>
+                      </div>
+                      {editedSettings.t10_bucketed_exit_enabled && (
+                      <>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Quick Exit (floor/base)</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 12 }}>
+                          <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>TP1 (pips)</div>
+                            <input type="number" min={1} max={20} step={0.5} value={editedSettings.t10_quick_tp1_pips}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, t10_quick_tp1_pips: parseFloat(e.target.value) || 4 })}
+                              style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.8rem' }} />
+                          </div>
+                          <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Close %</div>
+                            <input type="number" min={10} max={100} step={5} value={editedSettings.t10_quick_tp1_close_pct}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, t10_quick_tp1_close_pct: parseFloat(e.target.value) || 85 })}
+                              style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.8rem' }} />
+                          </div>
+                          <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>BE + Spread</div>
+                            <input type="number" min={0} max={5} step={0.1} value={editedSettings.t10_quick_be_spread_plus_pips}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, t10_quick_be_spread_plus_pips: parseFloat(e.target.value) || 0.3 })}
+                              style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.8rem' }} />
+                          </div>
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Runner Exit (press/elite)</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 12 }}>
+                          <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>TP1 (pips)</div>
+                            <input type="number" min={1} max={30} step={0.5} value={editedSettings.t10_runner_tp1_pips}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, t10_runner_tp1_pips: parseFloat(e.target.value) || 8 })}
+                              style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.8rem' }} />
+                          </div>
+                          <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Close %</div>
+                            <input type="number" min={10} max={100} step={5} value={editedSettings.t10_runner_tp1_close_pct}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, t10_runner_tp1_close_pct: parseFloat(e.target.value) || 55 })}
+                              style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.8rem' }} />
+                          </div>
+                          <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>BE + Spread</div>
+                            <input type="number" min={0} max={5} step={0.1} value={editedSettings.t10_runner_be_spread_plus_pips}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, t10_runner_be_spread_plus_pips: parseFloat(e.target.value) || 0.5 })}
+                              style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.8rem' }} />
+                          </div>
+                        </div>
+                      </>
+                      )}
                     </>
                     )}
                   </div>

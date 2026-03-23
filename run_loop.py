@@ -138,6 +138,14 @@ _TRIAL10_TEMP_OVERRIDE_MAP: dict[str, str] = {
     "temp_t10_regime_chop_pause_minutes": "regime_chop_pause_minutes",
     "temp_t10_regime_chop_pause_stop_count": "regime_chop_pause_stop_count",
     "temp_t10_tier17_nonboost_multiplier": "tier17_nonboost_multiplier",
+    "temp_t10_max_directional_lots_per_side": "max_directional_lots_per_side",
+    "temp_t10_bucketed_exit_enabled": "bucketed_exit_enabled",
+    "temp_t10_quick_tp1_pips": "quick_tp1_pips",
+    "temp_t10_quick_tp1_close_pct": "quick_tp1_close_pct",
+    "temp_t10_quick_be_spread_plus_pips": "quick_be_spread_plus_pips",
+    "temp_t10_runner_tp1_pips": "runner_tp1_pips",
+    "temp_t10_runner_tp1_close_pct": "runner_tp1_close_pct",
+    "temp_t10_runner_be_spread_plus_pips": "runner_be_spread_plus_pips",
 }
 
 
@@ -407,9 +415,14 @@ def _insert_trade_for_policy(
         pass
 
 
-def _trial10_bucket_exit_profile(policy: Any, runner_bucket: str | None) -> dict[str, Any]:
+def _trial10_bucket_exit_profile(policy: Any, runner_bucket: str | None, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     """Resolve Trial #10 bucket-specific managed-exit settings for a placed trade."""
-    exit_strategy = str(getattr(policy, "exit_strategy", "tp1_be_m5_trail") or "tp1_be_m5_trail")
+    def _ov(field: str, default=None):
+        if overrides and field in overrides and overrides[field] is not None:
+            return overrides[field]
+        return getattr(policy, field, default)
+
+    exit_strategy = str(_ov("exit_strategy", "tp1_be_m5_trail") or "tp1_be_m5_trail")
     default_trail_mode = "m5"
     if exit_strategy == "tp1_be_trail":
         default_trail_mode = "m1"
@@ -419,25 +432,25 @@ def _trial10_bucket_exit_profile(policy: Any, runner_bucket: str | None) -> dict
     profile = {
         "runner_bucket": str(runner_bucket or "").lower() or "unclassified",
         "exit_profile": "standard",
-        "tp1_pips": float(getattr(policy, "tp1_pips", 6.0)),
-        "tp1_close_pct": float(getattr(policy, "tp1_close_pct", 70.0)),
-        "be_plus_pips": float(getattr(policy, "be_spread_plus_pips", 0.5)),
+        "tp1_pips": float(_ov("tp1_pips", 6.0)),
+        "tp1_close_pct": float(_ov("tp1_close_pct", 70.0)),
+        "be_plus_pips": float(_ov("be_spread_plus_pips", 0.5)),
         "trail_mode": default_trail_mode,
     }
-    if not bool(getattr(policy, "bucketed_exit_enabled", False)):
+    if not bool(_ov("bucketed_exit_enabled", False)):
         return profile
 
     bucket = profile["runner_bucket"]
-    quick_buckets = {str(b).lower() for b in getattr(policy, "quick_exit_buckets", ("floor", "base"))}
-    runner_buckets = {str(b).lower() for b in getattr(policy, "runner_exit_buckets", ("press", "elite"))}
+    quick_buckets = {str(b).lower() for b in _ov("quick_exit_buckets", ("floor", "base"))}
+    runner_buckets = {str(b).lower() for b in _ov("runner_exit_buckets", ("press", "elite"))}
 
     if bucket in quick_buckets:
         profile.update(
             {
                 "exit_profile": "quick",
-                "tp1_pips": float(getattr(policy, "quick_tp1_pips", 4.0)),
-                "tp1_close_pct": float(getattr(policy, "quick_tp1_close_pct", 85.0)),
-                "be_plus_pips": float(getattr(policy, "quick_be_spread_plus_pips", 0.3)),
+                "tp1_pips": float(_ov("quick_tp1_pips", 4.0)),
+                "tp1_close_pct": float(_ov("quick_tp1_close_pct", 85.0)),
+                "be_plus_pips": float(_ov("quick_be_spread_plus_pips", 0.3)),
                 "trail_mode": "m1",
             }
         )
@@ -445,9 +458,9 @@ def _trial10_bucket_exit_profile(policy: Any, runner_bucket: str | None) -> dict
         profile.update(
             {
                 "exit_profile": "runner",
-                "tp1_pips": float(getattr(policy, "runner_tp1_pips", 8.0)),
-                "tp1_close_pct": float(getattr(policy, "runner_tp1_close_pct", 55.0)),
-                "be_plus_pips": float(getattr(policy, "runner_be_spread_plus_pips", 0.5)),
+                "tp1_pips": float(_ov("runner_tp1_pips", 8.0)),
+                "tp1_close_pct": float(_ov("runner_tp1_close_pct", 55.0)),
+                "be_plus_pips": float(_ov("runner_be_spread_plus_pips", 0.5)),
                 "trail_mode": "m5",
             }
         )
@@ -3765,7 +3778,7 @@ def main() -> None:
                                         (_lot_chain.get("runner_bucket") if isinstance(_lot_chain, dict) else None)
                                         or (getattr(_rs_result_pre, "bucket", None) if _runner_sizing_active else None)
                                     )
-                                    _t10_exit_profile = _trial10_bucket_exit_profile(pol, _t10_runner_bucket)
+                                    _t10_exit_profile = _trial10_bucket_exit_profile(pol, _t10_runner_bucket, _trial10_temp_overrides)
                                 except Exception:
                                     _t10_runner_bucket = None
                                     _t10_exit_profile = None
@@ -4468,7 +4481,7 @@ def main() -> None:
                                         (_lot_chain.get("runner_bucket") if isinstance(_lot_chain, dict) else None)
                                         or (getattr(_rs_result_pre, "bucket", None) if _runner_sizing_active else None)
                                     )
-                                    _t10_exit_profile = _trial10_bucket_exit_profile(pol, _t10_runner_bucket)
+                                    _t10_exit_profile = _trial10_bucket_exit_profile(pol, _t10_runner_bucket, _trial10_temp_overrides)
                                 except Exception:
                                     _t10_runner_bucket = None
                                     _t10_exit_profile = None

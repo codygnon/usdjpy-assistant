@@ -77,6 +77,14 @@ _TEMP_OVERRIDE_ATTRS = (
     "regime_chop_pause_minutes",
     "regime_chop_pause_stop_count",
     "tier17_nonboost_multiplier",
+    "max_directional_lots_per_side",
+    "bucketed_exit_enabled",
+    "quick_tp1_pips",
+    "quick_tp1_close_pct",
+    "quick_be_spread_plus_pips",
+    "runner_tp1_pips",
+    "runner_tp1_close_pct",
+    "runner_be_spread_plus_pips",
 )
 
 

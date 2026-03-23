@@ -104,6 +104,14 @@ class RuntimeState:
     temp_t10_regime_chop_pause_minutes: Optional[int] = None
     temp_t10_regime_chop_pause_stop_count: Optional[int] = None
     temp_t10_tier17_nonboost_multiplier: Optional[float] = None
+    temp_t10_max_directional_lots_per_side: Optional[float] = None
+    temp_t10_bucketed_exit_enabled: Optional[bool] = None
+    temp_t10_quick_tp1_pips: Optional[float] = None
+    temp_t10_quick_tp1_close_pct: Optional[float] = None
+    temp_t10_quick_be_spread_plus_pips: Optional[float] = None
+    temp_t10_runner_tp1_pips: Optional[float] = None
+    temp_t10_runner_tp1_close_pct: Optional[float] = None
+    temp_t10_runner_be_spread_plus_pips: Optional[float] = None
 
     # Trial #10 live chop-pause state
     chop_pause_buy_start_utc: Optional[str] = None
@@ -197,6 +205,14 @@ def load_state(path: str | Path) -> RuntimeState:
         temp_t10_regime_chop_pause_minutes=data.get("temp_t10_regime_chop_pause_minutes"),
         temp_t10_regime_chop_pause_stop_count=data.get("temp_t10_regime_chop_pause_stop_count"),
         temp_t10_tier17_nonboost_multiplier=data.get("temp_t10_tier17_nonboost_multiplier"),
+        temp_t10_max_directional_lots_per_side=data.get("temp_t10_max_directional_lots_per_side"),
+        temp_t10_bucketed_exit_enabled=data.get("temp_t10_bucketed_exit_enabled"),
+        temp_t10_quick_tp1_pips=data.get("temp_t10_quick_tp1_pips"),
+        temp_t10_quick_tp1_close_pct=data.get("temp_t10_quick_tp1_close_pct"),
+        temp_t10_quick_be_spread_plus_pips=data.get("temp_t10_quick_be_spread_plus_pips"),
+        temp_t10_runner_tp1_pips=data.get("temp_t10_runner_tp1_pips"),
+        temp_t10_runner_tp1_close_pct=data.get("temp_t10_runner_tp1_close_pct"),
+        temp_t10_runner_be_spread_plus_pips=data.get("temp_t10_runner_be_spread_plus_pips"),
         chop_pause_buy_start_utc=data.get("chop_pause_buy_start_utc"),
         chop_pause_buy_reason=data.get("chop_pause_buy_reason"),
         chop_pause_sell_start_utc=data.get("chop_pause_sell_start_utc"),
@@ -272,6 +288,14 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "temp_t10_regime_chop_pause_minutes": state.temp_t10_regime_chop_pause_minutes,
                 "temp_t10_regime_chop_pause_stop_count": state.temp_t10_regime_chop_pause_stop_count,
                 "temp_t10_tier17_nonboost_multiplier": state.temp_t10_tier17_nonboost_multiplier,
+                "temp_t10_max_directional_lots_per_side": state.temp_t10_max_directional_lots_per_side,
+                "temp_t10_bucketed_exit_enabled": state.temp_t10_bucketed_exit_enabled,
+                "temp_t10_quick_tp1_pips": state.temp_t10_quick_tp1_pips,
+                "temp_t10_quick_tp1_close_pct": state.temp_t10_quick_tp1_close_pct,
+                "temp_t10_quick_be_spread_plus_pips": state.temp_t10_quick_be_spread_plus_pips,
+                "temp_t10_runner_tp1_pips": state.temp_t10_runner_tp1_pips,
+                "temp_t10_runner_tp1_close_pct": state.temp_t10_runner_tp1_close_pct,
+                "temp_t10_runner_be_spread_plus_pips": state.temp_t10_runner_be_spread_plus_pips,
                 "chop_pause_buy_start_utc": state.chop_pause_buy_start_utc,
                 "chop_pause_buy_reason": state.chop_pause_buy_reason,
                 "chop_pause_sell_start_utc": state.chop_pause_sell_start_utc,

@@ -490,6 +490,14 @@ class TempEmaSettingsUpdate(BaseModel):
     t10_regime_chop_pause_minutes: Optional[int] = None
     t10_regime_chop_pause_stop_count: Optional[int] = None
     t10_tier17_nonboost_multiplier: Optional[float] = None
+    t10_max_directional_lots_per_side: Optional[float] = None
+    t10_bucketed_exit_enabled: Optional[bool] = None
+    t10_quick_tp1_pips: Optional[float] = None
+    t10_quick_tp1_close_pct: Optional[float] = None
+    t10_quick_be_spread_plus_pips: Optional[float] = None
+    t10_runner_tp1_pips: Optional[float] = None
+    t10_runner_tp1_close_pct: Optional[float] = None
+    t10_runner_be_spread_plus_pips: Optional[float] = None
 
 
 
@@ -825,6 +833,14 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
         "t10_regime_chop_pause_minutes": state.temp_t10_regime_chop_pause_minutes,
         "t10_regime_chop_pause_stop_count": state.temp_t10_regime_chop_pause_stop_count,
         "t10_tier17_nonboost_multiplier": state.temp_t10_tier17_nonboost_multiplier,
+        "t10_max_directional_lots_per_side": state.temp_t10_max_directional_lots_per_side,
+        "t10_bucketed_exit_enabled": state.temp_t10_bucketed_exit_enabled,
+        "t10_quick_tp1_pips": state.temp_t10_quick_tp1_pips,
+        "t10_quick_tp1_close_pct": state.temp_t10_quick_tp1_close_pct,
+        "t10_quick_be_spread_plus_pips": state.temp_t10_quick_be_spread_plus_pips,
+        "t10_runner_tp1_pips": state.temp_t10_runner_tp1_pips,
+        "t10_runner_tp1_close_pct": state.temp_t10_runner_tp1_close_pct,
+        "t10_runner_be_spread_plus_pips": state.temp_t10_runner_be_spread_plus_pips,
     }
 
 
@@ -883,6 +899,14 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
             "temp_t10_regime_chop_pause_minutes": req.t10_regime_chop_pause_minutes,
             "temp_t10_regime_chop_pause_stop_count": req.t10_regime_chop_pause_stop_count,
             "temp_t10_tier17_nonboost_multiplier": req.t10_tier17_nonboost_multiplier,
+            "temp_t10_max_directional_lots_per_side": req.t10_max_directional_lots_per_side,
+            "temp_t10_bucketed_exit_enabled": req.t10_bucketed_exit_enabled,
+            "temp_t10_quick_tp1_pips": req.t10_quick_tp1_pips,
+            "temp_t10_quick_tp1_close_pct": req.t10_quick_tp1_close_pct,
+            "temp_t10_quick_be_spread_plus_pips": req.t10_quick_be_spread_plus_pips,
+            "temp_t10_runner_tp1_pips": req.t10_runner_tp1_pips,
+            "temp_t10_runner_tp1_close_pct": req.t10_runner_tp1_close_pct,
+            "temp_t10_runner_be_spread_plus_pips": req.t10_runner_be_spread_plus_pips,
         }
     )
     new_state = RuntimeState(**new_data)  # type: ignore[arg-type]
@@ -3281,6 +3305,22 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         temp_overrides_api["regime_chop_pause_stop_count"] = _state.temp_t10_regime_chop_pause_stop_count
                     if _state.temp_t10_tier17_nonboost_multiplier is not None:
                         temp_overrides_api["tier17_nonboost_multiplier"] = _state.temp_t10_tier17_nonboost_multiplier
+                    if _state.temp_t10_max_directional_lots_per_side is not None:
+                        temp_overrides_api["max_directional_lots_per_side"] = _state.temp_t10_max_directional_lots_per_side
+                    if _state.temp_t10_bucketed_exit_enabled is not None:
+                        temp_overrides_api["bucketed_exit_enabled"] = _state.temp_t10_bucketed_exit_enabled
+                    if _state.temp_t10_quick_tp1_pips is not None:
+                        temp_overrides_api["quick_tp1_pips"] = _state.temp_t10_quick_tp1_pips
+                    if _state.temp_t10_quick_tp1_close_pct is not None:
+                        temp_overrides_api["quick_tp1_close_pct"] = _state.temp_t10_quick_tp1_close_pct
+                    if _state.temp_t10_quick_be_spread_plus_pips is not None:
+                        temp_overrides_api["quick_be_spread_plus_pips"] = _state.temp_t10_quick_be_spread_plus_pips
+                    if _state.temp_t10_runner_tp1_pips is not None:
+                        temp_overrides_api["runner_tp1_pips"] = _state.temp_t10_runner_tp1_pips
+                    if _state.temp_t10_runner_tp1_close_pct is not None:
+                        temp_overrides_api["runner_tp1_close_pct"] = _state.temp_t10_runner_tp1_close_pct
+                    if _state.temp_t10_runner_be_spread_plus_pips is not None:
+                        temp_overrides_api["runner_be_spread_plus_pips"] = _state.temp_t10_runner_be_spread_plus_pips
                     if not temp_overrides_api:
                         temp_overrides_api = None
                     if _policy_type == "phase3_integrated":
