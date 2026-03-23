@@ -52,14 +52,18 @@ class TestComputeRollingIntradayFibLevels:
         assert "S3" in result
         assert "R3" in result
 
-    def test_pp_is_midpoint(self):
-        """PP should be the midpoint of the rolling range."""
+    def test_pp_uses_rolling_high_low_and_latest_close(self):
+        """PP should use the standard close-based formula on the rolling window."""
         df = _make_m15_df(20, base_high=151.0, base_low=150.0)
         result = compute_rolling_intraday_fib_levels(df, lookback_bars=16)
         assert result is not None
         # Completed bars are [0..18], window is [3..18]
         window = df.iloc[:-1].iloc[-16:]
-        expected_pp = (float(window["high"].max()) + float(window["low"].min())) / 2.0
+        expected_pp = (
+            float(window["high"].max())
+            + float(window["low"].min())
+            + float(window["close"].iloc[-1])
+        ) / 3.0
         assert abs(result["PP"] - expected_pp) < 1e-10
 
     def test_level_ordering(self):
@@ -83,6 +87,20 @@ class TestComputeRollingIntradayFibLevels:
         """Returns None when fewer bars than lookback."""
         df = _make_m15_df(5)
         assert compute_rolling_intraday_fib_levels(df, lookback_bars=16) is None
+
+    def test_matches_standard_formula_for_rolling_window(self):
+        df = _make_m15_df(20, base_high=158.30, base_low=158.10)
+        result = compute_rolling_intraday_fib_levels(df, lookback_bars=8)
+        assert result is not None
+        window = df.iloc[:-1].iloc[-8:]
+        high = float(window["high"].max())
+        low = float(window["low"].min())
+        close = float(window["close"].iloc[-1])
+        expected_pp = (high + low + close) / 3.0
+        expected_range = high - low
+        assert abs(result["PP"] - expected_pp) < 1e-10
+        assert abs(result["R1"] - (expected_pp + 0.382 * expected_range)) < 1e-10
+        assert abs(result["S1"] - (expected_pp - 0.382 * expected_range)) < 1e-10
 
 
 class TestPreviousCandleFibLevels:

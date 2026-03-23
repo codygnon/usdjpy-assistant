@@ -106,17 +106,19 @@ def compute_rolling_intraday_fib_levels(
     df: pd.DataFrame,
     lookback_bars: int = 16,
 ) -> Optional[dict[str, float]]:
-    """Compute Fibonacci pivot levels from a rolling intraday high/low window.
+    """Compute Fibonacci pivot levels from a rolling intraday window.
 
     Uses the highest high and lowest low over the last *lookback_bars* completed
-    bars (excludes the current in-progress bar).  The midpoint of that range
-    serves as the pivot (PP) and S/R levels are placed at standard fib ratios.
+    bars (excludes the current in-progress bar). The pivot (PP) uses the
+    standard close-based formula from that rolling source window:
+
+    ``PP = (rolling_high + rolling_low + latest_close) / 3``
 
     Parameters
     ----------
     df : pd.DataFrame
         OHLC DataFrame for an intraday timeframe (e.g. M15, M5).
-        Must contain ``high`` and ``low`` columns.
+        Must contain ``high``, ``low``, and ``close`` columns.
     lookback_bars : int
         Number of completed bars to use for the rolling window.
 
@@ -126,7 +128,7 @@ def compute_rolling_intraday_fib_levels(
         Keys: PP, R1, R2, R3, S1, S2, S3.  None if insufficient data.
 
     Level convention (consistent with ``compute_daily_fib_pivots``):
-        PP = midpoint of rolling range
+        PP = (rolling_high + rolling_low + latest_close) / 3
         R1 = PP + 0.382 * range,  S1 = PP - 0.382 * range
         R2 = PP + 0.618 * range,  S2 = PP - 0.618 * range
         R3 = PP + 1.000 * range,  S3 = PP - 1.000 * range
@@ -141,21 +143,13 @@ def compute_rolling_intraday_fib_levels(
     window = completed.iloc[-lookback_bars:]
     rolling_high = float(window["high"].max())
     rolling_low = float(window["low"].min())
+    latest_close = float(window["close"].iloc[-1])
 
     rng = rolling_high - rolling_low
     if rng <= 0:
         return None
 
-    pp = (rolling_high + rolling_low) / 2.0
-    return {
-        "PP": pp,
-        "R1": pp + 0.382 * rng,
-        "R2": pp + 0.618 * rng,
-        "R3": pp + 1.000 * rng,
-        "S1": pp - 0.382 * rng,
-        "S2": pp - 0.618 * rng,
-        "S3": pp - 1.000 * rng,
-    }
+    return _standard_fib_levels_from_hlc(rolling_high, rolling_low, latest_close)
 
 
 def resolve_fib_level(levels: dict[str, float], name: str) -> Optional[float]:
