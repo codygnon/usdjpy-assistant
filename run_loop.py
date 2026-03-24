@@ -656,6 +656,40 @@ def _run_trade_management(
             _m5_ema_cache[period] = _ema_fn(_m5_close, period)
         return _m5_ema_cache[period]
 
+    # M15/H1 close series for trail escalation
+    _m15_close = None
+    _h1_close = None
+    _tm_m15_df = None
+    _tm_h1_df = None
+    if data_by_tf is not None:
+        _shared_m15 = data_by_tf.get("M15")
+        if _shared_m15 is not None and not _shared_m15.empty:
+            _tm_m15_df = drop_incomplete_last_bar(_shared_m15.copy(), "M15")
+            if _tm_m15_df is not None and not _tm_m15_df.empty:
+                _m15_close = _tm_m15_df["close"].astype(float)
+        _shared_h1 = data_by_tf.get("H1")
+        if _shared_h1 is not None and not _shared_h1.empty:
+            _tm_h1_df = drop_incomplete_last_bar(_shared_h1.copy(), "H1")
+            if _tm_h1_df is not None and not _tm_h1_df.empty:
+                _h1_close = _tm_h1_df["close"].astype(float)
+
+    _m15_ema_cache: dict[int, pd.Series] = {}
+    _h1_ema_cache: dict[int, pd.Series] = {}
+
+    def _m15_ema(period: int) -> "pd.Series | None":
+        if _ema_fn is None or _m15_close is None or len(_m15_close) <= period:
+            return None
+        if period not in _m15_ema_cache:
+            _m15_ema_cache[period] = _ema_fn(_m15_close, period)
+        return _m15_ema_cache[period]
+
+    def _h1_ema(period: int) -> "pd.Series | None":
+        if _ema_fn is None or _h1_close is None or len(_h1_close) <= period:
+            return None
+        if period not in _h1_ema_cache:
+            _h1_ema_cache[period] = _ema_fn(_h1_close, period)
+        return _h1_ema_cache[period]
+
     _t9_kill_switch_snapshot: dict[str, dict[str, float | bool | None]] = {}
     if (
         t9_family_policies
@@ -1158,8 +1192,65 @@ def _run_trade_management(
                     _trail_mode = "m5"
                     if family_type == "kt_cg_trial_10" and t10_trail_mode in ("m1", "m5"):
                         _trail_mode = t10_trail_mode
+
+                    # --- Trail escalation (Trial 10 only, non-quick buckets) ---
+                    _effective_trail_tf = _trail_mode
+                    _esc_enabled = (
+                        family_type == "kt_cg_trial_10"
+                        and bool(getattr(family_policy, "trail_escalation_enabled", False))
+                        and _trail_mode in ("m1", "m5")
+                    )
+                    if _esc_enabled:
+                        _esc_bucket = str(trade_row.get("runner_bucket") or "").lower()
+                        _esc_quick = {str(b).lower() for b in getattr(family_policy, "quick_exit_buckets", ("floor", "base"))}
+                        if _esc_bucket not in _esc_quick:
+                            # Current profit in pips
+                            if side == "buy":
+                                _esc_profit = (mid - entry) / pip
+                            else:
+                                _esc_profit = (entry - mid) / pip
+
+                            _esc_t1 = float(getattr(family_policy, "trail_escalation_tier1_pips", 10.0))
+                            _esc_t2 = float(getattr(family_policy, "trail_escalation_tier2_pips", 20.0))
+
+                            # What level does current profit warrant?
+                            _desired_level = _trail_mode
+                            if _trail_mode == "m1":
+                                if _esc_profit >= _esc_t2:
+                                    _desired_level = "m15"
+                                elif _esc_profit >= _esc_t1:
+                                    _desired_level = "m5"
+                            elif _trail_mode == "m5":
+                                if _esc_profit >= _esc_t2:
+                                    _desired_level = "h1"
+                                elif _esc_profit >= _esc_t1:
+                                    _desired_level = "m15"
+
+                            # One-way ratchet from DB
+                            _stored_esc = str(trade_row.get("trail_escalation_level") or "").lower()
+                            _level_rank = {"m1": 0, "m5": 1, "m15": 2, "h1": 3}
+                            _stored_rank = _level_rank.get(_stored_esc, -1)
+                            _desired_rank = _level_rank.get(_desired_level, 0)
+                            _base_rank = _level_rank.get(_trail_mode, 0)
+
+                            _eff_rank = max(_base_rank, _stored_rank, _desired_rank)
+                            _rank_to_level = {0: "m1", 1: "m5", 2: "m15", 3: "h1"}
+                            _effective_trail_tf = _rank_to_level.get(_eff_rank, _trail_mode)
+
+                            # Persist ratchet if it advanced
+                            if _eff_rank > max(_stored_rank, _base_rank):
+                                store.update_trade(trade_id, {"trail_escalation_level": _effective_trail_tf})
+                                print(f"[{profile.profile_name}] Trail escalation: pos {position_id} "
+                                      f"{_stored_esc or _trail_mode} -> {_effective_trail_tf} (+{_esc_profit:.1f}p)")
+
+                            # Fallback if data unavailable
+                            if _effective_trail_tf == "h1" and _h1_close is None:
+                                _effective_trail_tf = "m15"
+                            if _effective_trail_tf == "m15" and _m15_close is None:
+                                _effective_trail_tf = "m5"
+
                     try:
-                        if _trail_mode == "m1":
+                        if _effective_trail_tf == "m1":
                             _t9_trail_period = int(getattr(family_policy, "trail_ema_period", 21))
                             if _m1_close is not None and len(_m1_close) > _t9_trail_period + 1:
                                 trail_ema = _m1_ema(_t9_trail_period)
@@ -1200,7 +1291,8 @@ def _run_trade_management(
                                         if vol > 0:
                                             adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
                                         print(f"[{profile.profile_name}] {family_label} runner closed (SELL M1 bar-close > EMA{_t9_trail_period}): pos {position_id}")
-                        else:
+
+                        elif _effective_trail_tf == "m5":
                             _t9_m5_trail_period = int(getattr(family_policy, "trail_m5_ema_period", 20))
                             if _m5_close is not None and len(_m5_close) > _t9_m5_trail_period + 1:
                                 trail_ema = _m5_ema(_t9_m5_trail_period)
@@ -1251,6 +1343,115 @@ def _run_trade_management(
                                         if vol > 0:
                                             adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
                                             print(f"[{profile.profile_name}] {family_label} runner closed (SELL M5 bar-close > EMA{_t9_m5_trail_period}): pos {position_id}")
+
+                        elif _effective_trail_tf == "m15":
+                            _m15_trail_period = int(getattr(family_policy, "trail_escalation_m15_ema_period", 21))
+                            _m15_buffer = float(getattr(family_policy, "trail_escalation_m15_buffer_pips", 1.5))
+                            if _m15_close is not None and len(_m15_close) > _m15_trail_period + 1:
+                                trail_ema = _m15_ema(_m15_trail_period)
+                                if trail_ema is not None and not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):
+                                    ema_val = float(trail_ema.iloc[-2])
+                                    last_m15_close = float(_m15_close.iloc[-2])
+                                    prev_be_sl = trade_row.get("breakeven_sl_price")
+                                    if prev_be_sl is not None:
+                                        prev_be_sl = float(prev_be_sl)
+                                    if side == "buy":
+                                        new_trail_sl = ema_val - (_m15_buffer * pip)
+                                        if prev_be_sl is not None:
+                                            new_trail_sl = max(new_trail_sl, prev_be_sl)
+                                    else:
+                                        new_trail_sl = ema_val + (_m15_buffer * pip)
+                                        if prev_be_sl is not None:
+                                            new_trail_sl = min(new_trail_sl, prev_be_sl)
+                                    _safe_update_trail_sl(
+                                        adapter, store, position_id, trade_id, profile.symbol,
+                                        new_trail_sl, prev_be_sl, side, tick, pip,
+                                        profile.profile_name, label=f"{family_label} M15 trail",
+                                    )
+                                    # Bar-close exit (completed bar, anchored to tp1_time_utc)
+                                    _tp1_anchor = trade_row.get("tp1_time_utc")
+                                    _m15_bar_close_time = None
+                                    if _tm_m15_df is not None and "time" in _tm_m15_df.columns:
+                                        _m15_bar_open = _tm_m15_df["time"].iloc[-2]
+                                        _m15_bar_close_time = _m15_bar_open + pd.Timedelta(minutes=15)
+                                    _bar_is_new = (
+                                        _tp1_anchor is None
+                                        or _m15_bar_close_time is None
+                                        or _m15_bar_close_time > pd.Timestamp(_tp1_anchor)
+                                    )
+                                    if side == "buy" and last_m15_close < ema_val and _bar_is_new:
+                                        position_type = 0
+                                        if isinstance(pos, dict):
+                                            vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                        else:
+                                            vol = float(getattr(pos, "volume", 0) or 0)
+                                        if vol > 0:
+                                            adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                        print(f"[{profile.profile_name}] {family_label} runner closed (BUY M15 bar-close < EMA{_m15_trail_period}): pos {position_id}")
+                                    elif side == "sell" and last_m15_close > ema_val and _bar_is_new:
+                                        position_type = 1
+                                        if isinstance(pos, dict):
+                                            vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                        else:
+                                            vol = float(getattr(pos, "volume", 0) or 0)
+                                        if vol > 0:
+                                            adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                        print(f"[{profile.profile_name}] {family_label} runner closed (SELL M15 bar-close > EMA{_m15_trail_period}): pos {position_id}")
+
+                        elif _effective_trail_tf == "h1":
+                            _h1_trail_period = int(getattr(family_policy, "trail_escalation_h1_ema_period", 9))
+                            _h1_buffer = float(getattr(family_policy, "trail_escalation_h1_buffer_pips", 2.0))
+                            if _h1_close is not None and len(_h1_close) > _h1_trail_period + 1:
+                                trail_ema = _h1_ema(_h1_trail_period)
+                                if trail_ema is not None and not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):
+                                    ema_val = float(trail_ema.iloc[-2])
+                                    last_h1_close = float(_h1_close.iloc[-2])
+                                    prev_be_sl = trade_row.get("breakeven_sl_price")
+                                    if prev_be_sl is not None:
+                                        prev_be_sl = float(prev_be_sl)
+                                    if side == "buy":
+                                        new_trail_sl = ema_val - (_h1_buffer * pip)
+                                        if prev_be_sl is not None:
+                                            new_trail_sl = max(new_trail_sl, prev_be_sl)
+                                    else:
+                                        new_trail_sl = ema_val + (_h1_buffer * pip)
+                                        if prev_be_sl is not None:
+                                            new_trail_sl = min(new_trail_sl, prev_be_sl)
+                                    _safe_update_trail_sl(
+                                        adapter, store, position_id, trade_id, profile.symbol,
+                                        new_trail_sl, prev_be_sl, side, tick, pip,
+                                        profile.profile_name, label=f"{family_label} H1 trail",
+                                    )
+                                    # Bar-close exit (completed bar, anchored to tp1_time_utc)
+                                    _tp1_anchor = trade_row.get("tp1_time_utc")
+                                    _h1_bar_close_time = None
+                                    if _tm_h1_df is not None and "time" in _tm_h1_df.columns:
+                                        _h1_bar_open = _tm_h1_df["time"].iloc[-2]
+                                        _h1_bar_close_time = _h1_bar_open + pd.Timedelta(hours=1)
+                                    _bar_is_new = (
+                                        _tp1_anchor is None
+                                        or _h1_bar_close_time is None
+                                        or _h1_bar_close_time > pd.Timestamp(_tp1_anchor)
+                                    )
+                                    if side == "buy" and last_h1_close < ema_val and _bar_is_new:
+                                        position_type = 0
+                                        if isinstance(pos, dict):
+                                            vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                        else:
+                                            vol = float(getattr(pos, "volume", 0) or 0)
+                                        if vol > 0:
+                                            adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                        print(f"[{profile.profile_name}] {family_label} runner closed (BUY H1 bar-close < EMA{_h1_trail_period}): pos {position_id}")
+                                    elif side == "sell" and last_h1_close > ema_val and _bar_is_new:
+                                        position_type = 1
+                                        if isinstance(pos, dict):
+                                            vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                                        else:
+                                            vol = float(getattr(pos, "volume", 0) or 0)
+                                        if vol > 0:
+                                            adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
+                                        print(f"[{profile.profile_name}] {family_label} runner closed (SELL H1 bar-close > EMA{_h1_trail_period}): pos {position_id}")
+
                     except Exception as e:
                         print(f"[{profile.profile_name}] {family_label} trailing EMA error pos {position_id}: {e}")
 
@@ -3182,7 +3383,13 @@ def main() -> None:
                             _log(f"MN candle fetch failed: {_mn_err}", "WARN")
 
                     # Fetch H1 only when a non-Phase3 policy needs broker-native H1 data.
-                    if has_uncle_parsh:
+                    _needs_h1 = has_uncle_parsh
+                    if not _needs_h1 and has_kt_cg_trial_10:
+                        for _p10 in profile.execution.policies:
+                            if getattr(_p10, "type", "") == "kt_cg_trial_10" and getattr(_p10, "enabled", True) and getattr(_p10, "trail_escalation_enabled", False):
+                                _needs_h1 = True
+                                break
+                    if _needs_h1:
                         data_by_tf["H1"] = _get_bars_cached(profile.symbol, "H1", 200)
                     # Tick always fetched fresh for live price detection
                     tick = adapter.get_tick(profile.symbol)

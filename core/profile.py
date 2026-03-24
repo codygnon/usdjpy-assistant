@@ -1130,6 +1130,15 @@ class ExecutionPolicyKtCgTrial10(ExecutionPolicyKtCgTrial9):
     runner_tp1_close_pct: float = 55.0
     runner_be_spread_plus_pips: float = 0.5
 
+    # Trail escalation: promote trailing TF as profit grows (elevated/press/elite only)
+    trail_escalation_enabled: bool = False
+    trail_escalation_tier1_pips: float = 10.0     # profit to escalate once (m1→m5, m5→m15)
+    trail_escalation_tier2_pips: float = 20.0     # profit to escalate twice (m1→m15, m5→h1)
+    trail_escalation_m15_ema_period: int = 21     # EMA period for M15 trail
+    trail_escalation_h1_ema_period: int = 9       # EMA period for H1 trail
+    trail_escalation_m15_buffer_pips: float = 1.5 # SL buffer below/above M15 EMA
+    trail_escalation_h1_buffer_pips: float = 2.0  # SL buffer below/above H1 EMA
+
     kill_switch_enabled: bool = False
     kill_switch_zone_entry_action: Literal["kill", "hold"] = "hold"
 

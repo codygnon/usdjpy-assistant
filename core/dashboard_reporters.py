@@ -963,6 +963,10 @@ def report_t8_exit_strategy(policy) -> FilterReport:
             f"Std {s_tp1:.0f}p/{s_pct:.0f}% + BE +{s_be:.1f}p + M5 trail | "
             f"Runner {r_tp1:.0f}p/{r_pct:.0f}% + BE +{r_be:.1f}p + M5 trail"
         )
+        if bool(getattr(policy, "trail_escalation_enabled", False)):
+            _et1 = float(getattr(policy, "trail_escalation_tier1_pips", 10.0))
+            _et2 = float(getattr(policy, "trail_escalation_tier2_pips", 20.0))
+            label += f" | Escalation: +{_et1:.0f}p->M15, +{_et2:.0f}p->H1"
     elif exit_strategy == "ema_scale_runner":
         ema_fast = getattr(policy, "m1_exit_ema_fast", 9)
         ema_slow = getattr(policy, "m1_exit_ema_slow", 21)
