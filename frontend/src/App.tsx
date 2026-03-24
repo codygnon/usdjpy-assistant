@@ -3921,6 +3921,65 @@ function sanitizeTrial10TierPeriods(periods: number[] | null | undefined): numbe
   return cleaned.length > 0 ? cleaned : [...TRIAL10_DEFAULT_TIER_EMA_PERIODS];
 }
 
+const TEMP_SETTINGS_DRAFT_VERSION = 1;
+
+function getTempSettingsDraftScope(profileData: Record<string, unknown> | null): string {
+  if (!profileData) return 'generic';
+  const execution = profileData.execution as Record<string, unknown> | undefined;
+  const policies = (execution?.policies as Record<string, unknown>[] | undefined) ?? [];
+  const enabledTypes = new Set(
+    policies
+      .filter((pol) => (pol.enabled as boolean | undefined) !== false)
+      .map((pol) => String(pol.type || ''))
+      .filter(Boolean)
+  );
+  if (enabledTypes.has('phase3_integrated')) return 'phase3_integrated';
+  if (enabledTypes.has('kt_cg_trial_10')) return 'kt_cg_trial_10';
+  if (enabledTypes.has('kt_cg_trial_9')) return 'kt_cg_trial_9';
+  const activePresetName = String(profileData.active_preset_name || '').trim();
+  if (activePresetName) {
+    return (
+      activePresetName
+        .toLowerCase()
+        .replace(/\s*\(customized\)\s*/g, '')
+        .replace(/[^a-z0-9_]+/g, '_')
+        .replace(/^_+|_+$/g, '') || 'generic'
+    );
+  }
+  return 'generic';
+}
+
+function getTempSettingsDraftStorageKey(profileName: string, scope: string): string {
+  return `usdjpy_assistant.temp_settings_draft.v${TEMP_SETTINGS_DRAFT_VERSION}.${profileName}.${scope}`;
+}
+
+function loadTempSettingsDraft(profileName: string, scope: string): Partial<EditedSettings> | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(getTempSettingsDraftStorageKey(profileName, scope));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { settings?: Partial<EditedSettings> } | Partial<EditedSettings>;
+    if ('settings' in (parsed as Record<string, unknown>)) {
+      return (parsed as { settings?: Partial<EditedSettings> }).settings ?? null;
+    }
+    return parsed as Partial<EditedSettings>;
+  } catch {
+    return null;
+  }
+}
+
+function saveTempSettingsDraft(profileName: string, scope: string, settings: EditedSettings) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(
+      getTempSettingsDraftStorageKey(profileName, scope),
+      JSON.stringify({ version: TEMP_SETTINGS_DRAFT_VERSION, settings })
+    );
+  } catch {
+    // Ignore draft-storage failures.
+  }
+}
+
 function PresetsPage({ profile }: { profile: Profile }) {
   const [presets, setPresets] = useState<api.Preset[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -3935,6 +3994,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
   const [editedSettings, setEditedSettings] = useState<EditedSettings | null>(null);
   const [applyingSettings, setApplyingSettings] = useState(false);
   const [t7TrendExhaustionManualThresholds, setT7TrendExhaustionManualThresholds] = useState(false);
+  const suppressDraftPersistRef = useRef(false);
+  const tempSettingsDraftScope = useMemo(
+    () => getTempSettingsDraftScope(currentProfile),
+    [currentProfile]
+  );
 
   // Fetch current profile to get active preset
   const fetchProfile = () => {
@@ -4662,7 +4726,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         }
       }
 
-      setEditedSettings({
+      const baseEditedSettings: EditedSettings = {
         max_lots: (effectiveRisk?.max_lots ?? risk?.max_lots ?? 0.01) as number,
         min_stop_pips: (effectiveRisk?.min_stop_pips ?? risk?.min_stop_pips ?? 5) as number,
         max_spread_pips: (effectiveRisk?.max_spread_pips ?? risk?.max_spread_pips ?? 2) as number,
@@ -4932,9 +4996,21 @@ function PresetsPage({ profile }: { profile: Profile }) {
         up_scale_out_pct: ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.scale_out_pct as number ?? 50),
         up_max_spread_pips: ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.max_spread_pips as number ?? 3.0),
         up_initial_sl_spread_plus_pips: ((execution?.policies as Record<string, unknown>[])?.find(p => p.type === 'uncle_parsh_h1_breakout')?.initial_sl_spread_plus_pips as number ?? 5.0),
-      });
+      };
+      const savedDraft = loadTempSettingsDraft(profile.name, tempSettingsDraftScope);
+      suppressDraftPersistRef.current = true;
+      setEditedSettings(savedDraft ? { ...baseEditedSettings, ...savedDraft } : baseEditedSettings);
     }
-  }, [showActiveSettings, currentProfile, tempSettings]);
+  }, [showActiveSettings, currentProfile, tempSettings, profile.name, tempSettingsDraftScope]);
+
+  useEffect(() => {
+    if (!showActiveSettings || !editedSettings) return;
+    if (suppressDraftPersistRef.current) {
+      suppressDraftPersistRef.current = false;
+      return;
+    }
+    saveTempSettingsDraft(profile.name, tempSettingsDraftScope, editedSettings);
+  }, [showActiveSettings, editedSettings, profile.name, tempSettingsDraftScope]);
 
   // Handler to apply temporary settings
   const handleApplyTemporarySettings = async () => {
