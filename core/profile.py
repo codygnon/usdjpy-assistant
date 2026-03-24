@@ -1571,6 +1571,19 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
                             pol["tier_ema_periods"] = cleaned if cleaned else canonical_default
                         else:
                             pol["tier_ema_periods"] = canonical_default
+                    if isinstance(pol, dict) and pol.get("type") == "kt_cg_trial_10":
+                        # Migrate renamed chop pause fields
+                        pol.pop("regime_chop_pause_lookback_minutes", None)
+                        pol.pop("regime_chop_pause_stop_count", None)
+                        # Migrate absolute bucket lots -> multipliers
+                        pol.pop("runner_bucket_lots_floor", None)
+                        pol.pop("runner_bucket_lots_base", None)
+                        pol.pop("runner_bucket_lots_elevated", None)
+                        pol.pop("runner_bucket_lots_press", None)
+                        pol.pop("runner_bucket_lots_elite", None)
+                        # Remove H1 escalation fields (ladder simplified to M1->M5->M15)
+                        pol.pop("trail_escalation_h1_ema_period", None)
+                        pol.pop("trail_escalation_h1_buffer_pips", None)
         return d
 
     profile_name = d.get("profile_name") or d.get("name") or "default"
