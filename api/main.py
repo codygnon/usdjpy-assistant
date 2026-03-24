@@ -484,7 +484,8 @@ class TempEmaSettingsUpdate(BaseModel):
     t10_regime_sell_base_multiplier: Optional[float] = None
     t10_regime_chop_pause_enabled: Optional[bool] = None
     t10_regime_chop_pause_minutes: Optional[int] = None
-    t10_regime_chop_pause_stop_count: Optional[int] = None
+    t10_regime_chop_pause_lookback_trades: Optional[int] = None
+    t10_regime_chop_pause_stop_rate: Optional[float] = None
     t10_tier17_nonboost_multiplier: Optional[float] = None
     t10_max_directional_lots_per_side: Optional[float] = None
     t10_bucketed_exit_enabled: Optional[bool] = None
@@ -494,6 +495,11 @@ class TempEmaSettingsUpdate(BaseModel):
     t10_runner_tp1_pips: Optional[float] = None
     t10_runner_tp1_close_pct: Optional[float] = None
     t10_runner_be_spread_plus_pips: Optional[float] = None
+    t10_trail_escalation_enabled: Optional[bool] = None
+    t10_trail_escalation_tier1_pips: Optional[float] = None
+    t10_trail_escalation_tier2_pips: Optional[float] = None
+    t10_trail_escalation_m15_ema_period: Optional[int] = None
+    t10_trail_escalation_m15_buffer_pips: Optional[float] = None
 
 
 
@@ -823,7 +829,8 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
         "t10_regime_sell_base_multiplier": state.temp_t10_regime_sell_base_multiplier,
         "t10_regime_chop_pause_enabled": state.temp_t10_regime_chop_pause_enabled,
         "t10_regime_chop_pause_minutes": state.temp_t10_regime_chop_pause_minutes,
-        "t10_regime_chop_pause_stop_count": state.temp_t10_regime_chop_pause_stop_count,
+        "t10_regime_chop_pause_lookback_trades": state.temp_t10_regime_chop_pause_lookback_trades,
+        "t10_regime_chop_pause_stop_rate": state.temp_t10_regime_chop_pause_stop_rate,
         "t10_tier17_nonboost_multiplier": state.temp_t10_tier17_nonboost_multiplier,
         "t10_max_directional_lots_per_side": state.temp_t10_max_directional_lots_per_side,
         "t10_bucketed_exit_enabled": state.temp_t10_bucketed_exit_enabled,
@@ -833,6 +840,11 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
         "t10_runner_tp1_pips": state.temp_t10_runner_tp1_pips,
         "t10_runner_tp1_close_pct": state.temp_t10_runner_tp1_close_pct,
         "t10_runner_be_spread_plus_pips": state.temp_t10_runner_be_spread_plus_pips,
+        "t10_trail_escalation_enabled": state.temp_t10_trail_escalation_enabled,
+        "t10_trail_escalation_tier1_pips": state.temp_t10_trail_escalation_tier1_pips,
+        "t10_trail_escalation_tier2_pips": state.temp_t10_trail_escalation_tier2_pips,
+        "t10_trail_escalation_m15_ema_period": state.temp_t10_trail_escalation_m15_ema_period,
+        "t10_trail_escalation_m15_buffer_pips": state.temp_t10_trail_escalation_m15_buffer_pips,
     }
 
 
@@ -885,7 +897,8 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
             "temp_t10_regime_sell_base_multiplier": req.t10_regime_sell_base_multiplier,
             "temp_t10_regime_chop_pause_enabled": req.t10_regime_chop_pause_enabled,
             "temp_t10_regime_chop_pause_minutes": req.t10_regime_chop_pause_minutes,
-            "temp_t10_regime_chop_pause_stop_count": req.t10_regime_chop_pause_stop_count,
+            "temp_t10_regime_chop_pause_lookback_trades": req.t10_regime_chop_pause_lookback_trades,
+            "temp_t10_regime_chop_pause_stop_rate": req.t10_regime_chop_pause_stop_rate,
             "temp_t10_tier17_nonboost_multiplier": req.t10_tier17_nonboost_multiplier,
             "temp_t10_max_directional_lots_per_side": req.t10_max_directional_lots_per_side,
             "temp_t10_bucketed_exit_enabled": req.t10_bucketed_exit_enabled,
@@ -895,6 +908,11 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
             "temp_t10_runner_tp1_pips": req.t10_runner_tp1_pips,
             "temp_t10_runner_tp1_close_pct": req.t10_runner_tp1_close_pct,
             "temp_t10_runner_be_spread_plus_pips": req.t10_runner_be_spread_plus_pips,
+            "temp_t10_trail_escalation_enabled": req.t10_trail_escalation_enabled,
+            "temp_t10_trail_escalation_tier1_pips": req.t10_trail_escalation_tier1_pips,
+            "temp_t10_trail_escalation_tier2_pips": req.t10_trail_escalation_tier2_pips,
+            "temp_t10_trail_escalation_m15_ema_period": req.t10_trail_escalation_m15_ema_period,
+            "temp_t10_trail_escalation_m15_buffer_pips": req.t10_trail_escalation_m15_buffer_pips,
         }
     )
     new_state = RuntimeState(**new_data)  # type: ignore[arg-type]
@@ -3281,8 +3299,10 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         temp_overrides_api["regime_chop_pause_enabled"] = _state.temp_t10_regime_chop_pause_enabled
                     if _state.temp_t10_regime_chop_pause_minutes is not None:
                         temp_overrides_api["regime_chop_pause_minutes"] = _state.temp_t10_regime_chop_pause_minutes
-                    if _state.temp_t10_regime_chop_pause_stop_count is not None:
-                        temp_overrides_api["regime_chop_pause_stop_count"] = _state.temp_t10_regime_chop_pause_stop_count
+                    if _state.temp_t10_regime_chop_pause_lookback_trades is not None:
+                        temp_overrides_api["regime_chop_pause_lookback_trades"] = _state.temp_t10_regime_chop_pause_lookback_trades
+                    if _state.temp_t10_regime_chop_pause_stop_rate is not None:
+                        temp_overrides_api["regime_chop_pause_stop_rate"] = _state.temp_t10_regime_chop_pause_stop_rate
                     if _state.temp_t10_tier17_nonboost_multiplier is not None:
                         temp_overrides_api["tier17_nonboost_multiplier"] = _state.temp_t10_tier17_nonboost_multiplier
                     if _state.temp_t10_max_directional_lots_per_side is not None:
@@ -3301,6 +3321,16 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         temp_overrides_api["runner_tp1_close_pct"] = _state.temp_t10_runner_tp1_close_pct
                     if _state.temp_t10_runner_be_spread_plus_pips is not None:
                         temp_overrides_api["runner_be_spread_plus_pips"] = _state.temp_t10_runner_be_spread_plus_pips
+                    if _state.temp_t10_trail_escalation_enabled is not None:
+                        temp_overrides_api["trail_escalation_enabled"] = _state.temp_t10_trail_escalation_enabled
+                    if _state.temp_t10_trail_escalation_tier1_pips is not None:
+                        temp_overrides_api["trail_escalation_tier1_pips"] = _state.temp_t10_trail_escalation_tier1_pips
+                    if _state.temp_t10_trail_escalation_tier2_pips is not None:
+                        temp_overrides_api["trail_escalation_tier2_pips"] = _state.temp_t10_trail_escalation_tier2_pips
+                    if _state.temp_t10_trail_escalation_m15_ema_period is not None:
+                        temp_overrides_api["trail_escalation_m15_ema_period"] = _state.temp_t10_trail_escalation_m15_ema_period
+                    if _state.temp_t10_trail_escalation_m15_buffer_pips is not None:
+                        temp_overrides_api["trail_escalation_m15_buffer_pips"] = _state.temp_t10_trail_escalation_m15_buffer_pips
                     if not temp_overrides_api:
                         temp_overrides_api = None
                     if _policy_type == "phase3_integrated":
@@ -3637,8 +3667,8 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         side=_rg_side_api,
                         recent_trades=_closed_events,
                         now_utc=datetime.now(timezone.utc),
-                        lookback_minutes=int(getattr(_policy_for_snapshot, "regime_chop_pause_lookback_minutes", 45)),
-                        stop_count_threshold=int(getattr(_policy_for_snapshot, "regime_chop_pause_stop_count", 1)),
+                        lookback_trades=int(getattr(_policy_for_snapshot, "regime_chop_pause_lookback_trades", 5)),
+                        stop_rate_threshold=float(getattr(_policy_for_snapshot, "regime_chop_pause_stop_rate", 0.6)),
                         pause_minutes=int(getattr(_policy_for_snapshot, "regime_chop_pause_minutes", 45)),
                         current_pause_start=_chop_start_dt,
                         m5_bucket=_rg_m5_bucket_api,

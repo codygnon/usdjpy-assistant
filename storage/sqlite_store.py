@@ -204,7 +204,7 @@ class SqliteStore:
             self._ensure_column(conn, "trades", "managed_tp1_close_pct", "REAL")
             self._ensure_column(conn, "trades", "managed_be_plus_pips", "REAL")
             self._ensure_column(conn, "trades", "managed_trail_mode", "TEXT")
-            # v2.10: Trail escalation level ratchet (one-way: m1 -> m5 -> m15 -> h1)
+            # v2.10: Trail escalation level ratchet (one-way: m1 -> m5 -> m15)
             self._ensure_column(conn, "trades", "trail_escalation_level", "TEXT")
             conn.commit()
 

@@ -1094,8 +1094,8 @@ class ExecutionPolicyKtCgTrial10(ExecutionPolicyKtCgTrial9):
     regime_worst_multiplier: float = 0.35
     regime_weak_multiplier: float = 0.5
     regime_chop_pause_enabled: bool = False
-    regime_chop_pause_lookback_minutes: int = 45
-    regime_chop_pause_stop_count: int = 1
+    regime_chop_pause_lookback_trades: int = 5    # look at last N closed trades
+    regime_chop_pause_stop_rate: float = 0.6      # pause when stop rate > this (3/5 = 0.6)
     regime_chop_pause_minutes: int = 45
     tier17_nonboost_multiplier: float = 0.35
 
@@ -1109,11 +1109,12 @@ class ExecutionPolicyKtCgTrial10(ExecutionPolicyKtCgTrial9):
     conviction_min_lots: float = 0.03
 
     runner_score_sizing_enabled: bool = True
-    runner_bucket_lots_floor: float = 0.03
-    runner_bucket_lots_base: float = 0.05
-    runner_bucket_lots_elevated: float = 0.07
-    runner_bucket_lots_press: float = 0.15
-    runner_bucket_lots_elite: float = 0.30
+    # Bucket lot multipliers — applied to conviction_base_lots
+    runner_bucket_mult_floor: float = 0.43
+    runner_bucket_mult_base: float = 0.71
+    runner_bucket_mult_elevated: float = 1.0
+    runner_bucket_mult_press: float = 2.14
+    runner_bucket_mult_elite: float = 4.29
     runner_spread_gate_pips: float = 3.0
     runner_tier17_nonboost_force_floor: bool = True
     runner_weak_m5_zone_cap_enabled: bool = True
@@ -1131,13 +1132,12 @@ class ExecutionPolicyKtCgTrial10(ExecutionPolicyKtCgTrial9):
     runner_be_spread_plus_pips: float = 0.5
 
     # Trail escalation: promote trailing TF as profit grows (elevated/press/elite only)
+    # Ladder: M1 EMA21 -> M5 EMA21 (at tier1) -> M15 EMA21 (at tier2)
     trail_escalation_enabled: bool = False
-    trail_escalation_tier1_pips: float = 10.0     # profit to escalate once (m1→m5, m5→m15)
-    trail_escalation_tier2_pips: float = 20.0     # profit to escalate twice (m1→m15, m5→h1)
+    trail_escalation_tier1_pips: float = 10.0     # profit to escalate M1->M5
+    trail_escalation_tier2_pips: float = 20.0     # profit to escalate M5->M15
     trail_escalation_m15_ema_period: int = 21     # EMA period for M15 trail
-    trail_escalation_h1_ema_period: int = 9       # EMA period for H1 trail
     trail_escalation_m15_buffer_pips: float = 1.5 # SL buffer below/above M15 EMA
-    trail_escalation_h1_buffer_pips: float = 2.0  # SL buffer below/above H1 EMA
 
     kill_switch_enabled: bool = False
     kill_switch_zone_entry_action: Literal["kill", "hold"] = "hold"

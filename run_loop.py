@@ -132,7 +132,8 @@ _TRIAL10_TEMP_OVERRIDE_MAP: dict[str, str] = {
     "temp_t10_regime_sell_base_multiplier": "regime_sell_base_multiplier",
     "temp_t10_regime_chop_pause_enabled": "regime_chop_pause_enabled",
     "temp_t10_regime_chop_pause_minutes": "regime_chop_pause_minutes",
-    "temp_t10_regime_chop_pause_stop_count": "regime_chop_pause_stop_count",
+    "temp_t10_regime_chop_pause_lookback_trades": "regime_chop_pause_lookback_trades",
+    "temp_t10_regime_chop_pause_stop_rate": "regime_chop_pause_stop_rate",
     "temp_t10_tier17_nonboost_multiplier": "tier17_nonboost_multiplier",
     "temp_t10_max_directional_lots_per_side": "max_directional_lots_per_side",
     "temp_t10_bucketed_exit_enabled": "bucketed_exit_enabled",
@@ -142,6 +143,11 @@ _TRIAL10_TEMP_OVERRIDE_MAP: dict[str, str] = {
     "temp_t10_runner_tp1_pips": "runner_tp1_pips",
     "temp_t10_runner_tp1_close_pct": "runner_tp1_close_pct",
     "temp_t10_runner_be_spread_plus_pips": "runner_be_spread_plus_pips",
+    "temp_t10_trail_escalation_enabled": "trail_escalation_enabled",
+    "temp_t10_trail_escalation_tier1_pips": "trail_escalation_tier1_pips",
+    "temp_t10_trail_escalation_tier2_pips": "trail_escalation_tier2_pips",
+    "temp_t10_trail_escalation_m15_ema_period": "trail_escalation_m15_ema_period",
+    "temp_t10_trail_escalation_m15_buffer_pips": "trail_escalation_m15_buffer_pips",
 }
 
 
@@ -187,7 +193,8 @@ def _parse_runtime_timestamp(value: Any) -> datetime.datetime | None:
         return None
 
 
-def _trial10_recent_closed_trades(trades_df: pd.DataFrame | None, lookback_minutes: int) -> list[dict[str, Any]]:
+def _trial10_recent_closed_trades(trades_df: pd.DataFrame | None, max_trades: int = 20) -> list[dict[str, Any]]:
+    """Return the most recent closed Trial 10 trades for chop-pause rolling stop rate."""
     if trades_df is None or trades_df.empty:
         return []
     df = trades_df.copy()
@@ -204,27 +211,18 @@ def _trial10_recent_closed_trades(trades_df: pd.DataFrame | None, lookback_minut
     if df.empty:
         return []
     df["exit_dt"] = pd.to_datetime(df["exit_timestamp_utc"], utc=True, errors="coerce")
-    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(minutes=max(1, int(lookback_minutes)))
-    df = df.loc[df["exit_dt"].notna() & (df["exit_dt"] >= cutoff)].copy()
+    df = df.loc[df["exit_dt"].notna()].copy()
     if df.empty:
         return []
+    # Return most recent N trades (sorted newest first)
+    df = df.nlargest(max_trades, "exit_dt")
     events: list[dict[str, Any]] = []
     for _, row in df.iterrows():
-        tier = row.get("tier_number")
-        try:
-            tier_val = int(tier) if pd.notna(tier) else None
-        except Exception:
-            tier_val = None
-        pullback_label = row.get("pullback_quality_label")
-        if pd.isna(pullback_label):
-            pullback_label = None
         events.append(
             {
                 "side": str(row.get("side") or "").lower(),
                 "exit_reason": str(row.get("exit_reason") or ""),
                 "close_time_utc": row["exit_dt"].to_pydatetime(),
-                "pullback_label": str(pullback_label).lower() if pullback_label else None,
-                "tier": tier_val,
             }
         )
     return events
@@ -451,15 +449,21 @@ def _trial10_bucket_exit_profile(policy: Any, runner_bucket: str | None, overrid
             }
         )
     elif bucket in runner_buckets:
+        # When trail escalation is enabled, runners start on M1 and escalate up
+        _runner_trail = "m1" if bool(_ov("trail_escalation_enabled", False)) else "m5"
         profile.update(
             {
                 "exit_profile": "runner",
                 "tp1_pips": float(_ov("runner_tp1_pips", 8.0)),
                 "tp1_close_pct": float(_ov("runner_tp1_close_pct", 55.0)),
                 "be_plus_pips": float(_ov("runner_be_spread_plus_pips", 0.5)),
-                "trail_mode": "m5",
+                "trail_mode": _runner_trail,
             }
         )
+    else:
+        # Standard (elevated) bucket — also starts M1 when escalation enabled
+        if bool(_ov("trail_escalation_enabled", False)):
+            profile["trail_mode"] = "m1"
     return profile
 
 
@@ -656,25 +660,17 @@ def _run_trade_management(
             _m5_ema_cache[period] = _ema_fn(_m5_close, period)
         return _m5_ema_cache[period]
 
-    # M15/H1 close series for trail escalation
+    # M15 close series for trail escalation
     _m15_close = None
-    _h1_close = None
     _tm_m15_df = None
-    _tm_h1_df = None
     if data_by_tf is not None:
         _shared_m15 = data_by_tf.get("M15")
         if _shared_m15 is not None and not _shared_m15.empty:
             _tm_m15_df = drop_incomplete_last_bar(_shared_m15.copy(), "M15")
             if _tm_m15_df is not None and not _tm_m15_df.empty:
                 _m15_close = _tm_m15_df["close"].astype(float)
-        _shared_h1 = data_by_tf.get("H1")
-        if _shared_h1 is not None and not _shared_h1.empty:
-            _tm_h1_df = drop_incomplete_last_bar(_shared_h1.copy(), "H1")
-            if _tm_h1_df is not None and not _tm_h1_df.empty:
-                _h1_close = _tm_h1_df["close"].astype(float)
 
     _m15_ema_cache: dict[int, pd.Series] = {}
-    _h1_ema_cache: dict[int, pd.Series] = {}
 
     def _m15_ema(period: int) -> "pd.Series | None":
         if _ema_fn is None or _m15_close is None or len(_m15_close) <= period:
@@ -682,13 +678,6 @@ def _run_trade_management(
         if period not in _m15_ema_cache:
             _m15_ema_cache[period] = _ema_fn(_m15_close, period)
         return _m15_ema_cache[period]
-
-    def _h1_ema(period: int) -> "pd.Series | None":
-        if _ema_fn is None or _h1_close is None or len(_h1_close) <= period:
-            return None
-        if period not in _h1_ema_cache:
-            _h1_ema_cache[period] = _ema_fn(_h1_close, period)
-        return _h1_ema_cache[period]
 
     _t9_kill_switch_snapshot: dict[str, dict[str, float | bool | None]] = {}
     if (
@@ -1194,6 +1183,7 @@ def _run_trade_management(
                         _trail_mode = t10_trail_mode
 
                     # --- Trail escalation (Trial 10 only, non-quick buckets) ---
+                    # Ladder: all escalation-eligible trades start M1, promote M1→M5→M15
                     _effective_trail_tf = _trail_mode
                     _esc_enabled = (
                         family_type == "kt_cg_trial_10"
@@ -1213,39 +1203,30 @@ def _run_trade_management(
                             _esc_t1 = float(getattr(family_policy, "trail_escalation_tier1_pips", 10.0))
                             _esc_t2 = float(getattr(family_policy, "trail_escalation_tier2_pips", 20.0))
 
-                            # What level does current profit warrant?
-                            _desired_level = _trail_mode
-                            if _trail_mode == "m1":
-                                if _esc_profit >= _esc_t2:
-                                    _desired_level = "m15"
-                                elif _esc_profit >= _esc_t1:
-                                    _desired_level = "m5"
-                            elif _trail_mode == "m5":
-                                if _esc_profit >= _esc_t2:
-                                    _desired_level = "h1"
-                                elif _esc_profit >= _esc_t1:
-                                    _desired_level = "m15"
+                            # Unified ladder: M1 -> M5 (at tier1) -> M15 (at tier2)
+                            _desired_level = "m1"
+                            if _esc_profit >= _esc_t2:
+                                _desired_level = "m15"
+                            elif _esc_profit >= _esc_t1:
+                                _desired_level = "m5"
 
                             # One-way ratchet from DB
                             _stored_esc = str(trade_row.get("trail_escalation_level") or "").lower()
-                            _level_rank = {"m1": 0, "m5": 1, "m15": 2, "h1": 3}
+                            _level_rank = {"m1": 0, "m5": 1, "m15": 2}
                             _stored_rank = _level_rank.get(_stored_esc, -1)
                             _desired_rank = _level_rank.get(_desired_level, 0)
-                            _base_rank = _level_rank.get(_trail_mode, 0)
 
-                            _eff_rank = max(_base_rank, _stored_rank, _desired_rank)
-                            _rank_to_level = {0: "m1", 1: "m5", 2: "m15", 3: "h1"}
-                            _effective_trail_tf = _rank_to_level.get(_eff_rank, _trail_mode)
+                            _eff_rank = max(0, _stored_rank, _desired_rank)
+                            _rank_to_level = {0: "m1", 1: "m5", 2: "m15"}
+                            _effective_trail_tf = _rank_to_level.get(_eff_rank, "m1")
 
                             # Persist ratchet if it advanced
-                            if _eff_rank > max(_stored_rank, _base_rank):
+                            if _eff_rank > max(_stored_rank, 0):
                                 store.update_trade(trade_id, {"trail_escalation_level": _effective_trail_tf})
                                 print(f"[{profile.profile_name}] Trail escalation: pos {position_id} "
-                                      f"{_stored_esc or _trail_mode} -> {_effective_trail_tf} (+{_esc_profit:.1f}p)")
+                                      f"{_stored_esc or 'm1'} -> {_effective_trail_tf} (+{_esc_profit:.1f}p)")
 
                             # Fallback if data unavailable
-                            if _effective_trail_tf == "h1" and _h1_close is None:
-                                _effective_trail_tf = "m15"
                             if _effective_trail_tf == "m15" and _m15_close is None:
                                 _effective_trail_tf = "m5"
 
@@ -1397,60 +1378,6 @@ def _run_trade_management(
                                         if vol > 0:
                                             adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
                                         print(f"[{profile.profile_name}] {family_label} runner closed (SELL M15 bar-close > EMA{_m15_trail_period}): pos {position_id}")
-
-                        elif _effective_trail_tf == "h1":
-                            _h1_trail_period = int(getattr(family_policy, "trail_escalation_h1_ema_period", 9))
-                            _h1_buffer = float(getattr(family_policy, "trail_escalation_h1_buffer_pips", 2.0))
-                            if _h1_close is not None and len(_h1_close) > _h1_trail_period + 1:
-                                trail_ema = _h1_ema(_h1_trail_period)
-                                if trail_ema is not None and not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):
-                                    ema_val = float(trail_ema.iloc[-2])
-                                    last_h1_close = float(_h1_close.iloc[-2])
-                                    prev_be_sl = trade_row.get("breakeven_sl_price")
-                                    if prev_be_sl is not None:
-                                        prev_be_sl = float(prev_be_sl)
-                                    if side == "buy":
-                                        new_trail_sl = ema_val - (_h1_buffer * pip)
-                                        if prev_be_sl is not None:
-                                            new_trail_sl = max(new_trail_sl, prev_be_sl)
-                                    else:
-                                        new_trail_sl = ema_val + (_h1_buffer * pip)
-                                        if prev_be_sl is not None:
-                                            new_trail_sl = min(new_trail_sl, prev_be_sl)
-                                    _safe_update_trail_sl(
-                                        adapter, store, position_id, trade_id, profile.symbol,
-                                        new_trail_sl, prev_be_sl, side, tick, pip,
-                                        profile.profile_name, label=f"{family_label} H1 trail",
-                                    )
-                                    # Bar-close exit (completed bar, anchored to tp1_time_utc)
-                                    _tp1_anchor = trade_row.get("tp1_time_utc")
-                                    _h1_bar_close_time = None
-                                    if _tm_h1_df is not None and "time" in _tm_h1_df.columns:
-                                        _h1_bar_open = _tm_h1_df["time"].iloc[-2]
-                                        _h1_bar_close_time = _h1_bar_open + pd.Timedelta(hours=1)
-                                    _bar_is_new = (
-                                        _tp1_anchor is None
-                                        or _h1_bar_close_time is None
-                                        or _h1_bar_close_time > pd.Timestamp(_tp1_anchor)
-                                    )
-                                    if side == "buy" and last_h1_close < ema_val and _bar_is_new:
-                                        position_type = 0
-                                        if isinstance(pos, dict):
-                                            vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
-                                        else:
-                                            vol = float(getattr(pos, "volume", 0) or 0)
-                                        if vol > 0:
-                                            adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
-                                        print(f"[{profile.profile_name}] {family_label} runner closed (BUY H1 bar-close < EMA{_h1_trail_period}): pos {position_id}")
-                                    elif side == "sell" and last_h1_close > ema_val and _bar_is_new:
-                                        position_type = 1
-                                        if isinstance(pos, dict):
-                                            vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
-                                        else:
-                                            vol = float(getattr(pos, "volume", 0) or 0)
-                                        if vol > 0:
-                                            adapter.close_position(ticket=position_id, symbol=profile.symbol, volume=vol, position_type=position_type)
-                                        print(f"[{profile.profile_name}] {family_label} runner closed (SELL H1 bar-close > EMA{_h1_trail_period}): pos {position_id}")
 
                     except Exception as e:
                         print(f"[{profile.profile_name}] {family_label} trailing EMA error pos {position_id}: {e}")
@@ -3383,13 +3310,7 @@ def main() -> None:
                             _log(f"MN candle fetch failed: {_mn_err}", "WARN")
 
                     # Fetch H1 only when a non-Phase3 policy needs broker-native H1 data.
-                    _needs_h1 = has_uncle_parsh
-                    if not _needs_h1 and has_kt_cg_trial_10:
-                        for _p10 in profile.execution.policies:
-                            if getattr(_p10, "type", "") == "kt_cg_trial_10" and getattr(_p10, "enabled", True) and getattr(_p10, "trail_escalation_enabled", False):
-                                _needs_h1 = True
-                                break
-                    if _needs_h1:
+                    if has_uncle_parsh:
                         data_by_tf["H1"] = _get_bars_cached(profile.symbol, "H1", 200)
                     # Tick always fetched fresh for live price detection
                     tick = adapter.get_tick(profile.symbol)
@@ -3763,15 +3684,13 @@ def main() -> None:
                                 _chop_reason_key = f"chop_pause_{_likely_side}_reason"
                                 _chop_start_dt = _parse_runtime_timestamp(state_data.get(_chop_start_key))
                                 if bool(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_enabled", False)):
+                                    _chop_lookback_n = int(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_lookback_trades", 5))
                                     _chop_paused, _chop_reason = check_chop_pause(
                                         side=_likely_side,
-                                        recent_trades=_trial10_recent_closed_trades(
-                                            trades_df,
-                                            int(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_lookback_minutes", 45)),
-                                        ),
+                                        recent_trades=_trial10_recent_closed_trades(trades_df, max_trades=_chop_lookback_n + 5),
                                         now_utc=now_utc,
-                                        lookback_minutes=int(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_lookback_minutes", 45)),
-                                        stop_count_threshold=int(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_stop_count", 1)),
+                                        lookback_trades=_chop_lookback_n,
+                                        stop_rate_threshold=float(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_stop_rate", 0.6)),
                                         pause_minutes=int(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_minutes", 45)),
                                         current_pause_start=_chop_start_dt, m5_bucket=_m5_bucket_rg,
                                     )
@@ -3858,12 +3777,13 @@ def main() -> None:
                                         freshness_mode="strict",
                                     )
                                     _rs_spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
+                                    _rs_base = float(_policy_value(pol, _trial10_temp_overrides, "conviction_base_lots", 0.07))
                                     _rs_bucket_lots = {
-                                        "floor": float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_lots_floor", 0.03)),
-                                        "base": float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_lots_base", 0.05)),
-                                        "elevated": float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_lots_elevated", 0.07)),
-                                        "press": float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_lots_press", 0.15)),
-                                        "elite": float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_lots_elite", 0.30)),
+                                        "floor": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_floor", 0.43)), 2),
+                                        "base": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_base", 0.71)), 2),
+                                        "elevated": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elevated", 1.0)), 2),
+                                        "press": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_press", 2.14)), 2),
+                                        "elite": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elite", 4.29)), 2),
                                     }
                                     _runner_lots_pre, _runner_chain_pre = runner_score_to_lots(
                                         result=_rs_result_pre, bucket_lots=_rs_bucket_lots,
@@ -3873,14 +3793,14 @@ def main() -> None:
                                         tier=int(_rs_tier_pre) if _rs_tier_pre is not None else None,
                                         is_boost_hour=(_rs_regime_pre.lower() == "buy_boost_hour"),
                                         force_floor_tier17_nonboost=bool(_policy_value(pol, _trial10_temp_overrides, "runner_tier17_nonboost_force_floor", True)),
-                                        min_lots=float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_lots_floor", 0.03)),
+                                        min_lots=_rs_bucket_lots["floor"],
                                         max_lots=float(get_effective_risk(profile).max_lots),
                                     )
                                     _conviction_lots_val = _runner_lots_pre
                                     _fresh_tag = f" FRESH({_rs_bars_cross_pre}b/{_rs_prior_ent_pre}e)" if _rs_result_pre.fresh else ""
                                     _log(f"Runner score sizing: {_rs_result_pre.bucket.upper()} ({_rs_result_pre.points}pt){_fresh_tag} -> {_runner_lots_pre:.2f} lots")
                                 except Exception as _rs_pre_err:
-                                    _conviction_lots_val = float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_lots_floor", 0.03))
+                                    _conviction_lots_val = float(_policy_value(pol, _trial10_temp_overrides, "conviction_base_lots", 0.07)) * 0.43
                                     _log(f"Runner score sizing error: {_rs_pre_err}", "ERROR")
                             exec_result = (
                                 execute_kt_cg_trial_10_policy_demo_only if pol_type == "kt_cg_trial_10"
@@ -5331,15 +5251,13 @@ def main() -> None:
                                 _chop_reason_key = f"chop_pause_{_likely_side}_reason"
                                 _chop_start_dt = _parse_runtime_timestamp(state_data.get(_chop_start_key))
                                 if bool(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_enabled", False)):
+                                    _chop_lookback_n = int(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_lookback_trades", 5))
                                     _chop_paused, _chop_reason = check_chop_pause(
                                         side=_likely_side,
-                                        recent_trades=_trial10_recent_closed_trades(
-                                            trades_df,
-                                            int(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_lookback_minutes", 45)),
-                                        ),
+                                        recent_trades=_trial10_recent_closed_trades(trades_df, max_trades=_chop_lookback_n + 5),
                                         now_utc=now_utc,
-                                        lookback_minutes=int(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_lookback_minutes", 45)),
-                                        stop_count_threshold=int(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_stop_count", 1)),
+                                        lookback_trades=_chop_lookback_n,
+                                        stop_rate_threshold=float(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_stop_rate", 0.6)),
                                         pause_minutes=int(_policy_value(pol, _trial10_temp_overrides, "regime_chop_pause_minutes", 45)),
                                         current_pause_start=_chop_start_dt, m5_bucket=_m5_bucket_rg,
                                     )
@@ -5426,12 +5344,13 @@ def main() -> None:
                                         freshness_mode="strict",
                                     )
                                     _rs_spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
+                                    _rs_base = float(_policy_value(pol, _trial10_temp_overrides, "conviction_base_lots", 0.07))
                                     _rs_bucket_lots = {
-                                        "floor": float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_lots_floor", 0.03)),
-                                        "base": float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_lots_base", 0.05)),
-                                        "elevated": float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_lots_elevated", 0.07)),
-                                        "press": float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_lots_press", 0.15)),
-                                        "elite": float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_lots_elite", 0.30)),
+                                        "floor": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_floor", 0.43)), 2),
+                                        "base": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_base", 0.71)), 2),
+                                        "elevated": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elevated", 1.0)), 2),
+                                        "press": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_press", 2.14)), 2),
+                                        "elite": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elite", 4.29)), 2),
                                     }
                                     _runner_lots_pre, _runner_chain_pre = runner_score_to_lots(
                                         result=_rs_result_pre, bucket_lots=_rs_bucket_lots,
@@ -5441,14 +5360,14 @@ def main() -> None:
                                         tier=int(_rs_tier_pre) if _rs_tier_pre is not None else None,
                                         is_boost_hour=(_rs_regime_pre.lower() == "buy_boost_hour"),
                                         force_floor_tier17_nonboost=bool(_policy_value(pol, _trial10_temp_overrides, "runner_tier17_nonboost_force_floor", True)),
-                                        min_lots=float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_lots_floor", 0.03)),
+                                        min_lots=_rs_bucket_lots["floor"],
                                         max_lots=float(get_effective_risk(profile).max_lots),
                                     )
                                     _conviction_lots_val = _runner_lots_pre
                                     _fresh_tag = f" FRESH({_rs_bars_cross_pre}b/{_rs_prior_ent_pre}e)" if _rs_result_pre.fresh else ""
                                     _log(f"Runner score sizing: {_rs_result_pre.bucket.upper()} ({_rs_result_pre.points}pt){_fresh_tag} -> {_runner_lots_pre:.2f} lots")
                                 except Exception as _rs_pre_err:
-                                    _conviction_lots_val = float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_lots_floor", 0.03))
+                                    _conviction_lots_val = float(_policy_value(pol, _trial10_temp_overrides, "conviction_base_lots", 0.07)) * 0.43
                                     _log(f"Runner score sizing error: {_rs_pre_err}", "ERROR")
                             exec_result = (
                                 execute_kt_cg_trial_10_policy_demo_only if pol_type == "kt_cg_trial_10"

@@ -59,6 +59,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--baseline-m5-period", type=int, default=20)
     p.add_argument("--level1-pips", type=float, default=10.0)
     p.add_argument("--level2-pips", type=float, default=20.0)
+    p.add_argument("--max-hold-minutes", type=float, default=24 * 60.0)
     p.add_argument("--min-trades-per-class", type=int, default=100)
     return p.parse_args()
 
@@ -116,10 +117,13 @@ def simulate_trade(
     m1f: pd.DataFrame,
     m5: pd.DataFrame,
     m15: pd.DataFrame,
+    m5_close_set: set[pd.Timestamp],
+    m15_close_set: set[pd.Timestamp],
     spread_pips: float,
     tp1_pips: float,
     tp1_close_pct: float,
     be_spread_plus_pips: float,
+    max_hold_minutes: float,
 ) -> Optional[SimMetrics]:
     entry_time = pd.Timestamp(trade["entry_time"])
     if entry_time not in m1f.index:
@@ -163,14 +167,15 @@ def simulate_trade(
         regime_label=str(trade.get("regime_label") or "baseline"),
     )
 
-    m5_close_set = set(m5.index)
-    m15_close_set = set(m15.index)
     peak_favorable = 0.0
     trail_mode_used = "baseline_m5"
     last_ts = entry_time
+    max_hold_delta = pd.Timedelta(minutes=float(max_hold_minutes))
 
     for j in range(j0, len(m1f)):
         ts = m1f.index[j]
+        if ts - entry_time > max_hold_delta:
+            break
         bar = m1f.iloc[j]
         open_mid = float(bar["open"])
         high_mid = float(bar["high"])
@@ -340,6 +345,8 @@ def main() -> None:
             m15_period=21,
         ),
     ]
+    m5_close_set = set(frames["m5"].index)
+    m15_close_set = set(frames["m15"].index)
 
     rows: list[dict] = []
     for config in configs:
@@ -350,10 +357,13 @@ def main() -> None:
                 m1f=frames["m1"],
                 m5=frames["m5"],
                 m15=frames["m15"],
+                m5_close_set=m5_close_set,
+                m15_close_set=m15_close_set,
                 spread_pips=float(args.spread_pips),
                 tp1_pips=float(args.tp1_pips),
                 tp1_close_pct=float(args.tp1_close_pct),
                 be_spread_plus_pips=float(args.be_spread_plus_pips),
+                max_hold_minutes=float(args.max_hold_minutes),
             )
             if sim is None:
                 continue
@@ -387,6 +397,7 @@ def main() -> None:
         "be_spread_plus_pips": float(args.be_spread_plus_pips),
         "level1_pips": float(args.level1_pips),
         "level2_pips": float(args.level2_pips),
+        "max_hold_minutes": float(args.max_hold_minutes),
         "overall": overall,
         "by_entry_class": by_class,
     }

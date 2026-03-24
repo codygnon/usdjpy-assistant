@@ -229,7 +229,8 @@ export interface TempEmaSettings {
   t10_regime_sell_base_multiplier: number | null;
   t10_regime_chop_pause_enabled: boolean | null;
   t10_regime_chop_pause_minutes: number | null;
-  t10_regime_chop_pause_stop_count: number | null;
+  t10_regime_chop_pause_lookback_trades: number | null;
+  t10_regime_chop_pause_stop_rate: number | null;
   t10_tier17_nonboost_multiplier: number | null;
   t10_max_directional_lots_per_side: number | null;
   t10_bucketed_exit_enabled: boolean | null;
@@ -239,6 +240,11 @@ export interface TempEmaSettings {
   t10_runner_tp1_pips: number | null;
   t10_runner_tp1_close_pct: number | null;
   t10_runner_be_spread_plus_pips: number | null;
+  t10_trail_escalation_enabled: boolean | null;
+  t10_trail_escalation_tier1_pips: number | null;
+  t10_trail_escalation_tier2_pips: number | null;
+  t10_trail_escalation_m15_ema_period: number | null;
+  t10_trail_escalation_m15_buffer_pips: number | null;
 }
 
 export async function getTempSettings(profileName: string): Promise<TempEmaSettings> {

@@ -3790,7 +3790,8 @@ interface EditedSettings {
   t10_regime_sell_base_multiplier: number;
   t10_regime_chop_pause_enabled: boolean;
   t10_regime_chop_pause_minutes: number;
-  t10_regime_chop_pause_stop_count: number;
+  t10_regime_chop_pause_lookback_trades: number;
+  t10_regime_chop_pause_stop_rate: number;
   t10_tier17_nonboost_multiplier: number;
   t10_max_directional_lots_per_side: number;
   t10_bucketed_exit_enabled: boolean;
@@ -3800,6 +3801,11 @@ interface EditedSettings {
   t10_runner_tp1_pips: number;
   t10_runner_tp1_close_pct: number;
   t10_runner_be_spread_plus_pips: number;
+  t10_trail_escalation_enabled: boolean;
+  t10_trail_escalation_tier1_pips: number;
+  t10_trail_escalation_tier2_pips: number;
+  t10_trail_escalation_m15_ema_period: number;
+  t10_trail_escalation_m15_buffer_pips: number;
   // Trial #9: Exit Strategy + TP1/BE/Trail
   t9_exit_strategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail';
   t9_hwm_trail_pips: number;
@@ -4109,7 +4115,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t10RegimeSellBaseMultiplier = 0.35;
       let t10RegimeChopPauseEnabled = true;
       let t10RegimeChopPauseMinutes = 45;
-      let t10RegimeChopPauseStopCount = 1;
+      let t10RegimeChopPauseLookbackTrades = 5;
+      let t10RegimeChopPauseStopRate = 0.6;
       let t10Tier17NonboostMultiplier = 0.35;
       let t10MaxDirectionalLotsPerSide = 1.5;
       let t10BucketedExitEnabled = true;
@@ -4119,6 +4126,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t10RunnerTp1Pips = 8.0;
       let t10RunnerTp1ClosePct = 55.0;
       let t10RunnerBeSpreadPlusPips = 0.5;
+      let t10TrailEscalationEnabled = true;
+      let t10TrailEscalationTier1Pips = 10.0;
+      let t10TrailEscalationTier2Pips = 20.0;
+      let t10TrailEscalationM15EmaPeriod = 21;
+      let t10TrailEscalationM15BufferPips = 1.5;
       let t9ExitStrategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail' = 'tp1_be_m5_trail';
       let t9HwmTrailPips = 3.0;
       let t9Tp1Pips = 6.0;
@@ -4579,7 +4591,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
               t10RegimeSellBaseMultiplier = (pol.regime_sell_base_multiplier as number) ?? 0.35;
               t10RegimeChopPauseEnabled = (pol.regime_chop_pause_enabled as boolean) ?? true;
               t10RegimeChopPauseMinutes = (pol.regime_chop_pause_minutes as number) ?? 45;
-              t10RegimeChopPauseStopCount = (pol.regime_chop_pause_stop_count as number) ?? 1;
+              t10RegimeChopPauseLookbackTrades = (pol.regime_chop_pause_lookback_trades as number) ?? 5;
+              t10RegimeChopPauseStopRate = (pol.regime_chop_pause_stop_rate as number) ?? 0.6;
               t10Tier17NonboostMultiplier = (pol.tier17_nonboost_multiplier as number) ?? 0.35;
               t10MaxDirectionalLotsPerSide = (pol.max_directional_lots_per_side as number) ?? 1.5;
               t10BucketedExitEnabled = (pol.bucketed_exit_enabled as boolean) ?? true;
@@ -4589,6 +4602,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
               t10RunnerTp1Pips = (pol.runner_tp1_pips as number) ?? 8.0;
               t10RunnerTp1ClosePct = (pol.runner_tp1_close_pct as number) ?? 55.0;
               t10RunnerBeSpreadPlusPips = (pol.runner_be_spread_plus_pips as number) ?? 0.5;
+              t10TrailEscalationEnabled = (pol.trail_escalation_enabled as boolean) ?? true;
+              t10TrailEscalationTier1Pips = (pol.trail_escalation_tier1_pips as number) ?? 10.0;
+              t10TrailEscalationTier2Pips = (pol.trail_escalation_tier2_pips as number) ?? 20.0;
+              t10TrailEscalationM15EmaPeriod = (pol.trail_escalation_m15_ema_period as number) ?? 21;
+              t10TrailEscalationM15BufferPips = (pol.trail_escalation_m15_buffer_pips as number) ?? 1.5;
               const rawEs9 = (pol.exit_strategy as string) ?? 'tp1_be_m5_trail';
               t9ExitStrategy = (['none', 'tp1_be_trail', 'ema_scale_runner', 'tp1_be_m5_trail', 'tp1_be_hwm_trail'].includes(rawEs9) ? rawEs9 : 'tp1_be_m5_trail') as typeof t9ExitStrategy;
               t9HwmTrailPips = (pol.hwm_trail_pips as number) ?? 3.0;
@@ -4854,7 +4872,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t10_regime_sell_base_multiplier: tempSettings?.t10_regime_sell_base_multiplier ?? t10RegimeSellBaseMultiplier,
         t10_regime_chop_pause_enabled: tempSettings?.t10_regime_chop_pause_enabled ?? t10RegimeChopPauseEnabled,
         t10_regime_chop_pause_minutes: tempSettings?.t10_regime_chop_pause_minutes ?? t10RegimeChopPauseMinutes,
-        t10_regime_chop_pause_stop_count: tempSettings?.t10_regime_chop_pause_stop_count ?? t10RegimeChopPauseStopCount,
+        t10_regime_chop_pause_lookback_trades: tempSettings?.t10_regime_chop_pause_lookback_trades ?? t10RegimeChopPauseLookbackTrades,
+        t10_regime_chop_pause_stop_rate: tempSettings?.t10_regime_chop_pause_stop_rate ?? t10RegimeChopPauseStopRate,
         t10_tier17_nonboost_multiplier: tempSettings?.t10_tier17_nonboost_multiplier ?? t10Tier17NonboostMultiplier,
         t10_max_directional_lots_per_side: tempSettings?.t10_max_directional_lots_per_side ?? t10MaxDirectionalLotsPerSide,
         t10_bucketed_exit_enabled: tempSettings?.t10_bucketed_exit_enabled ?? t10BucketedExitEnabled,
@@ -4864,6 +4883,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t10_runner_tp1_pips: tempSettings?.t10_runner_tp1_pips ?? t10RunnerTp1Pips,
         t10_runner_tp1_close_pct: tempSettings?.t10_runner_tp1_close_pct ?? t10RunnerTp1ClosePct,
         t10_runner_be_spread_plus_pips: tempSettings?.t10_runner_be_spread_plus_pips ?? t10RunnerBeSpreadPlusPips,
+        t10_trail_escalation_enabled: tempSettings?.t10_trail_escalation_enabled ?? t10TrailEscalationEnabled,
+        t10_trail_escalation_tier1_pips: tempSettings?.t10_trail_escalation_tier1_pips ?? t10TrailEscalationTier1Pips,
+        t10_trail_escalation_tier2_pips: tempSettings?.t10_trail_escalation_tier2_pips ?? t10TrailEscalationTier2Pips,
+        t10_trail_escalation_m15_ema_period: tempSettings?.t10_trail_escalation_m15_ema_period ?? t10TrailEscalationM15EmaPeriod,
+        t10_trail_escalation_m15_buffer_pips: tempSettings?.t10_trail_escalation_m15_buffer_pips ?? t10TrailEscalationM15BufferPips,
         t9_exit_strategy: (() => {
           const raw = (tempSettings?.t9_exit_strategy ?? t9ExitStrategy) as string;
           return (['none', 'tp1_be_trail', 'ema_scale_runner', 'tp1_be_m5_trail', 'tp1_be_hwm_trail'].includes(raw) ? raw : 'tp1_be_m5_trail') as 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail';
@@ -5303,7 +5327,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
             updates.regime_sell_base_multiplier = Math.max(0.1, Math.min(2.0, editedSettings.t10_regime_sell_base_multiplier));
             updates.regime_chop_pause_enabled = editedSettings.t10_regime_chop_pause_enabled;
             updates.regime_chop_pause_minutes = Math.max(5, Math.min(120, editedSettings.t10_regime_chop_pause_minutes));
-            updates.regime_chop_pause_stop_count = Math.max(1, Math.min(5, editedSettings.t10_regime_chop_pause_stop_count));
+            updates.regime_chop_pause_lookback_trades = Math.max(3, Math.min(20, editedSettings.t10_regime_chop_pause_lookback_trades));
+            updates.regime_chop_pause_stop_rate = Math.max(0.3, Math.min(1.0, editedSettings.t10_regime_chop_pause_stop_rate));
             updates.tier17_nonboost_multiplier = Math.max(0.1, Math.min(2.0, editedSettings.t10_tier17_nonboost_multiplier));
             updates.max_directional_lots_per_side = Math.max(0.1, Math.min(10.0, editedSettings.t10_max_directional_lots_per_side));
             updates.bucketed_exit_enabled = editedSettings.t10_bucketed_exit_enabled;
@@ -5313,6 +5338,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
             updates.runner_tp1_pips = Math.max(1.0, Math.min(30.0, editedSettings.t10_runner_tp1_pips));
             updates.runner_tp1_close_pct = Math.max(10, Math.min(100, editedSettings.t10_runner_tp1_close_pct));
             updates.runner_be_spread_plus_pips = Math.max(0.0, Math.min(5.0, editedSettings.t10_runner_be_spread_plus_pips));
+            updates.trail_escalation_enabled = editedSettings.t10_trail_escalation_enabled;
+            updates.trail_escalation_tier1_pips = Math.max(1.0, Math.min(50.0, editedSettings.t10_trail_escalation_tier1_pips));
+            updates.trail_escalation_tier2_pips = Math.max(2.0, Math.min(100.0, editedSettings.t10_trail_escalation_tier2_pips));
+            updates.trail_escalation_m15_ema_period = Math.max(5, Math.min(100, editedSettings.t10_trail_escalation_m15_ema_period));
+            updates.trail_escalation_m15_buffer_pips = Math.max(0.0, Math.min(10.0, editedSettings.t10_trail_escalation_m15_buffer_pips));
           }
           // T9: Intraday Fibonacci Corridor
           updates.intraday_fib_enabled = editedSettings.t9_intraday_fib_enabled;
@@ -5456,7 +5486,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
           settings.t10_regime_sell_base_multiplier = editedSettings.t10_regime_sell_base_multiplier;
           settings.t10_regime_chop_pause_enabled = editedSettings.t10_regime_chop_pause_enabled;
           settings.t10_regime_chop_pause_minutes = editedSettings.t10_regime_chop_pause_minutes;
-          settings.t10_regime_chop_pause_stop_count = editedSettings.t10_regime_chop_pause_stop_count;
+          settings.t10_regime_chop_pause_lookback_trades = editedSettings.t10_regime_chop_pause_lookback_trades;
+          settings.t10_regime_chop_pause_stop_rate = editedSettings.t10_regime_chop_pause_stop_rate;
           settings.t10_tier17_nonboost_multiplier = editedSettings.t10_tier17_nonboost_multiplier;
           settings.t10_max_directional_lots_per_side = editedSettings.t10_max_directional_lots_per_side;
           settings.t10_bucketed_exit_enabled = editedSettings.t10_bucketed_exit_enabled;
@@ -5466,6 +5497,11 @@ function PresetsPage({ profile }: { profile: Profile }) {
           settings.t10_runner_tp1_pips = editedSettings.t10_runner_tp1_pips;
           settings.t10_runner_tp1_close_pct = editedSettings.t10_runner_tp1_close_pct;
           settings.t10_runner_be_spread_plus_pips = editedSettings.t10_runner_be_spread_plus_pips;
+          settings.t10_trail_escalation_enabled = editedSettings.t10_trail_escalation_enabled;
+          settings.t10_trail_escalation_tier1_pips = editedSettings.t10_trail_escalation_tier1_pips;
+          settings.t10_trail_escalation_tier2_pips = editedSettings.t10_trail_escalation_tier2_pips;
+          settings.t10_trail_escalation_m15_ema_period = editedSettings.t10_trail_escalation_m15_ema_period;
+          settings.t10_trail_escalation_m15_buffer_pips = editedSettings.t10_trail_escalation_m15_buffer_pips;
         }
         await api.updateTempSettings(profile.name, settings);
       }
@@ -6326,9 +6362,15 @@ function PresetsPage({ profile }: { profile: Profile }) {
                               style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.8rem' }} />
                           </div>
                           <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Stops to trigger</div>
-                            <input type="number" min={1} max={5} step={1} value={editedSettings.t10_regime_chop_pause_stop_count}
-                              onChange={(e) => setEditedSettings({ ...editedSettings, t10_regime_chop_pause_stop_count: parseInt(e.target.value) || 1 })}
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Lookback trades</div>
+                            <input type="number" min={3} max={20} step={1} value={editedSettings.t10_regime_chop_pause_lookback_trades}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, t10_regime_chop_pause_lookback_trades: parseInt(e.target.value) || 5 })}
+                              style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.8rem' }} />
+                          </div>
+                          <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Stop rate threshold</div>
+                            <input type="number" min={0.3} max={1.0} step={0.1} value={editedSettings.t10_regime_chop_pause_stop_rate}
+                              onChange={(e) => setEditedSettings({ ...editedSettings, t10_regime_chop_pause_stop_rate: parseFloat(e.target.value) || 0.6 })}
                               style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.8rem' }} />
                           </div>
                         </>
@@ -6400,6 +6442,52 @@ function PresetsPage({ profile }: { profile: Profile }) {
                               style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.8rem' }} />
                           </div>
                         </div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Trail Escalation (elevated/press/elite)</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 12 }}>
+                          <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                              <input type="checkbox" checked={editedSettings.t10_trail_escalation_enabled}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t10_trail_escalation_enabled: e.target.checked })}
+                                style={{ width: 18, height: 18, cursor: 'pointer' }} />
+                              <span style={{ fontSize: '0.75rem', fontWeight: 600, color: editedSettings.t10_trail_escalation_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                                {editedSettings.t10_trail_escalation_enabled ? 'Trail Escalation ON' : 'Trail Escalation OFF'}
+                              </span>
+                            </label>
+                          </div>
+                        </div>
+                        {editedSettings.t10_trail_escalation_enabled && (
+                        <>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 12 }}>
+                            <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Tier 1 (to M5)</div>
+                              <input type="number" min={1} max={50} step={0.5} value={editedSettings.t10_trail_escalation_tier1_pips}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t10_trail_escalation_tier1_pips: parseFloat(e.target.value) || 10 })}
+                                style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.8rem' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Tier 2 (to M15)</div>
+                              <input type="number" min={2} max={100} step={0.5} value={editedSettings.t10_trail_escalation_tier2_pips}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t10_trail_escalation_tier2_pips: parseFloat(e.target.value) || 20 })}
+                                style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.8rem' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>M15 EMA</div>
+                              <input type="number" min={5} max={100} step={1} value={editedSettings.t10_trail_escalation_m15_ema_period}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t10_trail_escalation_m15_ema_period: parseInt(e.target.value) || 21 })}
+                                style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.8rem' }} />
+                            </div>
+                            <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>M15 buffer</div>
+                              <input type="number" min={0} max={10} step={0.1} value={editedSettings.t10_trail_escalation_m15_buffer_pips}
+                                onChange={(e) => setEditedSettings({ ...editedSettings, t10_trail_escalation_m15_buffer_pips: parseFloat(e.target.value) || 1.5 })}
+                                style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.8rem' }} />
+                            </div>
+                          </div>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                            Live ratchet: M1 trail at entry, promote to M5 after Tier 1 profit, then M15 after Tier 2 profit. Quick buckets stay on fast management and do not escalate.
+                          </div>
+                        </>
+                        )}
                       </>
                       )}
                     </>

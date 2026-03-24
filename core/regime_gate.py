@@ -135,23 +135,24 @@ def check_chop_pause(
     side: str,
     recent_trades: list[dict],
     now_utc: datetime.datetime,
-    lookback_minutes: int = 45,
-    stop_count_threshold: int = 2,
+    lookback_trades: int = 5,
+    stop_rate_threshold: float = 0.6,
     pause_minutes: int = 45,
     current_pause_start: Optional[datetime.datetime] = None,
     m5_bucket: str = "normal",
 ) -> tuple[bool, str]:
     """Check whether *side* should be paused due to chop.
 
+    Uses a rolling stop-rate approach: if >= ``stop_rate_threshold`` of the
+    last ``lookback_trades`` closed trades (both sides) were initial stops,
+    pause the requested side.  Default 3/5 = 60%.
+
     Parameters
     ----------
     recent_trades : list[dict]
         Each dict should have at minimum:
-        - ``side``: ``"buy"`` or ``"sell"``
         - ``exit_reason``: e.g. ``"initial_stop"``
         - ``close_time_utc``: ``datetime.datetime`` or ISO string
-        - ``pullback_label`` (optional): ``"sloppy"`` / ``"neutral"`` / ``"orderly"``
-        - ``tier`` (optional): int tier period
 
     Returns
     -------
@@ -163,24 +164,15 @@ def check_chop_pause(
     if current_pause_start is not None:
         elapsed = (now_utc - current_pause_start).total_seconds() / 60.0
         if elapsed >= pause_minutes and m5_bucket != "weak":
-            # Timer expired and M5 is not weak -> resume
             return False, ""
         remaining = max(0, pause_minutes - elapsed)
         if elapsed < pause_minutes:
             return True, f"Chop pause: {remaining:.0f}m remaining"
         return True, f"Chop pause: timer done but M5 still weak"
 
-    # Check for new chop trigger
-    cutoff = now_utc - datetime.timedelta(minutes=lookback_minutes)
-    same_side_stops = 0
-    sloppy_shallow_stops = 0
-    sloppy_shallow_count = 0
-
+    # Sort recent trades by close time (newest first) and take last N
+    sorted_trades: list[dict] = []
     for t in recent_trades:
-        t_side = str(t.get("side", "")).lower()
-        if t_side != side:
-            continue
-
         close_time = t.get("close_time_utc")
         if close_time is None:
             continue
@@ -191,41 +183,19 @@ def check_chop_pause(
                 continue
         if close_time.tzinfo is None:
             close_time = close_time.replace(tzinfo=datetime.timezone.utc)
-        if close_time < cutoff:
-            continue
+        sorted_trades.append({**t, "_close_dt": close_time})
 
-        is_stop = t.get("exit_reason") == "initial_stop"
-        is_sloppy_shallow = (
-            t.get("pullback_label") == "sloppy"
-            and t.get("tier") in (17, 21)
-        )
+    sorted_trades.sort(key=lambda x: x["_close_dt"], reverse=True)
+    last_n = sorted_trades[:lookback_trades]
 
-        if is_stop:
-            same_side_stops += 1
-        if is_sloppy_shallow:
-            sloppy_shallow_count += 1
-        if is_stop and is_sloppy_shallow:
-            sloppy_shallow_stops += 1
+    if len(last_n) < lookback_trades:
+        return False, ""
 
-    # Trigger conditions:
-    # 1. 2+ initial_stop trades on this side within lookback
-    # 2. 2+ sloppy shallow-tier trades on this side within lookback
-    # 3. 1 sloppy shallow-tier initial_stop + 1 more same-side initial_stop
-    triggered = False
-    trigger_reason = ""
+    stop_count = sum(1 for t in last_n if t.get("exit_reason") == "initial_stop")
+    stop_rate = stop_count / len(last_n)
 
-    if same_side_stops >= stop_count_threshold:
-        triggered = True
-        trigger_reason = f"{same_side_stops} stops on {side} in {lookback_minutes}m"
-    elif sloppy_shallow_count >= stop_count_threshold:
-        triggered = True
-        trigger_reason = f"{sloppy_shallow_count} sloppy shallow-tier {side} in {lookback_minutes}m"
-    elif sloppy_shallow_stops >= 1 and same_side_stops >= 2:
-        triggered = True
-        trigger_reason = f"sloppy shallow stop + {same_side_stops} stops on {side} in {lookback_minutes}m"
-
-    if triggered:
-        return True, f"Chop pause triggered: {trigger_reason}"
+    if stop_rate > stop_rate_threshold:
+        return True, f"Chop pause triggered: {stop_count}/{len(last_n)} stops ({stop_rate:.0%})"
 
     return False, ""
 
