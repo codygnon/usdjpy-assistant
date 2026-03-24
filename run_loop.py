@@ -752,6 +752,13 @@ def _run_trade_management(
         entry = float(trade_row["entry_price"])
         side = str(trade_row["side"]).lower()
         entry_type = trade_row.get("entry_type")
+        trade_policy_type = str(trade_row.get("policy_type") or "").strip()
+        if not trade_policy_type:
+            notes = str(trade_row.get("notes") or "")
+            if notes.startswith("auto:"):
+                parts = notes.split(":")
+                if len(parts) >= 2:
+                    trade_policy_type = parts[1].strip()
 
         # 1a) Spread-Aware Breakeven for Trial #4 trades
         if t4_spread_be is not None and entry_type is not None:
@@ -944,7 +951,11 @@ def _run_trade_management(
                 print(f"[{profile.profile_name}] UP EMA exit error pos {position_id}: {e}")
 
         # 2b) Trial #8: ema_scale_runner (H1 breakout style) or tp1_be_trail (TP1 + BE + M1 EMA trail)
-        elif t8_policy is not None and entry_type in ("zone_entry", "tiered_pullback"):
+        elif (
+            t8_policy is not None
+            and trade_policy_type == "kt_cg_trial_8"
+            and entry_type in ("zone_entry", "tiered_pullback")
+        ):
             t8_exit_strategy = t8_tm_overrides.get("exit_strategy", getattr(t8_policy, "exit_strategy", "tp1_be_trail"))
 
             if t8_exit_strategy == "ema_scale_runner":
@@ -1119,7 +1130,7 @@ def _run_trade_management(
             if family_type == "kt_cg_trial_10" and t10_trail_mode not in ("m1", "m5", "hwm"):
                 t10_trail_mode = str(_trial10_bucket_exit_profile(family_policy, trade_row.get("runner_bucket")).get("trail_mode", "m5"))
 
-            if t9_exit_strategy == "tp1_be_m5_trail":
+            if t9_exit_strategy in ("tp1_be_m5_trail", "tp1_be_trail"):
                 # --- Phase A: TP1 partial close ---
                 if not tp1_done:
                     reached_buy = mid >= entry + t9_tp1_pips * pip
@@ -1220,7 +1231,10 @@ def _run_trade_management(
                                     print(f"[{profile.profile_name}] T9 BE retry (Phase C): pos {position_id} SL->{_be_sl_c:.3f}")
                                 except Exception as e:
                                     print(f"[{profile.profile_name}] T9 BE retry error pos {position_id}: {e}")
-                    _trail_mode = "m5"
+                    if t9_exit_strategy == "tp1_be_trail":
+                        _trail_mode = "m1"
+                    else:
+                        _trail_mode = "m5"
                     if family_type == "kt_cg_trial_10" and t10_trail_mode in ("m1", "m5"):
                         _trail_mode = t10_trail_mode
 
