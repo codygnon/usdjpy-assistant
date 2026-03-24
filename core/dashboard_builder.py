@@ -60,6 +60,7 @@ _TEMP_OVERRIDE_ATTRS = (
     "m1_zone_entry_ema_slow",
     "m5_trend_ema_fast",
     "m5_trend_ema_slow",
+    "m5_trend_source",
     "m1_zone_entry_ema_slow",
     "m1_pullback_cross_ema_slow",
     "regime_gate_enabled",
@@ -235,16 +236,14 @@ def _side_from_m3(data_by_tf: dict, policy: Any) -> str:
 
 def _side_from_m5(data_by_tf: dict, policy: Any) -> str:
     """Derive side (buy/sell) from M5 trend when eval_result is not available."""
-    m5_df = data_by_tf.get("M5")
-    if m5_df is None or m5_df.empty:
-        return "buy"
     try:
+        from core.execution_engine import _resolve_m5_trend_close_series
         from core.indicators import ema as ema_fn
         fast_p = getattr(policy, "m5_trend_ema_fast", 9)
         slow_p = getattr(policy, "m5_trend_ema_slow", 21)
-        if len(m5_df) < slow_p + 1:
+        close, _source = _resolve_m5_trend_close_series(policy, data_by_tf)
+        if len(close) < slow_p + 1:
             return "buy"
-        close = m5_df["close"]
         fast_v = float(ema_fn(close, fast_p).iloc[-1])
         slow_v = float(ema_fn(close, slow_p).iloc[-1])
         return "buy" if fast_v > slow_v else "sell"
@@ -386,7 +385,7 @@ def build_dashboard_filters(
 
     elif policy_type == "kt_cg_trial_7" and policy is not None:
         m5_df = data_by_tf.get("M5")
-        filters.append(report_trial7_m5_ema_distance_gate(policy, m5_df, pip_size))
+        filters.append(report_trial7_m5_ema_distance_gate(policy, data_by_tf, pip_size))
         m1_df = data_by_tf.get("M1")
         if m1_df is not None and not m1_df.empty:
             filters.append(report_ema_zone_slope_filter_trial_7(policy, m1_df, pip_size, side))
@@ -478,7 +477,7 @@ def build_dashboard_filters(
     elif policy_type == "kt_cg_trial_8" and policy is not None:
         filters.append(report_t8_exit_strategy(policy))
         m5_df = data_by_tf.get("M5")
-        filters.append(report_trial7_m5_ema_distance_gate(policy, m5_df, pip_size))
+        filters.append(report_trial7_m5_ema_distance_gate(policy, data_by_tf, pip_size))
         # No EMA zone slope filter for Trial #8 (disabled by design)
         if getattr(policy, "trend_exhaustion_enabled", False):
             filters.append(report_trend_exhaustion(exhaustion_result))
@@ -595,7 +594,7 @@ def build_dashboard_filters(
     elif policy_type in ("kt_cg_trial_9", "kt_cg_trial_10") and policy is not None:
         filters.append(report_t8_exit_strategy(policy))
         m5_df = data_by_tf.get("M5")
-        filters.append(report_trial7_m5_ema_distance_gate(policy, m5_df, pip_size))
+        filters.append(report_trial7_m5_ema_distance_gate(policy, data_by_tf, pip_size))
         if policy_type == "kt_cg_trial_10":
             filters.append(report_regime_gate(regime_snapshot))
             filters.append(report_trial10_entry_gates(eval_result))

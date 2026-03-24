@@ -108,6 +108,50 @@ def _rsi_zone(value: float, oversold: float, overbought: float) -> str:
     return "neutral"
 
 
+def _resolve_m5_trend_source(policy, temp_overrides: Optional[dict] = None) -> str:
+    source = None
+    if temp_overrides:
+        source = temp_overrides.get("m5_trend_source")
+    if source is None:
+        source = getattr(policy, "m5_trend_source", "closed_m5")
+    source = str(source or "closed_m5").strip().lower()
+    if source not in {"closed_m5", "synthetic_live_m5"}:
+        source = "closed_m5"
+    return source
+
+
+def _resolve_m5_trend_close_series(
+    policy,
+    data_by_tf: dict[Timeframe, pd.DataFrame],
+    temp_overrides: Optional[dict] = None,
+) -> tuple[pd.Series, str]:
+    m5_df = data_by_tf.get("M5")
+    if m5_df is None or m5_df.empty:
+        return pd.Series(dtype=float), "closed_m5"
+    source = _resolve_m5_trend_source(policy, temp_overrides)
+    m5_closed = drop_incomplete_last_bar(m5_df.copy(), "M5")
+    if m5_closed is None or m5_closed.empty:
+        return pd.Series(dtype=float), source
+    close = m5_closed["close"].astype(float).copy()
+    if source != "synthetic_live_m5":
+        return close, source
+    m1_df = data_by_tf.get("M1")
+    if m1_df is None or m1_df.empty:
+        return close, source
+    m1_closed = drop_incomplete_last_bar(m1_df.copy(), "M1")
+    if m1_closed is None or m1_closed.empty:
+        return close, source
+    try:
+        m5_last_ts = pd.to_datetime(m5_closed["time"].iloc[-1], utc=True)
+        m1_last_ts = pd.to_datetime(m1_closed["time"].iloc[-1], utc=True)
+        if pd.isna(m5_last_ts) or pd.isna(m1_last_ts) or m1_last_ts <= m5_last_ts:
+            return close, source
+        synthetic_close = float(m1_closed["close"].iloc[-1])
+        return pd.concat([close, pd.Series([synthetic_close], index=[m1_last_ts])]), source
+    except Exception:
+        return close, source
+
+
 def evaluate_indicator_policy(
     profile: ProfileV1,
     policy: ExecutionPolicyIndicator,
@@ -4058,13 +4102,14 @@ def evaluate_kt_cg_trial_7_conditions(
     current_bid: float,
     current_ask: float,
     tier_state: dict[int, bool],
+    temp_overrides: Optional[dict] = None,
 ) -> dict:
     """Evaluate KT/CG Trial #7 (M5 Trend + Tiered Pullback) conditions."""
     reasons: list[str] = []
     tier_updates: dict[int, bool] = {}
 
-    m5_ema_fast = getattr(policy, "m5_trend_ema_fast", 9)
-    m5_ema_slow = getattr(policy, "m5_trend_ema_slow", 21)
+    m5_ema_fast = temp_overrides.get("m5_trend_ema_fast", getattr(policy, "m5_trend_ema_fast", 9)) if temp_overrides else getattr(policy, "m5_trend_ema_fast", 9)
+    m5_ema_slow = temp_overrides.get("m5_trend_ema_slow", getattr(policy, "m5_trend_ema_slow", 21)) if temp_overrides else getattr(policy, "m5_trend_ema_slow", 21)
     min_ema_gap_pips = float(getattr(policy, "m5_min_ema_distance_pips", 1.0))
     zone_entry_mode = str(getattr(policy, "zone_entry_mode", "ema_cross"))
     if zone_entry_mode not in ("ema_cross", "price_vs_ema5"):
@@ -4076,11 +4121,10 @@ def evaluate_kt_cg_trial_7_conditions(
     m5_df = data_by_tf.get("M5")
     if m5_df is None or m5_df.empty:
         return {"passed": False, "side": None, "reasons": ["kt_cg_trial_7: no M5 data"], "trigger_type": "", "tiered_pullback_tier": None, "tier_updates": {}, "m5_trend": ""}
-    m5_df = drop_incomplete_last_bar(m5_df.copy(), "M5")
-    if len(m5_df) < m5_ema_slow + 1:
+    m5_close, m5_trend_source = _resolve_m5_trend_close_series(policy, data_by_tf, temp_overrides)
+    if len(m5_close) < m5_ema_slow + 1:
         return {"passed": False, "side": None, "reasons": [f"kt_cg_trial_7: need at least {m5_ema_slow + 1} M5 bars"], "trigger_type": "", "tiered_pullback_tier": None, "tier_updates": {}, "m5_trend": ""}
 
-    m5_close = m5_df["close"]
     m5_ema_gap_pips, m5_ema_fast_val, m5_ema_slow_val = _trial7_m5_ema_gap_pips(
         m5_close, int(m5_ema_fast), int(m5_ema_slow), float(profile.pip_size)
     )
@@ -4103,7 +4147,7 @@ def evaluate_kt_cg_trial_7_conditions(
         m5_close, float(profile.pip_size), is_bull
     )
     reasons.append(
-        f"M5 trend: {trend.upper()} (EMA{m5_ema_fast}={m5_ema_fast_val:.3f} vs EMA{m5_ema_slow}={m5_ema_slow_val:.3f}, gap={m5_ema_gap_pips:.2f}p >= {min_ema_gap_pips:.2f}p)"
+        f"M5 trend[{m5_trend_source}]: {trend.upper()} (EMA{m5_ema_fast}={m5_ema_fast_val:.3f} vs EMA{m5_ema_slow}={m5_ema_slow_val:.3f}, gap={m5_ema_gap_pips:.2f}p >= {min_ema_gap_pips:.2f}p)"
     )
 
     m1_df = data_by_tf.get("M1")
@@ -4164,6 +4208,7 @@ def evaluate_kt_cg_trial_7_conditions(
                 "trial10_m5_bucket": m5_bucket,
                 "trial10_m5_spread_pips": round(m5_spread_pips, 3),
                 "trial10_m5_slope_pips_per_bar": round(m5_slope_pips_per_bar, 3),
+                "m5_trend_source": m5_trend_source,
             }
 
     tiered_pullback_enabled = getattr(policy, "tiered_pullback_enabled", True)
@@ -4219,6 +4264,7 @@ def evaluate_kt_cg_trial_7_conditions(
             "trial10_m5_bucket": m5_bucket,
             "trial10_m5_spread_pips": round(m5_spread_pips, 3),
             "trial10_m5_slope_pips_per_bar": round(m5_slope_pips_per_bar, 3),
+            "m5_trend_source": m5_trend_source,
         }
 
     zone_entry_triggered = False
@@ -4272,6 +4318,7 @@ def evaluate_kt_cg_trial_7_conditions(
             "trial10_m5_bucket": m5_bucket,
             "trial10_m5_spread_pips": round(m5_spread_pips, 3),
             "trial10_m5_slope_pips_per_bar": round(m5_slope_pips_per_bar, 3),
+            "m5_trend_source": m5_trend_source,
         }
 
     if zone_entry_mode == "price_vs_ema5":
@@ -4291,6 +4338,7 @@ def evaluate_kt_cg_trial_7_conditions(
         "trial10_m5_bucket": m5_bucket,
         "trial10_m5_spread_pips": round(m5_spread_pips, 3),
         "trial10_m5_slope_pips_per_bar": round(m5_slope_pips_per_bar, 3),
+        "m5_trend_source": m5_trend_source,
     }
 
 
@@ -5038,6 +5086,7 @@ def evaluate_trial10_advisory_state(
             current_bid=current_bid,
             current_ask=current_ask,
             tier_state=tier_state,
+            temp_overrides=temp_overrides,
         )
     finally:
         try:
@@ -5862,6 +5911,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
                 current_bid=tick.bid,
                 current_ask=tick.ask,
                 tier_state=tier_state,
+                temp_overrides=temp_overrides,
             )
     finally:
         object.__setattr__(policy, "tier_ema_periods", original_tiers)

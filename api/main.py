@@ -437,6 +437,7 @@ class RuntimeStateUpdate(BaseModel):
 class TempEmaSettingsUpdate(BaseModel):
     m5_trend_ema_fast: Optional[int] = None
     m5_trend_ema_slow: Optional[int] = None
+    m5_trend_source: Optional[str] = None
     m1_zone_entry_ema_slow: Optional[int] = None
     m1_pullback_cross_ema_slow: Optional[int] = None
     # Trial #4 fields (Zone Entry only - Tiered Pullback uses fixed tiers)
@@ -795,6 +796,7 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
     return {
         "m5_trend_ema_fast": state.temp_m5_trend_ema_fast,
         "m5_trend_ema_slow": state.temp_m5_trend_ema_slow,
+        "m5_trend_source": state.temp_m5_trend_source,
         "m1_zone_entry_ema_slow": state.temp_m1_zone_entry_ema_slow,
         "m1_pullback_cross_ema_slow": state.temp_m1_pullback_cross_ema_slow,
         "m3_trend_ema_fast": state.temp_m3_trend_ema_fast,
@@ -867,6 +869,7 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
         {
             "temp_m5_trend_ema_fast": req.m5_trend_ema_fast,
             "temp_m5_trend_ema_slow": req.m5_trend_ema_slow,
+            "temp_m5_trend_source": req.m5_trend_source,
             "temp_m1_zone_entry_ema_slow": req.m1_zone_entry_ema_slow,
             "temp_m1_pullback_cross_ema_slow": req.m1_pullback_cross_ema_slow,
             "temp_m3_trend_ema_fast": req.m3_trend_ema_fast,
@@ -3289,6 +3292,8 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         temp_overrides_api["m5_trend_ema_fast"] = _state.temp_m5_trend_ema_fast
                     if _state.temp_m5_trend_ema_slow is not None:
                         temp_overrides_api["m5_trend_ema_slow"] = _state.temp_m5_trend_ema_slow
+                    if _state.temp_m5_trend_source is not None:
+                        temp_overrides_api["m5_trend_source"] = _state.temp_m5_trend_source
                     if _state.temp_m1_zone_entry_ema_slow is not None:
                         temp_overrides_api["m1_zone_entry_ema_slow"] = _state.temp_m1_zone_entry_ema_slow
                     if _state.temp_m1_pullback_cross_ema_slow is not None:

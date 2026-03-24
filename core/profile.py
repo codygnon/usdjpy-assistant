@@ -639,6 +639,7 @@ class ExecutionPolicyKtCgTrial7(BaseModel):
     # M5 Trend EMAs
     m5_trend_ema_fast: int = 9
     m5_trend_ema_slow: int = 21
+    m5_trend_source: Literal["closed_m5", "synthetic_live_m5"] = "closed_m5"
     # Block all entries when M5 EMA9/EMA21 are too close (chop guard)
     m5_min_ema_distance_pips: float = 1.0
 
@@ -822,6 +823,7 @@ class ExecutionPolicyKtCgTrial8(BaseModel):
     # M5 Trend EMAs
     m5_trend_ema_fast: int = 9
     m5_trend_ema_slow: int = 21
+    m5_trend_source: Literal["closed_m5", "synthetic_live_m5"] = "closed_m5"
     m5_min_ema_distance_pips: float = 1.0
 
     # M1 Zone Entry: ema_cross (fast vs slow) or price_vs_ema (price vs configurable EMA period)
@@ -929,6 +931,7 @@ class ExecutionPolicyKtCgTrial9(BaseModel):
     # M5 Trend EMAs
     m5_trend_ema_fast: int = 9
     m5_trend_ema_slow: int = 21
+    m5_trend_source: Literal["closed_m5", "synthetic_live_m5"] = "closed_m5"
     m5_min_ema_distance_pips: float = 1.0
 
     # M1 Zone Entry

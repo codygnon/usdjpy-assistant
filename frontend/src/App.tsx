@@ -3613,6 +3613,7 @@ interface EditedSettings {
   // Trial #3 EMA overrides
   m5_trend_ema_fast: number | null;
   m5_trend_ema_slow: number | null;
+  m5_trend_source: 'closed_m5' | 'synthetic_live_m5' | null;
   m1_zone_entry_ema_fast: number | null;
   m1_zone_entry_ema_slow: number | null;
   m1_pullback_cross_ema_slow: number | null;
@@ -3692,6 +3693,7 @@ interface EditedSettings {
   // Trial #7: M5 trend EMAs + exit
   t7_m5_trend_ema_fast: number;
   t7_m5_trend_ema_slow: number;
+  t7_m5_trend_source: 'closed_m5' | 'synthetic_live_m5';
   t7_m5_min_ema_distance_pips: number;
   t7_zone_entry_mode: 'ema_cross' | 'price_vs_ema5';
   t7_exit_strategy: 'tp_sl_be' | 'ema_scale_runner';
@@ -4151,6 +4153,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let maxTieredPullbackOpen = 8;
       let t7M5TrendEmaFast = 9;
       let t7M5TrendEmaSlow = 21;
+      let t7M5TrendSource: 'closed_m5' | 'synthetic_live_m5' = 'closed_m5';
       let t7M5MinEmaDistancePips = 1.0;
       let t7ZoneEntryMode: 'ema_cross' | 'price_vs_ema5' = 'ema_cross';
       // Trial #4: Tiered ATR Filter
@@ -4352,6 +4355,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
           if (pol.type === 'kt_cg_trial_7') {
             t7M5TrendEmaFast = (pol.m5_trend_ema_fast as number) ?? 9;
             t7M5TrendEmaSlow = (pol.m5_trend_ema_slow as number) ?? 21;
+            t7M5TrendSource = ((pol.m5_trend_source as 'closed_m5' | 'synthetic_live_m5') ?? 'closed_m5');
             t7M5MinEmaDistancePips = (pol.m5_min_ema_distance_pips as number) ?? 1.0;
             t7ZoneEntryMode = (pol.zone_entry_mode as 'ema_cross' | 'price_vs_ema5') ?? 'ema_cross';
             if (t7ZoneEntryMode !== 'ema_cross' && t7ZoneEntryMode !== 'price_vs_ema5') {
@@ -4428,6 +4432,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
           if (pol.type === 'kt_cg_trial_8' || pol.type === 'kt_cg_trial_9' || pol.type === 'kt_cg_trial_10') {
             t7M5TrendEmaFast = (pol.m5_trend_ema_fast as number) ?? 9;
             t7M5TrendEmaSlow = (pol.m5_trend_ema_slow as number) ?? 21;
+            t7M5TrendSource = ((pol.m5_trend_source as 'closed_m5' | 'synthetic_live_m5') ?? 'closed_m5');
             t7M5MinEmaDistancePips = (pol.m5_min_ema_distance_pips as number) ?? 1.0;
             t7ZoneEntryMode = (pol.zone_entry_mode as 'ema_cross' | 'price_vs_ema5') ?? 'price_vs_ema5';
             if (t7ZoneEntryMode !== 'ema_cross' && t7ZoneEntryMode !== 'price_vs_ema5') {
@@ -4495,6 +4500,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
           if (pol.type === 'kt_cg_trial_9' || pol.type === 'kt_cg_trial_10') {
             t7M5TrendEmaFast = (pol.m5_trend_ema_fast as number) ?? 9;
             t7M5TrendEmaSlow = (pol.m5_trend_ema_slow as number) ?? 21;
+            t7M5TrendSource = ((pol.m5_trend_source as 'closed_m5' | 'synthetic_live_m5') ?? 'closed_m5');
             t7M5MinEmaDistancePips = (pol.m5_min_ema_distance_pips as number) ?? 1.0;
             t7ZoneEntryMode = (pol.zone_entry_mode as 'ema_cross' | 'price_vs_ema5') ?? 'price_vs_ema5';
             if (t7ZoneEntryMode !== 'ema_cross' && t7ZoneEntryMode !== 'price_vs_ema5') {
@@ -4743,6 +4749,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         max_tiered_pullback_open: maxTieredPullbackOpen,
         t7_m5_trend_ema_fast: t7M5TrendEmaFast,
         t7_m5_trend_ema_slow: t7M5TrendEmaSlow,
+        t7_m5_trend_source: t7M5TrendSource,
         t7_m5_min_ema_distance_pips: t7M5MinEmaDistancePips,
         t7_zone_entry_mode: t7ZoneEntryMode,
         t7_exit_strategy: t7ExitStrategy,
@@ -4779,6 +4786,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         // Trial #3 EMA overrides from temp settings
         m5_trend_ema_fast: tempSettings?.m5_trend_ema_fast ?? null,
         m5_trend_ema_slow: tempSettings?.m5_trend_ema_slow ?? null,
+        m5_trend_source: tempSettings?.m5_trend_source ?? null,
         m1_zone_entry_ema_fast: t7M1ZoneEntryEmaFast ?? null,
         m1_zone_entry_ema_slow: t7M1ZoneEntryEmaSlow ?? tempSettings?.m1_zone_entry_ema_slow ?? null,
         m1_pullback_cross_ema_slow: tempSettings?.m1_pullback_cross_ema_slow ?? null,
@@ -5077,6 +5085,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         if (pol.type === 'kt_cg_trial_7') {
           updates.m5_trend_ema_fast = Math.max(2, editedSettings.t7_m5_trend_ema_fast);
           updates.m5_trend_ema_slow = Math.max(3, editedSettings.t7_m5_trend_ema_slow);
+          updates.m5_trend_source = editedSettings.t7_m5_trend_source;
           updates.m5_min_ema_distance_pips = Math.max(0, editedSettings.t7_m5_min_ema_distance_pips);
           updates.zone_entry_mode = editedSettings.t7_zone_entry_mode;
           updates.zone_entry_enabled = editedSettings.zone_entry_enabled;
@@ -5163,6 +5172,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         if (pol.type === 'kt_cg_trial_8') {
           updates.m5_trend_ema_fast = Math.max(1, editedSettings.t7_m5_trend_ema_fast);
           updates.m5_trend_ema_slow = Math.max(1, editedSettings.t7_m5_trend_ema_slow);
+          updates.m5_trend_source = editedSettings.t7_m5_trend_source;
           updates.m5_min_ema_distance_pips = Math.max(0, editedSettings.t7_m5_min_ema_distance_pips);
           updates.zone_entry_mode = editedSettings.t7_zone_entry_mode;
           updates.zone_entry_enabled = editedSettings.zone_entry_enabled;
@@ -5238,6 +5248,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         if (pol.type === 'kt_cg_trial_9' || pol.type === 'kt_cg_trial_10') {
           updates.m5_trend_ema_fast = Math.max(1, editedSettings.t7_m5_trend_ema_fast);
           updates.m5_trend_ema_slow = Math.max(1, editedSettings.t7_m5_trend_ema_slow);
+          updates.m5_trend_source = editedSettings.t7_m5_trend_source;
           updates.m5_min_ema_distance_pips = Math.max(0, editedSettings.t7_m5_min_ema_distance_pips);
           updates.zone_entry_mode = editedSettings.t7_zone_entry_mode;
           updates.zone_entry_enabled = editedSettings.zone_entry_enabled;
@@ -5467,6 +5478,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         if (hasKtCgCtp) {
           settings.m5_trend_ema_fast = editedSettings.m5_trend_ema_fast;
           settings.m5_trend_ema_slow = editedSettings.m5_trend_ema_slow;
+          settings.m5_trend_source = editedSettings.m5_trend_source;
           settings.m1_zone_entry_ema_slow = editedSettings.m1_zone_entry_ema_slow;
           settings.m1_pullback_cross_ema_slow = editedSettings.m1_pullback_cross_ema_slow;
         }
@@ -5488,6 +5500,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
           settings.t8_trail_ema_period = editedSettings.t8_trail_ema_period;
         }
         if (hasTrial9) {
+          settings.m5_trend_ema_fast = editedSettings.t7_m5_trend_ema_fast;
+          settings.m5_trend_ema_slow = editedSettings.t7_m5_trend_ema_slow;
+          settings.m5_trend_source = editedSettings.t7_m5_trend_source;
           settings.t9_exit_strategy = editedSettings.t9_exit_strategy;
           settings.t9_hwm_trail_pips = editedSettings.t9_hwm_trail_pips;
           settings.t9_tp1_pips = editedSettings.t9_tp1_pips;
@@ -5657,6 +5672,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
                     {tempSettings.m5_trend_ema_fast && (
                       <div style={{ color: 'var(--text-secondary)' }}>Trial #3: M5 Trend EMA: {tempSettings.m5_trend_ema_fast}/{tempSettings.m5_trend_ema_slow}</div>
                     )}
+                    {tempSettings.m5_trend_source && (
+                      <div style={{ color: 'var(--text-secondary)' }}>M5 Trend Source: {tempSettings.m5_trend_source === 'synthetic_live_m5' ? 'Synthetic Live M5' : 'Closed M5'}</div>
+                    )}
                     {tempSettings.m1_zone_entry_ema_slow && (
                       <div style={{ color: 'var(--text-secondary)' }}>Trial #3: M1 Zone EMA: 9/{tempSettings.m1_zone_entry_ema_slow}</div>
                     )}
@@ -5670,7 +5688,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       <div style={{ color: 'var(--text-secondary)' }}>Trial #4: M1 Zone EMA: {tempSettings.m1_t4_zone_entry_ema_fast}/{tempSettings.m1_t4_zone_entry_ema_slow}</div>
                     )}
                   </div>
-                  {!tempSettings.m5_trend_ema_fast && !tempSettings.m3_trend_ema_fast && (
+                  {!tempSettings.m5_trend_ema_fast && !tempSettings.m5_trend_source && !tempSettings.m3_trend_ema_fast && (
                     <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
                       (No temp overrides currently saved)
                     </div>
@@ -7548,6 +7566,21 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
                         Determines trend: fast {'>'} slow = BULL
                       </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '10px 0 8px' }}>
+                        Trend Source
+                      </div>
+                      <select
+                        value={editedSettings.m5_trend_source ?? ''}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, m5_trend_source: (e.target.value || null) as 'closed_m5' | 'synthetic_live_m5' | null })}
+                        style={{ width: '100%', padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                      >
+                        <option value="">No override</option>
+                        <option value="closed_m5">Closed M5</option>
+                        <option value="synthetic_live_m5">Synthetic Live M5</option>
+                      </select>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                        Synthetic Live M5 uses the latest closed M1 close as a preview point on top of confirmed M5 bars.
+                      </div>
                     </div>
                     <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
@@ -7590,6 +7623,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       ...editedSettings,
                       m5_trend_ema_fast: null,
                       m5_trend_ema_slow: null,
+                      m5_trend_source: null,
                       m1_zone_entry_ema_fast: null,
                       m1_zone_entry_ema_slow: null,
                       m1_pullback_cross_ema_slow: null,
@@ -7912,6 +7946,20 @@ function PresetsPage({ profile }: { profile: Profile }) {
                           onChange={(e) => setEditedSettings({ ...editedSettings, t7_m5_trend_ema_slow: parseInt(e.target.value) || 21 })}
                           style={{ flex: 1, padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
                         />
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '10px 0 8px' }}>
+                        Trend Source
+                      </div>
+                      <select
+                        value={editedSettings.t7_m5_trend_source}
+                        onChange={(e) => setEditedSettings({ ...editedSettings, t7_m5_trend_source: (e.target.value as 'closed_m5' | 'synthetic_live_m5') || 'closed_m5' })}
+                        style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
+                      >
+                        <option value="closed_m5">Closed M5</option>
+                        <option value="synthetic_live_m5">Synthetic Live M5</option>
+                      </select>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                        Synthetic Live M5 updates the M5 trend EMA with the latest closed M1 close between M5 bar closes.
                       </div>
                     </div>
                     )}

@@ -123,6 +123,9 @@ def _poll_seconds(profile, cli_poll: float | None) -> float:
 
 
 _TRIAL10_TEMP_OVERRIDE_MAP: dict[str, str] = {
+    "temp_m5_trend_ema_fast": "m5_trend_ema_fast",
+    "temp_m5_trend_ema_slow": "m5_trend_ema_slow",
+    "temp_m5_trend_source": "m5_trend_source",
     "temp_t10_regime_gate_enabled": "regime_gate_enabled",
     "temp_t10_regime_london_sell_veto": "regime_london_sell_veto",
     "temp_t10_regime_london_start_hour_et": "regime_london_start_hour_et",
@@ -367,6 +370,7 @@ def _insert_trade_for_policy(
             "profile": profile.profile_name,
             "symbol": profile.symbol,
             "side": side,
+            "policy_type": policy_type,
             "config_json": json.dumps(profile.model_dump()),
             "entry_price": float(entry_price),
             "stop_price": stop_price,
@@ -1065,7 +1069,15 @@ def _run_trade_management(
                     te = pos.get("tradeClientExtensions")
                     if isinstance(te, dict):
                         position_comment = str(te.get("comment") or "")
-            family_type = "kt_cg_trial_10" if "kt_cg_trial_10" in position_comment else "kt_cg_trial_9"
+            family_type = str(trade_row.get("policy_type") or "").strip()
+            if family_type not in ("kt_cg_trial_9", "kt_cg_trial_10"):
+                notes = str(trade_row.get("notes") or "")
+                if "auto:kt_cg_trial_10:" in notes:
+                    family_type = "kt_cg_trial_10"
+                elif "auto:kt_cg_trial_9:" in notes:
+                    family_type = "kt_cg_trial_9"
+            if family_type not in ("kt_cg_trial_9", "kt_cg_trial_10"):
+                family_type = "kt_cg_trial_10" if "kt_cg_trial_10" in position_comment else "kt_cg_trial_9"
             family_policy = t9_family_policies.get(family_type) or t10_policy or t9_policy
             if family_policy is None:
                 continue

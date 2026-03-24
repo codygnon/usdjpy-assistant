@@ -370,31 +370,32 @@ def report_ema_zone_slope_filter_trial_7(policy, m1_df, pip_size: float, side: s
     )
 
 
-def report_trial7_m5_ema_distance_gate(policy, m5_df, pip_size: float) -> FilterReport:
+def report_trial7_m5_ema_distance_gate(policy, data_by_tf, pip_size: float) -> FilterReport:
     """Report Trial #7 M5 EMA distance trade gate status."""
-    from core.execution_engine import _trial7_m5_ema_gap_pips
+    from core.execution_engine import _resolve_m5_trend_close_series, _trial7_m5_ema_gap_pips
 
+    m5_df = (data_by_tf or {}).get("M5")
     if m5_df is None or m5_df.empty:
         return FilterReport(
             filter_id="m5_ema_distance_gate", display_name="M5 EMA Distance Gate",
             enabled=True, is_clear=True, current_value="No M5 data",
         )
-    m5_df = m5_df.copy()
+    m5_close, m5_source = _resolve_m5_trend_close_series(policy, data_by_tf or {})
     fast_p = int(getattr(policy, "m5_trend_ema_fast", 9))
     slow_p = int(getattr(policy, "m5_trend_ema_slow", 21))
-    if len(m5_df) < max(fast_p, slow_p) + 1:
+    if len(m5_close) < max(fast_p, slow_p) + 1:
         return FilterReport(
             filter_id="m5_ema_distance_gate", display_name="M5 EMA Distance Gate",
             enabled=True, is_clear=True, current_value="Insufficient data",
         )
-    gap_pips, _fast_v, _slow_v = _trial7_m5_ema_gap_pips(m5_df["close"], fast_p, slow_p, pip_size)
+    gap_pips, _fast_v, _slow_v = _trial7_m5_ema_gap_pips(m5_close, fast_p, slow_p, pip_size)
     min_gap = float(getattr(policy, "m5_min_ema_distance_pips", 1.0))
     is_clear = gap_pips >= min_gap
     return FilterReport(
         filter_id="m5_ema_distance_gate", display_name="M5 EMA Distance Gate",
         enabled=True, is_clear=is_clear,
         current_value=f"{gap_pips:.2f}p",
-        threshold=f">= {min_gap:.2f}p",
+        threshold=f">= {min_gap:.2f}p | {m5_source}",
         block_reason=f"{gap_pips:.2f}p < {min_gap:.2f}p" if not is_clear else None,
     )
 
@@ -2447,6 +2448,7 @@ def report_h1_levels(policy, data_by_tf, level_state) -> FilterReport:
 
 def report_m5_trend_alignment(policy, data_by_tf) -> FilterReport:
     """M5 EMA 9 vs 21 alignment status."""
+    from core.execution_engine import _resolve_m5_trend_close_series
     from core.indicators import ema as ema_fn
 
     m5_df = data_by_tf.get("M5")
@@ -2457,7 +2459,7 @@ def report_m5_trend_alignment(policy, data_by_tf) -> FilterReport:
             current_value="No M5 data",
             explanation="No M5 data yet.",
         )
-    m5_close = m5_df["close"].astype(float)
+    m5_close, m5_source = _resolve_m5_trend_close_series(policy, data_by_tf)
     fast = ema_fn(m5_close, policy.m5_trend_ema_fast)
     slow = ema_fn(m5_close, policy.m5_trend_ema_slow)
     if fast.empty or slow.empty or pd.isna(fast.iloc[-1]) or pd.isna(slow.iloc[-1]):
@@ -2478,7 +2480,7 @@ def report_m5_trend_alignment(policy, data_by_tf) -> FilterReport:
     return FilterReport(
         filter_id="m5_trend", display_name="M5 Trend (EMA)",
         enabled=True, is_clear=trend != "FLAT",
-        current_value=f"{trend} (EMA{policy.m5_trend_ema_fast}={f_val:.3f} vs EMA{policy.m5_trend_ema_slow}={s_val:.3f}, gap={gap:.3f})",
+        current_value=f"{trend} [{m5_source}] (EMA{policy.m5_trend_ema_fast}={f_val:.3f} vs EMA{policy.m5_trend_ema_slow}={s_val:.3f}, gap={gap:.3f})",
         threshold=f"EMA {policy.m5_trend_ema_fast}/{policy.m5_trend_ema_slow}",
         explanation=expl,
     )

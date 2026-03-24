@@ -1067,6 +1067,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     # M5 Trend EMAs
                     "m5_trend_ema_fast": 9,
                     "m5_trend_ema_slow": 21,
+                    "m5_trend_source": "closed_m5",
                     "m5_min_ema_distance_pips": 1.0,
                     # M1 Zone Entry - EMA 9 vs EMA 21 (respects cooldown)
                     "m1_zone_entry_ema_slow": 21,
@@ -1685,6 +1686,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "enabled": True,
                     "m5_trend_ema_fast": 9,
                     "m5_trend_ema_slow": 21,
+                    "m5_trend_source": "closed_m5",
                     "m5_min_ema_distance_pips": 1.0,
                     "zone_entry_enabled": True,
                     "zone_entry_mode": "price_vs_ema5",
@@ -1814,6 +1816,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "enabled": True,
                     "m5_trend_ema_fast": 9,
                     "m5_trend_ema_slow": 21,
+                    "m5_trend_source": "closed_m5",
                     "m5_min_ema_distance_pips": 1.0,
                     "zone_entry_enabled": True,
                     "zone_entry_mode": "price_vs_ema5",
@@ -1960,6 +1963,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "enabled": True,
                     "m5_trend_ema_fast": 9,
                     "m5_trend_ema_slow": 21,
+                    "m5_trend_source": "closed_m5",
                     "m5_min_ema_distance_pips": 1.0,
                     "zone_entry_enabled": True,
                     "zone_entry_mode": "price_vs_ema5",

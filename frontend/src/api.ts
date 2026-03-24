@@ -175,6 +175,7 @@ export async function updateRuntimeState(
 export interface TempEmaSettings {
   m5_trend_ema_fast: number | null;
   m5_trend_ema_slow: number | null;
+  m5_trend_source: 'closed_m5' | 'synthetic_live_m5' | null;
   m1_zone_entry_ema_slow: number | null;
   m1_pullback_cross_ema_slow: number | null;
   // Trial #4 fields (Zone Entry only - Tiered Pullback uses fixed tiers)
