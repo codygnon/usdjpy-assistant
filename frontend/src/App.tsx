@@ -3925,6 +3925,18 @@ const TEMP_SETTINGS_DRAFT_VERSION = 1;
 
 function getTempSettingsDraftScope(profileData: Record<string, unknown> | null): string {
   if (!profileData) return 'generic';
+  const activePresetName = String(profileData.active_preset_name || '').trim().toLowerCase();
+  if (activePresetName) {
+    if (activePresetName.includes('phase3_integrated') || activePresetName.includes('phase 3')) {
+      return 'phase3_integrated';
+    }
+    if (activePresetName.includes('kt_cg_trial_10') || activePresetName.includes('trial #10') || activePresetName.includes('trial 10')) {
+      return 'kt_cg_trial_10';
+    }
+    if (activePresetName.includes('kt_cg_trial_9') || activePresetName.includes('trial #9') || activePresetName.includes('trial 9')) {
+      return 'kt_cg_trial_9';
+    }
+  }
   const execution = profileData.execution as Record<string, unknown> | undefined;
   const policies = (execution?.policies as Record<string, unknown>[] | undefined) ?? [];
   const enabledTypes = new Set(
@@ -3936,10 +3948,10 @@ function getTempSettingsDraftScope(profileData: Record<string, unknown> | null):
   if (enabledTypes.has('phase3_integrated')) return 'phase3_integrated';
   if (enabledTypes.has('kt_cg_trial_10')) return 'kt_cg_trial_10';
   if (enabledTypes.has('kt_cg_trial_9')) return 'kt_cg_trial_9';
-  const activePresetName = String(profileData.active_preset_name || '').trim();
-  if (activePresetName) {
+  const rawActivePresetName = String(profileData.active_preset_name || '').trim();
+  if (rawActivePresetName) {
     return (
-      activePresetName
+      rawActivePresetName
         .toLowerCase()
         .replace(/\s*\(customized\)\s*/g, '')
         .replace(/[^a-z0-9_]+/g, '_')
