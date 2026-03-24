@@ -567,10 +567,30 @@ def _run_trade_management(
 
     # Find Trial #9 / #10 policies for managed exits (TP1 + BE + bar-close trail + Kill Switch)
     t9_family_policies: dict[str, Any] = {}
+    t9_tm_overrides: dict = {}
     for pol in profile.execution.policies:
         pol_type = getattr(pol, "type", None)
         if pol_type in ("kt_cg_trial_9", "kt_cg_trial_10") and getattr(pol, "enabled", True):
             t9_family_policies[str(pol_type)] = pol
+            if pol_type == "kt_cg_trial_9":
+                try:
+                    _t9_sp = Path("runtime") / profile.profile_name / "runtime_state.json"
+                    if _t9_sp.exists():
+                        _t9_sd = json.loads(_t9_sp.read_text(encoding="utf-8"))
+                        for _fld, _sk in [
+                            ("exit_strategy", "temp_t9_exit_strategy"),
+                            ("hwm_trail_pips", "temp_t9_hwm_trail_pips"),
+                            ("tp1_pips", "temp_t9_tp1_pips"),
+                            ("tp1_close_pct", "temp_t9_tp1_close_pct"),
+                            ("be_spread_plus_pips", "temp_t9_be_spread_plus_pips"),
+                            ("trail_ema_period", "temp_t9_trail_ema_period"),
+                            ("trail_m5_ema_period", "temp_t9_trail_m5_ema_period"),
+                        ]:
+                            _v = _t9_sd.get(_sk)
+                            if _v is not None:
+                                t9_tm_overrides[_fld] = _v
+                except Exception:
+                    pass
     t9_policy = t9_family_policies.get("kt_cg_trial_9")
     t10_policy = t9_family_policies.get("kt_cg_trial_10")
 
@@ -1082,12 +1102,19 @@ def _run_trade_management(
             if family_policy is None:
                 continue
             family_label = "T10" if family_type == "kt_cg_trial_10" else "T9"
-            t9_exit_strategy = str(getattr(family_policy, "exit_strategy", "tp1_be_trail"))
+            _family_overrides = t9_tm_overrides if family_type == "kt_cg_trial_9" else {}
+
+            def _family_ov(field: str, default: Any = None) -> Any:
+                if field in _family_overrides:
+                    return _family_overrides[field]
+                return getattr(family_policy, field, default)
+
+            t9_exit_strategy = str(_family_ov("exit_strategy", "tp1_be_trail"))
             tp1_done = trade_row.get("tp1_partial_done") or 0
             tp1_triggered = trade_row.get("tp1_triggered") or 0
-            t9_tp1_pips = float(trade_row.get("managed_tp1_pips") or getattr(family_policy, "tp1_pips", 6.0))
-            t9_tp1_pct = float(trade_row.get("managed_tp1_close_pct") or getattr(family_policy, "tp1_close_pct", 80.0))
-            t9_be_pips = float(trade_row.get("managed_be_plus_pips") or getattr(family_policy, "be_spread_plus_pips", 0.5))
+            t9_tp1_pips = float(trade_row.get("managed_tp1_pips") or _family_ov("tp1_pips", 6.0))
+            t9_tp1_pct = float(trade_row.get("managed_tp1_close_pct") or _family_ov("tp1_close_pct", 80.0))
+            t9_be_pips = float(trade_row.get("managed_be_plus_pips") or _family_ov("be_spread_plus_pips", 0.5))
             t10_trail_mode = str(trade_row.get("managed_trail_mode") or "").lower()
             if family_type == "kt_cg_trial_10" and t10_trail_mode not in ("m1", "m5", "hwm"):
                 t10_trail_mode = str(_trial10_bucket_exit_profile(family_policy, trade_row.get("runner_bucket")).get("trail_mode", "m5"))
@@ -1247,7 +1274,7 @@ def _run_trade_management(
 
                     try:
                         if _effective_trail_tf == "m1":
-                            _t9_trail_period = int(getattr(family_policy, "trail_ema_period", 21))
+                            _t9_trail_period = int(_family_ov("trail_ema_period", 21))
                             if _m1_close is not None and len(_m1_close) > _t9_trail_period + 1:
                                 trail_ema = _m1_ema(_t9_trail_period)
                                 if not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):
@@ -1289,7 +1316,7 @@ def _run_trade_management(
                                         print(f"[{profile.profile_name}] {family_label} runner closed (SELL M1 bar-close > EMA{_t9_trail_period}): pos {position_id}")
 
                         elif _effective_trail_tf == "m5":
-                            _t9_m5_trail_period = int(getattr(family_policy, "trail_m5_ema_period", 20))
+                            _t9_m5_trail_period = int(_family_ov("trail_m5_ema_period", 20))
                             if _m5_close is not None and len(_m5_close) > _t9_m5_trail_period + 1:
                                 trail_ema = _m5_ema(_t9_m5_trail_period)
                                 if not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):
@@ -1440,7 +1467,7 @@ def _run_trade_management(
                             _tp1_ts = pd.Timestamp.now(tz="UTC").isoformat()
                             store.update_trade(trade_id, {"tp1_partial_done": 1, "tp1_time_utc": _tp1_ts})
                             # --- Phase B: BE on TP1 hit ---
-                            _t9_be_pips = float(getattr(family_policy, "be_spread_plus_pips", 0.5))
+                            _t9_be_pips = float(_family_ov("be_spread_plus_pips", 0.5))
                             be_offset = current_spread + _t9_be_pips * pip
                             if side == "buy":
                                 be_sl = entry + be_offset
@@ -1460,7 +1487,7 @@ def _run_trade_management(
                     # Safety net: if Phase B (BE SL) failed for any reason, retry it now.
                     _c_be_applied = trade_row.get("breakeven_applied") or 0
                     if not _c_be_applied:
-                        _t9_be_pips_c = float(getattr(family_policy, "be_spread_plus_pips", 0.5))
+                        _t9_be_pips_c = float(_family_ov("be_spread_plus_pips", 0.5))
                         _be_offset_c = current_spread + _t9_be_pips_c * pip
                         if side == "buy":
                             _be_sl_c = entry + _be_offset_c
@@ -1481,7 +1508,7 @@ def _run_trade_management(
                                 except Exception as e:
                                     print(f"[{profile.profile_name}] T9 HWM BE retry error pos {position_id}: {e}")
                     try:
-                        _hwm_trail_pips = float(getattr(family_policy, "hwm_trail_pips", 3.0))
+                        _hwm_trail_pips = float(_family_ov("hwm_trail_pips", 3.0))
                         stored_peak = trade_row.get("peak_price")
                         prev_be_sl = trade_row.get("breakeven_sl_price")
                         if prev_be_sl is not None:
@@ -1556,7 +1583,7 @@ def _run_trade_management(
                             _tp1_retry_last.pop(position_id, None)
                             _tp1_ts = pd.Timestamp.now(tz="UTC").isoformat()
                             store.update_trade(trade_id, {"tp1_partial_done": 1, "tp1_time_utc": _tp1_ts})
-                            _t9_be_pips = float(getattr(family_policy, "be_spread_plus_pips", 2.0))
+                            _t9_be_pips = float(_family_ov("be_spread_plus_pips", 2.0))
                             be_offset = current_spread + _t9_be_pips * pip
                             if side == "buy":
                                 be_sl = entry + be_offset
@@ -1576,7 +1603,7 @@ def _run_trade_management(
                     # Safety net: if Phase B (BE SL) failed for any reason, retry it now.
                     _c_be_applied = trade_row.get("breakeven_applied") or 0
                     if not _c_be_applied:
-                        _t9_be_pips_c = float(getattr(family_policy, "be_spread_plus_pips", 2.0))
+                        _t9_be_pips_c = float(_family_ov("be_spread_plus_pips", 2.0))
                         _be_offset_c = current_spread + _t9_be_pips_c * pip
                         if side == "buy":
                             _be_sl_c = entry + _be_offset_c
@@ -1597,7 +1624,7 @@ def _run_trade_management(
                                 except Exception as e:
                                     print(f"[{profile.profile_name}] T9 BE retry error pos {position_id}: {e}")
                     try:
-                        _t9_trail_period = int(getattr(family_policy, "trail_ema_period", 21))
+                        _t9_trail_period = int(_family_ov("trail_ema_period", 21))
                         if _m1_close is not None and len(_m1_close) > _t9_trail_period + 1:
                             trail_ema = _m1_ema(_t9_trail_period)
                             if not trail_ema.empty and pd.notna(trail_ema.iloc[-2]):

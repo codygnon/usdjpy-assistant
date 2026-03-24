@@ -90,6 +90,15 @@ class RuntimeState:
     temp_t8_scale_out_pct: Optional[float] = None
     temp_t8_initial_sl_spread_plus_pips: Optional[float] = None
 
+    # Trial #9 exit strategy temp overrides
+    temp_t9_exit_strategy: Optional[str] = None
+    temp_t9_hwm_trail_pips: Optional[float] = None
+    temp_t9_tp1_pips: Optional[float] = None
+    temp_t9_tp1_close_pct: Optional[float] = None
+    temp_t9_be_spread_plus_pips: Optional[float] = None
+    temp_t9_trail_ema_period: Optional[int] = None
+    temp_t9_trail_m5_ema_period: Optional[int] = None
+
     # Trial #10 proof / regime temp overrides
     temp_t10_regime_gate_enabled: Optional[bool] = None
     temp_t10_regime_london_sell_veto: Optional[bool] = None
@@ -199,6 +208,13 @@ def load_state(path: str | Path) -> RuntimeState:
         temp_t8_m1_exit_ema_slow=data.get("temp_t8_m1_exit_ema_slow"),
         temp_t8_scale_out_pct=data.get("temp_t8_scale_out_pct"),
         temp_t8_initial_sl_spread_plus_pips=data.get("temp_t8_initial_sl_spread_plus_pips"),
+        temp_t9_exit_strategy=data.get("temp_t9_exit_strategy"),
+        temp_t9_hwm_trail_pips=data.get("temp_t9_hwm_trail_pips"),
+        temp_t9_tp1_pips=data.get("temp_t9_tp1_pips"),
+        temp_t9_tp1_close_pct=data.get("temp_t9_tp1_close_pct"),
+        temp_t9_be_spread_plus_pips=data.get("temp_t9_be_spread_plus_pips"),
+        temp_t9_trail_ema_period=data.get("temp_t9_trail_ema_period"),
+        temp_t9_trail_m5_ema_period=data.get("temp_t9_trail_m5_ema_period"),
         temp_t10_regime_gate_enabled=data.get("temp_t10_regime_gate_enabled"),
         temp_t10_regime_london_sell_veto=data.get("temp_t10_regime_london_sell_veto"),
         temp_t10_regime_london_start_hour_et=data.get("temp_t10_regime_london_start_hour_et"),
@@ -289,6 +305,13 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "temp_t8_m1_exit_ema_slow": state.temp_t8_m1_exit_ema_slow,
                 "temp_t8_scale_out_pct": state.temp_t8_scale_out_pct,
                 "temp_t8_initial_sl_spread_plus_pips": state.temp_t8_initial_sl_spread_plus_pips,
+                "temp_t9_exit_strategy": state.temp_t9_exit_strategy,
+                "temp_t9_hwm_trail_pips": state.temp_t9_hwm_trail_pips,
+                "temp_t9_tp1_pips": state.temp_t9_tp1_pips,
+                "temp_t9_tp1_close_pct": state.temp_t9_tp1_close_pct,
+                "temp_t9_be_spread_plus_pips": state.temp_t9_be_spread_plus_pips,
+                "temp_t9_trail_ema_period": state.temp_t9_trail_ema_period,
+                "temp_t9_trail_m5_ema_period": state.temp_t9_trail_m5_ema_period,
                 "temp_t10_regime_gate_enabled": state.temp_t10_regime_gate_enabled,
                 "temp_t10_regime_london_sell_veto": state.temp_t10_regime_london_sell_veto,
                 "temp_t10_regime_london_start_hour_et": state.temp_t10_regime_london_start_hour_et,

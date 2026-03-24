@@ -476,6 +476,14 @@ class TempEmaSettingsUpdate(BaseModel):
     t8_m1_exit_ema_slow: Optional[int] = None
     t8_scale_out_pct: Optional[float] = None
     t8_initial_sl_spread_plus_pips: Optional[float] = None
+    # Trial #9 exit strategy
+    t9_exit_strategy: Optional[str] = None
+    t9_hwm_trail_pips: Optional[float] = None
+    t9_tp1_pips: Optional[float] = None
+    t9_tp1_close_pct: Optional[float] = None
+    t9_be_spread_plus_pips: Optional[float] = None
+    t9_trail_ema_period: Optional[int] = None
+    t9_trail_m5_ema_period: Optional[int] = None
     # Trial #10 regime / execution fields
     t10_regime_gate_enabled: Optional[bool] = None
     t10_regime_london_sell_veto: Optional[bool] = None
@@ -828,6 +836,13 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
         "t8_m1_exit_ema_slow": state.temp_t8_m1_exit_ema_slow,
         "t8_scale_out_pct": state.temp_t8_scale_out_pct,
         "t8_initial_sl_spread_plus_pips": state.temp_t8_initial_sl_spread_plus_pips,
+        "t9_exit_strategy": state.temp_t9_exit_strategy,
+        "t9_hwm_trail_pips": state.temp_t9_hwm_trail_pips,
+        "t9_tp1_pips": state.temp_t9_tp1_pips,
+        "t9_tp1_close_pct": state.temp_t9_tp1_close_pct,
+        "t9_be_spread_plus_pips": state.temp_t9_be_spread_plus_pips,
+        "t9_trail_ema_period": state.temp_t9_trail_ema_period,
+        "t9_trail_m5_ema_period": state.temp_t9_trail_m5_ema_period,
         "t10_regime_gate_enabled": state.temp_t10_regime_gate_enabled,
         "t10_regime_london_sell_veto": state.temp_t10_regime_london_sell_veto,
         "t10_regime_london_start_hour_et": state.temp_t10_regime_london_start_hour_et,
@@ -900,6 +915,13 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
             "temp_t8_m1_exit_ema_slow": req.t8_m1_exit_ema_slow,
             "temp_t8_scale_out_pct": req.t8_scale_out_pct,
             "temp_t8_initial_sl_spread_plus_pips": req.t8_initial_sl_spread_plus_pips,
+            "temp_t9_exit_strategy": req.t9_exit_strategy,
+            "temp_t9_hwm_trail_pips": req.t9_hwm_trail_pips,
+            "temp_t9_tp1_pips": req.t9_tp1_pips,
+            "temp_t9_tp1_close_pct": req.t9_tp1_close_pct,
+            "temp_t9_be_spread_plus_pips": req.t9_be_spread_plus_pips,
+            "temp_t9_trail_ema_period": req.t9_trail_ema_period,
+            "temp_t9_trail_m5_ema_period": req.t9_trail_m5_ema_period,
             "temp_t10_regime_gate_enabled": req.t10_regime_gate_enabled,
             "temp_t10_regime_london_sell_veto": req.t10_regime_london_sell_veto,
             "temp_t10_regime_london_start_hour_et": req.t10_regime_london_start_hour_et,
