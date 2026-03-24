@@ -958,12 +958,15 @@ def report_t8_exit_strategy(policy) -> FilterReport:
         r_tp1 = float(getattr(policy, "runner_tp1_pips", 8.0))
         r_pct = float(getattr(policy, "runner_tp1_close_pct", 55.0))
         r_be = float(getattr(policy, "runner_be_spread_plus_pips", 0.5))
+        _trail_escalation_enabled = bool(getattr(policy, "trail_escalation_enabled", False))
+        _std_trail = "M1->M5->M15 ratchet" if _trail_escalation_enabled else "M5 trail"
+        _runner_trail = "M1->M5->M15 ratchet" if _trail_escalation_enabled else "M5 trail"
         label = (
             f"Quick {q_tp1:.0f}p/{q_pct:.0f}% + BE +{q_be:.1f}p + M1 trail | "
-            f"Std {s_tp1:.0f}p/{s_pct:.0f}% + BE +{s_be:.1f}p + M5 trail | "
-            f"Runner {r_tp1:.0f}p/{r_pct:.0f}% + BE +{r_be:.1f}p + M5 trail"
+            f"Std {s_tp1:.0f}p/{s_pct:.0f}% + BE +{s_be:.1f}p + {_std_trail} | "
+            f"Runner {r_tp1:.0f}p/{r_pct:.0f}% + BE +{r_be:.1f}p + {_runner_trail}"
         )
-        if bool(getattr(policy, "trail_escalation_enabled", False)):
+        if _trail_escalation_enabled:
             _et1 = float(getattr(policy, "trail_escalation_tier1_pips", 10.0))
             _et2 = float(getattr(policy, "trail_escalation_tier2_pips", 20.0))
             label += f" | Escalation: +{_et1:.0f}p->M5, +{_et2:.0f}p->M15"

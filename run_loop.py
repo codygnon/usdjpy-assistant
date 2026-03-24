@@ -148,6 +148,9 @@ _TRIAL10_TEMP_OVERRIDE_MAP: dict[str, str] = {
     "temp_t10_trail_escalation_tier2_pips": "trail_escalation_tier2_pips",
     "temp_t10_trail_escalation_m15_ema_period": "trail_escalation_m15_ema_period",
     "temp_t10_trail_escalation_m15_buffer_pips": "trail_escalation_m15_buffer_pips",
+    "temp_t10_runner_score_sizing_enabled": "runner_score_sizing_enabled",
+    "temp_t10_runner_base_lots": "conviction_base_lots",
+    "temp_t10_runner_min_lots": "conviction_min_lots",
 }
 
 
@@ -3237,7 +3240,7 @@ def main() -> None:
             _phase_done("tradeid_backfill", _backfill_started)
 
             state = load_state(state_path)
-            if state.kill_switch:
+            if state.kill_switch or state.exit_system_only:
                 mode = "DISARMED"
             else:
                 mode = state.mode
@@ -3778,12 +3781,13 @@ def main() -> None:
                                     )
                                     _rs_spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
                                     _rs_base = float(_policy_value(pol, _trial10_temp_overrides, "conviction_base_lots", 0.07))
+                                    _rs_min = float(_policy_value(pol, _trial10_temp_overrides, "conviction_min_lots", 0.03))
                                     _rs_bucket_lots = {
-                                        "floor": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_floor", 0.43)), 2),
-                                        "base": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_base", 0.71)), 2),
-                                        "elevated": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elevated", 1.0)), 2),
-                                        "press": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_press", 2.14)), 2),
-                                        "elite": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elite", 4.29)), 2),
+                                        "floor": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_floor", 0.43))), 2),
+                                        "base": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_base", 0.71))), 2),
+                                        "elevated": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elevated", 1.0))), 2),
+                                        "press": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_press", 2.14))), 2),
+                                        "elite": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elite", 4.29))), 2),
                                     }
                                     _runner_lots_pre, _runner_chain_pre = runner_score_to_lots(
                                         result=_rs_result_pre, bucket_lots=_rs_bucket_lots,
@@ -3800,7 +3804,10 @@ def main() -> None:
                                     _fresh_tag = f" FRESH({_rs_bars_cross_pre}b/{_rs_prior_ent_pre}e)" if _rs_result_pre.fresh else ""
                                     _log(f"Runner score sizing: {_rs_result_pre.bucket.upper()} ({_rs_result_pre.points}pt){_fresh_tag} -> {_runner_lots_pre:.2f} lots")
                                 except Exception as _rs_pre_err:
-                                    _conviction_lots_val = float(_policy_value(pol, _trial10_temp_overrides, "conviction_base_lots", 0.07)) * 0.43
+                                    _conviction_lots_val = max(
+                                        float(_policy_value(pol, _trial10_temp_overrides, "conviction_min_lots", 0.03)),
+                                        float(_policy_value(pol, _trial10_temp_overrides, "conviction_base_lots", 0.07)) * 0.43,
+                                    )
                                     _log(f"Runner score sizing error: {_rs_pre_err}", "ERROR")
                             exec_result = (
                                 execute_kt_cg_trial_10_policy_demo_only if pol_type == "kt_cg_trial_10"
@@ -5345,12 +5352,13 @@ def main() -> None:
                                     )
                                     _rs_spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
                                     _rs_base = float(_policy_value(pol, _trial10_temp_overrides, "conviction_base_lots", 0.07))
+                                    _rs_min = float(_policy_value(pol, _trial10_temp_overrides, "conviction_min_lots", 0.03))
                                     _rs_bucket_lots = {
-                                        "floor": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_floor", 0.43)), 2),
-                                        "base": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_base", 0.71)), 2),
-                                        "elevated": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elevated", 1.0)), 2),
-                                        "press": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_press", 2.14)), 2),
-                                        "elite": round(_rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elite", 4.29)), 2),
+                                        "floor": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_floor", 0.43))), 2),
+                                        "base": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_base", 0.71))), 2),
+                                        "elevated": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elevated", 1.0))), 2),
+                                        "press": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_press", 2.14))), 2),
+                                        "elite": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elite", 4.29))), 2),
                                     }
                                     _runner_lots_pre, _runner_chain_pre = runner_score_to_lots(
                                         result=_rs_result_pre, bucket_lots=_rs_bucket_lots,
@@ -5367,7 +5375,10 @@ def main() -> None:
                                     _fresh_tag = f" FRESH({_rs_bars_cross_pre}b/{_rs_prior_ent_pre}e)" if _rs_result_pre.fresh else ""
                                     _log(f"Runner score sizing: {_rs_result_pre.bucket.upper()} ({_rs_result_pre.points}pt){_fresh_tag} -> {_runner_lots_pre:.2f} lots")
                                 except Exception as _rs_pre_err:
-                                    _conviction_lots_val = float(_policy_value(pol, _trial10_temp_overrides, "conviction_base_lots", 0.07)) * 0.43
+                                    _conviction_lots_val = max(
+                                        float(_policy_value(pol, _trial10_temp_overrides, "conviction_min_lots", 0.03)),
+                                        float(_policy_value(pol, _trial10_temp_overrides, "conviction_base_lots", 0.07)) * 0.43,
+                                    )
                                     _log(f"Runner score sizing error: {_rs_pre_err}", "ERROR")
                             exec_result = (
                                 execute_kt_cg_trial_10_policy_demo_only if pol_type == "kt_cg_trial_10"

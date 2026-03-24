@@ -13,6 +13,7 @@ Mode = Literal["DISARMED", "ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"]
 class RuntimeState:
     mode: Mode = "DISARMED"
     kill_switch: bool = False
+    exit_system_only: bool = False
 
     # Used for idempotency / loop progress tracking
     last_processed_bar_time_utc: Optional[str] = None
@@ -114,6 +115,9 @@ class RuntimeState:
     temp_t10_trail_escalation_tier2_pips: Optional[float] = None
     temp_t10_trail_escalation_m15_ema_period: Optional[int] = None
     temp_t10_trail_escalation_m15_buffer_pips: Optional[float] = None
+    temp_t10_runner_score_sizing_enabled: Optional[bool] = None
+    temp_t10_runner_base_lots: Optional[float] = None
+    temp_t10_runner_min_lots: Optional[float] = None
 
     # Trial #10 live chop-pause state
     chop_pause_buy_start_utc: Optional[str] = None
@@ -147,6 +151,7 @@ def load_state(path: str | Path) -> RuntimeState:
     return RuntimeState(
         mode=data.get("mode", "DISARMED"),
         kill_switch=bool(data.get("kill_switch", False)),
+        exit_system_only=bool(data.get("exit_system_only", False)),
         last_processed_bar_time_utc=data.get("last_processed_bar_time_utc"),
         temp_m5_trend_ema_fast=data.get("temp_m5_trend_ema_fast"),
         temp_m5_trend_ema_slow=data.get("temp_m5_trend_ema_slow"),
@@ -217,6 +222,9 @@ def load_state(path: str | Path) -> RuntimeState:
         temp_t10_trail_escalation_tier2_pips=data.get("temp_t10_trail_escalation_tier2_pips"),
         temp_t10_trail_escalation_m15_ema_period=data.get("temp_t10_trail_escalation_m15_ema_period"),
         temp_t10_trail_escalation_m15_buffer_pips=data.get("temp_t10_trail_escalation_m15_buffer_pips"),
+        temp_t10_runner_score_sizing_enabled=data.get("temp_t10_runner_score_sizing_enabled"),
+        temp_t10_runner_base_lots=data.get("temp_t10_runner_base_lots"),
+        temp_t10_runner_min_lots=data.get("temp_t10_runner_min_lots"),
         chop_pause_buy_start_utc=data.get("chop_pause_buy_start_utc"),
         chop_pause_buy_reason=data.get("chop_pause_buy_reason"),
         chop_pause_sell_start_utc=data.get("chop_pause_sell_start_utc"),
@@ -232,6 +240,7 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
             {
                 "mode": state.mode,
                 "kill_switch": state.kill_switch,
+                "exit_system_only": state.exit_system_only,
                 "last_processed_bar_time_utc": state.last_processed_bar_time_utc,
                 "temp_m5_trend_ema_fast": state.temp_m5_trend_ema_fast,
                 "temp_m5_trend_ema_slow": state.temp_m5_trend_ema_slow,
@@ -302,6 +311,9 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "temp_t10_trail_escalation_tier2_pips": state.temp_t10_trail_escalation_tier2_pips,
                 "temp_t10_trail_escalation_m15_ema_period": state.temp_t10_trail_escalation_m15_ema_period,
                 "temp_t10_trail_escalation_m15_buffer_pips": state.temp_t10_trail_escalation_m15_buffer_pips,
+                "temp_t10_runner_score_sizing_enabled": state.temp_t10_runner_score_sizing_enabled,
+                "temp_t10_runner_base_lots": state.temp_t10_runner_base_lots,
+                "temp_t10_runner_min_lots": state.temp_t10_runner_min_lots,
                 "chop_pause_buy_start_utc": state.chop_pause_buy_start_utc,
                 "chop_pause_buy_reason": state.chop_pause_buy_reason,
                 "chop_pause_sell_start_utc": state.chop_pause_sell_start_utc,

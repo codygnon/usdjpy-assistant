@@ -3806,6 +3806,9 @@ interface EditedSettings {
   t10_trail_escalation_tier2_pips: number;
   t10_trail_escalation_m15_ema_period: number;
   t10_trail_escalation_m15_buffer_pips: number;
+  t10_runner_score_sizing_enabled: boolean;
+  t10_runner_base_lots: number;
+  t10_runner_min_lots: number;
   // Trial #9: Exit Strategy + TP1/BE/Trail
   t9_exit_strategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail';
   t9_hwm_trail_pips: number;
@@ -4131,6 +4134,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t10TrailEscalationTier2Pips = 20.0;
       let t10TrailEscalationM15EmaPeriod = 21;
       let t10TrailEscalationM15BufferPips = 1.5;
+      let t10RunnerScoreSizingEnabled = true;
+      let t10RunnerBaseLots = 0.07;
+      let t10RunnerMinLots = 0.03;
       let t9ExitStrategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail' = 'tp1_be_m5_trail';
       let t9HwmTrailPips = 3.0;
       let t9Tp1Pips = 6.0;
@@ -4607,6 +4613,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
               t10TrailEscalationTier2Pips = (pol.trail_escalation_tier2_pips as number) ?? 20.0;
               t10TrailEscalationM15EmaPeriod = (pol.trail_escalation_m15_ema_period as number) ?? 21;
               t10TrailEscalationM15BufferPips = (pol.trail_escalation_m15_buffer_pips as number) ?? 1.5;
+              t10RunnerScoreSizingEnabled = (pol.runner_score_sizing_enabled as boolean) ?? true;
+              t10RunnerBaseLots = (pol.conviction_base_lots as number) ?? 0.07;
+              t10RunnerMinLots = (pol.conviction_min_lots as number) ?? 0.03;
               const rawEs9 = (pol.exit_strategy as string) ?? 'tp1_be_m5_trail';
               t9ExitStrategy = (['none', 'tp1_be_trail', 'ema_scale_runner', 'tp1_be_m5_trail', 'tp1_be_hwm_trail'].includes(rawEs9) ? rawEs9 : 'tp1_be_m5_trail') as typeof t9ExitStrategy;
               t9HwmTrailPips = (pol.hwm_trail_pips as number) ?? 3.0;
@@ -4888,6 +4897,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t10_trail_escalation_tier2_pips: tempSettings?.t10_trail_escalation_tier2_pips ?? t10TrailEscalationTier2Pips,
         t10_trail_escalation_m15_ema_period: tempSettings?.t10_trail_escalation_m15_ema_period ?? t10TrailEscalationM15EmaPeriod,
         t10_trail_escalation_m15_buffer_pips: tempSettings?.t10_trail_escalation_m15_buffer_pips ?? t10TrailEscalationM15BufferPips,
+        t10_runner_score_sizing_enabled: tempSettings?.t10_runner_score_sizing_enabled ?? t10RunnerScoreSizingEnabled,
+        t10_runner_base_lots: tempSettings?.t10_runner_base_lots ?? t10RunnerBaseLots,
+        t10_runner_min_lots: tempSettings?.t10_runner_min_lots ?? t10RunnerMinLots,
         t9_exit_strategy: (() => {
           const raw = (tempSettings?.t9_exit_strategy ?? t9ExitStrategy) as string;
           return (['none', 'tp1_be_trail', 'ema_scale_runner', 'tp1_be_m5_trail', 'tp1_be_hwm_trail'].includes(raw) ? raw : 'tp1_be_m5_trail') as 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail';
@@ -5312,12 +5324,18 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.ntz_use_fib_s2 = editedSettings.t9_ntz_use_fib_s2;
           updates.ntz_use_fib_s3 = editedSettings.t9_ntz_use_fib_s3;
           // T9: Conviction Sizing
-          updates.conviction_sizing_enabled = editedSettings.t9_conviction_sizing_enabled;
-          updates.conviction_base_lots = Math.max(0.01, editedSettings.t9_conviction_base_lots);
-          updates.conviction_min_lots = Math.max(0.01, editedSettings.t9_conviction_min_lots);
+          if (pol.type === 'kt_cg_trial_9') {
+            updates.conviction_sizing_enabled = editedSettings.t9_conviction_sizing_enabled;
+            updates.conviction_base_lots = Math.max(0.01, editedSettings.t9_conviction_base_lots);
+            updates.conviction_min_lots = Math.max(0.01, editedSettings.t9_conviction_min_lots);
+          }
           if (pol.type === 'kt_cg_trial_10') {
             updates.zone_entry_require_recent_cross = false;
             updates.tier_reclaim_confirmation_enabled = false;
+            updates.conviction_sizing_enabled = false;
+            updates.runner_score_sizing_enabled = editedSettings.t10_runner_score_sizing_enabled;
+            updates.conviction_base_lots = Math.max(0.01, editedSettings.t10_runner_base_lots);
+            updates.conviction_min_lots = Math.max(0.01, editedSettings.t10_runner_min_lots);
             updates.regime_gate_enabled = editedSettings.t10_regime_gate_enabled;
             updates.regime_london_sell_veto = editedSettings.t10_regime_london_sell_veto;
             updates.regime_london_start_hour_et = Math.max(0, Math.min(23, editedSettings.t10_regime_london_start_hour_et));
@@ -5502,6 +5520,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
           settings.t10_trail_escalation_tier2_pips = editedSettings.t10_trail_escalation_tier2_pips;
           settings.t10_trail_escalation_m15_ema_period = editedSettings.t10_trail_escalation_m15_ema_period;
           settings.t10_trail_escalation_m15_buffer_pips = editedSettings.t10_trail_escalation_m15_buffer_pips;
+          settings.t10_runner_score_sizing_enabled = editedSettings.t10_runner_score_sizing_enabled;
+          settings.t10_runner_base_lots = editedSettings.t10_runner_base_lots;
+          settings.t10_runner_min_lots = editedSettings.t10_runner_min_lots;
         }
         await api.updateTempSettings(profile.name, settings);
       }
@@ -6209,7 +6230,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                   </div>
                   )}
                   {/* Trial #9: Conviction Sizing */}
-                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_9' || pol.type === 'kt_cg_trial_10') && (
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_9') && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
                       Trial #9 / #10 Conviction Sizing
@@ -6261,6 +6282,56 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       M5 thresholds: weak&lt;1.1p spread, strong&gt;3.0p spread + slope&gt;0.80p/bar aligned.
                       M1 dampen: crossing against or spread decreasing 3+ bars or &lt;0.23p.
                     </div>
+                    )}
+                  </div>
+                  )}
+                  {/* Trial #10: Runner Score Sizing */}
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_10') && (
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Trial #10 Conviction Sizing / Runner Score
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Trial 10 sizes from the runner score, not the old Trial 9 conviction matrix. Base lots anchors the bucket ladder, Min lots is the hard floor, and Max lots is the ceiling from the risk settings above.
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 12 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={editedSettings.t10_runner_score_sizing_enabled}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t10_runner_score_sizing_enabled: e.target.checked })}
+                            style={{ width: 18, height: 18, cursor: 'pointer' }} />
+                          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: editedSettings.t10_runner_score_sizing_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                            {editedSettings.t10_runner_score_sizing_enabled ? 'Runner Score ON' : 'Runner Score OFF'}
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+                    {editedSettings.t10_runner_score_sizing_enabled && (
+                    <>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Base Lots</div>
+                          <input type="number" step="0.01" min="0.01" value={editedSettings.t10_runner_base_lots}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t10_runner_base_lots: parseFloat(e.target.value) || 0.07 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Min Lots</div>
+                          <input type="number" step="0.01" min="0.01" value={editedSettings.t10_runner_min_lots}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t10_runner_min_lots: parseFloat(e.target.value) || 0.03 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max Lots</div>
+                          <input type="number" step="0.01" min="0.01" value={editedSettings.max_lots}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, max_lots: parseFloat(e.target.value) || 0.5 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        </div>
+                      </div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
+                        Bucket ladder uses Base Lots with the Trial 10 multipliers. Min Lots floors weak buckets and sizing-error fallback. Max Lots is shared with the global risk cap above.
+                      </div>
+                    </>
                     )}
                   </div>
                   )}

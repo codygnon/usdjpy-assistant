@@ -18,6 +18,7 @@ export interface Preset {
 export interface RuntimeState {
   mode: string;
   kill_switch: boolean;
+  exit_system_only: boolean;
   last_processed_bar_time_utc: string | null;
   loop_running: boolean;
 }
@@ -160,12 +161,13 @@ export async function getRuntimeState(profileName: string): Promise<RuntimeState
 export async function updateRuntimeState(
   profileName: string,
   mode: string,
-  killSwitch: boolean
+  killSwitch: boolean,
+  exitSystemOnly: boolean = false
 ): Promise<void> {
   await fetchJson<unknown>(`${API_BASE}/runtime/${profileName}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode, kill_switch: killSwitch }),
+    body: JSON.stringify({ mode, kill_switch: killSwitch, exit_system_only: exitSystemOnly }),
   });
 }
 
@@ -245,6 +247,9 @@ export interface TempEmaSettings {
   t10_trail_escalation_tier2_pips: number | null;
   t10_trail_escalation_m15_ema_period: number | null;
   t10_trail_escalation_m15_buffer_pips: number | null;
+  t10_runner_score_sizing_enabled: boolean | null;
+  t10_runner_base_lots: number | null;
+  t10_runner_min_lots: number | null;
 }
 
 export async function getTempSettings(profileName: string): Promise<TempEmaSettings> {

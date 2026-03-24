@@ -85,6 +85,7 @@ function PipsValue({ pips }: { pips: number }) {
 
 function HeaderBar({
   loopRunning, profileName, mode, tick, onToggleLoop, presetName, onModeChange, staleLabel,
+  exitSystemOnly, onExitSystemOnlyChange,
 }: {
   loopRunning: boolean;
   profileName: string;
@@ -94,6 +95,8 @@ function HeaderBar({
   presetName: string;
   onModeChange: (mode: string) => void;
   staleLabel?: string | null;
+  exitSystemOnly: boolean;
+  onExitSystemOnlyChange: (enabled: boolean) => void;
 }) {
   const [utcTime, setUtcTime] = useState(new Date().toISOString().slice(11, 19));
   useEffect(() => {
@@ -133,6 +136,15 @@ function HeaderBar({
           <option value="ARMED_AUTO_DEMO">ARMED_AUTO_DEMO</option>
         </select>
       </label>
+      <button
+        onClick={() => onExitSystemOnlyChange(!exitSystemOnly)}
+        style={{
+          padding: '2px 10px', borderRadius: 4, border: 'none', cursor: 'pointer',
+          fontWeight: 600, fontSize: 11,
+          backgroundColor: exitSystemOnly ? colors.amber : colors.panelHover,
+          color: exitSystemOnly ? '#000' : colors.textSecondary,
+        }}
+      >{exitSystemOnly ? 'EXIT ONLY ON' : 'Exit Only'}</button>
       {staleLabel && <span style={{ color: colors.amber, fontSize: 12 }}>{staleLabel}</span>}
       <div style={{ flex: 1 }} />
       {tick && (
@@ -559,6 +571,11 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     ? { bid: dashState.bid, ask: dashState.ask, spread: dashState.spread_pips }
     : null;
 
+  // Load runtime state on mount (for exit_system_only toggle)
+  useEffect(() => {
+    getRuntimeState(profileName).then(setRuntime).catch(() => {});
+  }, [profileName]);
+
   // Poll trade events — 10s
   useEffect(() => {
     if (!isPageVisible) return;
@@ -632,11 +649,25 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     try {
       const rt = await getRuntimeState(profileName);
       setRuntime(rt);
-      await updateRuntimeState(profileName, mode, rt.kill_switch);
+      await updateRuntimeState(profileName, mode, rt.kill_switch, rt.exit_system_only);
       const s = await getDashboard(profileName, profilePath);
       if (s && !s.error) setDashState(s);
     } catch (e) {
       console.error('Mode change error:', e);
+    }
+  }, [profileName, profilePath]);
+
+  const handleExitSystemOnlyChange = useCallback(async (enabled: boolean) => {
+    try {
+      const rt = await getRuntimeState(profileName);
+      setRuntime(rt);
+      await updateRuntimeState(profileName, rt.mode, rt.kill_switch, enabled);
+      const updated = await getRuntimeState(profileName);
+      setRuntime(updated);
+      const s = await getDashboard(profileName, profilePath);
+      if (s && !s.error) setDashState(s);
+    } catch (e) {
+      console.error('Exit system only toggle error:', e);
     }
   }, [profileName, profilePath]);
 
@@ -677,6 +708,8 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
         presetName={presetName}
         onModeChange={handleModeChange}
         staleLabel={staleLabel}
+        exitSystemOnly={runtime?.exit_system_only ?? false}
+        onExitSystemOnlyChange={handleExitSystemOnlyChange}
       />
 
       {/* Main content */}

@@ -431,6 +431,7 @@ class ProfileInfo(BaseModel):
 class RuntimeStateUpdate(BaseModel):
     mode: str
     kill_switch: bool
+    exit_system_only: bool = False
 
 
 class TempEmaSettingsUpdate(BaseModel):
@@ -500,6 +501,9 @@ class TempEmaSettingsUpdate(BaseModel):
     t10_trail_escalation_tier2_pips: Optional[float] = None
     t10_trail_escalation_m15_ema_period: Optional[int] = None
     t10_trail_escalation_m15_buffer_pips: Optional[float] = None
+    t10_runner_score_sizing_enabled: Optional[bool] = None
+    t10_runner_base_lots: Optional[float] = None
+    t10_runner_min_lots: Optional[float] = None
 
 
 
@@ -756,6 +760,7 @@ def get_runtime_state(profile_name: str) -> dict[str, Any]:
     return {
         "mode": state.mode,
         "kill_switch": state.kill_switch,
+        "exit_system_only": state.exit_system_only,
         "last_processed_bar_time_utc": state.last_processed_bar_time_utc,
         "loop_running": _is_loop_running(profile_name),
         "daily_reset_date": state.daily_reset_date,
@@ -776,6 +781,7 @@ def update_runtime_state(profile_name: str, req: RuntimeStateUpdate) -> dict[str
     new_data = dict(old.__dict__)
     new_data["mode"] = req.mode
     new_data["kill_switch"] = req.kill_switch
+    new_data["exit_system_only"] = req.exit_system_only
     new_state = RuntimeState(**new_data)  # type: ignore[arg-type]
     save_state(state_path, new_state)
     return {"status": "saved"}
@@ -845,6 +851,9 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
         "t10_trail_escalation_tier2_pips": state.temp_t10_trail_escalation_tier2_pips,
         "t10_trail_escalation_m15_ema_period": state.temp_t10_trail_escalation_m15_ema_period,
         "t10_trail_escalation_m15_buffer_pips": state.temp_t10_trail_escalation_m15_buffer_pips,
+        "t10_runner_score_sizing_enabled": state.temp_t10_runner_score_sizing_enabled,
+        "t10_runner_base_lots": state.temp_t10_runner_base_lots,
+        "t10_runner_min_lots": state.temp_t10_runner_min_lots,
     }
 
 
@@ -913,6 +922,9 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
             "temp_t10_trail_escalation_tier2_pips": req.t10_trail_escalation_tier2_pips,
             "temp_t10_trail_escalation_m15_ema_period": req.t10_trail_escalation_m15_ema_period,
             "temp_t10_trail_escalation_m15_buffer_pips": req.t10_trail_escalation_m15_buffer_pips,
+            "temp_t10_runner_score_sizing_enabled": req.t10_runner_score_sizing_enabled,
+            "temp_t10_runner_base_lots": req.t10_runner_base_lots,
+            "temp_t10_runner_min_lots": req.t10_runner_min_lots,
         }
     )
     new_state = RuntimeState(**new_data)  # type: ignore[arg-type]
@@ -3331,6 +3343,12 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         temp_overrides_api["trail_escalation_m15_ema_period"] = _state.temp_t10_trail_escalation_m15_ema_period
                     if _state.temp_t10_trail_escalation_m15_buffer_pips is not None:
                         temp_overrides_api["trail_escalation_m15_buffer_pips"] = _state.temp_t10_trail_escalation_m15_buffer_pips
+                    if _state.temp_t10_runner_score_sizing_enabled is not None:
+                        temp_overrides_api["runner_score_sizing_enabled"] = _state.temp_t10_runner_score_sizing_enabled
+                    if _state.temp_t10_runner_base_lots is not None:
+                        temp_overrides_api["conviction_base_lots"] = _state.temp_t10_runner_base_lots
+                    if _state.temp_t10_runner_min_lots is not None:
+                        temp_overrides_api["conviction_min_lots"] = _state.temp_t10_runner_min_lots
                     if not temp_overrides_api:
                         temp_overrides_api = None
                     if _policy_type == "phase3_integrated":

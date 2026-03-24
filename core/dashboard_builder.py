@@ -82,6 +82,14 @@ _TEMP_OVERRIDE_ATTRS = (
     "runner_tp1_pips",
     "runner_tp1_close_pct",
     "runner_be_spread_plus_pips",
+    "trail_escalation_enabled",
+    "trail_escalation_tier1_pips",
+    "trail_escalation_tier2_pips",
+    "trail_escalation_m15_ema_period",
+    "trail_escalation_m15_buffer_pips",
+    "runner_score_sizing_enabled",
+    "conviction_base_lots",
+    "conviction_min_lots",
 )
 
 
