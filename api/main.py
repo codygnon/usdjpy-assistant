@@ -474,11 +474,7 @@ class TempEmaSettingsUpdate(BaseModel):
     t8_m1_exit_ema_slow: Optional[int] = None
     t8_scale_out_pct: Optional[float] = None
     t8_initial_sl_spread_plus_pips: Optional[float] = None
-    # Trial #10 proof / regime fields
-    t10_zone_entry_require_recent_cross: Optional[bool] = None
-    t10_zone_entry_max_cross_lookback_bars: Optional[int] = None
-    t10_tier_reclaim_confirmation_enabled: Optional[bool] = None
-    t10_tier_reclaim_ema_period: Optional[int] = None
+    # Trial #10 regime / execution fields
     t10_regime_gate_enabled: Optional[bool] = None
     t10_regime_london_sell_veto: Optional[bool] = None
     t10_regime_london_start_hour_et: Optional[int] = None
@@ -818,10 +814,6 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
         "t8_m1_exit_ema_slow": state.temp_t8_m1_exit_ema_slow,
         "t8_scale_out_pct": state.temp_t8_scale_out_pct,
         "t8_initial_sl_spread_plus_pips": state.temp_t8_initial_sl_spread_plus_pips,
-        "t10_zone_entry_require_recent_cross": state.temp_t10_zone_entry_require_recent_cross,
-        "t10_zone_entry_max_cross_lookback_bars": state.temp_t10_zone_entry_max_cross_lookback_bars,
-        "t10_tier_reclaim_confirmation_enabled": state.temp_t10_tier_reclaim_confirmation_enabled,
-        "t10_tier_reclaim_ema_period": state.temp_t10_tier_reclaim_ema_period,
         "t10_regime_gate_enabled": state.temp_t10_regime_gate_enabled,
         "t10_regime_london_sell_veto": state.temp_t10_regime_london_sell_veto,
         "t10_regime_london_start_hour_et": state.temp_t10_regime_london_start_hour_et,
@@ -884,10 +876,6 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
             "temp_t8_m1_exit_ema_slow": req.t8_m1_exit_ema_slow,
             "temp_t8_scale_out_pct": req.t8_scale_out_pct,
             "temp_t8_initial_sl_spread_plus_pips": req.t8_initial_sl_spread_plus_pips,
-            "temp_t10_zone_entry_require_recent_cross": req.t10_zone_entry_require_recent_cross,
-            "temp_t10_zone_entry_max_cross_lookback_bars": req.t10_zone_entry_max_cross_lookback_bars,
-            "temp_t10_tier_reclaim_confirmation_enabled": req.t10_tier_reclaim_confirmation_enabled,
-            "temp_t10_tier_reclaim_ema_period": req.t10_tier_reclaim_ema_period,
             "temp_t10_regime_gate_enabled": req.t10_regime_gate_enabled,
             "temp_t10_regime_london_sell_veto": req.t10_regime_london_sell_veto,
             "temp_t10_regime_london_start_hour_et": req.t10_regime_london_start_hour_et,
@@ -3275,14 +3263,6 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         temp_overrides_api["m1_zone_entry_ema_slow"] = _state.temp_m1_zone_entry_ema_slow
                     if _state.temp_m1_pullback_cross_ema_slow is not None:
                         temp_overrides_api["m1_pullback_cross_ema_slow"] = _state.temp_m1_pullback_cross_ema_slow
-                    if _state.temp_t10_zone_entry_require_recent_cross is not None:
-                        temp_overrides_api["zone_entry_require_recent_cross"] = _state.temp_t10_zone_entry_require_recent_cross
-                    if _state.temp_t10_zone_entry_max_cross_lookback_bars is not None:
-                        temp_overrides_api["zone_entry_max_cross_lookback_bars"] = _state.temp_t10_zone_entry_max_cross_lookback_bars
-                    if _state.temp_t10_tier_reclaim_confirmation_enabled is not None:
-                        temp_overrides_api["tier_reclaim_confirmation_enabled"] = _state.temp_t10_tier_reclaim_confirmation_enabled
-                    if _state.temp_t10_tier_reclaim_ema_period is not None:
-                        temp_overrides_api["tier_reclaim_ema_period"] = _state.temp_t10_tier_reclaim_ema_period
                     if _state.temp_t10_regime_gate_enabled is not None:
                         temp_overrides_api["regime_gate_enabled"] = _state.temp_t10_regime_gate_enabled
                     if _state.temp_t10_regime_london_sell_veto is not None:

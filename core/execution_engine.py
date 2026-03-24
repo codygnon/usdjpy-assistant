@@ -5024,15 +5024,27 @@ def evaluate_trial10_advisory_state(
         if temp_overrides and field in temp_overrides and temp_overrides[field] is not None:
             return temp_overrides[field]
         return getattr(policy, field, default)
-
-    base_result = evaluate_kt_cg_trial_7_conditions(
-        profile,
-        policy,
-        data_by_tf,
-        current_bid=current_bid,
-        current_ask=current_ask,
-        tier_state=tier_state,
-    )
+    _orig_recent_cross = getattr(policy, "zone_entry_require_recent_cross", None)
+    _orig_reclaim_confirm = getattr(policy, "tier_reclaim_confirmation_enabled", None)
+    try:
+        # Active Trial #10 intentionally uses open Trial #9-style flow:
+        # no recent-cross requirement and no reclaim-confirmation gate.
+        object.__setattr__(policy, "zone_entry_require_recent_cross", False)
+        object.__setattr__(policy, "tier_reclaim_confirmation_enabled", False)
+        base_result = evaluate_kt_cg_trial_7_conditions(
+            profile,
+            policy,
+            data_by_tf,
+            current_bid=current_bid,
+            current_ask=current_ask,
+            tier_state=tier_state,
+        )
+    finally:
+        try:
+            object.__setattr__(policy, "zone_entry_require_recent_cross", _orig_recent_cross)
+            object.__setattr__(policy, "tier_reclaim_confirmation_enabled", _orig_reclaim_confirm)
+        except Exception:
+            pass
 
     result = dict(base_result)
     reasons = list(result.get("reasons") or [])
@@ -5046,15 +5058,15 @@ def evaluate_trial10_advisory_state(
             "mode": str(_ov("zone_entry_mode", "price_vs_ema5") or "price_vs_ema5"),
             "status": "passed" if trigger_type == "zone_entry" else "idle",
             "message": "Trial #9-style zone trigger active" if trigger_type == "zone_entry" else "Awaiting alignment",
-            "recent_cross_required": bool(_ov("zone_entry_require_recent_cross", False)),
-            "lookback_bars": int(_ov("zone_entry_max_cross_lookback_bars", 2)),
+            "recent_cross_required": False,
+            "lookback_bars": None,
         },
         "tier": {
             "enabled": bool(_ov("tiered_pullback_enabled", True)),
             "status": "passed" if trigger_type == "tiered_pullback" else "idle",
             "message": "Trial #9-style tier touch active" if trigger_type == "tiered_pullback" else "Awaiting tier touch",
-            "reclaim_enabled": bool(_ov("tier_reclaim_confirmation_enabled", False)),
-            "reclaim_period": int(_ov("tier_reclaim_ema_period", 5)),
+            "reclaim_enabled": False,
+            "reclaim_period": None,
             "tier": tier,
             "pullback_quality": None,
         },

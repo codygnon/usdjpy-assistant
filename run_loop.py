@@ -123,10 +123,6 @@ def _poll_seconds(profile, cli_poll: float | None) -> float:
 
 
 _TRIAL10_TEMP_OVERRIDE_MAP: dict[str, str] = {
-    "temp_t10_zone_entry_require_recent_cross": "zone_entry_require_recent_cross",
-    "temp_t10_zone_entry_max_cross_lookback_bars": "zone_entry_max_cross_lookback_bars",
-    "temp_t10_tier_reclaim_confirmation_enabled": "tier_reclaim_confirmation_enabled",
-    "temp_t10_tier_reclaim_ema_period": "tier_reclaim_ema_period",
     "temp_t10_regime_gate_enabled": "regime_gate_enabled",
     "temp_t10_regime_london_sell_veto": "regime_london_sell_veto",
     "temp_t10_regime_london_start_hour_et": "regime_london_start_hour_et",

@@ -3780,12 +3780,7 @@ interface EditedSettings {
   t9_conviction_sizing_enabled: boolean;
   t9_conviction_base_lots: number;
   t9_conviction_min_lots: number;
-  // Trial #10: Proof-based continuation confirmation
-  t10_zone_entry_require_recent_cross: boolean;
-  t10_zone_entry_max_cross_lookback_bars: number;
-  t10_tier_reclaim_confirmation_enabled: boolean;
-  t10_tier_reclaim_ema_period: number;
-  // Trial #10: Regime Gate
+  // Trial #10: Regime Gate / execution
   t10_regime_gate_enabled: boolean;
   t10_regime_london_sell_veto: boolean;
   t10_regime_london_start_hour_et: number;
@@ -4105,10 +4100,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t9ConvictionSizingEnabled = false;
       let t9ConvictionBaseLots = 0.05;
       let t9ConvictionMinLots = 0.01;
-      let t10ZoneEntryRequireRecentCross = true;
-      let t10ZoneEntryMaxCrossLookbackBars = 2;
-      let t10TierReclaimConfirmationEnabled = true;
-      let t10TierReclaimEmaPeriod = 5;
       let t10RegimeGateEnabled = true;
       let t10RegimeLondonSellVeto = true;
       let t10RegimeLondonStartHourEt = 3;
@@ -4579,10 +4570,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
               t9ConvictionSizingEnabled = (pol.conviction_sizing_enabled as boolean) ?? false;
               t9ConvictionBaseLots = (pol.conviction_base_lots as number) ?? 0.05;
               t9ConvictionMinLots = (pol.conviction_min_lots as number) ?? 0.01;
-              t10ZoneEntryRequireRecentCross = (pol.zone_entry_require_recent_cross as boolean) ?? true;
-              t10ZoneEntryMaxCrossLookbackBars = (pol.zone_entry_max_cross_lookback_bars as number) ?? 2;
-              t10TierReclaimConfirmationEnabled = (pol.tier_reclaim_confirmation_enabled as boolean) ?? true;
-              t10TierReclaimEmaPeriod = (pol.tier_reclaim_ema_period as number) ?? 5;
               t10RegimeGateEnabled = (pol.regime_gate_enabled as boolean) ?? true;
               t10RegimeLondonSellVeto = (pol.regime_london_sell_veto as boolean) ?? true;
               t10RegimeLondonStartHourEt = (pol.regime_london_start_hour_et as number) ?? 3;
@@ -4858,10 +4845,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t9_conviction_sizing_enabled: t9ConvictionSizingEnabled,
         t9_conviction_base_lots: t9ConvictionBaseLots,
         t9_conviction_min_lots: t9ConvictionMinLots,
-        t10_zone_entry_require_recent_cross: tempSettings?.t10_zone_entry_require_recent_cross ?? t10ZoneEntryRequireRecentCross,
-        t10_zone_entry_max_cross_lookback_bars: tempSettings?.t10_zone_entry_max_cross_lookback_bars ?? t10ZoneEntryMaxCrossLookbackBars,
-        t10_tier_reclaim_confirmation_enabled: tempSettings?.t10_tier_reclaim_confirmation_enabled ?? t10TierReclaimConfirmationEnabled,
-        t10_tier_reclaim_ema_period: tempSettings?.t10_tier_reclaim_ema_period ?? t10TierReclaimEmaPeriod,
         t10_regime_gate_enabled: tempSettings?.t10_regime_gate_enabled ?? t10RegimeGateEnabled,
         t10_regime_london_sell_veto: tempSettings?.t10_regime_london_sell_veto ?? t10RegimeLondonSellVeto,
         t10_regime_london_start_hour_et: tempSettings?.t10_regime_london_start_hour_et ?? t10RegimeLondonStartHourEt,
@@ -5309,10 +5292,8 @@ function PresetsPage({ profile }: { profile: Profile }) {
           updates.conviction_base_lots = Math.max(0.01, editedSettings.t9_conviction_base_lots);
           updates.conviction_min_lots = Math.max(0.01, editedSettings.t9_conviction_min_lots);
           if (pol.type === 'kt_cg_trial_10') {
-            updates.zone_entry_require_recent_cross = editedSettings.t10_zone_entry_require_recent_cross;
-            updates.zone_entry_max_cross_lookback_bars = Math.max(1, Math.min(10, editedSettings.t10_zone_entry_max_cross_lookback_bars));
-            updates.tier_reclaim_confirmation_enabled = editedSettings.t10_tier_reclaim_confirmation_enabled;
-            updates.tier_reclaim_ema_period = Math.max(2, Math.min(50, editedSettings.t10_tier_reclaim_ema_period));
+            updates.zone_entry_require_recent_cross = false;
+            updates.tier_reclaim_confirmation_enabled = false;
             updates.regime_gate_enabled = editedSettings.t10_regime_gate_enabled;
             updates.regime_london_sell_veto = editedSettings.t10_regime_london_sell_veto;
             updates.regime_london_start_hour_et = Math.max(0, Math.min(23, editedSettings.t10_regime_london_start_hour_et));
@@ -5466,10 +5447,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
           settings.t9_be_spread_plus_pips = editedSettings.t9_be_spread_plus_pips;
           settings.t9_trail_ema_period = editedSettings.t9_trail_ema_period;
           settings.t9_trail_m5_ema_period = editedSettings.t9_trail_m5_ema_period;
-          settings.t10_zone_entry_require_recent_cross = editedSettings.t10_zone_entry_require_recent_cross;
-          settings.t10_zone_entry_max_cross_lookback_bars = editedSettings.t10_zone_entry_max_cross_lookback_bars;
-          settings.t10_tier_reclaim_confirmation_enabled = editedSettings.t10_tier_reclaim_confirmation_enabled;
-          settings.t10_tier_reclaim_ema_period = editedSettings.t10_tier_reclaim_ema_period;
           settings.t10_regime_gate_enabled = editedSettings.t10_regime_gate_enabled;
           settings.t10_regime_london_sell_veto = editedSettings.t10_regime_london_sell_veto;
           settings.t10_regime_london_start_hour_et = editedSettings.t10_regime_london_start_hour_et;
@@ -7618,36 +7595,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
                               Inactive while Zone Entry Enabled is OFF.
                             </div>
                           )}
-                          {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_10') && (
-                            <div style={{ marginTop: 10, padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6, border: '1px solid var(--border)' }}>
-                              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 8 }}>
-                                <input
-                                  type="checkbox"
-                                  checked={editedSettings.t10_zone_entry_require_recent_cross}
-                                  onChange={(e) => setEditedSettings({ ...editedSettings, t10_zone_entry_require_recent_cross: e.target.checked })}
-                                  style={{ width: 16, height: 16, cursor: 'pointer' }}
-                                />
-                                <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>Trial #10: Require recent cross / reclaim</span>
-                              </label>
-                              <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                                Zone entries only fire when the latest closed M1 bar is aligned and the alignment flipped within the recent lookback window.
-                              </div>
-                              {editedSettings.t10_zone_entry_require_recent_cross && (
-                                <div>
-                                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Recent cross lookback (bars)</div>
-                                  <input
-                                    type="number"
-                                    step="1"
-                                    min="1"
-                                    max="10"
-                                    value={editedSettings.t10_zone_entry_max_cross_lookback_bars}
-                                    onChange={(e) => setEditedSettings({ ...editedSettings, t10_zone_entry_max_cross_lookback_bars: Math.max(1, Math.min(10, parseInt(e.target.value) || 2)) })}
-                                    style={{ width: '100%', padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                                  />
-                                </div>
-                              )}
-                            </div>
-                          )}
                         </div>
                       )}
                     </div>
@@ -7684,36 +7631,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
                               </label>
                             ))}
                           </div>
-                          {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_10') && (
-                            <div style={{ marginTop: 10, padding: 8, background: 'var(--bg-secondary)', borderRadius: 6, border: '1px solid var(--border)' }}>
-                              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 8 }}>
-                                <input
-                                  type="checkbox"
-                                  checked={editedSettings.t10_tier_reclaim_confirmation_enabled}
-                                  onChange={(e) => setEditedSettings({ ...editedSettings, t10_tier_reclaim_confirmation_enabled: e.target.checked })}
-                                  style={{ width: 16, height: 16, cursor: 'pointer' }}
-                                />
-                                <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>Trial #10: Require reclaim confirmation</span>
-                              </label>
-                              <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                                A tier needs a touch on the previous closed M1 bar, then the latest close must reclaim the selected EMA before entry.
-                              </div>
-                              {editedSettings.t10_tier_reclaim_confirmation_enabled && (
-                                <div>
-                                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Reclaim EMA period</div>
-                                  <input
-                                    type="number"
-                                    step="1"
-                                    min="2"
-                                    max="50"
-                                    value={editedSettings.t10_tier_reclaim_ema_period}
-                                    onChange={(e) => setEditedSettings({ ...editedSettings, t10_tier_reclaim_ema_period: Math.max(2, Math.min(50, parseInt(e.target.value) || 5)) })}
-                                    style={{ width: '100%', padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: 600 }}
-                                  />
-                                </div>
-                              )}
-                            </div>
-                          )}
                         </>
                       ) : (
                         <>
