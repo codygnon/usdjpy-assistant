@@ -571,10 +571,11 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
   const [dashState, setDashState] = useState<DashboardState | null>(null);
   const [runtime, setRuntime] = useState<RuntimeState | null>(null);
   const [loopError, setLoopError] = useState<string | null>(null);
+  const [dashboardOffline, setDashboardOffline] = useState(false);
   const [trail, setTrail] = useState<Array<{ time: string; spread: number; blocked: number; trend: string }>>([]);
   const [trailExpanded, setTrailExpanded] = useState(false);
 
-  const loopRunning = dashState?.loop_running ?? false;
+  const loopRunning = dashboardOffline ? false : (dashState?.loop_running ?? false);
   const tick = (dashState && Number.isFinite(dashState.bid) && Number.isFinite(dashState.ask))
     ? { bid: dashState.bid, ask: dashState.ask, spread: dashState.spread_pips }
     : null;
@@ -619,7 +620,14 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     const poll = () => {
       getDashboard(profileName, profilePath)
         .then(s => {
-          if (!mounted || !s || s.error) return;
+          if (!mounted || !s || s.error) {
+            if (mounted) {
+              setDashboardOffline(true);
+              setDashState(prev => prev ? { ...prev, loop_running: false, stale: true } : prev);
+            }
+            return;
+          }
+          setDashboardOffline(false);
           setDashState(s);
           const enabled = (s.filters || []).filter(f => f.enabled);
           const blocked = enabled.filter(f => !f.is_clear).length;
@@ -628,7 +636,12 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
           const t = String(s.timestamp_utc || new Date().toISOString()).slice(11, 19);
           setTrail(prev => [...prev, { time: t, spread, blocked, trend }].slice(-60));
         })
-        .catch(() => {});
+        .catch((e) => {
+          if (!mounted) return;
+          setDashboardOffline(true);
+          setDashState(prev => prev ? { ...prev, loop_running: false, stale: true } : prev);
+          setLoopError(prev => prev ?? (e instanceof Error ? e.message : String(e)));
+        });
     };
     poll();
     const id = setInterval(poll, 10000);
@@ -693,6 +706,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
   const latestTrail = trail.length > 0 ? trail[trail.length - 1] : null;
 
   const staleLabel = (() => {
+    if (dashboardOffline) return 'Dashboard disconnected';
     if (!dashState?.stale) return null;
     const age = dashState.stale_age_seconds;
     if (age == null) return 'Stale data';

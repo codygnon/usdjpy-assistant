@@ -618,22 +618,73 @@ def build_dashboard_filters(
         if policy_type == "kt_cg_trial_10":
             _buy_lots = 0.0
             _sell_lots = 0.0
+            _db_trial10_position_ids: set[int] = set()
+            if store is not None:
+                try:
+                    _open_trades_t10 = store.list_open_trades(profile.profile_name)
+                    for _t in _open_trades_t10:
+                        _row = dict(_t) if hasattr(_t, "keys") else _t
+                        if str(_row.get("policy_type", "")) != "kt_cg_trial_10":
+                            continue
+                        _side = str(_row.get("side", "")).lower()
+                        _lots = float(_row.get("size_lots") or 0.0)
+                        if _side == "buy":
+                            _buy_lots += _lots
+                        elif _side == "sell":
+                            _sell_lots += _lots
+                        _pid = _row.get("mt5_position_id")
+                        if _pid is not None:
+                            try:
+                                _db_trial10_position_ids.add(int(_pid))
+                            except (TypeError, ValueError):
+                                pass
+                except Exception:
+                    _db_trial10_position_ids = set()
             for pos in live_positions_snapshot or []:
                 try:
+                    _is_trial10_pos = False
+                    _pos_id = None
+                    _side = None
+                    _lots = 0.0
                     if isinstance(pos, dict):
+                        _pos_id = pos.get("id")
                         units = float(pos.get("currentUnits") or pos.get("initialUnits") or 0)
-                        lots = abs(units) / 100000.0
+                        _lots = abs(units) / 100000.0
                         if units > 0:
-                            _buy_lots += lots
+                            _side = "buy"
                         elif units < 0:
-                            _sell_lots += lots
+                            _side = "sell"
+                        _comment = ""
+                        _client_ext = pos.get("clientExtensions")
+                        if isinstance(_client_ext, dict):
+                            _comment = str(_client_ext.get("comment") or "").strip()
+                        if not _comment:
+                            _trade_ext = pos.get("tradeClientExtensions")
+                            if isinstance(_trade_ext, dict):
+                                _comment = str(_trade_ext.get("comment") or "").strip()
+                        _is_trial10_pos = _comment.startswith("kt_cg_trial_10:")
                     else:
+                        _pos_id = getattr(pos, "ticket", None)
                         volume = float(getattr(pos, "volume", 0.0) or 0.0)
+                        _lots = abs(volume)
                         mt5_type = getattr(pos, "type", None)
                         if mt5_type == 0:
-                            _buy_lots += volume
+                            _side = "buy"
                         elif mt5_type == 1:
-                            _sell_lots += volume
+                            _side = "sell"
+                        _is_trial10_pos = str(getattr(pos, "comment", "") or "").startswith("kt_cg_trial_10:")
+                    if _pos_id is not None:
+                        try:
+                            if int(_pos_id) in _db_trial10_position_ids:
+                                continue
+                        except (TypeError, ValueError):
+                            pass
+                    if not _is_trial10_pos:
+                        continue
+                    if _side == "buy":
+                        _buy_lots += _lots
+                    elif _side == "sell":
+                        _sell_lots += _lots
                 except Exception:
                     continue
             filters.append(report_regime_gate(regime_snapshot))

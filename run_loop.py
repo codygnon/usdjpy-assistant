@@ -3822,8 +3822,22 @@ def main() -> None:
                             except Exception as _rg_err:
                                 _log(f"Regime gate error: {_rg_err}", "ERROR")
                         if _regime_blocked:
+                            _regime_block_reason = f"regime_gate_blocked: {_regime_result.reason}" if _regime_result else "regime_gate_blocked"
+                            try:
+                                store.insert_execution({
+                                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                                    "profile": profile.profile_name,
+                                    "symbol": profile.symbol,
+                                    "signal_id": f"{pol_type}:{pol.id}:regime:{bar_time_utc}",
+                                    "mode": mode,
+                                    "attempted": 1, "placed": 0,
+                                    "reason": _regime_block_reason,
+                                    "mt5_retcode": None, "mt5_order_id": None, "mt5_deal_id": None,
+                                })
+                            except Exception:
+                                pass
                             exec_result = {
-                                "decision": ExecutionDecision(attempted=True, placed=False, reason="regime_gate_blocked"),
+                                "decision": ExecutionDecision(attempted=True, placed=False, reason=_regime_block_reason),
                                 "trigger_type": None,
                                 "candidate_side": None,
                                 "candidate_trigger": None,
@@ -5413,8 +5427,22 @@ def main() -> None:
                             except Exception as _rg_err:
                                 _log(f"Regime gate error: {_rg_err}", "ERROR")
                         if _regime_blocked:
+                            _regime_block_reason = f"regime_gate_blocked: {_regime_result.reason}" if _regime_result else "regime_gate_blocked"
+                            try:
+                                store.insert_execution({
+                                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                                    "profile": profile.profile_name,
+                                    "symbol": profile.symbol,
+                                    "signal_id": f"{pol_type}:{pol.id}:regime:{bar_time_utc}",
+                                    "mode": mode,
+                                    "attempted": 1, "placed": 0,
+                                    "reason": _regime_block_reason,
+                                    "mt5_retcode": None, "mt5_order_id": None, "mt5_deal_id": None,
+                                })
+                            except Exception:
+                                pass
                             exec_result = {
-                                "decision": ExecutionDecision(attempted=True, placed=False, reason="regime_gate_blocked"),
+                                "decision": ExecutionDecision(attempted=True, placed=False, reason=_regime_block_reason),
                                 "trigger_type": None,
                                 "candidate_side": None,
                                 "candidate_trigger": None,

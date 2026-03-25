@@ -5445,7 +5445,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
             );
             const manualDirectionalCap = editedSettings.t10_max_directional_lots_per_side == null
               ? null
-              : Math.max(0.01, Math.min(10.0, editedSettings.t10_max_directional_lots_per_side));
+              : Math.max(0.01, editedSettings.t10_max_directional_lots_per_side);
             updates.zone_entry_require_recent_cross = false;
             updates.tier_reclaim_confirmation_enabled = false;
             updates.conviction_sizing_enabled = false;
@@ -5638,7 +5638,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
             );
             const manualDirectionalCap = editedSettings.t10_max_directional_lots_per_side == null
               ? null
-              : Math.max(0.01, Math.min(10.0, editedSettings.t10_max_directional_lots_per_side));
+              : Math.max(0.01, editedSettings.t10_max_directional_lots_per_side);
             settings.t10_max_directional_lots_per_side =
               manualDirectionalCap !== null && Math.abs(manualDirectionalCap - autoDirectionalCap) > 0.0001
                 ? manualDirectionalCap

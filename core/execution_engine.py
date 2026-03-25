@@ -5838,6 +5838,29 @@ def execute_kt_cg_trial_7_policy_demo_only(
         if temp_overrides and field in temp_overrides and temp_overrides[field] is not None:
             return temp_overrides[field]
         return getattr(policy, field, default)
+
+    def _log_block(reason: str) -> None:
+        """Insert an execution record for a blocked entry so execution log shows the reason."""
+        try:
+            store.insert_execution(
+                {
+                    "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "profile": profile.profile_name,
+                    "symbol": profile.symbol,
+                    "signal_id": f"{rule_id}:{pd.Timestamp.now(tz='UTC').isoformat()}",
+                    "rule_id": rule_id,
+                    "mode": mode,
+                    "attempted": 1,
+                    "placed": 0,
+                    "reason": reason,
+                    "mt5_retcode": None,
+                    "mt5_order_id": None,
+                    "mt5_deal_id": None,
+                }
+            )
+        except Exception:
+            pass
+
     effective_tiers = _canonical_trial7_tier_periods(getattr(policy, "tier_ema_periods", tuple(range(9, 35))))
     # Trial #8 / #9: only allow tiers 17, 21, 27, 33, 50, 75, 100 (never 9-16)
     if policy_type in ("kt_cg_trial_8", "kt_cg_trial_9"):
@@ -6258,12 +6281,10 @@ def execute_kt_cg_trial_7_policy_demo_only(
         r = get_effective_risk(profile)
         max_open_trades = getattr(r, "max_open_trades", None)
         if max_open_trades is not None and total_open >= int(max_open_trades):
+            _block_msg = f"max_open_trades: {total_open} total open >= {max_open_trades}"
+            _log_block(_block_msg)
             return _result_payload(
-                ExecutionDecision(
-                    attempted=True,
-                    placed=False,
-                    reason=f"max_open_trades: {total_open} total open >= {max_open_trades}",
-                ),
+                ExecutionDecision(attempted=True, placed=False, reason=_block_msg),
             )
     except Exception:
         open_positions = []
@@ -6316,12 +6337,10 @@ def execute_kt_cg_trial_7_policy_demo_only(
                     if pos_side == side:
                         side_open += 1
             if side_open >= max_open_per_side:
+                _block_msg = f"max_open_trades_per_side: {side_open} {side} trade(s) open (max {max_open_per_side})"
+                _log_block(_block_msg)
                 return _result_payload(
-                    ExecutionDecision(
-                        attempted=True,
-                        placed=False,
-                        reason=f"max_open_trades_per_side: {side_open} {side} trade(s) open (max {max_open_per_side})",
-                    ),
+                    ExecutionDecision(attempted=True, placed=False, reason=_block_msg),
                 )
         except Exception:
             pass
@@ -6452,11 +6471,13 @@ def execute_kt_cg_trial_7_policy_demo_only(
                         )
                         fallback_ok, fallback_reason = _attempt_zone_fallback_from_tier_cap(tier_cap_reason)
                         if not fallback_ok:
+                            _log_block(fallback_reason)
                             return _result_payload(
                                 ExecutionDecision(attempted=True, placed=False, reason=fallback_reason),
                             )
                         zone_precheck_reason = _run_zone_prechecks()
                         if zone_precheck_reason:
+                            _log_block(zone_precheck_reason)
                             return _result_payload(
                                 ExecutionDecision(attempted=True, placed=False, reason=zone_precheck_reason),
                             )
@@ -6473,12 +6494,10 @@ def execute_kt_cg_trial_7_policy_demo_only(
                     # entry cap. These arise when trades were placed but not recorded (e.g. pre-fix crashes).
                     zone_entry_open += _orphaned_live_count
                     if zone_entry_open >= max_zone_entry_open:
+                        _block_msg = f"max_zone_entry_open: {zone_entry_open} zone entry trade(s) already open (max {max_zone_entry_open}; includes {_orphaned_live_count} unrecorded)"
+                        _log_block(_block_msg)
                         return _result_payload(
-                            ExecutionDecision(
-                                attempted=True,
-                                placed=False,
-                                reason=f"max_zone_entry_open: {zone_entry_open} zone entry trade(s) already open (max {max_zone_entry_open}; includes {_orphaned_live_count} unrecorded)",
-                            ),
+                            ExecutionDecision(attempted=True, placed=False, reason=_block_msg),
                         )
             break
     except Exception:
@@ -6658,15 +6677,13 @@ def execute_kt_cg_trial_7_policy_demo_only(
                 _directional_available_lots = max(0.0, float(_directional_cap_lots) - float(_same_side_open_lots))
                 _lot_chain["directional_available_lots"] = round(float(_directional_available_lots), 4)
                 if _directional_available_lots + 1e-9 < _pq_min:
+                    _block_msg = (
+                        f"max_directional_lots_per_side: {side} exposure "
+                        f"{_same_side_open_lots:.2f}/{float(_directional_cap_lots):.2f} lots"
+                    )
+                    _log_block(_block_msg)
                     return _result_payload(
-                        ExecutionDecision(
-                            attempted=True,
-                            placed=False,
-                            reason=(
-                                f"max_directional_lots_per_side: {side} exposure "
-                                f"{_same_side_open_lots:.2f}/{float(_directional_cap_lots):.2f} lots"
-                            ),
-                        ),
+                        ExecutionDecision(attempted=True, placed=False, reason=_block_msg),
                     )
                 if float(_effective_lots) > float(_directional_available_lots):
                     _effective_lots = float(_directional_available_lots)
