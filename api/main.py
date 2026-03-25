@@ -4417,6 +4417,34 @@ def debug_daily_trades(profile_name: str, profile_path: Optional[str] = None) ->
 @app.get("/api/data/{profile_name}/dashboard")
 def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
     """Return dashboard state with lean run-loop-file-first behavior."""
+    try:
+        return _get_dashboard_impl(profile_name, profile_path)
+    except Exception as e:
+        import traceback
+        print(f"[api] DASHBOARD CRASH for '{profile_name}': {e}\n{traceback.format_exc()}")
+        return {
+            "timestamp_utc": None,
+            "preset_name": "",
+            "mode": "DISARMED",
+            "loop_running": False,
+            "entry_candidate_side": None,
+            "entry_candidate_trigger": None,
+            "filters": [],
+            "context": [],
+            "positions": [],
+            "daily_summary": None,
+            "bid": 0.0,
+            "ask": 0.0,
+            "spread_pips": 0.0,
+            "stale": True,
+            "stale_age_seconds": None,
+            "data_source": "error",
+            "error": str(e),
+        }
+
+
+def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
+    """Internal dashboard implementation."""
     from core.dashboard_models import read_dashboard_state
 
     if LEAN_UI_MODE:
@@ -4444,33 +4472,6 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
             result["stale_age_seconds"] = stale_age_seconds
             result["data_source"] = "run_loop_file"
             try:
-                live_refresh = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
-                if "error" not in live_refresh:
-                    for key in (
-                        "filters",
-                        "context",
-                        "positions",
-                        "bid",
-                        "ask",
-                        "spread_pips",
-                        "entry_candidate_side",
-                        "entry_candidate_trigger",
-                        "daily_summary",
-                        "preset_name",
-                        "mode",
-                    ):
-                        if key in live_refresh:
-                            result[key] = live_refresh[key]
-                    result["data_source"] = "run_loop_file+live_filters"
-            except Exception as e:
-                print(f"[api] live dashboard refresh error: {e}")
-            # Override positions with live broker data so Open Positions panel matches OANDA
-            try:
-                result["positions"] = _fetch_live_positions(profile_name, profile_path)
-            except Exception:
-                result["positions"] = []
-            # Attach loop log if available
-            try:
                 _loop_log_path = log_dir / "loop_log.json"
                 if _loop_log_path.exists():
                     result["loop_log"] = json.loads(_loop_log_path.read_text(encoding="utf-8"))
@@ -4478,13 +4479,6 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
                     result["loop_log"] = []
             except Exception:
                 result["loop_log"] = []
-            # Always compute daily summary fresh from OANDA (file state may be stale).
-            try:
-                _ds_summary = _compute_daily_summary_from_broker(profile_name, profile_path=profile_path)
-                if _ds_summary is not None:
-                    result["daily_summary"] = _ds_summary
-            except Exception as e:
-                print(f"[api] dashboard daily_summary override error: {e}")
             return _strip_trial10_directional_cap_filter(result)
 
         live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
