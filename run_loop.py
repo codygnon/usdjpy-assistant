@@ -152,8 +152,9 @@ _TRIAL10_TEMP_OVERRIDE_MAP: dict[str, str] = {
     "temp_t10_trail_escalation_m15_ema_period": "trail_escalation_m15_ema_period",
     "temp_t10_trail_escalation_m15_buffer_pips": "trail_escalation_m15_buffer_pips",
     "temp_t10_runner_score_sizing_enabled": "runner_score_sizing_enabled",
-    "temp_t10_runner_base_lots": "conviction_base_lots",
-    "temp_t10_runner_min_lots": "conviction_min_lots",
+    "temp_t10_runner_base_lots": "runner_base_lots",
+    "temp_t10_runner_min_lots": "runner_min_lots",
+    "temp_t10_runner_max_lots": "runner_max_lots",
 }
 
 _TRIAL9_TEMP_OVERRIDE_MAP: dict[str, str] = {
@@ -2227,27 +2228,33 @@ def _build_and_write_dashboard(
         if policy_type in ("kt_cg_trial_9", "kt_cg_trial_10") and policy_for_dashboard is not None:
             try:
                 _conv_pol = policy_for_dashboard
-                _conv_enabled_dash = bool(getattr(_conv_pol, "conviction_sizing_enabled", False))
-                _m5_df_dash = data_by_tf.get("M5")
-                _m1_df_dash = data_by_tf.get("M1")
-                _is_bull_dash = False
-                if _m5_df_dash is not None and len(_m5_df_dash) > 21:
-                    _m5c_dash = drop_incomplete_last_bar(_m5_df_dash.copy(), "M5")
-                    _m5_close_dash = _m5c_dash["close"].astype(float)
-                    _ema9_dash = _m5_close_dash.ewm(span=9, adjust=False).mean()
-                    _ema21_dash = _m5_close_dash.ewm(span=21, adjust=False).mean()
-                    _is_bull_dash = float(_ema9_dash.iloc[-1]) > float(_ema21_dash.iloc[-1])
-                _conv_result_dash = compute_conviction(
-                    m5_df=drop_incomplete_last_bar(_m5_df_dash.copy(), "M5") if _m5_df_dash is not None else None,
-                    m1_df=drop_incomplete_last_bar(_m1_df_dash.copy(), "M1") if _m1_df_dash is not None else None,
-                    pip_size=pip_size,
-                    is_bull=_is_bull_dash,
-                    enabled=_conv_enabled_dash,
-                    base_lots=float(getattr(_conv_pol, "conviction_base_lots", 0.05)),
-                    min_lots=float(getattr(_conv_pol, "conviction_min_lots", 0.01)),
-                    max_lots=float(get_effective_risk(profile).max_lots),
-                )
-                _conviction_snap = _conviction_snapshot_fn(_conv_result_dash)
+                if (
+                    policy_type == "kt_cg_trial_10"
+                    and bool(getattr(_conv_pol, "runner_score_sizing_enabled", False))
+                ):
+                    _conviction_snap = None
+                else:
+                    _conv_enabled_dash = bool(getattr(_conv_pol, "conviction_sizing_enabled", False))
+                    _m5_df_dash = data_by_tf.get("M5")
+                    _m1_df_dash = data_by_tf.get("M1")
+                    _is_bull_dash = False
+                    if _m5_df_dash is not None and len(_m5_df_dash) > 21:
+                        _m5c_dash = drop_incomplete_last_bar(_m5_df_dash.copy(), "M5")
+                        _m5_close_dash = _m5c_dash["close"].astype(float)
+                        _ema9_dash = _m5_close_dash.ewm(span=9, adjust=False).mean()
+                        _ema21_dash = _m5_close_dash.ewm(span=21, adjust=False).mean()
+                        _is_bull_dash = float(_ema9_dash.iloc[-1]) > float(_ema21_dash.iloc[-1])
+                    _conv_result_dash = compute_conviction(
+                        m5_df=drop_incomplete_last_bar(_m5_df_dash.copy(), "M5") if _m5_df_dash is not None else None,
+                        m1_df=drop_incomplete_last_bar(_m1_df_dash.copy(), "M1") if _m1_df_dash is not None else None,
+                        pip_size=pip_size,
+                        is_bull=_is_bull_dash,
+                        enabled=_conv_enabled_dash,
+                        base_lots=float(getattr(_conv_pol, "conviction_base_lots", 0.05)),
+                        min_lots=float(getattr(_conv_pol, "conviction_min_lots", 0.01)),
+                        max_lots=float(get_effective_risk(profile).max_lots),
+                    )
+                    _conviction_snap = _conviction_snapshot_fn(_conv_result_dash)
             except Exception:
                 pass
 
@@ -2350,6 +2357,7 @@ def _build_and_write_dashboard(
 
         candidate_side = None
         candidate_trigger = None
+        last_block_reason = None
         if isinstance(eval_result, dict):
             raw_side = eval_result.get("candidate_side") or eval_result.get("side")
             if raw_side is None:
@@ -2361,6 +2369,13 @@ def _build_and_write_dashboard(
             raw_trigger = eval_result.get("candidate_trigger") or eval_result.get("trigger_type")
             if str(raw_trigger) in ("zone_entry", "tiered_pullback"):
                 candidate_trigger = str(raw_trigger)
+
+            # Extract block reason when candidate exists but trade was not placed
+            _eval_dec = eval_result.get("decision")
+            if _eval_dec is not None and not getattr(_eval_dec, "placed", False):
+                _block_reason = getattr(_eval_dec, "reason", None)
+                if _block_reason and str(_block_reason).strip():
+                    last_block_reason = str(_block_reason).strip()
         elif isinstance(previous_state, dict):
             prev_side = previous_state.get("entry_candidate_side")
             prev_trigger = previous_state.get("entry_candidate_trigger")
@@ -2387,6 +2402,7 @@ def _build_and_write_dashboard(
             loop_running=True,
             entry_candidate_side=candidate_side,
             entry_candidate_trigger=candidate_trigger,
+            last_block_reason=last_block_reason,
             filters=filters,
             context=context_items,
             positions=positions,
@@ -3820,7 +3836,12 @@ def main() -> None:
                             if _runner_sizing_active and not _regime_blocked:
                                 try:
                                     from core.execution_engine import evaluate_trial10_advisory_state
-                                    from core.runner_score import compute_runner_score, compute_freshness, runner_score_to_lots
+                                    from core.runner_score import (
+                                        build_trial10_runner_bucket_lots,
+                                        compute_runner_score,
+                                        compute_freshness,
+                                        runner_score_to_lots,
+                                    )
                                     from core.signal_engine import drop_incomplete_last_bar as _dilb_rs_pre
                                     _preview_result = evaluate_trial10_advisory_state(
                                         profile, pol, data_by_tf,
@@ -3853,15 +3874,17 @@ def main() -> None:
                                         freshness_mode="strict",
                                     )
                                     _rs_spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
-                                    _rs_base = float(_policy_value(pol, _trial10_temp_overrides, "conviction_base_lots", 0.07))
-                                    _rs_min = float(_policy_value(pol, _trial10_temp_overrides, "conviction_min_lots", 0.03))
-                                    _rs_bucket_lots = {
-                                        "floor": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_floor", 0.43))), 2),
-                                        "base": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_base", 0.71))), 2),
-                                        "elevated": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elevated", 1.0))), 2),
-                                        "press": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_press", 2.14))), 2),
-                                        "elite": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elite", 4.29))), 2),
-                                    }
+                                    _rs_base = float(_policy_value(pol, _trial10_temp_overrides, "runner_base_lots", 0.07))
+                                    _rs_min = float(_policy_value(pol, _trial10_temp_overrides, "runner_min_lots", 0.03))
+                                    _rs_bucket_lots = build_trial10_runner_bucket_lots(
+                                        base_lots=_rs_base,
+                                        min_lots=_rs_min,
+                                        mult_floor=float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_floor", 0.43)),
+                                        mult_base=float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_base", 0.71)),
+                                        mult_elevated=float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elevated", 1.0)),
+                                        mult_press=float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_press", 2.14)),
+                                        mult_elite=float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elite", 4.29)),
+                                    )
                                     _runner_lots_pre, _runner_chain_pre = runner_score_to_lots(
                                         result=_rs_result_pre, bucket_lots=_rs_bucket_lots,
                                         regime_multiplier=1.0,  # regime multiplier applied inside execute lot chain
@@ -3871,15 +3894,24 @@ def main() -> None:
                                         is_boost_hour=(_rs_regime_pre.lower() == "buy_boost_hour"),
                                         force_floor_tier17_nonboost=bool(_policy_value(pol, _trial10_temp_overrides, "runner_tier17_nonboost_force_floor", True)),
                                         min_lots=_rs_bucket_lots["floor"],
-                                        max_lots=float(get_effective_risk(profile).max_lots),
+                                        max_lots=float(
+                                            _policy_value(
+                                                pol,
+                                                _trial10_temp_overrides,
+                                                "runner_max_lots",
+                                                get_effective_risk(profile).max_lots,
+                                            )
+                                            or get_effective_risk(profile).max_lots
+                                        ),
                                     )
                                     _conviction_lots_val = _runner_lots_pre
                                     _fresh_tag = f" FRESH({_rs_bars_cross_pre}b/{_rs_prior_ent_pre}e)" if _rs_result_pre.fresh else ""
                                     _log(f"Runner score sizing: {_rs_result_pre.bucket.upper()} ({_rs_result_pre.points}pt){_fresh_tag} -> {_runner_lots_pre:.2f} lots")
                                 except Exception as _rs_pre_err:
+                                    _fallback_floor_mult = float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_floor", 0.43))
                                     _conviction_lots_val = max(
-                                        float(_policy_value(pol, _trial10_temp_overrides, "conviction_min_lots", 0.03)),
-                                        float(_policy_value(pol, _trial10_temp_overrides, "conviction_base_lots", 0.07)) * 0.43,
+                                        float(_policy_value(pol, _trial10_temp_overrides, "runner_min_lots", 0.03)),
+                                        float(_policy_value(pol, _trial10_temp_overrides, "runner_base_lots", 0.07)) * _fallback_floor_mult,
                                     )
                                     _log(f"Runner score sizing error: {_rs_pre_err}", "ERROR")
                             exec_result = (
@@ -5395,7 +5427,12 @@ def main() -> None:
                             if _runner_sizing_active and not _regime_blocked:
                                 try:
                                     from core.execution_engine import evaluate_trial10_advisory_state
-                                    from core.runner_score import compute_runner_score, compute_freshness, runner_score_to_lots
+                                    from core.runner_score import (
+                                        build_trial10_runner_bucket_lots,
+                                        compute_runner_score,
+                                        compute_freshness,
+                                        runner_score_to_lots,
+                                    )
                                     from core.signal_engine import drop_incomplete_last_bar as _dilb_rs_pre
                                     _preview_result = evaluate_trial10_advisory_state(
                                         profile, pol, data_by_tf,
@@ -5428,15 +5465,17 @@ def main() -> None:
                                         freshness_mode="strict",
                                     )
                                     _rs_spread_pips = (tick.ask - tick.bid) / float(profile.pip_size)
-                                    _rs_base = float(_policy_value(pol, _trial10_temp_overrides, "conviction_base_lots", 0.07))
-                                    _rs_min = float(_policy_value(pol, _trial10_temp_overrides, "conviction_min_lots", 0.03))
-                                    _rs_bucket_lots = {
-                                        "floor": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_floor", 0.43))), 2),
-                                        "base": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_base", 0.71))), 2),
-                                        "elevated": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elevated", 1.0))), 2),
-                                        "press": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_press", 2.14))), 2),
-                                        "elite": round(max(_rs_min, _rs_base * float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elite", 4.29))), 2),
-                                    }
+                                    _rs_base = float(_policy_value(pol, _trial10_temp_overrides, "runner_base_lots", 0.07))
+                                    _rs_min = float(_policy_value(pol, _trial10_temp_overrides, "runner_min_lots", 0.03))
+                                    _rs_bucket_lots = build_trial10_runner_bucket_lots(
+                                        base_lots=_rs_base,
+                                        min_lots=_rs_min,
+                                        mult_floor=float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_floor", 0.43)),
+                                        mult_base=float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_base", 0.71)),
+                                        mult_elevated=float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elevated", 1.0)),
+                                        mult_press=float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_press", 2.14)),
+                                        mult_elite=float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_elite", 4.29)),
+                                    )
                                     _runner_lots_pre, _runner_chain_pre = runner_score_to_lots(
                                         result=_rs_result_pre, bucket_lots=_rs_bucket_lots,
                                         regime_multiplier=1.0,
@@ -5446,15 +5485,24 @@ def main() -> None:
                                         is_boost_hour=(_rs_regime_pre.lower() == "buy_boost_hour"),
                                         force_floor_tier17_nonboost=bool(_policy_value(pol, _trial10_temp_overrides, "runner_tier17_nonboost_force_floor", True)),
                                         min_lots=_rs_bucket_lots["floor"],
-                                        max_lots=float(get_effective_risk(profile).max_lots),
+                                        max_lots=float(
+                                            _policy_value(
+                                                pol,
+                                                _trial10_temp_overrides,
+                                                "runner_max_lots",
+                                                get_effective_risk(profile).max_lots,
+                                            )
+                                            or get_effective_risk(profile).max_lots
+                                        ),
                                     )
                                     _conviction_lots_val = _runner_lots_pre
                                     _fresh_tag = f" FRESH({_rs_bars_cross_pre}b/{_rs_prior_ent_pre}e)" if _rs_result_pre.fresh else ""
                                     _log(f"Runner score sizing: {_rs_result_pre.bucket.upper()} ({_rs_result_pre.points}pt){_fresh_tag} -> {_runner_lots_pre:.2f} lots")
                                 except Exception as _rs_pre_err:
+                                    _fallback_floor_mult = float(_policy_value(pol, _trial10_temp_overrides, "runner_bucket_mult_floor", 0.43))
                                     _conviction_lots_val = max(
-                                        float(_policy_value(pol, _trial10_temp_overrides, "conviction_min_lots", 0.03)),
-                                        float(_policy_value(pol, _trial10_temp_overrides, "conviction_base_lots", 0.07)) * 0.43,
+                                        float(_policy_value(pol, _trial10_temp_overrides, "runner_min_lots", 0.03)),
+                                        float(_policy_value(pol, _trial10_temp_overrides, "runner_base_lots", 0.07)) * _fallback_floor_mult,
                                     )
                                     _log(f"Runner score sizing error: {_rs_pre_err}", "ERROR")
                             exec_result = (

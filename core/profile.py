@@ -1112,7 +1112,10 @@ class ExecutionPolicyKtCgTrial10(ExecutionPolicyKtCgTrial9):
     conviction_min_lots: float = 0.03
 
     runner_score_sizing_enabled: bool = True
-    # Bucket lot multipliers — applied to conviction_base_lots
+    runner_base_lots: float = 0.07
+    runner_min_lots: float = 0.03
+    runner_max_lots: Optional[float] = None
+    # Bucket lot multipliers — applied to runner_base_lots
     runner_bucket_mult_floor: float = 0.43
     runner_bucket_mult_base: float = 0.71
     runner_bucket_mult_elevated: float = 1.0
@@ -1599,6 +1602,12 @@ def migrate_profile_dict(d: dict[str, Any]) -> dict[str, Any]:
                         # Migrate renamed chop pause fields
                         pol.pop("regime_chop_pause_lookback_minutes", None)
                         pol.pop("regime_chop_pause_stop_count", None)
+                        if "runner_base_lots" not in pol:
+                            pol["runner_base_lots"] = pol.get("conviction_base_lots", 0.07)
+                        if "runner_min_lots" not in pol:
+                            pol["runner_min_lots"] = pol.get("conviction_min_lots", 0.03)
+                        if "runner_max_lots" not in pol:
+                            pol["runner_max_lots"] = None
                         # Migrate absolute bucket lots -> multipliers
                         pol.pop("runner_bucket_lots_floor", None)
                         pol.pop("runner_bucket_lots_base", None)

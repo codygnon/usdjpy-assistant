@@ -268,6 +268,32 @@ def runner_score_snapshot(result: RunnerScoreResult) -> dict:
     }
 
 
+def build_trial10_runner_bucket_lots(
+    *,
+    base_lots: float,
+    min_lots: float,
+    mult_floor: float = 0.43,
+    mult_base: float = 0.71,
+    mult_elevated: float = 1.0,
+    mult_press: float = 2.14,
+    mult_elite: float = 4.29,
+) -> dict[str, float]:
+    """Build the Trial 10 runner bucket ladder from base/min lots and multipliers."""
+    base = max(0.0, float(base_lots))
+    floor = max(0.0, float(min_lots))
+
+    def _bucket(multiplier: float) -> float:
+        return round(max(floor, base * float(multiplier)), 2)
+
+    return {
+        "floor": _bucket(mult_floor),
+        "base": _bucket(mult_base),
+        "elevated": _bucket(mult_elevated),
+        "press": _bucket(mult_press),
+        "elite": _bucket(mult_elite),
+    }
+
+
 def runner_score_to_lots(
     *,
     result: RunnerScoreResult,

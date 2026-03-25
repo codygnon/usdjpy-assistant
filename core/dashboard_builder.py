@@ -90,6 +90,9 @@ _TEMP_OVERRIDE_ATTRS = (
     "trail_escalation_m15_ema_period",
     "trail_escalation_m15_buffer_pips",
     "runner_score_sizing_enabled",
+    "runner_base_lots",
+    "runner_min_lots",
+    "runner_max_lots",
     "conviction_base_lots",
     "conviction_min_lots",
     "exit_strategy",
@@ -543,7 +546,7 @@ def build_dashboard_filters(
                             _dir_cap = getattr(policy, "max_directional_lots_per_side", None)
                             if _dir_cap is None:
                                 _dir_cap = calculate_trial10_directional_cap_lots(
-                                    getattr(policy, "conviction_base_lots", None),
+                                    getattr(policy, "runner_base_lots", getattr(policy, "conviction_base_lots", None)),
                                     getattr(policy, "max_open_trades_per_side", None),
                                 )
                             if _dir_cap is not None:
@@ -622,7 +625,11 @@ def build_dashboard_filters(
         filters.append(report_ntz_status(ntz_filter_snapshot, tick, pip_size))
         filters.append(report_intraday_fib_corridor(intraday_fib_corridor_snapshot, tick, pip_size))
         filters.append(report_kill_switch_status(policy, data_by_tf, tick, pip_size, side))
-        filters.append(report_conviction_sizing(conviction_snapshot))
+        if not (
+            getattr(policy, "type", None) == "kt_cg_trial_10"
+            and bool(getattr(policy, "runner_score_sizing_enabled", False))
+        ):
+            filters.append(report_conviction_sizing(conviction_snapshot))
         cap_multiplier = 1.0
         cap_min = 1
         if (

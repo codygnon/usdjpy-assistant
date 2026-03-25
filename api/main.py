@@ -533,6 +533,7 @@ class TempEmaSettingsUpdate(BaseModel):
     t10_runner_score_sizing_enabled: Optional[bool] = None
     t10_runner_base_lots: Optional[float] = None
     t10_runner_min_lots: Optional[float] = None
+    t10_runner_max_lots: Optional[float] = None
 
 
 
@@ -891,6 +892,7 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
         "t10_runner_score_sizing_enabled": state.temp_t10_runner_score_sizing_enabled,
         "t10_runner_base_lots": state.temp_t10_runner_base_lots,
         "t10_runner_min_lots": state.temp_t10_runner_min_lots,
+        "t10_runner_max_lots": state.temp_t10_runner_max_lots,
     }
 
 
@@ -970,6 +972,7 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
             "temp_t10_runner_score_sizing_enabled": req.t10_runner_score_sizing_enabled,
             "temp_t10_runner_base_lots": req.t10_runner_base_lots,
             "temp_t10_runner_min_lots": req.t10_runner_min_lots,
+            "temp_t10_runner_max_lots": req.t10_runner_max_lots,
         }
     )
     new_state = RuntimeState(**new_data)  # type: ignore[arg-type]
@@ -3437,9 +3440,11 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                     if _state.temp_t10_runner_score_sizing_enabled is not None:
                         temp_overrides_api["runner_score_sizing_enabled"] = _state.temp_t10_runner_score_sizing_enabled
                     if _state.temp_t10_runner_base_lots is not None:
-                        temp_overrides_api["conviction_base_lots"] = _state.temp_t10_runner_base_lots
+                        temp_overrides_api["runner_base_lots"] = _state.temp_t10_runner_base_lots
                     if _state.temp_t10_runner_min_lots is not None:
-                        temp_overrides_api["conviction_min_lots"] = _state.temp_t10_runner_min_lots
+                        temp_overrides_api["runner_min_lots"] = _state.temp_t10_runner_min_lots
+                    if _state.temp_t10_runner_max_lots is not None:
+                        temp_overrides_api["runner_max_lots"] = _state.temp_t10_runner_max_lots
                     if not temp_overrides_api:
                         temp_overrides_api = None
                     if _policy_type == "phase3_integrated":
@@ -3696,30 +3701,34 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
             _conviction_snap_api = None
             if _policy_type in ("kt_cg_trial_9", "kt_cg_trial_10") and _policy_for_snapshot is not None:
                 try:
-                    from core.conviction_sizing import compute_conviction as _compute_conv_api
-                    from core.conviction_sizing import conviction_snapshot as _conv_snap_fn_api
-                    from core.signal_engine import drop_incomplete_last_bar as _dilb_api
-                    _conv_enabled_api = bool(getattr(_policy_for_snapshot, "conviction_sizing_enabled", False))
-                    _m5_api = data_by_tf.get("M5")
-                    _m1_api = data_by_tf.get("M1")
-                    _is_bull_api = False
-                    if _m5_api is not None and len(_m5_api) > 21:
-                        _m5c_api = _dilb_api(_m5_api.copy(), "M5")
-                        _m5_close_api = _m5c_api["close"].astype(float)
-                        _e9_api = _m5_close_api.ewm(span=9, adjust=False).mean()
-                        _e21_api = _m5_close_api.ewm(span=21, adjust=False).mean()
-                        _is_bull_api = float(_e9_api.iloc[-1]) > float(_e21_api.iloc[-1])
-                    _conv_r_api = _compute_conv_api(
-                        m5_df=_dilb_api(_m5_api.copy(), "M5") if _m5_api is not None else None,
-                        m1_df=_dilb_api(_m1_api.copy(), "M1") if _m1_api is not None else None,
-                        pip_size=pip_size,
-                        is_bull=_is_bull_api,
-                        enabled=_conv_enabled_api,
-                        base_lots=float(getattr(_policy_for_snapshot, "conviction_base_lots", 0.05)),
-                        min_lots=float(getattr(_policy_for_snapshot, "conviction_min_lots", 0.01)),
-                        max_lots=float(get_effective_risk(profile).max_lots),
-                    )
-                    _conviction_snap_api = _conv_snap_fn_api(_conv_r_api)
+                    if not (
+                        _policy_type == "kt_cg_trial_10"
+                        and bool(getattr(_policy_for_snapshot, "runner_score_sizing_enabled", False))
+                    ):
+                        from core.conviction_sizing import compute_conviction as _compute_conv_api
+                        from core.conviction_sizing import conviction_snapshot as _conv_snap_fn_api
+                        from core.signal_engine import drop_incomplete_last_bar as _dilb_api
+                        _conv_enabled_api = bool(getattr(_policy_for_snapshot, "conviction_sizing_enabled", False))
+                        _m5_api = data_by_tf.get("M5")
+                        _m1_api = data_by_tf.get("M1")
+                        _is_bull_api = False
+                        if _m5_api is not None and len(_m5_api) > 21:
+                            _m5c_api = _dilb_api(_m5_api.copy(), "M5")
+                            _m5_close_api = _m5c_api["close"].astype(float)
+                            _e9_api = _m5_close_api.ewm(span=9, adjust=False).mean()
+                            _e21_api = _m5_close_api.ewm(span=21, adjust=False).mean()
+                            _is_bull_api = float(_e9_api.iloc[-1]) > float(_e21_api.iloc[-1])
+                        _conv_r_api = _compute_conv_api(
+                            m5_df=_dilb_api(_m5_api.copy(), "M5") if _m5_api is not None else None,
+                            m1_df=_dilb_api(_m1_api.copy(), "M1") if _m1_api is not None else None,
+                            pip_size=pip_size,
+                            is_bull=_is_bull_api,
+                            enabled=_conv_enabled_api,
+                            base_lots=float(getattr(_policy_for_snapshot, "conviction_base_lots", 0.05)),
+                            min_lots=float(getattr(_policy_for_snapshot, "conviction_min_lots", 0.01)),
+                            max_lots=float(get_effective_risk(profile).max_lots),
+                        )
+                        _conviction_snap_api = _conv_snap_fn_api(_conv_r_api)
                 except Exception as _conv_api_err:
                     print(f"[api] conviction sizing error: {_conv_api_err}")
             # --- Regime gate snapshot (Trial 10) ---

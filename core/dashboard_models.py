@@ -85,6 +85,7 @@ class DashboardState:
     loop_running: bool = True
     entry_candidate_side: Optional[str] = None
     entry_candidate_trigger: Optional[str] = None
+    last_block_reason: Optional[str] = None
     filters: list[FilterReport] = field(default_factory=list)
     context: list[ContextItem] = field(default_factory=list)
     positions: list[PositionInfo] = field(default_factory=list)

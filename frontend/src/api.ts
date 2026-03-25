@@ -251,6 +251,7 @@ export interface TempEmaSettings {
   t10_runner_score_sizing_enabled: boolean | null;
   t10_runner_base_lots: number | null;
   t10_runner_min_lots: number | null;
+  t10_runner_max_lots: number | null;
 }
 
 export async function getTempSettings(profileName: string): Promise<TempEmaSettings> {
@@ -708,6 +709,7 @@ export interface DashboardState {
   loop_running: boolean;
   entry_candidate_side?: 'buy' | 'sell' | null;
   entry_candidate_trigger?: 'zone_entry' | 'tiered_pullback' | null;
+  last_block_reason?: string | null;
   filters: FilterReport[];
   context: ContextItem[];
   positions: PositionInfo[];

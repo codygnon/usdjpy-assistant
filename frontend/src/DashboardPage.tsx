@@ -252,10 +252,12 @@ function FilterTable({
   filters,
   candidateSide,
   candidateTrigger,
+  lastBlockReason,
 }: {
   filters: FilterReport[];
   candidateSide: 'buy' | 'sell' | null;
   candidateTrigger: 'zone_entry' | 'tiered_pullback' | null;
+  lastBlockReason?: string | null;
 }) {
   const enabledFilters = filters.filter(f => f.enabled);
   if (enabledFilters.length === 0) {
@@ -349,6 +351,11 @@ function FilterTable({
       {hasCandidateContext && (
         <div style={{ marginTop: 4, fontSize: 11, color: colors.textSecondary }}>
           Candidate: {candidateSide?.toUpperCase()} {candidateTrigger === 'zone_entry' ? 'zone entry' : 'tiered pullback'}
+        </div>
+      )}
+      {lastBlockReason && (
+        <div style={{ marginTop: 4, padding: '4px 8px', fontSize: 11, color: '#f59e0b', backgroundColor: 'rgba(245, 158, 11, 0.1)', borderRadius: 4 }}>
+          Block: {lastBlockReason}
         </div>
       )}
     </div>
@@ -751,6 +758,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
           filters={filters}
           candidateSide={dashState?.entry_candidate_side ?? null}
           candidateTrigger={dashState?.entry_candidate_trigger ?? null}
+          lastBlockReason={dashState?.last_block_reason ?? null}
         />
 
         {/* Closed Trades */}

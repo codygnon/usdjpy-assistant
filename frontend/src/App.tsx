@@ -3811,6 +3811,7 @@ interface EditedSettings {
   t10_runner_score_sizing_enabled: boolean;
   t10_runner_base_lots: number;
   t10_runner_min_lots: number;
+  t10_runner_max_lots: number;
   // Trial #9: Exit Strategy + TP1/BE/Trail
   t9_exit_strategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail';
   t9_hwm_trail_pips: number;
@@ -4221,6 +4222,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t10RunnerScoreSizingEnabled = true;
       let t10RunnerBaseLots = 0.07;
       let t10RunnerMinLots = 0.03;
+      let t10RunnerMaxLots = 0.50;
       let t9ExitStrategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail' = 'tp1_be_m5_trail';
       let t9HwmTrailPips = 3.0;
       let t9Tp1Pips = 6.0;
@@ -4702,8 +4704,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
               t10TrailEscalationM15EmaPeriod = (pol.trail_escalation_m15_ema_period as number) ?? 21;
               t10TrailEscalationM15BufferPips = (pol.trail_escalation_m15_buffer_pips as number) ?? 1.5;
               t10RunnerScoreSizingEnabled = (pol.runner_score_sizing_enabled as boolean) ?? true;
-              t10RunnerBaseLots = (pol.conviction_base_lots as number) ?? 0.07;
-              t10RunnerMinLots = (pol.conviction_min_lots as number) ?? 0.03;
+              t10RunnerBaseLots = (pol.runner_base_lots as number) ?? (pol.conviction_base_lots as number) ?? 0.07;
+              t10RunnerMinLots = (pol.runner_min_lots as number) ?? (pol.conviction_min_lots as number) ?? 0.03;
+              t10RunnerMaxLots = (pol.runner_max_lots as number) ?? ((risk?.max_lots as number) ?? 0.50);
               const rawEs9 = (pol.exit_strategy as string) ?? 'tp1_be_m5_trail';
               t9ExitStrategy = (['none', 'tp1_be_trail', 'ema_scale_runner', 'tp1_be_m5_trail', 'tp1_be_hwm_trail'].includes(rawEs9) ? rawEs9 : 'tp1_be_m5_trail') as typeof t9ExitStrategy;
               t9HwmTrailPips = (pol.hwm_trail_pips as number) ?? 3.0;
@@ -4990,6 +4993,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t10_runner_score_sizing_enabled: tempSettings?.t10_runner_score_sizing_enabled ?? t10RunnerScoreSizingEnabled,
         t10_runner_base_lots: tempSettings?.t10_runner_base_lots ?? t10RunnerBaseLots,
         t10_runner_min_lots: tempSettings?.t10_runner_min_lots ?? t10RunnerMinLots,
+        t10_runner_max_lots: tempSettings?.t10_runner_max_lots ?? t10RunnerMaxLots,
         t9_exit_strategy: (() => {
           const raw = (tempSettings?.t9_exit_strategy ?? t9ExitStrategy) as string;
           return (['none', 'tp1_be_trail', 'ema_scale_runner', 'tp1_be_m5_trail', 'tp1_be_hwm_trail'].includes(raw) ? raw : 'tp1_be_m5_trail') as 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail';
@@ -5446,8 +5450,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
             updates.tier_reclaim_confirmation_enabled = false;
             updates.conviction_sizing_enabled = false;
             updates.runner_score_sizing_enabled = editedSettings.t10_runner_score_sizing_enabled;
-            updates.conviction_base_lots = Math.max(0.01, editedSettings.t10_runner_base_lots);
-            updates.conviction_min_lots = Math.max(0.01, editedSettings.t10_runner_min_lots);
+            updates.runner_base_lots = Math.max(0.01, editedSettings.t10_runner_base_lots);
+            updates.runner_min_lots = Math.max(0.01, editedSettings.t10_runner_min_lots);
+            updates.runner_max_lots = Math.max(0.01, editedSettings.t10_runner_max_lots);
             updates.regime_gate_enabled = editedSettings.t10_regime_gate_enabled;
             updates.regime_london_sell_veto = editedSettings.t10_regime_london_sell_veto;
             updates.regime_london_start_hour_et = Math.max(0, Math.min(23, editedSettings.t10_regime_london_start_hour_et));
@@ -5654,6 +5659,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
           settings.t10_runner_score_sizing_enabled = editedSettings.t10_runner_score_sizing_enabled;
           settings.t10_runner_base_lots = editedSettings.t10_runner_base_lots;
           settings.t10_runner_min_lots = editedSettings.t10_runner_min_lots;
+          settings.t10_runner_max_lots = editedSettings.t10_runner_max_lots;
         }
         await api.updateTempSettings(profile.name, settings);
       }
@@ -6426,7 +6432,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       Trial #10 Conviction Sizing / Runner Score
                     </div>
                     <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                      Trial 10 sizes from the runner score, not the old Trial 9 conviction matrix. Base lots anchors the bucket ladder, Min lots is the hard floor, and Max lots is the ceiling from the risk settings above.
+                      Trial 10 sizes from the runner score, not the old Trial 9 conviction matrix. Base lots anchors the bucket ladder, Min lots is the hard floor, and Max lots is the Trial 10 runner ceiling.
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 12 }}>
                       <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
@@ -6457,13 +6463,13 @@ function PresetsPage({ profile }: { profile: Profile }) {
                         </div>
                         <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max Lots</div>
-                          <input type="number" step="0.01" min="0.01" value={editedSettings.max_lots}
-                            onChange={(e) => setEditedSettings({ ...editedSettings, max_lots: parseFloat(e.target.value) || 0.5 })}
+                          <input type="number" step="0.01" min="0.01" value={editedSettings.t10_runner_max_lots}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t10_runner_max_lots: parseFloat(e.target.value) || 0.5 })}
                             style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
                         </div>
                       </div>
                       <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
-                        Bucket ladder uses Base Lots with the Trial 10 multipliers. Min Lots floors weak buckets and sizing-error fallback. Max Lots is shared with the global risk cap above.
+                        Bucket ladder uses Base Lots with the Trial 10 multipliers. Min Lots floors weak buckets and sizing-error fallback. Final live sizing still respects the lower of this cap and the global risk Max Lots above.
                       </div>
                     </>
                     )}

@@ -1869,28 +1869,32 @@ def collect_trial_9_context(
         else:
             items.append(ContextItem("IFC Status", "Awaiting data", "filters"))
 
-    # Conviction Sizing context
-    conv = conviction_snapshot or {}
-    conv_enabled = bool(conv.get("enabled", False))
-    items.append(ContextItem("Conviction Sizing", "ON" if conv_enabled else "OFF", "sizing"))
-    if conv_enabled:
-        m5b = conv.get("m5_bucket", "normal")
-        m1b = conv.get("m1_bucket", "neutral")
-        mult = conv.get("multiplier", 1.0)
-        lots = conv.get("conviction_lots", 0.0)
-        base = conv.get("base_lots", 0.0)
-        items.append(ContextItem("M5 Regime", m5b.upper(), "sizing"))
-        items.append(ContextItem("M1 Health", m1b.upper(), "sizing"))
-        items.append(ContextItem("Multiplier", f"{mult:.2f}x", "sizing"))
-        items.append(ContextItem("Lots", f"{lots:.2f} (base {base:.2f})", "sizing"))
-        m5_spread = conv.get("m5_spread_pips", 0.0)
-        m5_slope = conv.get("m5_slope_pips_per_bar", 0.0)
-        m1_spread = conv.get("m1_spread_pips", 0.0)
-        items.append(ContextItem("M5 EMA Spread", f"{m5_spread:.2f}p", "sizing"))
-        items.append(ContextItem("M5 EMA9 Slope", f"{m5_slope:.2f}p/bar", "sizing"))
-        items.append(ContextItem("M1 EMA Spread", f"{m1_spread:.2f}p", "sizing"))
-        if conv.get("m1_compressing"):
-            items.append(ContextItem("M1 Compressing", f"YES ({conv.get('m1_compression_bars_count', 0)} bars)", "sizing"))
+    # Conviction sizing is a Trial 9 context item. Trial 10 uses runner-score sizing instead.
+    if not (
+        getattr(policy, "type", None) == "kt_cg_trial_10"
+        and bool(getattr(policy, "runner_score_sizing_enabled", False))
+    ):
+        conv = conviction_snapshot or {}
+        conv_enabled = bool(conv.get("enabled", False))
+        items.append(ContextItem("Conviction Sizing", "ON" if conv_enabled else "OFF", "sizing"))
+        if conv_enabled:
+            m5b = conv.get("m5_bucket", "normal")
+            m1b = conv.get("m1_bucket", "neutral")
+            mult = conv.get("multiplier", 1.0)
+            lots = conv.get("conviction_lots", 0.0)
+            base = conv.get("base_lots", 0.0)
+            items.append(ContextItem("M5 Regime", m5b.upper(), "sizing"))
+            items.append(ContextItem("M1 Health", m1b.upper(), "sizing"))
+            items.append(ContextItem("Multiplier", f"{mult:.2f}x", "sizing"))
+            items.append(ContextItem("Lots", f"{lots:.2f} (base {base:.2f})", "sizing"))
+            m5_spread = conv.get("m5_spread_pips", 0.0)
+            m5_slope = conv.get("m5_slope_pips_per_bar", 0.0)
+            m1_spread = conv.get("m1_spread_pips", 0.0)
+            items.append(ContextItem("M5 EMA Spread", f"{m5_spread:.2f}p", "sizing"))
+            items.append(ContextItem("M5 EMA9 Slope", f"{m5_slope:.2f}p/bar", "sizing"))
+            items.append(ContextItem("M1 EMA Spread", f"{m1_spread:.2f}p", "sizing"))
+            if conv.get("m1_compressing"):
+                items.append(ContextItem("M1 Compressing", f"YES ({conv.get('m1_compression_bars_count', 0)} bars)", "sizing"))
 
     gate_data = dict((eval_result or {}).get("trial10_entry_gates") or {})
     if gate_data:

@@ -6335,15 +6335,48 @@ def execute_kt_cg_trial_7_policy_demo_only(
         open_trades = [dict(r) if hasattr(r, "keys") else r for r in open_trades]
         # Live broker position ids: cap counts only actually open positions (not stale DB rows)
         _live_pos_ids: set[int] = set()
+        _live_pos_meta: dict[int, tuple[str, float, bool]] = {}
         try:
             positions = open_positions
             if (positions is None or not positions) and adapter is not None:
                 positions = adapter.get_open_positions(profile.symbol)
             for pos in positions or []:
                 pid = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
+                pos_side = None
+                pos_lots = 0.0
+                is_trial10_position = False
+                if isinstance(pos, dict):
+                    units = float(pos.get("currentUnits") or pos.get("initialUnits") or 0.0)
+                    if units > 0:
+                        pos_side = "buy"
+                    elif units < 0:
+                        pos_side = "sell"
+                    pos_lots = abs(units) / 100000.0
+                    client_ext = pos.get("clientExtensions")
+                    comment = ""
+                    if isinstance(client_ext, dict):
+                        comment = str(client_ext.get("comment") or "").strip()
+                    if not comment:
+                        trade_ext = pos.get("tradeClientExtensions")
+                        if isinstance(trade_ext, dict):
+                            comment = str(trade_ext.get("comment") or "").strip()
+                    is_trial10_position = comment.startswith("kt_cg_trial_10:")
+                else:
+                    mt5_type = getattr(pos, "type", None)
+                    if mt5_type == 0:
+                        pos_side = "buy"
+                    elif mt5_type == 1:
+                        pos_side = "sell"
+                    try:
+                        pos_lots = abs(float(getattr(pos, "volume", 0.0) or 0.0))
+                    except (TypeError, ValueError):
+                        pos_lots = 0.0
+                    is_trial10_position = str(getattr(pos, "comment", "") or "").startswith("kt_cg_trial_10:")
                 if pid is not None:
                     try:
-                        _live_pos_ids.add(int(pid))
+                        _pid_int = int(pid)
+                        _live_pos_ids.add(_pid_int)
+                        _live_pos_meta[_pid_int] = (str(pos_side or ""), float(pos_lots), bool(is_trial10_position))
                     except (TypeError, ValueError):
                         pass
         except Exception:
@@ -6361,6 +6394,11 @@ def execute_kt_cg_trial_7_policy_demo_only(
                     pass
         # Orphaned live positions: in OANDA but absent from DB entirely (e.g. placed before DB recording worked)
         _orphaned_live_count = len(_live_pos_ids - _db_all_pos_ids) if _live_pos_ids else 0
+        _orphaned_trial10_same_side_lots = sum(
+            lots
+            for pid, (live_side, lots, is_trial10_position) in _live_pos_meta.items()
+            if pid not in _db_all_pos_ids and is_trial10_position and live_side == side
+        )
 
         def _row_still_open(row: dict) -> bool:
             if not _live_pos_ids:
@@ -6378,7 +6416,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
                 _directional_cap_raw = _ov("max_directional_lots_per_side", None)
                 if _directional_cap_raw is None:
                     _directional_cap_raw = calculate_trial10_directional_cap_lots(
-                        _ov("conviction_base_lots", getattr(policy, "conviction_base_lots", None)),
+                        _ov("runner_base_lots", getattr(policy, "runner_base_lots", getattr(policy, "conviction_base_lots", None))),
                         _ov("max_open_trades_per_side", getattr(policy, "max_open_trades_per_side", None)),
                     )
                 if _directional_cap_raw is not None:
@@ -6393,6 +6431,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
                         )
                         and _row_still_open(dict(row) if hasattr(row, "keys") else row)
                     )
+                    _same_side_open_lots += float(_orphaned_trial10_same_side_lots)
             except Exception:
                 _directional_cap_lots = None
                 _same_side_open_lots = 0.0
@@ -6555,8 +6594,25 @@ def execute_kt_cg_trial_7_policy_demo_only(
             ),
         }
         if policy_type == "kt_cg_trial_10" and trial10_regime_multiplier is not None:
-            _runner_floor = float(_ov("runner_bucket_lots_floor", 0.03))
-            _runner_base = float(_ov("runner_bucket_lots_base", 0.05))
+            from core.runner_score import build_trial10_runner_bucket_lots
+            _runner_base_lots_cfg = float(_ov("runner_base_lots", _ov("conviction_base_lots", 0.07)))
+            _runner_min_lots_cfg = float(_ov("runner_min_lots", _ov("conviction_min_lots", 0.03)))
+            _runner_bucket_lots = build_trial10_runner_bucket_lots(
+                base_lots=_runner_base_lots_cfg,
+                min_lots=_runner_min_lots_cfg,
+                mult_floor=float(_ov("runner_bucket_mult_floor", 0.43)),
+                mult_base=float(_ov("runner_bucket_mult_base", 0.71)),
+                mult_elevated=float(_ov("runner_bucket_mult_elevated", 1.0)),
+                mult_press=float(_ov("runner_bucket_mult_press", 2.14)),
+                mult_elite=float(_ov("runner_bucket_mult_elite", 4.29)),
+            )
+            _runner_floor = float(_runner_bucket_lots["floor"])
+            _runner_base = float(_runner_bucket_lots["base"])
+            _runner_elevated = float(_runner_bucket_lots["elevated"])
+            _runner_max_lots = float(
+                _ov("runner_max_lots", getattr(policy, "runner_max_lots", None))
+                or get_effective_risk(profile).max_lots
+            )
             _pq_min = _runner_floor if _runner_sizing_active else float(_ov("conviction_min_lots", 0.01))
             if not _runner_sizing_active:
                 _regime_multiplier_applied = float(_regime_multiplier_raw)
@@ -6592,7 +6648,6 @@ def execute_kt_cg_trial_7_policy_demo_only(
                     f"trial10 advisory: deep tier outside strong M5 -> capped at base {_runner_base:.2f} lots"
                 )
             if trigger_type == "zone_entry" and bool(trial10_advisory_flags.get("weak_m5_zone_cap", False)):
-                _runner_elevated = float(_ov("runner_bucket_lots_elevated", 0.07))
                 _effective_lots = min(float(_effective_lots), _runner_elevated)
                 _lot_chain["weak_m5_zone_cap_applied"] = True
                 eval_reasons.append(
@@ -6621,7 +6676,7 @@ def execute_kt_cg_trial_7_policy_demo_only(
                     )
             _lot_chain["final_lots_pre_clamp"] = round(float(_effective_lots), 4)
             _effective_lots = round(
-                min(float(get_effective_risk(profile).max_lots), max(_pq_min, float(_effective_lots))),
+                min(float(get_effective_risk(profile).max_lots), float(_runner_max_lots), max(_pq_min, float(_effective_lots))),
                 2,
             )
             if _directional_cap_lots is not None:
