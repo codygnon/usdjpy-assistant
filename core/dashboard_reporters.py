@@ -145,6 +145,78 @@ def report_regime_gate(regime_snapshot: Optional[dict]) -> FilterReport:
     )
 
 
+def report_trial10_directional_cap(
+    *,
+    base_lots: float | None,
+    runner_max_lots: float | None,
+    max_open_trades_per_side: int | None,
+    configured_cap_lots: float | None,
+    buy_open_lots: float = 0.0,
+    sell_open_lots: float = 0.0,
+) -> FilterReport:
+    """Report Trial #10 same-side directional lot cap."""
+    side_cap = int(max_open_trades_per_side) if max_open_trades_per_side is not None else None
+    base = float(base_lots) if base_lots is not None else None
+    runner_cap = float(runner_max_lots) if runner_max_lots is not None else None
+    configured_cap = float(configured_cap_lots) if configured_cap_lots is not None else None
+
+    auto_cap = None
+    if base is not None and side_cap is not None and base > 0 and side_cap > 0:
+        auto_cap = round(base * side_cap / 2.0, 2)
+
+    display_cap = configured_cap if configured_cap is not None else auto_cap
+    if display_cap is None:
+        return FilterReport(
+            filter_id="trial10_directional_cap",
+            display_name="Trial #10 Directional Cap",
+            enabled=False,
+            is_clear=True,
+            current_value="Disabled",
+        )
+
+    current_side_lots = max(float(buy_open_lots), float(sell_open_lots))
+    is_clear = current_side_lots + 1e-9 < float(display_cap)
+    mode = "MANUAL" if configured_cap is not None else "AUTO"
+    current_value = f"{mode} {float(display_cap):.2f} lots/side"
+    threshold_parts = []
+    if base is not None:
+        threshold_parts.append(f"Base {base:.2f}")
+    if side_cap is not None:
+        threshold_parts.append(f"Trades/side {side_cap}")
+    if runner_cap is not None:
+        threshold_parts.append(f"Runner max {runner_cap:.2f}")
+    if auto_cap is not None:
+        threshold_parts.append(f"Auto {auto_cap:.2f}")
+    threshold = " | ".join(threshold_parts) if threshold_parts else None
+    explanation = (
+        f"Buy open {float(buy_open_lots):.2f} lots, Sell open {float(sell_open_lots):.2f} lots. "
+        "Auto cap formula = runner base lots x max open trades per side / 2."
+    )
+    if configured_cap is not None and auto_cap is not None:
+        explanation += f" Manual override active over auto default {auto_cap:.2f}."
+
+    return FilterReport(
+        filter_id="trial10_directional_cap",
+        display_name="Trial #10 Directional Cap",
+        enabled=True,
+        is_clear=is_clear,
+        current_value=current_value,
+        threshold=threshold,
+        explanation=explanation,
+        metadata={
+            "directional_cap_lots": round(float(display_cap), 4),
+            "auto_directional_cap_lots": round(float(auto_cap), 4) if auto_cap is not None else None,
+            "configured_directional_cap_lots": round(float(configured_cap), 4) if configured_cap is not None else None,
+            "buy_open_lots": round(float(buy_open_lots), 4),
+            "sell_open_lots": round(float(sell_open_lots), 4),
+            "runner_base_lots": round(float(base), 4) if base is not None else None,
+            "runner_max_lots": round(float(runner_cap), 4) if runner_cap is not None else None,
+            "max_open_trades_per_side": side_cap,
+            "mode": mode.lower(),
+        },
+    )
+
+
 def report_trial10_stop_loss(profile, policy, data_by_tf: dict, pip_size: float) -> FilterReport:
     """Report Trial #10 active stop-loss mode and current ATR-derived stop distance."""
     from core.execution_engine import _resolve_trial10_stop_pips

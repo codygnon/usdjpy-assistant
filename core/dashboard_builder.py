@@ -46,6 +46,7 @@ from core.dashboard_reporters import (
     report_conviction_sizing,
     report_runner_score,
     report_open_exposure,
+    report_trial10_directional_cap,
     report_h1_levels,
     report_m5_trend_alignment,
     report_m5_power_close_status,
@@ -76,6 +77,7 @@ _TEMP_OVERRIDE_ATTRS = (
     "regime_chop_pause_lookback_trades",
     "regime_chop_pause_stop_rate",
     "tier17_nonboost_multiplier",
+    "max_open_trades_per_side",
     "max_directional_lots_per_side",
     "bucketed_exit_enabled",
     "quick_tp1_pips",
@@ -614,7 +616,37 @@ def build_dashboard_filters(
         m5_df = data_by_tf.get("M5")
         filters.append(report_trial7_m5_ema_distance_gate(policy, data_by_tf, pip_size))
         if policy_type == "kt_cg_trial_10":
+            _buy_lots = 0.0
+            _sell_lots = 0.0
+            for pos in live_positions_snapshot or []:
+                try:
+                    if isinstance(pos, dict):
+                        units = float(pos.get("currentUnits") or pos.get("initialUnits") or 0)
+                        lots = abs(units) / 100000.0
+                        if units > 0:
+                            _buy_lots += lots
+                        elif units < 0:
+                            _sell_lots += lots
+                    else:
+                        volume = float(getattr(pos, "volume", 0.0) or 0.0)
+                        mt5_type = getattr(pos, "type", None)
+                        if mt5_type == 0:
+                            _buy_lots += volume
+                        elif mt5_type == 1:
+                            _sell_lots += volume
+                except Exception:
+                    continue
             filters.append(report_regime_gate(regime_snapshot))
+            filters.append(
+                report_trial10_directional_cap(
+                    base_lots=getattr(policy, "runner_base_lots", getattr(policy, "conviction_base_lots", None)),
+                    runner_max_lots=getattr(policy, "runner_max_lots", getattr(profile.risk, "max_lots", None)),
+                    max_open_trades_per_side=getattr(policy, "max_open_trades_per_side", None),
+                    configured_cap_lots=getattr(policy, "max_directional_lots_per_side", None),
+                    buy_open_lots=_buy_lots,
+                    sell_open_lots=_sell_lots,
+                )
+            )
             filters.append(report_trial10_entry_gates(eval_result))
             filters.append(report_trial10_pullback_quality(eval_result))
             filters.append(report_trial10_stop_loss(profile, policy, data_by_tf, pip_size))
