@@ -32,7 +32,6 @@ from core.profile import (
     ExecutionPolicySessionMomentum,
     ExecutionPolicyVWAP,
     ProfileV1,
-    calculate_trial10_directional_cap_lots,
     get_effective_risk,
 )
 from core.daily_level_filter import DailyLevelFilter, drop_incomplete_m5_for_filter
@@ -6431,44 +6430,8 @@ def execute_kt_cg_trial_7_policy_demo_only(
                 return False
 
         if policy_type == "kt_cg_trial_10":
-            try:
-                _directional_cap_raw = _ov("max_directional_lots_per_side", None)
-                if _directional_cap_raw is None:
-                    _directional_cap_raw = calculate_trial10_directional_cap_lots(
-                        _ov("runner_base_lots", getattr(policy, "runner_base_lots", getattr(policy, "conviction_base_lots", None))),
-                        _ov("max_open_trades_per_side", getattr(policy, "max_open_trades_per_side", None)),
-                    )
-                if _directional_cap_raw is not None:
-                    _directional_cap_lots = max(0.0, float(_directional_cap_raw))
-                    _same_side_open_lots = 0.0
-                    for _trade_row in open_trades:
-                        _row = dict(_trade_row) if hasattr(_trade_row, "keys") else _trade_row
-                        if str(_row.get("side") or "").lower() != side:
-                            continue
-                        if not (
-                            str(_row.get("policy_type") or "") == "kt_cg_trial_10"
-                            or str(_row.get("notes") or "").startswith("auto:kt_cg_trial_10:")
-                        ):
-                            continue
-                        if not _row_still_open(_row):
-                            continue
-                        _pid = _row.get("mt5_position_id")
-                        _live_lots = None
-                        if _pid is not None:
-                            try:
-                                _live_meta = _live_pos_meta.get(int(_pid))
-                                if _live_meta is not None:
-                                    _live_lots = float(_live_meta[1])
-                            except (TypeError, ValueError):
-                                _live_lots = None
-                        if _live_lots is not None:
-                            _same_side_open_lots += _live_lots
-                        else:
-                            _same_side_open_lots += float(_row.get("size_lots") or 0.0)
-                    _same_side_open_lots += float(_orphaned_trial10_same_side_lots)
-            except Exception:
-                _directional_cap_lots = None
-                _same_side_open_lots = 0.0
+            _directional_cap_lots = None
+            _same_side_open_lots = 0.0
 
         while True:
             if trigger_type == "tiered_pullback":
@@ -6620,12 +6583,9 @@ def execute_kt_cg_trial_7_policy_demo_only(
             "regime_label": str(trial10_regime_label or ""),
             "regime_reason": str(trial10_regime_reason or ""),
             "atr_stop_pips": round(float(sl_pips), 2),
-            "directional_open_lots": round(float(_same_side_open_lots), 4),
-            "directional_cap_lots": round(float(_directional_cap_lots), 4) if _directional_cap_lots is not None else None,
-            "directional_available_lots": (
-                round(max(0.0, float(_directional_cap_lots) - float(_same_side_open_lots)), 4)
-                if _directional_cap_lots is not None else None
-            ),
+            "directional_open_lots": None,
+            "directional_cap_lots": None,
+            "directional_available_lots": None,
         }
         if policy_type == "kt_cg_trial_10" and trial10_regime_multiplier is not None:
             from core.runner_score import build_trial10_runner_bucket_lots
@@ -6687,32 +6647,11 @@ def execute_kt_cg_trial_7_policy_demo_only(
                 eval_reasons.append(
                     f"trial10 advisory: weak M5 zone entry -> capped at elevated {_runner_elevated:.2f} lots"
                 )
-            _directional_available_lots = None
-            if _directional_cap_lots is not None:
-                _directional_available_lots = max(0.0, float(_directional_cap_lots) - float(_same_side_open_lots))
-                _lot_chain["directional_available_lots"] = round(float(_directional_available_lots), 4)
-                if _directional_available_lots + 1e-9 < _pq_min:
-                    _block_msg = (
-                        f"max_directional_lots_per_side: {side} exposure "
-                        f"{_same_side_open_lots:.2f}/{float(_directional_cap_lots):.2f} lots"
-                    )
-                    _log_block(_block_msg)
-                    return _result_payload(
-                        ExecutionDecision(attempted=True, placed=False, reason=_block_msg),
-                    )
-                if float(_effective_lots) > float(_directional_available_lots):
-                    _effective_lots = float(_directional_available_lots)
-                    _lot_chain["directional_cap_applied"] = True
-                    eval_reasons.append(
-                        f"trial10 directional cap: {side} exposure {_same_side_open_lots:.2f}/{float(_directional_cap_lots):.2f} -> capped to {_directional_available_lots:.2f} lots"
-                    )
             _lot_chain["final_lots_pre_clamp"] = round(float(_effective_lots), 4)
             _effective_lots = round(
                 min(float(get_effective_risk(profile).max_lots), float(_runner_max_lots), max(_pq_min, float(_effective_lots))),
                 2,
             )
-            if _directional_cap_lots is not None:
-                _effective_lots = round(min(float(_effective_lots), float(_lot_chain.get("directional_available_lots") or _effective_lots)), 2)
             _lot_chain["final_lots"] = round(float(_effective_lots), 4)
         trial10_lot_chain = _lot_chain if policy_type == "kt_cg_trial_10" else None
         candidate = TradeCandidate(

@@ -138,7 +138,6 @@ _TRIAL10_TEMP_OVERRIDE_MAP: dict[str, str] = {
     "temp_t10_regime_chop_pause_lookback_trades": "regime_chop_pause_lookback_trades",
     "temp_t10_regime_chop_pause_stop_rate": "regime_chop_pause_stop_rate",
     "temp_t10_tier17_nonboost_multiplier": "tier17_nonboost_multiplier",
-    "temp_t10_max_directional_lots_per_side": "max_directional_lots_per_side",
     "temp_t10_bucketed_exit_enabled": "bucketed_exit_enabled",
     "temp_t10_quick_tp1_pips": "quick_tp1_pips",
     "temp_t10_quick_tp1_close_pct": "quick_tp1_close_pct",

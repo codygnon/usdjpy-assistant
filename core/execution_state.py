@@ -112,7 +112,6 @@ class RuntimeState:
     temp_t10_regime_chop_pause_lookback_trades: Optional[int] = None
     temp_t10_regime_chop_pause_stop_rate: Optional[float] = None
     temp_t10_tier17_nonboost_multiplier: Optional[float] = None
-    temp_t10_max_directional_lots_per_side: Optional[float] = None
     temp_t10_bucketed_exit_enabled: Optional[bool] = None
     temp_t10_quick_tp1_pips: Optional[float] = None
     temp_t10_quick_tp1_close_pct: Optional[float] = None
@@ -228,7 +227,6 @@ def load_state(path: str | Path) -> RuntimeState:
         temp_t10_regime_chop_pause_lookback_trades=data.get("temp_t10_regime_chop_pause_lookback_trades"),
         temp_t10_regime_chop_pause_stop_rate=data.get("temp_t10_regime_chop_pause_stop_rate"),
         temp_t10_tier17_nonboost_multiplier=data.get("temp_t10_tier17_nonboost_multiplier"),
-        temp_t10_max_directional_lots_per_side=data.get("temp_t10_max_directional_lots_per_side"),
         temp_t10_bucketed_exit_enabled=data.get("temp_t10_bucketed_exit_enabled"),
         temp_t10_quick_tp1_pips=data.get("temp_t10_quick_tp1_pips"),
         temp_t10_quick_tp1_close_pct=data.get("temp_t10_quick_tp1_close_pct"),
@@ -326,7 +324,6 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "temp_t10_regime_chop_pause_lookback_trades": state.temp_t10_regime_chop_pause_lookback_trades,
                 "temp_t10_regime_chop_pause_stop_rate": state.temp_t10_regime_chop_pause_stop_rate,
                 "temp_t10_tier17_nonboost_multiplier": state.temp_t10_tier17_nonboost_multiplier,
-                "temp_t10_max_directional_lots_per_side": state.temp_t10_max_directional_lots_per_side,
                 "temp_t10_bucketed_exit_enabled": state.temp_t10_bucketed_exit_enabled,
                 "temp_t10_quick_tp1_pips": state.temp_t10_quick_tp1_pips,
                 "temp_t10_quick_tp1_close_pct": state.temp_t10_quick_tp1_close_pct,

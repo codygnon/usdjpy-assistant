@@ -3795,7 +3795,6 @@ interface EditedSettings {
   t10_regime_chop_pause_lookback_trades: number;
   t10_regime_chop_pause_stop_rate: number;
   t10_tier17_nonboost_multiplier: number;
-  t10_max_directional_lots_per_side: number | null;
   t10_bucketed_exit_enabled: boolean;
   t10_quick_tp1_pips: number;
   t10_quick_tp1_close_pct: number;
@@ -3991,12 +3990,6 @@ function saveTempSettingsDraft(profileName: string, scope: string, settings: Edi
   } catch {
     // Ignore draft-storage failures.
   }
-}
-
-function computeTrial10DirectionalCap(baseLots: number, maxOpenTradesPerSide: number): number {
-  const base = Number.isFinite(baseLots) ? Math.max(0, baseLots) : 0;
-  const sideCap = Number.isFinite(maxOpenTradesPerSide) ? Math.max(0, maxOpenTradesPerSide) : 0;
-  return Math.round((base * sideCap / 2) * 100) / 100;
 }
 
 function PresetsPage({ profile }: { profile: Profile }) {
@@ -4206,7 +4199,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t10RegimeChopPauseLookbackTrades = 5;
       let t10RegimeChopPauseStopRate = 0.6;
       let t10Tier17NonboostMultiplier = 0.35;
-      let t10MaxDirectionalLotsPerSide: number | null = null;
       let t10BucketedExitEnabled = true;
       let t10QuickTp1Pips = 4.0;
       let t10QuickTp1ClosePct = 85.0;
@@ -4690,7 +4682,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
               t10RegimeChopPauseLookbackTrades = (pol.regime_chop_pause_lookback_trades as number) ?? 5;
               t10RegimeChopPauseStopRate = (pol.regime_chop_pause_stop_rate as number) ?? 0.6;
               t10Tier17NonboostMultiplier = (pol.tier17_nonboost_multiplier as number) ?? 0.35;
-              t10MaxDirectionalLotsPerSide = (pol.max_directional_lots_per_side as number | null) ?? null;
               t10BucketedExitEnabled = (pol.bucketed_exit_enabled as boolean) ?? true;
               t10QuickTp1Pips = (pol.quick_tp1_pips as number) ?? 4.0;
               t10QuickTp1ClosePct = (pol.quick_tp1_close_pct as number) ?? 85.0;
@@ -4977,7 +4968,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t10_regime_chop_pause_lookback_trades: tempSettings?.t10_regime_chop_pause_lookback_trades ?? t10RegimeChopPauseLookbackTrades,
         t10_regime_chop_pause_stop_rate: tempSettings?.t10_regime_chop_pause_stop_rate ?? t10RegimeChopPauseStopRate,
         t10_tier17_nonboost_multiplier: tempSettings?.t10_tier17_nonboost_multiplier ?? t10Tier17NonboostMultiplier,
-        t10_max_directional_lots_per_side: tempSettings?.t10_max_directional_lots_per_side ?? t10MaxDirectionalLotsPerSide,
         t10_bucketed_exit_enabled: tempSettings?.t10_bucketed_exit_enabled ?? t10BucketedExitEnabled,
         t10_quick_tp1_pips: tempSettings?.t10_quick_tp1_pips ?? t10QuickTp1Pips,
         t10_quick_tp1_close_pct: tempSettings?.t10_quick_tp1_close_pct ?? t10QuickTp1ClosePct,
@@ -5438,14 +5428,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
             updates.conviction_base_lots = Math.max(0.01, editedSettings.t9_conviction_base_lots);
             updates.conviction_min_lots = Math.max(0.01, editedSettings.t9_conviction_min_lots);
           }
-          if (pol.type === 'kt_cg_trial_10') {
-            const autoDirectionalCap = computeTrial10DirectionalCap(
-              editedSettings.t10_runner_base_lots,
-              editedSettings.max_open_trades_per_side,
-            );
-            const manualDirectionalCap = editedSettings.t10_max_directional_lots_per_side == null
-              ? null
-              : Math.max(0.01, editedSettings.t10_max_directional_lots_per_side);
+        if (pol.type === 'kt_cg_trial_10') {
             updates.zone_entry_require_recent_cross = false;
             updates.tier_reclaim_confirmation_enabled = false;
             updates.conviction_sizing_enabled = false;
@@ -5465,10 +5448,7 @@ function PresetsPage({ profile }: { profile: Profile }) {
             updates.regime_chop_pause_lookback_trades = Math.max(3, Math.min(20, editedSettings.t10_regime_chop_pause_lookback_trades));
             updates.regime_chop_pause_stop_rate = Math.max(0.3, Math.min(1.0, editedSettings.t10_regime_chop_pause_stop_rate));
             updates.tier17_nonboost_multiplier = Math.max(0.1, Math.min(2.0, editedSettings.t10_tier17_nonboost_multiplier));
-            updates.max_directional_lots_per_side =
-              manualDirectionalCap !== null && Math.abs(manualDirectionalCap - autoDirectionalCap) > 0.0001
-                ? manualDirectionalCap
-                : null;
+            updates.max_directional_lots_per_side = null;
             updates.bucketed_exit_enabled = editedSettings.t10_bucketed_exit_enabled;
             updates.quick_tp1_pips = Math.max(1.0, Math.min(20.0, editedSettings.t10_quick_tp1_pips));
             updates.quick_tp1_close_pct = Math.max(10, Math.min(100, editedSettings.t10_quick_tp1_close_pct));
@@ -5631,19 +5611,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
           settings.t10_regime_chop_pause_lookback_trades = editedSettings.t10_regime_chop_pause_lookback_trades;
           settings.t10_regime_chop_pause_stop_rate = editedSettings.t10_regime_chop_pause_stop_rate;
           settings.t10_tier17_nonboost_multiplier = editedSettings.t10_tier17_nonboost_multiplier;
-          {
-            const autoDirectionalCap = computeTrial10DirectionalCap(
-              editedSettings.t10_runner_base_lots,
-              editedSettings.max_open_trades_per_side,
-            );
-            const manualDirectionalCap = editedSettings.t10_max_directional_lots_per_side == null
-              ? null
-              : Math.max(0.01, editedSettings.t10_max_directional_lots_per_side);
-            settings.t10_max_directional_lots_per_side =
-              manualDirectionalCap !== null && Math.abs(manualDirectionalCap - autoDirectionalCap) > 0.0001
-                ? manualDirectionalCap
-                : null;
-          }
           settings.t10_bucketed_exit_enabled = editedSettings.t10_bucketed_exit_enabled;
           settings.t10_quick_tp1_pips = editedSettings.t10_quick_tp1_pips;
           settings.t10_quick_tp1_close_pct = editedSettings.t10_quick_tp1_close_pct;
@@ -6592,26 +6559,6 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       </div>
                       <div style={{ marginTop: 12, fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Execution Discipline</div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 12 }}>
-                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Directional Cap (lots/side)</div>
-                          <input
-                            type="number"
-                            min={0.01}
-                            max={10.0}
-                            step={0.05}
-                            value={editedSettings.t10_max_directional_lots_per_side ?? computeTrial10DirectionalCap(editedSettings.t10_runner_base_lots, editedSettings.max_open_trades_per_side)}
-                            onChange={(e) => {
-                              const raw = e.target.value.trim();
-                              setEditedSettings({
-                                ...editedSettings,
-                                t10_max_directional_lots_per_side: raw === '' ? null : (parseFloat(raw) || null),
-                              });
-                            }}
-                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.8rem' }} />
-                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 4 }}>
-                            Auto default: {computeTrial10DirectionalCap(editedSettings.t10_runner_base_lots, editedSettings.max_open_trades_per_side).toFixed(2)} = base lots x max trades/side / 2
-                          </div>
-                        </div>
                         <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
                           <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                             <input type="checkbox" checked={editedSettings.t10_bucketed_exit_enabled}

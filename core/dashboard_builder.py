@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from core.dashboard_models import FilterReport
-from core.profile import calculate_trial10_directional_cap_lots
 from core.signal_engine import drop_incomplete_last_bar
 from core.dashboard_reporters import (
     report_session_filter,
@@ -46,7 +45,6 @@ from core.dashboard_reporters import (
     report_conviction_sizing,
     report_runner_score,
     report_open_exposure,
-    report_trial10_directional_cap,
     report_h1_levels,
     report_m5_trend_alignment,
     report_m5_power_close_status,
@@ -78,7 +76,6 @@ _TEMP_OVERRIDE_ATTRS = (
     "regime_chop_pause_stop_rate",
     "tier17_nonboost_multiplier",
     "max_open_trades_per_side",
-    "max_directional_lots_per_side",
     "bucketed_exit_enabled",
     "quick_tp1_pips",
     "quick_tp1_close_pct",
@@ -542,20 +539,7 @@ def build_dashboard_filters(
                     except Exception:
                         continue
                 if buy_lots > 0 or sell_lots > 0:
-                    _dir_cap = None
-                    if policy_type == "kt_cg_trial_10":
-                        try:
-                            _dir_cap = getattr(policy, "max_directional_lots_per_side", None)
-                            if _dir_cap is None:
-                                _dir_cap = calculate_trial10_directional_cap_lots(
-                                    getattr(policy, "runner_base_lots", getattr(policy, "conviction_base_lots", None)),
-                                    getattr(policy, "max_open_trades_per_side", None),
-                                )
-                            if _dir_cap is not None:
-                                _dir_cap = float(_dir_cap)
-                        except Exception:
-                            _dir_cap = None
-                    filters.append(report_open_exposure(buy_lots + sell_lots, buy_lots, sell_lots, _dir_cap))
+                    filters.append(report_open_exposure(buy_lots + sell_lots, buy_lots, sell_lots))
                 open_trades = store.list_open_trades(profile.profile_name)
                 live_ids = _live_position_ids(profile, adapter, live_positions_snapshot)
                 db_live_ids: set[int] = set()
@@ -739,16 +723,6 @@ def build_dashboard_filters(
                 except Exception:
                     continue
             filters.append(report_regime_gate(regime_snapshot))
-            filters.append(
-                report_trial10_directional_cap(
-                    base_lots=getattr(policy, "runner_base_lots", getattr(policy, "conviction_base_lots", None)),
-                    runner_max_lots=getattr(policy, "runner_max_lots", getattr(profile.risk, "max_lots", None)),
-                    max_open_trades_per_side=getattr(policy, "max_open_trades_per_side", None),
-                    configured_cap_lots=getattr(policy, "max_directional_lots_per_side", None),
-                    buy_open_lots=_buy_lots,
-                    sell_open_lots=_sell_lots,
-                )
-            )
             filters.append(report_trial10_entry_gates(eval_result))
             filters.append(report_trial10_pullback_quality(eval_result))
             filters.append(report_trial10_stop_loss(profile, policy, data_by_tf, pip_size))

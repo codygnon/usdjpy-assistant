@@ -517,7 +517,6 @@ class TempEmaSettingsUpdate(BaseModel):
     t10_regime_chop_pause_lookback_trades: Optional[int] = None
     t10_regime_chop_pause_stop_rate: Optional[float] = None
     t10_tier17_nonboost_multiplier: Optional[float] = None
-    t10_max_directional_lots_per_side: Optional[float] = None
     t10_bucketed_exit_enabled: Optional[bool] = None
     t10_quick_tp1_pips: Optional[float] = None
     t10_quick_tp1_close_pct: Optional[float] = None
@@ -876,7 +875,6 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
         "t10_regime_chop_pause_lookback_trades": state.temp_t10_regime_chop_pause_lookback_trades,
         "t10_regime_chop_pause_stop_rate": state.temp_t10_regime_chop_pause_stop_rate,
         "t10_tier17_nonboost_multiplier": state.temp_t10_tier17_nonboost_multiplier,
-        "t10_max_directional_lots_per_side": state.temp_t10_max_directional_lots_per_side,
         "t10_bucketed_exit_enabled": state.temp_t10_bucketed_exit_enabled,
         "t10_quick_tp1_pips": state.temp_t10_quick_tp1_pips,
         "t10_quick_tp1_close_pct": state.temp_t10_quick_tp1_close_pct,
@@ -956,7 +954,6 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
             "temp_t10_regime_chop_pause_lookback_trades": req.t10_regime_chop_pause_lookback_trades,
             "temp_t10_regime_chop_pause_stop_rate": req.t10_regime_chop_pause_stop_rate,
             "temp_t10_tier17_nonboost_multiplier": req.t10_tier17_nonboost_multiplier,
-            "temp_t10_max_directional_lots_per_side": req.t10_max_directional_lots_per_side,
             "temp_t10_bucketed_exit_enabled": req.t10_bucketed_exit_enabled,
             "temp_t10_quick_tp1_pips": req.t10_quick_tp1_pips,
             "temp_t10_quick_tp1_close_pct": req.t10_quick_tp1_close_pct,
@@ -3411,8 +3408,6 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         temp_overrides_api["regime_chop_pause_stop_rate"] = _state.temp_t10_regime_chop_pause_stop_rate
                     if _state.temp_t10_tier17_nonboost_multiplier is not None:
                         temp_overrides_api["tier17_nonboost_multiplier"] = _state.temp_t10_tier17_nonboost_multiplier
-                    if _state.temp_t10_max_directional_lots_per_side is not None:
-                        temp_overrides_api["max_directional_lots_per_side"] = _state.temp_t10_max_directional_lots_per_side
                     if _state.temp_t10_bucketed_exit_enabled is not None:
                         temp_overrides_api["bucketed_exit_enabled"] = _state.temp_t10_bucketed_exit_enabled
                     if _state.temp_t10_quick_tp1_pips is not None:
@@ -3984,6 +3979,18 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
     }
 
 
+def _strip_trial10_directional_cap_filter(payload: dict[str, Any]) -> dict[str, Any]:
+    """Remove the retired Trial 10 directional-cap row from dashboard responses."""
+    filters = payload.get("filters")
+    if not isinstance(filters, list):
+        return payload
+    payload["filters"] = [
+        row for row in filters
+        if not (isinstance(row, dict) and str(row.get("display_name", "")).strip() == "Trial #10 Directional Cap")
+    ]
+    return payload
+
+
 _DASHBOARD_FILE_FRESHNESS = 90.0  # seconds — file state considered fresh if < 90s old (avoids stale flash during slow loop iterations)
 
 
@@ -4478,7 +4485,7 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
                     result["daily_summary"] = _ds_summary
             except Exception as e:
                 print(f"[api] dashboard daily_summary override error: {e}")
-            return result
+            return _strip_trial10_directional_cap_filter(result)
 
         live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
         if "error" not in live:
@@ -4493,9 +4500,9 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
                     live["loop_log"] = []
             except Exception:
                 live["loop_log"] = []
-            return live
+            return _strip_trial10_directional_cap_filter(live)
 
-        return {
+        return _strip_trial10_directional_cap_filter({
             "timestamp_utc": None,
             "preset_name": "",
             "mode": "DISARMED",
@@ -4512,7 +4519,7 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
             "stale": True,
             "stale_age_seconds": None,
             "data_source": "none",
-        }
+        })
 
     # Legacy behavior (opt-in): live + file merge.
     now = _time.monotonic()
@@ -4523,7 +4530,7 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
     log_dir = _pick_best_dashboard_log_dir(profile_name, profile_path)
     live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
     if "error" in live:
-        return live
+        return _strip_trial10_directional_cap_filter(live)
 
     file_state = read_dashboard_state(log_dir)
 
@@ -4561,6 +4568,7 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
     result["data_source"] = "run_loop_file"
     result.setdefault("entry_candidate_side", None)
     result.setdefault("entry_candidate_trigger", None)
+    result = _strip_trial10_directional_cap_filter(result)
     _dashboard_live_cache[profile_name] = (now, result)
     return result
 
