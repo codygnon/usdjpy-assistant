@@ -4428,8 +4428,31 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
                     stale = stale_age_seconds >= _DASHBOARD_FILE_FRESHNESS
                 except Exception:
                     stale_age_seconds = None
-            result = dict(file_state)
             loop_running = _is_loop_running(profile_name)
+            if stale or not loop_running:
+                live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
+                if "error" not in live:
+                    live["loop_running"] = loop_running
+                    live["stale"] = stale
+                    live["stale_age_seconds"] = stale_age_seconds
+                    live["data_source"] = "live_refresh" if stale else "live_not_running"
+                    try:
+                        _loop_log_path = log_dir / "loop_log.json"
+                        if _loop_log_path.exists():
+                            live["loop_log"] = json.loads(_loop_log_path.read_text(encoding="utf-8"))
+                        else:
+                            live["loop_log"] = []
+                    except Exception:
+                        live["loop_log"] = []
+                    try:
+                        _ds_summary = _compute_daily_summary_from_broker(profile_name, profile_path=profile_path)
+                        if _ds_summary is not None:
+                            live["daily_summary"] = _ds_summary
+                    except Exception as e:
+                        print(f"[api] dashboard daily_summary override error: {e}")
+                    return live
+
+            result = dict(file_state)
             result["loop_running"] = loop_running
             result.setdefault("entry_candidate_side", None)
             result.setdefault("entry_candidate_trigger", None)
