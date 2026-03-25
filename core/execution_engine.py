@@ -6440,16 +6440,31 @@ def execute_kt_cg_trial_7_policy_demo_only(
                     )
                 if _directional_cap_raw is not None:
                     _directional_cap_lots = max(0.0, float(_directional_cap_raw))
-                    _same_side_open_lots = sum(
-                        float(row.get("size_lots") or 0.0)
-                        for row in open_trades
-                        if str(row.get("side") or "").lower() == side
-                        and (
-                            str(row.get("policy_type") or "") == "kt_cg_trial_10"
-                            or str(row.get("notes") or "").startswith("auto:kt_cg_trial_10:")
-                        )
-                        and _row_still_open(dict(row) if hasattr(row, "keys") else row)
-                    )
+                    _same_side_open_lots = 0.0
+                    for _trade_row in open_trades:
+                        _row = dict(_trade_row) if hasattr(_trade_row, "keys") else _trade_row
+                        if str(_row.get("side") or "").lower() != side:
+                            continue
+                        if not (
+                            str(_row.get("policy_type") or "") == "kt_cg_trial_10"
+                            or str(_row.get("notes") or "").startswith("auto:kt_cg_trial_10:")
+                        ):
+                            continue
+                        if not _row_still_open(_row):
+                            continue
+                        _pid = _row.get("mt5_position_id")
+                        _live_lots = None
+                        if _pid is not None:
+                            try:
+                                _live_meta = _live_pos_meta.get(int(_pid))
+                                if _live_meta is not None:
+                                    _live_lots = float(_live_meta[1])
+                            except (TypeError, ValueError):
+                                _live_lots = None
+                        if _live_lots is not None:
+                            _same_side_open_lots += _live_lots
+                        else:
+                            _same_side_open_lots += float(_row.get("size_lots") or 0.0)
                     _same_side_open_lots += float(_orphaned_trial10_same_side_lots)
             except Exception:
                 _directional_cap_lots = None

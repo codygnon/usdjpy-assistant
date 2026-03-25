@@ -619,6 +619,47 @@ def build_dashboard_filters(
             _buy_lots = 0.0
             _sell_lots = 0.0
             _db_trial10_position_ids: set[int] = set()
+            _live_trial10_pos_meta: dict[int, tuple[str, float, bool]] = {}
+            for pos in live_positions_snapshot or []:
+                try:
+                    _is_trial10_pos = False
+                    _pos_id = None
+                    _side = None
+                    _lots = 0.0
+                    if isinstance(pos, dict):
+                        _pos_id = pos.get("id")
+                        units = float(pos.get("currentUnits") or pos.get("initialUnits") or 0)
+                        _lots = abs(units) / 100000.0
+                        if units > 0:
+                            _side = "buy"
+                        elif units < 0:
+                            _side = "sell"
+                        _comment = ""
+                        _client_ext = pos.get("clientExtensions")
+                        if isinstance(_client_ext, dict):
+                            _comment = str(_client_ext.get("comment") or "").strip()
+                        if not _comment:
+                            _trade_ext = pos.get("tradeClientExtensions")
+                            if isinstance(_trade_ext, dict):
+                                _comment = str(_trade_ext.get("comment") or "").strip()
+                        _is_trial10_pos = _comment.startswith("kt_cg_trial_10:")
+                    else:
+                        _pos_id = getattr(pos, "ticket", None)
+                        volume = float(getattr(pos, "volume", 0.0) or 0.0)
+                        _lots = abs(volume)
+                        mt5_type = getattr(pos, "type", None)
+                        if mt5_type == 0:
+                            _side = "buy"
+                        elif mt5_type == 1:
+                            _side = "sell"
+                        _is_trial10_pos = str(getattr(pos, "comment", "") or "").startswith("kt_cg_trial_10:")
+                    if _pos_id is not None:
+                        try:
+                            _live_trial10_pos_meta[int(_pos_id)] = (str(_side or ""), float(_lots), bool(_is_trial10_pos))
+                        except (TypeError, ValueError):
+                            pass
+                except Exception:
+                    continue
             if store is not None:
                 try:
                     _open_trades_t10 = store.list_open_trades(profile.profile_name)
@@ -629,15 +670,25 @@ def build_dashboard_filters(
                         _side = str(_row.get("side", "")).lower()
                         _lots = float(_row.get("size_lots") or 0.0)
                         if _side == "buy":
-                            _buy_lots += _lots
+                            pass
                         elif _side == "sell":
-                            _sell_lots += _lots
+                            pass
                         _pid = _row.get("mt5_position_id")
+                        _live_lots = None
                         if _pid is not None:
                             try:
-                                _db_trial10_position_ids.add(int(_pid))
+                                _pid_int = int(_pid)
+                                _db_trial10_position_ids.add(_pid_int)
+                                _live_meta = _live_trial10_pos_meta.get(_pid_int)
+                                if _live_meta is not None:
+                                    _live_lots = float(_live_meta[1])
                             except (TypeError, ValueError):
                                 pass
+                        _effective_lots = _live_lots if _live_lots is not None else _lots
+                        if _side == "buy":
+                            _buy_lots += _effective_lots
+                        elif _side == "sell":
+                            _sell_lots += _effective_lots
                 except Exception:
                     _db_trial10_position_ids = set()
             for pos in live_positions_snapshot or []:
