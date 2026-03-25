@@ -128,6 +128,9 @@ class RuntimeState:
     temp_t10_runner_base_lots: Optional[float] = None
     temp_t10_runner_min_lots: Optional[float] = None
     temp_t10_runner_max_lots: Optional[float] = None
+    temp_t10_atr_stop_enabled: Optional[bool] = None
+    temp_t10_atr_stop_multiplier: Optional[float] = None
+    temp_t10_atr_stop_max_pips: Optional[float] = None
 
     # Trial #10 live chop-pause state
     chop_pause_buy_start_utc: Optional[str] = None
@@ -243,6 +246,9 @@ def load_state(path: str | Path) -> RuntimeState:
         temp_t10_runner_base_lots=data.get("temp_t10_runner_base_lots"),
         temp_t10_runner_min_lots=data.get("temp_t10_runner_min_lots"),
         temp_t10_runner_max_lots=data.get("temp_t10_runner_max_lots"),
+        temp_t10_atr_stop_enabled=data.get("temp_t10_atr_stop_enabled"),
+        temp_t10_atr_stop_multiplier=data.get("temp_t10_atr_stop_multiplier"),
+        temp_t10_atr_stop_max_pips=data.get("temp_t10_atr_stop_max_pips"),
         chop_pause_buy_start_utc=data.get("chop_pause_buy_start_utc"),
         chop_pause_buy_reason=data.get("chop_pause_buy_reason"),
         chop_pause_sell_start_utc=data.get("chop_pause_sell_start_utc"),
@@ -340,6 +346,9 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
                 "temp_t10_runner_base_lots": state.temp_t10_runner_base_lots,
                 "temp_t10_runner_min_lots": state.temp_t10_runner_min_lots,
                 "temp_t10_runner_max_lots": state.temp_t10_runner_max_lots,
+                "temp_t10_atr_stop_enabled": state.temp_t10_atr_stop_enabled,
+                "temp_t10_atr_stop_multiplier": state.temp_t10_atr_stop_multiplier,
+                "temp_t10_atr_stop_max_pips": state.temp_t10_atr_stop_max_pips,
                 "chop_pause_buy_start_utc": state.chop_pause_buy_start_utc,
                 "chop_pause_buy_reason": state.chop_pause_buy_reason,
                 "chop_pause_sell_start_utc": state.chop_pause_sell_start_utc,

@@ -3811,6 +3811,9 @@ interface EditedSettings {
   t10_runner_base_lots: number;
   t10_runner_min_lots: number;
   t10_runner_max_lots: number;
+  t10_atr_stop_enabled: boolean;
+  t10_atr_stop_multiplier: number;
+  t10_atr_stop_max_pips: number;
   // Trial #9: Exit Strategy + TP1/BE/Trail
   t9_exit_strategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail';
   t9_hwm_trail_pips: number;
@@ -4215,6 +4218,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
       let t10RunnerBaseLots = 0.07;
       let t10RunnerMinLots = 0.03;
       let t10RunnerMaxLots = 0.50;
+      let t10AtrStopEnabled = true;
+      let t10AtrStopMultiplier = 1.3;
+      let t10AtrStopMaxPips = 20.0;
       let t9ExitStrategy: 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail' = 'tp1_be_m5_trail';
       let t9HwmTrailPips = 3.0;
       let t9Tp1Pips = 6.0;
@@ -4698,6 +4704,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
               t10RunnerBaseLots = (pol.runner_base_lots as number) ?? (pol.conviction_base_lots as number) ?? 0.07;
               t10RunnerMinLots = (pol.runner_min_lots as number) ?? (pol.conviction_min_lots as number) ?? 0.03;
               t10RunnerMaxLots = (pol.runner_max_lots as number) ?? ((risk?.max_lots as number) ?? 0.50);
+              t10AtrStopEnabled = (pol.atr_stop_enabled as boolean) ?? true;
+              t10AtrStopMultiplier = (pol.atr_stop_multiplier as number) ?? 1.3;
+              t10AtrStopMaxPips = (pol.atr_stop_max_pips as number) ?? 20.0;
               const rawEs9 = (pol.exit_strategy as string) ?? 'tp1_be_m5_trail';
               t9ExitStrategy = (['none', 'tp1_be_trail', 'ema_scale_runner', 'tp1_be_m5_trail', 'tp1_be_hwm_trail'].includes(rawEs9) ? rawEs9 : 'tp1_be_m5_trail') as typeof t9ExitStrategy;
               t9HwmTrailPips = (pol.hwm_trail_pips as number) ?? 3.0;
@@ -4984,6 +4993,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
         t10_runner_base_lots: tempSettings?.t10_runner_base_lots ?? t10RunnerBaseLots,
         t10_runner_min_lots: tempSettings?.t10_runner_min_lots ?? t10RunnerMinLots,
         t10_runner_max_lots: tempSettings?.t10_runner_max_lots ?? t10RunnerMaxLots,
+        t10_atr_stop_enabled: tempSettings?.t10_atr_stop_enabled ?? t10AtrStopEnabled,
+        t10_atr_stop_multiplier: tempSettings?.t10_atr_stop_multiplier ?? t10AtrStopMultiplier,
+        t10_atr_stop_max_pips: tempSettings?.t10_atr_stop_max_pips ?? t10AtrStopMaxPips,
         t9_exit_strategy: (() => {
           const raw = (tempSettings?.t9_exit_strategy ?? t9ExitStrategy) as string;
           return (['none', 'tp1_be_trail', 'ema_scale_runner', 'tp1_be_m5_trail', 'tp1_be_hwm_trail'].includes(raw) ? raw : 'tp1_be_m5_trail') as 'none' | 'tp1_be_trail' | 'ema_scale_runner' | 'tp1_be_m5_trail' | 'tp1_be_hwm_trail';
@@ -5436,6 +5448,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
             updates.runner_base_lots = Math.max(0.01, editedSettings.t10_runner_base_lots);
             updates.runner_min_lots = Math.max(0.01, editedSettings.t10_runner_min_lots);
             updates.runner_max_lots = Math.max(0.01, editedSettings.t10_runner_max_lots);
+            updates.atr_stop_enabled = editedSettings.t10_atr_stop_enabled;
+            updates.atr_stop_multiplier = Math.max(0.1, Math.min(10.0, editedSettings.t10_atr_stop_multiplier));
+            updates.atr_stop_max_pips = Math.max(1.0, Math.min(100.0, editedSettings.t10_atr_stop_max_pips));
             updates.regime_gate_enabled = editedSettings.t10_regime_gate_enabled;
             updates.regime_london_sell_veto = editedSettings.t10_regime_london_sell_veto;
             updates.regime_london_start_hour_et = Math.max(0, Math.min(23, editedSettings.t10_regime_london_start_hour_et));
@@ -5627,6 +5642,9 @@ function PresetsPage({ profile }: { profile: Profile }) {
           settings.t10_runner_base_lots = editedSettings.t10_runner_base_lots;
           settings.t10_runner_min_lots = editedSettings.t10_runner_min_lots;
           settings.t10_runner_max_lots = editedSettings.t10_runner_max_lots;
+          settings.t10_atr_stop_enabled = editedSettings.t10_atr_stop_enabled;
+          settings.t10_atr_stop_multiplier = editedSettings.t10_atr_stop_multiplier;
+          settings.t10_atr_stop_max_pips = editedSettings.t10_atr_stop_max_pips;
         }
         await api.updateTempSettings(profile.name, settings);
       }
@@ -6437,6 +6455,49 @@ function PresetsPage({ profile }: { profile: Profile }) {
                       </div>
                       <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
                         Bucket ladder uses Base Lots with the Trial 10 multipliers. Min Lots floors weak buckets and sizing-error fallback. Final live sizing still respects the lower of this cap and the global risk Max Lots above.
+                      </div>
+                    </>
+                    )}
+                  </div>
+                  )}
+                  {(execution?.policies as Record<string, unknown>[])?.some(pol => pol.type === 'kt_cg_trial_10') && (
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Trial #10 ATR Stop Loss
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      Uses the active M5 ATR to size the initial Trial 10 stop. When off, Trial 10 falls back to its fixed stop-loss pips.
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 12 }}>
+                      <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={editedSettings.t10_atr_stop_enabled}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t10_atr_stop_enabled: e.target.checked })}
+                            style={{ width: 18, height: 18, cursor: 'pointer' }} />
+                          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: editedSettings.t10_atr_stop_enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                            {editedSettings.t10_atr_stop_enabled ? 'ATR Stop ON' : 'ATR Stop OFF'}
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+                    {editedSettings.t10_atr_stop_enabled && (
+                    <>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>ATR Multiplier</div>
+                          <input type="number" step="0.1" min="0.1" value={editedSettings.t10_atr_stop_multiplier}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t10_atr_stop_multiplier: parseFloat(e.target.value) || 1.3 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        </div>
+                        <div style={{ padding: 8, background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Max Stop (pips)</div>
+                          <input type="number" step="0.5" min="1" value={editedSettings.t10_atr_stop_max_pips}
+                            onChange={(e) => setEditedSettings({ ...editedSettings, t10_atr_stop_max_pips: parseFloat(e.target.value) || 20.0 })}
+                            style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontWeight: 600 }} />
+                        </div>
+                      </div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: 8 }}>
+                        Final ATR stop = min(M5 ATR(14) x multiplier, max stop), with the profile minimum stop still acting as a floor.
                       </div>
                     </>
                     )}

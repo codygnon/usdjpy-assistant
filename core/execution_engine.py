@@ -4402,9 +4402,18 @@ def _resolve_trial10_stop_pips(
         fallback_sl = float(get_effective_risk(profile).min_stop_pips)
     fallback_sl = float(fallback_sl)
 
-    sl_cfg = getattr(profile.trade_management, "stop_loss", None)
-    if sl_cfg is None or getattr(sl_cfg, "mode", None) != "atr":
+    atr_enabled = getattr(policy, "atr_stop_enabled", None)
+    if atr_enabled is None:
+        sl_cfg = getattr(profile.trade_management, "stop_loss", None)
+        if sl_cfg is None or getattr(sl_cfg, "mode", None) != "atr":
+            return fallback_sl
+        atr_multiplier = float(getattr(sl_cfg, "atr_multiplier", 1.5))
+        atr_cap_pips = float(getattr(sl_cfg, "max_sl_pips", fallback_sl))
+    elif not bool(atr_enabled):
         return fallback_sl
+    else:
+        atr_multiplier = float(getattr(policy, "atr_stop_multiplier", 1.3))
+        atr_cap_pips = float(getattr(policy, "atr_stop_max_pips", fallback_sl))
 
     m5_df = data_by_tf.get("M5")
     if m5_df is None or m5_df.empty:
@@ -4421,7 +4430,7 @@ def _resolve_trial10_stop_pips(
 
     atr_val = float(atr_series.iloc[-1])
     atr_pips = atr_val / pip
-    atr_stop = min(atr_pips * float(getattr(sl_cfg, "atr_multiplier", 1.5)), float(getattr(sl_cfg, "max_sl_pips", fallback_sl)))
+    atr_stop = min(atr_pips * atr_multiplier, atr_cap_pips)
     atr_stop = max(atr_stop, float(get_effective_risk(profile).min_stop_pips))
     return float(atr_stop)
 

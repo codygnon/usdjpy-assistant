@@ -154,6 +154,9 @@ _TRIAL10_TEMP_OVERRIDE_MAP: dict[str, str] = {
     "temp_t10_runner_base_lots": "runner_base_lots",
     "temp_t10_runner_min_lots": "runner_min_lots",
     "temp_t10_runner_max_lots": "runner_max_lots",
+    "temp_t10_atr_stop_enabled": "atr_stop_enabled",
+    "temp_t10_atr_stop_multiplier": "atr_stop_multiplier",
+    "temp_t10_atr_stop_max_pips": "atr_stop_max_pips",
 }
 
 _TRIAL9_TEMP_OVERRIDE_MAP: dict[str, str] = {

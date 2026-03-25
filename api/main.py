@@ -533,6 +533,9 @@ class TempEmaSettingsUpdate(BaseModel):
     t10_runner_base_lots: Optional[float] = None
     t10_runner_min_lots: Optional[float] = None
     t10_runner_max_lots: Optional[float] = None
+    t10_atr_stop_enabled: Optional[bool] = None
+    t10_atr_stop_multiplier: Optional[float] = None
+    t10_atr_stop_max_pips: Optional[float] = None
 
 
 
@@ -891,6 +894,9 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
         "t10_runner_base_lots": state.temp_t10_runner_base_lots,
         "t10_runner_min_lots": state.temp_t10_runner_min_lots,
         "t10_runner_max_lots": state.temp_t10_runner_max_lots,
+        "t10_atr_stop_enabled": state.temp_t10_atr_stop_enabled,
+        "t10_atr_stop_multiplier": state.temp_t10_atr_stop_multiplier,
+        "t10_atr_stop_max_pips": state.temp_t10_atr_stop_max_pips,
     }
 
 
@@ -970,6 +976,9 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
             "temp_t10_runner_base_lots": req.t10_runner_base_lots,
             "temp_t10_runner_min_lots": req.t10_runner_min_lots,
             "temp_t10_runner_max_lots": req.t10_runner_max_lots,
+            "temp_t10_atr_stop_enabled": req.t10_atr_stop_enabled,
+            "temp_t10_atr_stop_multiplier": req.t10_atr_stop_multiplier,
+            "temp_t10_atr_stop_max_pips": req.t10_atr_stop_max_pips,
         }
     )
     new_state = RuntimeState(**new_data)  # type: ignore[arg-type]
@@ -3440,6 +3449,12 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         temp_overrides_api["runner_min_lots"] = _state.temp_t10_runner_min_lots
                     if _state.temp_t10_runner_max_lots is not None:
                         temp_overrides_api["runner_max_lots"] = _state.temp_t10_runner_max_lots
+                    if _state.temp_t10_atr_stop_enabled is not None:
+                        temp_overrides_api["atr_stop_enabled"] = _state.temp_t10_atr_stop_enabled
+                    if _state.temp_t10_atr_stop_multiplier is not None:
+                        temp_overrides_api["atr_stop_multiplier"] = _state.temp_t10_atr_stop_multiplier
+                    if _state.temp_t10_atr_stop_max_pips is not None:
+                        temp_overrides_api["atr_stop_max_pips"] = _state.temp_t10_atr_stop_max_pips
                     if not temp_overrides_api:
                         temp_overrides_api = None
                     if _policy_type == "phase3_integrated":

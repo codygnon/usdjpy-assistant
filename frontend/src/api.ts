@@ -252,6 +252,9 @@ export interface TempEmaSettings {
   t10_runner_base_lots: number | null;
   t10_runner_min_lots: number | null;
   t10_runner_max_lots: number | null;
+  t10_atr_stop_enabled: boolean | null;
+  t10_atr_stop_multiplier: number | null;
+  t10_atr_stop_max_pips: number | null;
 }
 
 export async function getTempSettings(profileName: string): Promise<TempEmaSettings> {

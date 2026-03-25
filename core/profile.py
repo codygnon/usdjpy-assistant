@@ -1115,6 +1115,9 @@ class ExecutionPolicyKtCgTrial10(ExecutionPolicyKtCgTrial9):
     runner_base_lots: float = 0.07
     runner_min_lots: float = 0.03
     runner_max_lots: Optional[float] = None
+    atr_stop_enabled: bool = True
+    atr_stop_multiplier: float = 1.3
+    atr_stop_max_pips: float = 20.0
     # Bucket lot multipliers — applied to runner_base_lots
     runner_bucket_mult_floor: float = 0.43
     runner_bucket_mult_base: float = 0.71
