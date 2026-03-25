@@ -2031,7 +2031,7 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                     "runner_spread_gate_pips": 3.0,
                     "runner_tier17_nonboost_force_floor": True,
                     "runner_weak_m5_zone_cap_enabled": True,
-                    "max_directional_lots_per_side": 1.50,
+                    "max_directional_lots_per_side": None,
                     "tier_reset_on_tp1": True,
                     "bucketed_exit_enabled": True,
                     "quick_exit_buckets": ["floor", "base"],

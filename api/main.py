@@ -156,6 +156,26 @@ def _list_profile_paths() -> list[Path]:
     return sorted([p for p in PROFILES_DIR.rglob("*.json") if p.is_file()])
 
 
+def _dedupe_profile_paths_by_stem(paths: list[Path]) -> list[Path]:
+    """Keep one profile per stem to avoid runtime/log collisions in the UI."""
+    best_by_stem: dict[str, Path] = {}
+
+    def _rank(path: Path) -> tuple[int, str]:
+        try:
+            rel = path.relative_to(PROFILES_DIR)
+        except Exception:
+            rel = path
+        # Prefer shallower paths like profiles/foo.json over profiles/v1/foo.json.
+        return (len(rel.parts), str(rel))
+
+    for path in paths:
+        stem = path.stem
+        current = best_by_stem.get(stem)
+        if current is None or _rank(path) < _rank(current):
+            best_by_stem[stem] = path
+    return sorted(best_by_stem.values(), key=lambda p: str(p))
+
+
 _oanda_cleanup_done: set[str] = set()
 
 def _store_for(profile_name: str, log_dir: Optional[Path] = None) -> SqliteStore:
@@ -576,7 +596,7 @@ def _profile_path_safe(path: Path) -> bool:
 @app.get("/api/profiles")
 def list_profiles() -> list[ProfileInfo]:
     """List all profile JSON files."""
-    paths = _list_profile_paths()
+    paths = _dedupe_profile_paths_by_stem(_list_profile_paths())
     return [
         ProfileInfo(path=str(p.resolve()), name=p.stem)
         for p in paths
@@ -976,6 +996,7 @@ def start_loop(profile_name: str, profile_path: str) -> dict[str, Any]:
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "loop.log"
     
+    log_file = None
     try:
         log_file = open(log_path, "w", encoding="utf-8")
         proc = subprocess.Popen(
@@ -984,12 +1005,33 @@ def start_loop(profile_name: str, profile_path: str) -> dict[str, Any]:
             stdout=log_file,
             stderr=subprocess.STDOUT,
         )
+        log_file.close()
+        log_file = None
         _loop_processes[profile_name] = proc
         pid_path = _loop_pid_path(profile_name)
         pid_path.parent.mkdir(parents=True, exist_ok=True)
         pid_path.write_text(str(proc.pid), encoding="utf-8")
+        _time.sleep(0.75)
+        if proc.poll() is not None:
+            _loop_processes.pop(profile_name, None)
+            pid_path.unlink(missing_ok=True)
+            detail = f"Loop exited immediately with code {proc.returncode}."
+            try:
+                if log_path.exists():
+                    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                    tail = "\n".join(lines[-12:]).strip()
+                    if tail:
+                        detail = f"{detail}\n{tail}"
+            except Exception:
+                pass
+            raise HTTPException(status_code=500, detail=detail)
         return {"status": "started", "pid": proc.pid}
     except Exception as e:
+        if log_file is not None:
+            try:
+                log_file.close()
+            except Exception:
+                pass
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1854,18 +1896,25 @@ def get_stats_by_preset(profile_name: str, profile_path: Optional[str] = None) -
     for preset_name, group in closed.groupby("preset_name"):
         presets_data[str(preset_name)] = _stats_for_group(group)
 
-    PHASE3_PRESET_ID = "phase3_integrated_usd_jpy"
-    if PHASE3_PRESET_ID in presets_data and "entry_session" in closed.columns:
-        phase3_closed = closed[closed["preset_name"] == PHASE3_PRESET_ID]
-        session_trades = phase3_closed[phase3_closed["entry_session"].isin(["tokyo", "london", "ny"])]
-        if not session_trades.empty:
-            by_session: dict[str, Any] = {}
-            for sess in ("tokyo", "london", "ny"):
-                grp = session_trades[session_trades["entry_session"] == sess]
-                if grp.empty:
-                    continue
-                by_session[sess] = _stats_for_group(grp)
-            presets_data[PHASE3_PRESET_ID]["by_session"] = by_session
+    # Phase 3 session breakdown: match by policy_type since preset_name varies by profile
+    _phase3_policy_col = closed.get("policy_type")
+    _phase3_has_sessions = "entry_session" in closed.columns and _phase3_policy_col is not None
+    if _phase3_has_sessions:
+        phase3_closed = closed[_phase3_policy_col == "phase3_integrated"]
+        # Find the preset_name key these trades are grouped under
+        _phase3_preset_key = None
+        if not phase3_closed.empty:
+            _phase3_preset_key = str(phase3_closed["preset_name"].iloc[0])
+        if _phase3_preset_key and _phase3_preset_key in presets_data:
+            session_trades = phase3_closed[phase3_closed["entry_session"].isin(["tokyo", "london", "ny"])]
+            if not session_trades.empty:
+                by_session: dict[str, Any] = {}
+                for sess in ("tokyo", "london", "ny"):
+                    grp = session_trades[session_trades["entry_session"] == sess]
+                    if grp.empty:
+                        continue
+                    by_session[sess] = _stats_for_group(grp)
+                presets_data[_phase3_preset_key]["by_session"] = by_session
 
     payload = {"presets": presets_data, "source": source, "display_currency": curr}
     _cache_set("stats_by_preset", cache_key, payload)
@@ -3320,6 +3369,21 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         temp_overrides_api["m1_zone_entry_ema_slow"] = _state.temp_m1_zone_entry_ema_slow
                     if _state.temp_m1_pullback_cross_ema_slow is not None:
                         temp_overrides_api["m1_pullback_cross_ema_slow"] = _state.temp_m1_pullback_cross_ema_slow
+                    if _policy_type == "kt_cg_trial_9":
+                        if _state.temp_t9_exit_strategy is not None:
+                            temp_overrides_api["exit_strategy"] = _state.temp_t9_exit_strategy
+                        if _state.temp_t9_hwm_trail_pips is not None:
+                            temp_overrides_api["hwm_trail_pips"] = _state.temp_t9_hwm_trail_pips
+                        if _state.temp_t9_tp1_pips is not None:
+                            temp_overrides_api["tp1_pips"] = _state.temp_t9_tp1_pips
+                        if _state.temp_t9_tp1_close_pct is not None:
+                            temp_overrides_api["tp1_close_pct"] = _state.temp_t9_tp1_close_pct
+                        if _state.temp_t9_be_spread_plus_pips is not None:
+                            temp_overrides_api["be_spread_plus_pips"] = _state.temp_t9_be_spread_plus_pips
+                        if _state.temp_t9_trail_ema_period is not None:
+                            temp_overrides_api["trail_ema_period"] = _state.temp_t9_trail_ema_period
+                        if _state.temp_t9_trail_m5_ema_period is not None:
+                            temp_overrides_api["trail_m5_ema_period"] = _state.temp_t9_trail_m5_ema_period
                     if _state.temp_t10_regime_gate_enabled is not None:
                         temp_overrides_api["regime_gate_enabled"] = _state.temp_t10_regime_gate_enabled
                     if _state.temp_t10_regime_london_sell_veto is not None:

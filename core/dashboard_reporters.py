@@ -111,20 +111,28 @@ def report_regime_gate(regime_snapshot: Optional[dict]) -> FilterReport:
     label = str(regime_snapshot.get("label", "normal"))
     allowed = bool(regime_snapshot.get("allowed", True))
     mult = regime_snapshot.get("multiplier", 1.0)
+    applied_mult = regime_snapshot.get("regime_multiplier_applied", regime_snapshot.get("regime_multiplier", mult))
+    mult_active = bool(regime_snapshot.get("regime_multiplier_active", abs(float(applied_mult or 1.0) - 1.0) > 1e-9))
     reason = str(regime_snapshot.get("reason", ""))
     final_lots = regime_snapshot.get("final_lots")
     conviction_lots = regime_snapshot.get("conviction_lots")
     is_blocked = not allowed
     display = f"{label.upper()}"
-    if allowed:
+    if allowed and mult_active:
         display += f" ({mult}x)"
     if final_lots is not None:
         display += f" | {float(final_lots):.2f} lots"
     explanation = reason
     if conviction_lots is not None and final_lots is not None:
-        explanation = (
-            f"{reason} Conviction {float(conviction_lots):.2f} -> final {float(final_lots):.2f} lots."
-        ).strip()
+        if mult_active:
+            explanation = (
+                f"{reason} Conviction {float(conviction_lots):.2f} -> final {float(final_lots):.2f} lots."
+            ).strip()
+        else:
+            explanation = (
+                f"{reason} Regime is informational for runner sizing. "
+                f"Runner lots {float(conviction_lots):.2f} -> final {float(final_lots):.2f} lots."
+            ).strip()
     return FilterReport(
         filter_id="trial10_regime_gate",
         display_name="Trial #10 Regime Gate",
@@ -1306,17 +1314,33 @@ def collect_trial_7_context(
     trend_added = False
     if m5_df is not None and not m5_df.empty:
         from core.indicators import ema as ema_fn
-        from core.execution_engine import _trial7_m5_ema_gap_pips
-        m5_close = m5_df["close"]
+        from core.execution_engine import _resolve_m5_trend_close_series, _trial7_m5_ema_gap_pips
         fast_p = getattr(policy, "m5_trend_ema_fast", 9)
         slow_p = getattr(policy, "m5_trend_ema_slow", 21)
-        if len(m5_df) >= max(fast_p, slow_p):
+        current_price = None
+        try:
+            current_price = (float(tick.bid) + float(tick.ask)) / 2.0
+        except Exception:
+            current_price = None
+        m5_close, m5_source = _resolve_m5_trend_close_series(
+            policy,
+            data_by_tf,
+            current_price=current_price,
+        )
+        if len(m5_close) >= max(fast_p, slow_p):
             fast_v = float(ema_fn(m5_close, fast_p).iloc[-1])
             slow_v = float(ema_fn(m5_close, slow_p).iloc[-1])
             trend = "BULL" if fast_v > slow_v else "BEAR"
             items.append(ContextItem("M5 Trend", trend, "trend"))
             items.append(ContextItem(f"M5 EMA{fast_p}", f"{fast_v:.3f}", "trend"))
             items.append(ContextItem(f"M5 EMA{slow_p}", f"{slow_v:.3f}", "trend"))
+            items.append(
+                ContextItem(
+                    "M5 Trend Source",
+                    "Synthetic Live M5" if m5_source == "synthetic_live_m5" else "Closed M5",
+                    "trend",
+                )
+            )
             gap_pips, _fv, _sv = _trial7_m5_ema_gap_pips(m5_close, int(fast_p), int(slow_p), pip_size)
             min_gap = float(getattr(policy, "m5_min_ema_distance_pips", 1.0))
             items.append(ContextItem("EMA9-EMA21 Gap (pips)", f"{gap_pips:.2f}", "trend"))
@@ -1346,13 +1370,27 @@ def collect_trial_7_context(
                 if len(m1_df) > ze_price:
                     ema_price = float(ema_fn(m1_close, ze_price).iloc[-1])
                     # Use same price as execution: ask for BULL (buy), bid for BEAR (sell)
-                    if m5_df is not None and not m5_df.empty and len(m5_df) >= max(getattr(policy, "m5_trend_ema_fast", 9), getattr(policy, "m5_trend_ema_slow", 21)):
+                    if m5_df is not None and not m5_df.empty:
+                        from core.execution_engine import _resolve_m5_trend_close_series
+
                         fast_p = getattr(policy, "m5_trend_ema_fast", 9)
                         slow_p = getattr(policy, "m5_trend_ema_slow", 21)
-                        m5_close = m5_df["close"]
-                        fast_v = float(ema_fn(m5_close, fast_p).iloc[-1])
-                        slow_v = float(ema_fn(m5_close, slow_p).iloc[-1])
-                        is_bull = fast_v > slow_v
+                        current_price = None
+                        try:
+                            current_price = (float(tick.bid) + float(tick.ask)) / 2.0
+                        except Exception:
+                            current_price = None
+                        m5_close, _m5_source = _resolve_m5_trend_close_series(
+                            policy,
+                            data_by_tf,
+                            current_price=current_price,
+                        )
+                        if len(m5_close) >= max(fast_p, slow_p):
+                            fast_v = float(ema_fn(m5_close, fast_p).iloc[-1])
+                            slow_v = float(ema_fn(m5_close, slow_p).iloc[-1])
+                            is_bull = fast_v > slow_v
+                        else:
+                            is_bull = True  # default
                     else:
                         is_bull = True  # default
                     if is_bull:

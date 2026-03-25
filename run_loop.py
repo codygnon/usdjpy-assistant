@@ -156,6 +156,16 @@ _TRIAL10_TEMP_OVERRIDE_MAP: dict[str, str] = {
     "temp_t10_runner_min_lots": "conviction_min_lots",
 }
 
+_TRIAL9_TEMP_OVERRIDE_MAP: dict[str, str] = {
+    "temp_t9_exit_strategy": "exit_strategy",
+    "temp_t9_hwm_trail_pips": "hwm_trail_pips",
+    "temp_t9_tp1_pips": "tp1_pips",
+    "temp_t9_tp1_close_pct": "tp1_close_pct",
+    "temp_t9_be_spread_plus_pips": "be_spread_plus_pips",
+    "temp_t9_trail_ema_period": "trail_ema_period",
+    "temp_t9_trail_m5_ema_period": "trail_m5_ema_period",
+}
+
 
 def _read_state_json(state_path: Path) -> dict[str, Any]:
     try:
@@ -173,6 +183,15 @@ def _write_state_updates(state_path: Path, updates: dict[str, Any]) -> None:
 def _trial10_temp_overrides_from_state(state_data: dict[str, Any]) -> dict[str, Any] | None:
     overrides: dict[str, Any] = {}
     for state_key, policy_key in _TRIAL10_TEMP_OVERRIDE_MAP.items():
+        value = state_data.get(state_key)
+        if value is not None:
+            overrides[policy_key] = value
+    return overrides or None
+
+
+def _trial9_temp_overrides_from_state(state_data: dict[str, Any]) -> dict[str, Any] | None:
+    overrides: dict[str, Any] = {}
+    for state_key, policy_key in _TRIAL9_TEMP_OVERRIDE_MAP.items():
         value = state_data.get(state_key)
         if value is not None:
             overrides[policy_key] = value
@@ -2200,12 +2219,14 @@ def _build_and_write_dashboard(
         now_utc = datetime.now(timezone.utc)
         spread_pips = (tick.ask - tick.bid) / pip_size
         previous_state = read_dashboard_state(log_dir) if not policy and not policy_type else None
+        from core.dashboard_builder import build_dashboard_filters, effective_policy_for_dashboard
+        policy_for_dashboard = effective_policy_for_dashboard(policy, temp_overrides) if policy else policy
 
         # --- Conviction sizing snapshot for dashboard ---
         _conviction_snap = None
-        if policy_type in ("kt_cg_trial_9", "kt_cg_trial_10") and policy is not None:
+        if policy_type in ("kt_cg_trial_9", "kt_cg_trial_10") and policy_for_dashboard is not None:
             try:
-                _conv_pol = policy
+                _conv_pol = policy_for_dashboard
                 _conv_enabled_dash = bool(getattr(_conv_pol, "conviction_sizing_enabled", False))
                 _m5_df_dash = data_by_tf.get("M5")
                 _m1_df_dash = data_by_tf.get("M1")
@@ -2231,7 +2252,6 @@ def _build_and_write_dashboard(
                 pass
 
         # --- Filter reports (shared with API via core.dashboard_builder) ---
-        from core.dashboard_builder import build_dashboard_filters, effective_policy_for_dashboard
         filters = build_dashboard_filters(
             profile=profile,
             tick=tick,
@@ -2257,7 +2277,7 @@ def _build_and_write_dashboard(
 
         # --- Context items (use effective policy when Apply Temporary Settings active) ---
         context_items = []
-        policy_for_context = effective_policy_for_dashboard(policy, temp_overrides) if policy else policy
+        policy_for_context = policy_for_dashboard
         if policy_type == "kt_cg_trial_4":
             context_items = collect_trial_4_context(
                 policy_for_context, data_by_tf, tick, tier_state or {}, eval_result, pip_size,
@@ -4091,7 +4111,11 @@ def main() -> None:
                         policy_type=pol_type, tier_state=tier_state,
                         eval_result=exec_result,
                         exhaustion_result=exec_result.get("exhaustion_result"),
-                        temp_overrides=_trial10_temp_overrides if pol_type == "kt_cg_trial_10" else None,
+                        temp_overrides=(
+                            _trial10_temp_overrides if pol_type == "kt_cg_trial_10"
+                            else _trial9_temp_overrides_from_state(state_data) if pol_type == "kt_cg_trial_9"
+                            else None
+                        ),
                         daily_level_filter=daily_level_filter if pol_type == "kt_cg_trial_8" else None,
                         ntz_filter=ntz_filter if pol_type in ("kt_cg_trial_9", "kt_cg_trial_10") else None,
                         intraday_fib_corridor_filter=intraday_fib_corridor_filter if pol_type in ("kt_cg_trial_9", "kt_cg_trial_10") else None,
@@ -5643,7 +5667,11 @@ def main() -> None:
                         policy_type=pol_type, tier_state=tier_state,
                         eval_result=exec_result,
                         exhaustion_result=exec_result.get("exhaustion_result"),
-                        temp_overrides=_trial10_temp_overrides if pol_type == "kt_cg_trial_10" else None,
+                        temp_overrides=(
+                            _trial10_temp_overrides if pol_type == "kt_cg_trial_10"
+                            else _trial9_temp_overrides_from_state(state_data) if pol_type == "kt_cg_trial_9"
+                            else None
+                        ),
                         daily_level_filter=daily_level_filter if pol_type == "kt_cg_trial_8" else None,
                         ntz_filter=ntz_filter if pol_type in ("kt_cg_trial_9", "kt_cg_trial_10") else None,
                         intraday_fib_corridor_filter=intraday_fib_corridor_filter if pol_type in ("kt_cg_trial_9", "kt_cg_trial_10") else None,

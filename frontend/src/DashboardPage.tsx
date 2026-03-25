@@ -563,6 +563,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
   const [executions, setExecutions] = useState<ExecutionRecord[]>([]);
   const [dashState, setDashState] = useState<DashboardState | null>(null);
   const [runtime, setRuntime] = useState<RuntimeState | null>(null);
+  const [loopError, setLoopError] = useState<string | null>(null);
   const [trail, setTrail] = useState<Array<{ time: string; spread: number; blocked: number; trend: string }>>([]);
   const [trailExpanded, setTrailExpanded] = useState(false);
 
@@ -633,6 +634,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
 
   const handleToggleLoop = useCallback(async () => {
     try {
+      setLoopError(null);
       if (loopRunning) {
         await stopLoop(profileName);
       } else {
@@ -642,6 +644,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
       if (s && !s.error) setDashState(s);
     } catch (e) {
       console.error('Loop toggle error:', e);
+      setLoopError(e instanceof Error ? e.message : String(e));
     }
   }, [loopRunning, profileName, profilePath]);
 
@@ -714,6 +717,18 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
 
       {/* Main content */}
       <div style={{ flex: 1, padding: 12, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto' }}>
+        {loopError && (
+          <div style={{
+            backgroundColor: colors.panel,
+            border: `1px solid ${colors.red}`,
+            borderRadius: 6,
+            padding: 12,
+            color: colors.red,
+            whiteSpace: 'pre-wrap',
+          }}>
+            {loopError}
+          </div>
+        )}
         {dashState?.data_source === 'none' && (
           <div style={{
             backgroundColor: colors.panel,

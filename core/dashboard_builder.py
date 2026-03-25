@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from core.dashboard_models import FilterReport
+from core.profile import calculate_trial10_directional_cap_lots
 from core.signal_engine import drop_incomplete_last_bar
 from core.dashboard_reporters import (
     report_session_filter,
@@ -91,6 +92,13 @@ _TEMP_OVERRIDE_ATTRS = (
     "runner_score_sizing_enabled",
     "conviction_base_lots",
     "conviction_min_lots",
+    "exit_strategy",
+    "hwm_trail_pips",
+    "tp1_pips",
+    "tp1_close_pct",
+    "be_spread_plus_pips",
+    "trail_ema_period",
+    "trail_m5_ema_period",
 )
 
 
@@ -532,7 +540,14 @@ def build_dashboard_filters(
                     _dir_cap = None
                     if policy_type == "kt_cg_trial_10":
                         try:
-                            _dir_cap = float(getattr(policy, "max_directional_lots_per_side", 0.0) or 0.0)
+                            _dir_cap = getattr(policy, "max_directional_lots_per_side", None)
+                            if _dir_cap is None:
+                                _dir_cap = calculate_trial10_directional_cap_lots(
+                                    getattr(policy, "conviction_base_lots", None),
+                                    getattr(policy, "max_open_trades_per_side", None),
+                                )
+                            if _dir_cap is not None:
+                                _dir_cap = float(_dir_cap)
                         except Exception:
                             _dir_cap = None
                     filters.append(report_open_exposure(buy_lots + sell_lots, buy_lots, sell_lots, _dir_cap))

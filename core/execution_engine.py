@@ -32,6 +32,7 @@ from core.profile import (
     ExecutionPolicySessionMomentum,
     ExecutionPolicyVWAP,
     ProfileV1,
+    calculate_trial10_directional_cap_lots,
     get_effective_risk,
 )
 from core.daily_level_filter import DailyLevelFilter, drop_incomplete_m5_for_filter
@@ -124,6 +125,7 @@ def _resolve_m5_trend_close_series(
     policy,
     data_by_tf: dict[Timeframe, pd.DataFrame],
     temp_overrides: Optional[dict] = None,
+    current_price: Optional[float] = None,
 ) -> tuple[pd.Series, str]:
     m5_df = data_by_tf.get("M5")
     if m5_df is None or m5_df.empty:
@@ -137,17 +139,39 @@ def _resolve_m5_trend_close_series(
         return close, source
     m1_df = data_by_tf.get("M1")
     if m1_df is None or m1_df.empty:
-        return close, source
-    m1_closed = drop_incomplete_last_bar(m1_df.copy(), "M1")
-    if m1_closed is None or m1_closed.empty:
-        return close, source
+        if current_price is None:
+            return close, source
+        try:
+            m5_last_ts = pd.to_datetime(m5_closed["time"].iloc[-1], utc=True)
+            synthetic_ts = m5_last_ts + pd.Timedelta(seconds=1)
+            return pd.concat([close, pd.Series([float(current_price)], index=[synthetic_ts])]), source
+        except Exception:
+            return close, source
     try:
         m5_last_ts = pd.to_datetime(m5_closed["time"].iloc[-1], utc=True)
-        m1_last_ts = pd.to_datetime(m1_closed["time"].iloc[-1], utc=True)
-        if pd.isna(m5_last_ts) or pd.isna(m1_last_ts) or m1_last_ts <= m5_last_ts:
+        if pd.isna(m5_last_ts):
             return close, source
-        synthetic_close = float(m1_closed["close"].iloc[-1])
-        return pd.concat([close, pd.Series([synthetic_close], index=[m1_last_ts])]), source
+
+        # Prefer the latest M1 row, including the currently forming bar, so synthetic mode can
+        # refresh between completed M5 candles instead of waiting for the next closed M1 bar.
+        m1_latest = m1_df.sort_values("time").iloc[-1]
+        m1_last_ts = pd.to_datetime(m1_latest["time"], utc=True)
+        if pd.notna(m1_last_ts) and m1_last_ts > m5_last_ts:
+            synthetic_close = float(current_price) if current_price is not None else float(m1_latest["close"])
+            return pd.concat([close, pd.Series([synthetic_close], index=[m1_last_ts])]), source
+
+        if current_price is not None:
+            synthetic_ts = m5_last_ts + pd.Timedelta(seconds=1)
+            return pd.concat([close, pd.Series([float(current_price)], index=[synthetic_ts])]), source
+
+        m1_closed = drop_incomplete_last_bar(m1_df.copy(), "M1")
+        if m1_closed is None or m1_closed.empty:
+            return close, source
+        m1_closed_last_ts = pd.to_datetime(m1_closed["time"].iloc[-1], utc=True)
+        if pd.notna(m1_closed_last_ts) and m1_closed_last_ts > m5_last_ts:
+            synthetic_close = float(m1_closed["close"].iloc[-1])
+            return pd.concat([close, pd.Series([synthetic_close], index=[m1_closed_last_ts])]), source
+        return close, source
     except Exception:
         return close, source
 
@@ -6352,6 +6376,11 @@ def execute_kt_cg_trial_7_policy_demo_only(
         if policy_type == "kt_cg_trial_10":
             try:
                 _directional_cap_raw = _ov("max_directional_lots_per_side", None)
+                if _directional_cap_raw is None:
+                    _directional_cap_raw = calculate_trial10_directional_cap_lots(
+                        _ov("conviction_base_lots", getattr(policy, "conviction_base_lots", None)),
+                        _ov("max_open_trades_per_side", getattr(policy, "max_open_trades_per_side", None)),
+                    )
                 if _directional_cap_raw is not None:
                     _directional_cap_lots = max(0.0, float(_directional_cap_raw))
                     _same_side_open_lots = sum(
@@ -6496,10 +6525,16 @@ def execute_kt_cg_trial_7_policy_demo_only(
         if getattr(policy, "trail_after_tp1", False):
             tp_price = None
         _effective_lots = float(conviction_lots) if conviction_lots is not None else float(get_effective_risk(profile).max_lots)
+        _runner_sizing_active = bool(_ov("runner_score_sizing_enabled", False))
+        _regime_multiplier_raw = float(trial10_regime_multiplier) if trial10_regime_multiplier is not None else 1.0
+        _regime_multiplier_applied = 1.0
         _lot_chain = {
             "conviction_lots": round(float(_effective_lots), 4),
             "pullback_quality_multiplier": 1.0,
-            "regime_multiplier": float(trial10_regime_multiplier) if trial10_regime_multiplier is not None else 1.0,
+            "regime_multiplier": 1.0,
+            "regime_multiplier_raw": round(float(_regime_multiplier_raw), 4),
+            "regime_multiplier_applied": round(float(_regime_multiplier_applied), 4),
+            "regime_multiplier_active": False,
             "tier17_nonboost_multiplier": 1.0,
             "spread_gated": False,
             "tier17_floor_applied": False,
@@ -6522,8 +6557,13 @@ def execute_kt_cg_trial_7_policy_demo_only(
         if policy_type == "kt_cg_trial_10" and trial10_regime_multiplier is not None:
             _runner_floor = float(_ov("runner_bucket_lots_floor", 0.03))
             _runner_base = float(_ov("runner_bucket_lots_base", 0.05))
-            _pq_min = _runner_floor if bool(_ov("runner_score_sizing_enabled", False)) else float(_ov("conviction_min_lots", 0.01))
-            _effective_lots = _effective_lots * float(trial10_regime_multiplier)
+            _pq_min = _runner_floor if _runner_sizing_active else float(_ov("conviction_min_lots", 0.01))
+            if not _runner_sizing_active:
+                _regime_multiplier_applied = float(_regime_multiplier_raw)
+                _effective_lots = _effective_lots * _regime_multiplier_applied
+            _lot_chain["regime_multiplier"] = round(float(_regime_multiplier_applied), 4)
+            _lot_chain["regime_multiplier_applied"] = round(float(_regime_multiplier_applied), 4)
+            _lot_chain["regime_multiplier_active"] = bool(abs(float(_regime_multiplier_applied) - 1.0) > 1e-9)
             if trigger_type == "tiered_pullback" and int(tiered_pullback_tier or 0) == 17:
                 _regime_label = str(trial10_regime_label or "").upper()
                 if _regime_label != "BUY_BOOST_HOUR":

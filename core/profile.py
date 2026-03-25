@@ -1121,7 +1121,7 @@ class ExecutionPolicyKtCgTrial10(ExecutionPolicyKtCgTrial9):
     runner_spread_gate_pips: float = 3.0
     runner_tier17_nonboost_force_floor: bool = True
     runner_weak_m5_zone_cap_enabled: bool = True
-    max_directional_lots_per_side: Optional[float] = 1.50
+    max_directional_lots_per_side: Optional[float] = None
     tier_reset_on_tp1: bool = True
 
     bucketed_exit_enabled: bool = True
@@ -1153,6 +1153,27 @@ class ExecutionPolicyKtCgTrial10(ExecutionPolicyKtCgTrial9):
     max_open_trades_per_side: Optional[int] = 6
     max_zone_entry_open: Optional[int] = 4
     max_tiered_pullback_open: Optional[int] = 10
+
+
+def calculate_trial10_directional_cap_lots(
+    base_lots: Optional[float],
+    max_open_trades_per_side: Optional[int],
+) -> Optional[float]:
+    """Default Trial 10 same-side exposure cap.
+
+    Formula:
+    directional_cap = base_lots * max_open_trades_per_side / 2
+    """
+    try:
+        if base_lots is None or max_open_trades_per_side is None:
+            return None
+        base = float(base_lots)
+        side_cap = int(max_open_trades_per_side)
+        if base <= 0 or side_cap <= 0:
+            return None
+        return round(base * side_cap / 2.0, 2)
+    except Exception:
+        return None
 
 
 class ExecutionPolicyKtCgTrial6(BaseModel):
