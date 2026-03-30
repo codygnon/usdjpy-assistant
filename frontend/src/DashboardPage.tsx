@@ -1320,7 +1320,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
       getPhase3DefensiveMonitor()
         .then((data) => { if (mounted) setPhase3Monitor(data); })
         .catch(() => { if (mounted) setPhase3Monitor(null); });
-      getPhase3Decisions(profileName, 7, 2000)
+      getPhase3Decisions(profileName, 7, 2000, profilePath)
         .then((rows) => { if (mounted) setPhase3Decisions(rows || []); })
         .catch(() => { if (mounted) setPhase3Decisions([]); });
     };

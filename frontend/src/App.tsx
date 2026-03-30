@@ -10711,8 +10711,8 @@ function LogsPage({ profile }: { profile: Profile }) {
     setPhase3Loading(true);
     try {
       const [rows, blockers] = await Promise.all([
-        api.getPhase3Decisions(profile.name, phase3Days, 20000),
-        api.getPhase3BlockersBreakdown(profile.name, phase3Days, 50000),
+        api.getPhase3Decisions(profile.name, phase3Days, 20000, profile.path),
+        api.getPhase3BlockersBreakdown(profile.name, phase3Days, 50000, profile.path),
       ]);
       setPhase3Decisions(rows);
       setPhase3Blockers(blockers);

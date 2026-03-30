@@ -392,18 +392,22 @@ export interface Phase3DecisionRow {
 export async function getPhase3Decisions(
   profileName: string,
   days = 3,
-  limit = 5000
+  limit = 5000,
+  profilePath?: string
 ): Promise<Phase3DecisionRow[]> {
   const params = new URLSearchParams({ days: String(days), limit: String(limit) });
+  if (profilePath) params.set('profile_path', profilePath);
   return fetchJson<Phase3DecisionRow[]>(`${API_BASE}/data/${profileName}/phase3-decisions?${params}`);
 }
 
 export async function getPhase3BlockersBreakdown(
   profileName: string,
   days = 7,
-  limit = 20000
+  limit = 20000,
+  profilePath?: string
 ): Promise<Record<string, number>> {
   const params = new URLSearchParams({ days: String(days), limit: String(limit) });
+  if (profilePath) params.set('profile_path', profilePath);
   return fetchJson<Record<string, number>>(`${API_BASE}/data/${profileName}/phase3-blockers-breakdown?${params}`);
 }
 

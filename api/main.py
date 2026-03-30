@@ -1548,7 +1548,7 @@ def get_rejection_breakdown(profile_name: str, limit: int = 200) -> dict[str, in
 
 
 @app.get("/api/data/{profile_name}/phase3-decisions")
-def get_phase3_decisions(profile_name: str, days: int = 3, limit: int = 5000) -> list[dict[str, Any]]:
+def get_phase3_decisions(profile_name: str, days: int = 3, limit: int = 5000, profile_path: Optional[str] = None) -> list[dict[str, Any]]:
     """Return Phase 3 per-closed-M1 decision rows (stored in executions).
 
     Rows are written by run_loop as signal_id like:
@@ -1559,8 +1559,10 @@ def get_phase3_decisions(profile_name: str, days: int = 3, limit: int = 5000) ->
     days = max(1, min(int(days), 60))
     limit = max(100, min(int(limit), 20000))
 
-    store = _store_for(profile_name)
-    df = store.read_executions_df(profile_name)
+    log_dir = _pick_best_dashboard_log_dir(profile_name, profile_path)
+    active_profile_name = log_dir.name if log_dir is not None else profile_name
+    store = _store_for(profile_name, log_dir=log_dir)
+    df = store.read_executions_df(active_profile_name)
     if df.empty:
         return []
     df = df.where(pd.notna(df), None)
@@ -1584,7 +1586,7 @@ def get_phase3_decisions(profile_name: str, days: int = 3, limit: int = 5000) ->
 
 
 @app.get("/api/data/{profile_name}/phase3-blockers-breakdown")
-def get_phase3_blockers_breakdown(profile_name: str, days: int = 7, limit: int = 20000) -> dict[str, int]:
+def get_phase3_blockers_breakdown(profile_name: str, days: int = 7, limit: int = 20000, profile_path: Optional[str] = None) -> dict[str, int]:
     """Aggregate Phase 3 blocking filters from stored execution reasons.
 
     run_loop encodes blockers as:  "... | blocks=filter_id_a,filter_id_b"
@@ -1594,8 +1596,10 @@ def get_phase3_blockers_breakdown(profile_name: str, days: int = 7, limit: int =
     days = max(1, min(int(days), 60))
     limit = max(100, min(int(limit), 50000))
 
-    store = _store_for(profile_name)
-    df = store.read_executions_df(profile_name)
+    log_dir = _pick_best_dashboard_log_dir(profile_name, profile_path)
+    active_profile_name = log_dir.name if log_dir is not None else profile_name
+    store = _store_for(profile_name, log_dir=log_dir)
+    df = store.read_executions_df(active_profile_name)
     if df.empty or "reason" not in df.columns or "signal_id" not in df.columns:
         return {}
 
@@ -1657,7 +1661,7 @@ def get_phase3_provenance(profile_name: str, profile_path: Optional[str] = None)
         }
 
     latest_decision = None
-    decisions = get_phase3_decisions(profile_name, days=7, limit=2000)
+    decisions = get_phase3_decisions(profile_name, days=7, limit=2000, profile_path=profile_path)
     if decisions:
         latest_decision = decisions[-1]
     return build_phase3_provenance_payload(
@@ -3480,13 +3484,25 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
             # First enabled KT/CG Trial policy for rich filters
             _policy = None
             _policy_type = ""
-            for pol in getattr(profile.execution, "policies", []) or []:
-                if not getattr(pol, "enabled", True):
-                    continue
-                pt = getattr(pol, "type", "") or ""
-                if pt in ("kt_cg_trial_4", "kt_cg_trial_5", "kt_cg_trial_6", "kt_cg_trial_7", "kt_cg_trial_8", "kt_cg_trial_9", "kt_cg_trial_10", "phase3_integrated"):
-                    _policy = pol
-                    _policy_type = pt
+            enabled_policies = [
+                pol for pol in (getattr(profile.execution, "policies", []) or [])
+                if getattr(pol, "enabled", True)
+            ]
+            preferred_order = (
+                "phase3_integrated",
+                "kt_cg_trial_10",
+                "kt_cg_trial_9",
+                "kt_cg_trial_8",
+                "kt_cg_trial_7",
+                "kt_cg_trial_6",
+                "kt_cg_trial_5",
+                "kt_cg_trial_4",
+            )
+            for preferred_type in preferred_order:
+                match = next((pol for pol in enabled_policies if (getattr(pol, "type", "") or "") == preferred_type), None)
+                if match is not None:
+                    _policy = match
+                    _policy_type = preferred_type
                     break
             data_by_tf: dict = {}
             daily_reset_state: Optional[dict] = None
