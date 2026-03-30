@@ -113,6 +113,9 @@ _BACKFILL_INTERVAL = 60.0  # seconds
 # Lean API mode: reduce broker-backed read amplification for UI pages.
 LEAN_UI_MODE = os.environ.get("LEAN_UI_MODE", "true").strip().lower() in {"1", "true", "yes", "on"}
 
+# Verbose stdout logging (Railway log volume / CPU); default off.
+API_VERBOSE_LOGS = os.environ.get("API_VERBOSE_LOGS", "").strip().lower() in {"1", "true", "yes", "on"}
+
 # Short-lived endpoint response cache for expensive read endpoints.
 _endpoint_response_cache: dict[str, tuple[float, Any]] = {}
 _ENDPOINT_CACHE_TTL_SECONDS: dict[str, float] = {
@@ -120,6 +123,9 @@ _ENDPOINT_CACHE_TTL_SECONDS: dict[str, float] = {
     "advanced_analytics": 10.0,
     "stats_by_preset": 10.0,
     "mt5_report": 10.0,
+    "phase3_decisions": 5.0,
+    "phase3_provenance": 5.0,
+    "phase3_blockers": 8.0,
 }
 
 
@@ -153,6 +159,9 @@ def _cache_invalidate_profile(profile_name: str) -> None:
     for k in stale_keys:
         _endpoint_response_cache.pop(k, None)
     _dashboard_live_cache.pop(profile_name, None)
+    lean_rm = [k for k in list(_lean_dashboard_cache.keys()) if k.startswith(f"{profile_name}\x1f")]
+    for k in lean_rm:
+        _lean_dashboard_cache.pop(k, None)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1700,10 +1709,16 @@ def get_phase3_decisions(profile_name: str, days: int = 3, limit: int = 5000, pr
     days = max(1, min(int(days), 60))
     limit = max(100, min(int(limit), 20000))
 
+    p3_key = _cache_compose_key("phase3_decisions", profile_name, profile_path or "", str(days), str(limit))
+    cached_rows = _cache_get("phase3_decisions", p3_key)
+    if cached_rows is not None:
+        return cached_rows
+
     log_dir = _pick_best_dashboard_log_dir(profile_name, profile_path)
     active_profile_name = log_dir.name if log_dir is not None else profile_name
     store = _store_for(profile_name, log_dir=log_dir)
-    df = store.read_executions_df(active_profile_name)
+    tail_n = min(150_000, max(50_000, int(limit) * 50, days * 2500))
+    df = store.read_executions_tail_df(active_profile_name, limit=tail_n)
     enriched: list[dict[str, Any]] = []
     if not df.empty and "signal_id" in df.columns:
         df = df.where(pd.notna(df), None)
@@ -1723,8 +1738,11 @@ def get_phase3_decisions(profile_name: str, days: int = 3, limit: int = 5000, pr
             out["reason_text"] = extract_phase3_reason_text(out.get("reason"))
             enriched.append(out)
     if enriched:
+        _cache_set("phase3_decisions", p3_key, enriched)
         return enriched
-    return _load_phase3_decision_rows_from_diagnostics(log_dir, days=days, limit=limit)
+    diag = _load_phase3_decision_rows_from_diagnostics(log_dir, days=days, limit=limit)
+    _cache_set("phase3_decisions", p3_key, diag)
+    return diag
 
 
 @app.get("/api/data/{profile_name}/phase3-blockers-breakdown")
@@ -1738,10 +1756,16 @@ def get_phase3_blockers_breakdown(profile_name: str, days: int = 7, limit: int =
     days = max(1, min(int(days), 60))
     limit = max(100, min(int(limit), 50000))
 
+    b_key = _cache_compose_key("phase3_blockers", profile_name, profile_path or "", str(days), str(limit))
+    cached_b = _cache_get("phase3_blockers", b_key)
+    if cached_b is not None:
+        return cached_b
+
     log_dir = _pick_best_dashboard_log_dir(profile_name, profile_path)
     active_profile_name = log_dir.name if log_dir is not None else profile_name
     store = _store_for(profile_name, log_dir=log_dir)
-    df = store.read_executions_df(active_profile_name)
+    tail_n = min(150_000, max(60_000, int(limit) * 4, days * 2500))
+    df = store.read_executions_tail_df(active_profile_name, limit=tail_n)
     counts: dict[str, int] = {}
     if not df.empty and "reason" in df.columns and "signal_id" in df.columns:
         since_dt = datetime.now(timezone.utc) - timedelta(days=days)
@@ -1766,17 +1790,26 @@ def get_phase3_blockers_breakdown(profile_name: str, days: int = 7, limit: int =
             except Exception:
                 continue
     if counts:
-        return dict(sorted(counts.items(), key=lambda kv: kv[1], reverse=True))
+        out = dict(sorted(counts.items(), key=lambda kv: kv[1], reverse=True))
+        _cache_set("phase3_blockers", b_key, out)
+        return out
 
     for row in _load_phase3_decision_rows_from_diagnostics(log_dir, days=days, limit=limit):
         for bid in list(row.get("blocking_filter_ids") or []):
             counts[bid] = int(counts.get(bid, 0)) + 1
 
-    return dict(sorted(counts.items(), key=lambda kv: kv[1], reverse=True))
+    out = dict(sorted(counts.items(), key=lambda kv: kv[1], reverse=True))
+    _cache_set("phase3_blockers", b_key, out)
+    return out
 
 
 @app.get("/api/data/{profile_name}/phase3-provenance")
 def get_phase3_provenance(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
+    pv_key = _cache_compose_key("phase3_provenance", profile_name, profile_path or "")
+    hit_pv = _cache_get("phase3_provenance", pv_key)
+    if hit_pv is not None:
+        return hit_pv
+
     def _waiting_payload() -> dict[str, Any]:
         return {
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -1811,7 +1844,7 @@ def get_phase3_provenance(profile_name: str, profile_path: Optional[str] = None)
         decisions = get_phase3_decisions(profile_name, days=7, limit=2000, profile_path=profile_path)
         if decisions:
             latest_decision = decisions[-1]
-        return build_phase3_provenance_payload(
+        payload = build_phase3_provenance_payload(
             preset_name=str(dashboard.get("preset_name") or ""),
             context_items=list(dashboard.get("context") or []),
             filters=list(dashboard.get("filters") or []),
@@ -1820,6 +1853,8 @@ def get_phase3_provenance(profile_name: str, profile_path: Optional[str] = None)
             dashboard_timestamp_utc=dashboard.get("timestamp_utc"),
             last_block_reason=dashboard.get("last_block_reason"),
         )
+        _cache_set("phase3_provenance", pv_key, payload)
+        return payload
     except Exception:
         return _waiting_payload()
 
@@ -3433,6 +3468,10 @@ def health_check() -> dict[str, str]:
 _dashboard_live_cache: dict[str, tuple[float, dict]] = {}
 _DASHBOARD_LIVE_TTL = 2.0  # seconds
 
+# Lean-mode dashboard: full response cache (legacy mode already used _dashboard_live_cache).
+_lean_dashboard_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_LEAN_DASHBOARD_CACHE_TTL = float(os.environ.get("LEAN_DASHBOARD_CACHE_TTL", "4.0"))
+
 # Cached adapters for dashboard use — avoids init/shutdown every poll
 _dashboard_adapters: dict[str, tuple[Any, float]] = {}  # {key: (adapter, init_time)}
 _DASHBOARD_ADAPTER_TTL = 300.0  # re-init every 5 min
@@ -4298,9 +4337,10 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
             )
             raw_profit = d.get("profit")
             raw_pips = d.get("pips")
-            print(f"[api] daily_summary trade: id={d.get('trade_id')}, side={d.get('side')}, "
-                  f"entry={d.get('entry_price')}, exit={d.get('exit_price')}, "
-                  f"raw_profit={raw_profit}, norm_profit={profit}, raw_pips={raw_pips}, norm_pips={pips}")
+            if API_VERBOSE_LOGS:
+                print(f"[api] daily_summary trade: id={d.get('trade_id')}, side={d.get('side')}, "
+                      f"entry={d.get('entry_price')}, exit={d.get('exit_price')}, "
+                      f"raw_profit={raw_profit}, norm_profit={profit}, raw_pips={raw_pips}, norm_pips={pips}")
             if pips is not None:
                 total_pips += float(pips)
             if profit is not None:
@@ -4315,9 +4355,10 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                     wins += 1
                 else:
                     losses += 1
-        print(f"[api] daily_summary result: date={date_str}, profile={active_profile_name}, "
-              f"trades={trades_today}, wins={wins}, losses={losses}, "
-              f"total_pips={total_pips:.1f}, total_profit={total_profit:.2f}")
+        if API_VERBOSE_LOGS:
+            print(f"[api] daily_summary result: date={date_str}, profile={active_profile_name}, "
+                  f"trades={trades_today}, wins={wins}, losses={losses}, "
+                  f"total_pips={total_pips:.1f}, total_profit={total_profit:.2f}")
         win_rate = round(wins / trades_today * 100, 1) if trades_today > 0 else 0.0
         daily_summary = {
             "trades_today": trades_today,
@@ -4847,6 +4888,14 @@ def _dashboard_state_is_phase3(state: Optional[dict[str, Any]]) -> bool:
     return False
 
 
+def _lean_dashboard_cache_key(profile_name: str, profile_path: Optional[str], log_dir: Path) -> str:
+    try:
+        ld = str(log_dir.resolve())
+    except Exception:
+        ld = str(log_dir)
+    return f"{profile_name}\x1f{profile_path or ''}\x1f{ld}"
+
+
 def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
     """Internal dashboard implementation."""
     from core.dashboard_models import read_dashboard_state
@@ -4855,6 +4904,14 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
         from datetime import datetime, timezone
 
         log_dir = _pick_best_dashboard_log_dir(profile_name, profile_path)
+        lk = _lean_dashboard_cache_key(profile_name, profile_path, log_dir)
+        now_mono = _time.monotonic()
+        lean_hit = _lean_dashboard_cache.get(lk)
+        if lean_hit and (now_mono - lean_hit[0]) < _LEAN_DASHBOARD_CACHE_TTL:
+            out = dict(lean_hit[1])
+            out["loop_running"] = _is_loop_running(profile_name)
+            return out
+
         file_state = read_dashboard_state(log_dir)
         live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
         prefer_live_phase3 = _dashboard_state_is_phase3(file_state) or _dashboard_state_is_phase3(live)
@@ -4895,7 +4952,9 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
                 result["data_source"] = "live_phase3" if prefer_live_phase3 else "live_fallback"
                 result["loop_log"] = file_state.get("loop_log", result.get("loop_log", []))
             result["positions"] = _enrich_phase3_rows(list(result.get("positions") or []))
-            return _strip_trial10_directional_cap_filter(result)
+            out = _strip_trial10_directional_cap_filter(result)
+            _lean_dashboard_cache[lk] = (_time.monotonic(), dict(out))
+            return out
 
         if "error" not in live:
             live["stale"] = True
@@ -4910,9 +4969,11 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
             except Exception:
                 live["loop_log"] = []
             live["positions"] = _enrich_phase3_rows(list(live.get("positions") or []))
-            return _strip_trial10_directional_cap_filter(live)
+            out = _strip_trial10_directional_cap_filter(live)
+            _lean_dashboard_cache[lk] = (_time.monotonic(), dict(out))
+            return out
 
-        return _strip_trial10_directional_cap_filter({
+        out = _strip_trial10_directional_cap_filter({
             "timestamp_utc": None,
             "preset_name": "",
             "mode": "DISARMED",
@@ -4930,6 +4991,8 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
             "stale_age_seconds": None,
             "data_source": "none",
         })
+        _lean_dashboard_cache[lk] = (_time.monotonic(), dict(out))
+        return out
 
     # Legacy behavior (opt-in): live + file merge.
     now = _time.monotonic()

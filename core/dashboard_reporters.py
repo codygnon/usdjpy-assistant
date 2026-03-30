@@ -2138,6 +2138,110 @@ def _phase3_defended_context_items(active_preset_name: str | None, cfg: dict[str
         items.append(ContextItem("T3 Scale", f"ambiguous/er_mid/der_pos:sell = {float(t3_scale):.2f}x", "frozen"))
     return items
 
+
+def _phase3_additive_payload(eval_result: Optional[dict], phase3_state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    fallback_eval = phase3_state.get("last_phase3_eval", {}) if isinstance(phase3_state.get("last_phase3_eval"), dict) else {}
+    envelope = {}
+    if isinstance(eval_result, dict):
+        envelope = dict(eval_result.get("phase3_additive_envelope") or {})
+    if not envelope:
+        envelope = dict(fallback_eval.get("additive_envelope") or {})
+    truth = {}
+    if isinstance(eval_result, dict):
+        truth = dict(eval_result.get("phase3_additive_truth") or {})
+    if not truth:
+        truth = dict(fallback_eval.get("additive_truth") or {})
+    return envelope, truth
+
+
+def _collect_phase3_additive_context(
+    *,
+    tick: Any,
+    pip_size: float,
+    eval_result: Optional[dict],
+    phase3_state: dict,
+    active_preset_name: Optional[str],
+    cfg: dict[str, Any],
+) -> list[ContextItem]:
+    items: list[ContextItem] = []
+    items.extend(_phase3_defended_context_items(active_preset_name, cfg))
+
+    envelope, truth = _phase3_additive_payload(eval_result, phase3_state)
+    fallback_eval = phase3_state.get("last_phase3_eval", {}) if isinstance(phase3_state.get("last_phase3_eval"), dict) else {}
+    candidates = list(envelope.get("candidates") or [])
+    accepted = list(envelope.get("accepted") or [])
+    rejected = list(envelope.get("rejected") or [])
+    baseline_intents = list(envelope.get("baseline_intents") or [])
+    offensive_intents = list(envelope.get("offensive_intents") or [])
+    placements = list(envelope.get("placements") or [])
+
+    _cfg_hash = str(phase3_state.get("effective_phase3_config_hash") or "")
+    _cfg_date = str(phase3_state.get("effective_phase3_config_date") or "")
+    if _cfg_hash:
+        items.append(ContextItem("Config Hash", _cfg_hash[:12], "runtime"))
+    if _cfg_date:
+        items.append(ContextItem("Config Date", _cfg_date, "runtime"))
+    _arrival_lag = phase3_state.get("last_m1_arrival_lag_sec")
+    if _arrival_lag is not None:
+        try:
+            items.append(ContextItem("M1 Arrival Lag", f"{float(_arrival_lag):.1f}s", "runtime"))
+        except Exception:
+            pass
+
+    items.append(ContextItem("Additive Mode", str(fallback_eval.get("additive_mode") or truth.get("mode") or "defended_additive_runtime_v1"), "additive"))
+    items.append(ContextItem("Open Book", str(truth.get("open_book_count_before", 0)), "additive"))
+    items.append(ContextItem("Candidates", str(truth.get("candidate_count", len(candidates))), "additive"))
+    items.append(ContextItem("Accepted", str(truth.get("accepted_count", len(accepted))), "additive"))
+    items.append(ContextItem("Rejected", str(truth.get("rejected_count", len(rejected))), "additive"))
+
+    items.append(ContextItem("Baseline Intents", str(truth.get("baseline_candidate_count", len(baseline_intents))), "baseline"))
+    items.append(ContextItem("Baseline Accepted", str(truth.get("accepted_baseline_count", sum(1 for row in accepted if str(row.get('intent_source')) == 'baseline'))), "baseline"))
+
+    items.append(ContextItem("Offensive Intents", str(truth.get("offensive_candidate_count", len(offensive_intents))), "offensive"))
+    items.append(ContextItem("Offensive Accepted", str(truth.get("accepted_offensive_count", sum(1 for row in accepted if str(row.get('intent_source')) == 'offensive'))), "offensive"))
+    if offensive_intents:
+        labels = sorted({str(row.get("slice_id") or row.get("strategy_tag") or "") for row in offensive_intents if str(row.get("slice_id") or row.get("strategy_tag") or "").strip()})
+        if labels:
+            items.append(ContextItem("Active Slices", ", ".join(labels[:6]) + (" ..." if len(labels) > 6 else ""), "offensive"))
+
+    conflict_state = dict(envelope.get("conflict_state") or {})
+    items.append(ContextItem("Entries Today", str(conflict_state.get("entries_today_before", 0)), "conflict"))
+    items.append(ContextItem("Baseline This Bar", str(conflict_state.get("baseline_candidates", len(baseline_intents))), "conflict"))
+    items.append(ContextItem("Offensive This Bar", str(conflict_state.get("offensive_candidates", len(offensive_intents))), "conflict"))
+
+    margin_state = dict(envelope.get("margin_state") or {})
+    items.append(ContextItem("Placements", str(margin_state.get("placements", len(placements))), "margin"))
+
+    decision_reason = ""
+    dec = eval_result.get("decision") if isinstance(eval_result, dict) else None
+    if dec is not None and getattr(dec, "reason", None):
+        decision_reason = str(dec.reason)
+    if not decision_reason:
+        decision_reason = str(fallback_eval.get("reason") or "")
+    items.append(ContextItem("Last decision", decision_reason or "phase3_additive: waiting", "decision"))
+    items.append(ContextItem("Placed This Bar", "yes" if bool(fallback_eval.get("placed")) else "no", "decision"))
+
+    ownership_cell = ""
+    if isinstance(eval_result, dict):
+        ownership_cell = str((eval_result.get("phase3_ownership_audit") or {}).get("ownership_cell") or "")
+    if not ownership_cell:
+        ownership_cell = str(fallback_eval.get("ownership_cell") or "")
+    if ownership_cell:
+        items.append(ContextItem("Ownership Cell", ownership_cell, "decision"))
+
+    if rejected:
+        first_reject = dict(rejected[0] or {})
+        items.append(ContextItem("First Block", str(first_reject.get("reason") or "blocked"), "conflict"))
+    else:
+        items.append(ContextItem("First Block", "none", "conflict"))
+
+    items.append(ContextItem("Observer State", "session panels quarantined for defended additive runtime", "quarantine"))
+    items.append(ContextItem("Allowed Source", "additive envelope only", "quarantine"))
+    items.append(ContextItem("Bid", f"{tick.bid:.3f}", "price"))
+    items.append(ContextItem("Ask", f"{tick.ask:.3f}", "price"))
+    items.append(ContextItem("Spread", f"{(tick.ask - tick.bid) / pip_size:.1f}p", "price"))
+    return items
+
 def collect_phase3_context(
     policy: Any,
     data_by_tf: dict,
@@ -2148,6 +2252,21 @@ def collect_phase3_context(
     active_preset_name: Optional[str] = None,
 ) -> list[ContextItem]:
     """Collect context items for Phase 3 Integrated dashboard; varies by active session."""
+    try:
+        from core.phase3_integrated_engine import load_phase3_sizing_config as _lp3cfg
+        _p3_sizing = _lp3cfg(preset_id=active_preset_name) or {}
+    except Exception:
+        _p3_sizing = {}
+    if _is_defended_phase3_preset_name(active_preset_name):
+        return _collect_phase3_additive_context(
+            tick=tick,
+            pip_size=pip_size,
+            eval_result=eval_result,
+            phase3_state=phase3_state,
+            active_preset_name=active_preset_name,
+            cfg=_p3_sizing,
+        )
+
     from datetime import datetime, timezone
     from core.phase3_integrated_engine import (
         classify_session,
@@ -2167,12 +2286,6 @@ def collect_phase3_context(
 
     items: list[ContextItem] = []
     now_utc = datetime.now(timezone.utc)
-    # Load sizing config for session classification (matches engine's classify_session call)
-    try:
-        from core.phase3_integrated_engine import load_phase3_sizing_config as _lp3cfg
-        _p3_sizing = _lp3cfg() or {}
-    except Exception:
-        _p3_sizing = {}
     session = classify_session(now_utc, _p3_sizing)
     items.extend(_phase3_defended_context_items(active_preset_name, _p3_sizing))
 

@@ -196,12 +196,15 @@ def normalize_phase3_decision_envelope(
             "ownership_audit": ownership_audit or {},
             "overlay_state": dict(exec_result.get("phase3_overlay_state") or {}),
             "package_spec": phase3_package_spec_to_dict(spec),
+            "additive_envelope": dict(exec_result.get("phase3_additive_envelope") or {}),
+            "additive_rejected": list(exec_result.get("phase3_additive_rejected") or []),
         },
         raw_decision={
             "reason": reason,
             "attempted": attempted,
             "placed": placed,
             "strategy_tag": strategy_tag,
+            "placements": list(exec_result.get("placements") or []),
         },
     )
 
@@ -223,9 +226,11 @@ def evaluate_phase3_bar(
     preset_id: str | None = None,
 ) -> dict[str, Any]:
     from core.phase3_integrated_engine import (
+        ExecutionDecision,
         execute_phase3_integrated_policy_demo_only,
         load_phase3_sizing_config,
     )
+    from core.phase3_additive_runtime import execute_phase3_defended_additive_policy
 
     spec = load_phase3_package_spec(preset_id=preset_id)
     if sizing_config is not None:
@@ -244,22 +249,53 @@ def evaluate_phase3_bar(
     ownership_audit = compute_phase3_ownership_audit_for_data(data_by_tf, pip_size)
     overlay_state = build_phase3_overlay_state(effective_cfg)
 
-    exec_result = execute_phase3_integrated_policy_demo_only(
-        adapter=adapter,
-        profile=profile,
-        log_dir=log_dir,
-        policy=policy,
-        context=context,
-        data_by_tf=data_by_tf,
-        tick=tick,
-        mode=mode,
-        phase3_state=phase3_state,
-        store=store,
-        sizing_config=effective_cfg,
-        is_new_m1=is_new_m1,
-        ownership_audit=ownership_audit,
-        overlay_state=overlay_state,
-    )
+    normalized_preset_id = str(preset_id or "").strip().lower()
+    if normalized_preset_id == PHASE3_DEFENDED_PRESET_ID:
+        exec_result = execute_phase3_defended_additive_policy(
+            adapter=adapter,
+            profile=profile,
+            log_dir=log_dir,
+            policy=policy,
+            context=context,
+            data_by_tf=data_by_tf,
+            tick=tick,
+            mode=mode,
+            phase3_state=phase3_state,
+            store=store,
+            sizing_config=effective_cfg,
+            ownership_audit=ownership_audit,
+            overlay_state=overlay_state,
+        )
+    elif normalized_preset_id.startswith("phase3_integrated"):
+        exec_result = {
+            "decision": ExecutionDecision(
+                attempted=False,
+                placed=False,
+                reason="phase3: generic preset disabled during defended additive rebuild",
+                side=None,
+            ),
+            "phase3_state_updates": {},
+            "strategy_tag": None,
+            "placements": [],
+            "phase3_additive_mode": "generic_disabled",
+        }
+    else:
+        exec_result = execute_phase3_integrated_policy_demo_only(
+            adapter=adapter,
+            profile=profile,
+            log_dir=log_dir,
+            policy=policy,
+            context=context,
+            data_by_tf=data_by_tf,
+            tick=tick,
+            mode=mode,
+            phase3_state=phase3_state,
+            store=store,
+            sizing_config=effective_cfg,
+            is_new_m1=is_new_m1,
+            ownership_audit=ownership_audit,
+            overlay_state=overlay_state,
+        )
     exec_result["phase3_ownership_audit"] = ownership_audit
     exec_result["phase3_overlay_state"] = overlay_state
     exec_result["decision_envelope"] = asdict(

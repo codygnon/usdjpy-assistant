@@ -1,0 +1,174 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from core.phase3_additive_runtime import (
+    Phase3AdditiveCandidate,
+    _margin_state,
+    _split_candidate_intents,
+    execute_phase3_defended_additive_policy,
+)
+
+
+class _Adapter:
+    def __init__(self):
+        self.orders = []
+
+    def is_demo(self):
+        return True
+
+    def get_account_info(self):
+        return SimpleNamespace(balance=100000.0, equity=100000.0, margin_used=0.0)
+
+    def place_order(self, *, symbol, side, lots, stop_price, target_price, comment):
+        self.orders.append(
+            {
+                "symbol": symbol,
+                "side": side,
+                "lots": lots,
+                "stop_price": stop_price,
+                "target_price": target_price,
+                "comment": comment,
+            }
+        )
+        return SimpleNamespace(order_id=len(self.orders), deal_id=len(self.orders), order_retcode=0, fill_price=None)
+
+    def get_position_id_from_order(self, order_id: int):
+        return int(order_id)
+
+    def get_position_id_from_deal(self, deal_id: int):
+        return int(deal_id)
+
+
+class _Store:
+    def list_open_trades(self, profile_name: str):
+        return []
+
+
+def test_defended_additive_runtime_blocks_generic_preset():
+    adapter = _Adapter()
+    profile = SimpleNamespace(active_preset_name="phase3_integrated_usd_jpy", profile_name="demo", name="demo", symbol="USDJPY", pip_size=0.01)
+    policy = SimpleNamespace(id="phase3_integrated_v14")
+    result = execute_phase3_defended_additive_policy(
+        adapter=adapter,
+        profile=profile,
+        log_dir=None,
+        policy=policy,
+        context={},
+        data_by_tf={},
+        tick=SimpleNamespace(bid=159.5, ask=159.51),
+        mode="ARMED_AUTO_DEMO",
+        phase3_state={},
+        store=_Store(),
+        sizing_config={},
+        ownership_audit={},
+        overlay_state={},
+    )
+    assert result["decision"].placed is False
+    assert "generic phase3 preset disabled" in result["decision"].reason
+
+
+def test_margin_state_honors_max_lot_cap():
+    spec = SimpleNamespace(strict_policy={"margin_leverage": 33.3, "max_lot_per_trade": 1.0})
+    state = _margin_state(_Adapter(), spec, 2.0)
+    assert state.blocked is True
+    assert state.reason == "lot_cap>1.00"
+
+
+def test_defended_additive_runtime_places_accepted_candidate(monkeypatch):
+    import core.phase3_integrated_engine as engine
+
+    def _tokyo(*, adapter, profile, policy, data_by_tf, tick, mode, phase3_state, store=None, sizing_config=None, now_utc=None, ownership_audit=None, overlay_state=None, base_state_updates=None):
+        dec = engine.ExecutionDecision(attempted=True, placed=True, reason="phase3:v14 buy", side="buy", order_retcode=0, order_id=1, deal_id=1)
+        return {
+            "decision": dec,
+            "strategy_tag": "phase3:v14_mean_reversion@ambiguous/er_mid/der_pos",
+            "sl_price": 159.4,
+            "tp1_price": 159.7,
+            "entry_price": 159.55,
+            "units": 250000,
+            "phase3_state_updates": {"session_tokyo_2026-03-30": {"trade_count": 1}},
+        }
+
+    def _no_trade(**kwargs):
+        return {
+            "decision": engine.ExecutionDecision(attempted=False, placed=False, reason="none", side=None),
+            "strategy_tag": None,
+            "phase3_state_updates": {},
+        }
+
+    monkeypatch.setattr(engine, "execute_tokyo_v14_entry", _tokyo)
+    monkeypatch.setattr(engine, "execute_london_v2_entry", _no_trade)
+    monkeypatch.setattr(engine, "execute_v44_ny_entry", _no_trade)
+
+    adapter = _Adapter()
+    profile = SimpleNamespace(active_preset_name="phase3_integrated_v7_defended", profile_name="demo", name="demo", symbol="USDJPY", pip_size=0.01)
+    policy = SimpleNamespace(id="phase3_integrated_v7_defended")
+    result = execute_phase3_defended_additive_policy(
+        adapter=adapter,
+        profile=profile,
+        log_dir=None,
+        policy=policy,
+        context={},
+        data_by_tf={},
+        tick=SimpleNamespace(bid=159.54, ask=159.55),
+        mode="ARMED_AUTO_DEMO",
+        phase3_state={},
+        store=_Store(),
+        sizing_config={},
+        ownership_audit={"ownership_cell": "ambiguous/er_mid/der_pos"},
+        overlay_state={},
+    )
+    assert result["decision"].placed is True
+    assert len(result["placements"]) == 1
+    assert adapter.orders[0]["side"] == "buy"
+    assert result["phase3_additive_truth"]["accepted_count"] == 1
+
+
+def test_split_candidate_intents_distinguishes_baseline_and_offensive() -> None:
+    spec = SimpleNamespace(base_cell_scales={"T3_ambig_mid_pos_sell": 0.25})
+    candidates = [
+        Phase3AdditiveCandidate(
+            identity="tokyo-sell",
+            intent_source="reconstructed_family_candidate",
+            slice_id=None,
+            strategy_tag="phase3:v14_mean_reversion@ambiguous/er_mid/der_pos",
+            strategy_family="v14",
+            side="sell",
+            ownership_cell="ambiguous/er_mid/der_pos",
+            entry_time_utc="2026-03-30T16:00:00+00:00",
+            units=25000,
+            lots=0.25,
+            entry_price=159.55,
+            sl_price=159.70,
+            tp1_price=159.40,
+            reason="tokyo sell",
+        ),
+        Phase3AdditiveCandidate(
+            identity="ny-buy",
+            intent_source="reconstructed_family_candidate",
+            slice_id=None,
+            strategy_tag="phase3:v44_ny:normal@breakout/er_mid/der_pos",
+            strategy_family="v44_ny",
+            side="buy",
+            ownership_cell="breakout/er_mid/der_pos",
+            entry_time_utc="2026-03-30T14:00:00+00:00",
+            units=100000,
+            lots=1.0,
+            entry_price=159.55,
+            sl_price=159.40,
+            tp1_price=159.80,
+            reason="ny buy",
+        ),
+    ]
+
+    baseline_intents, offensive_intents, baseline_candidates, offensive_candidates = _split_candidate_intents(candidates, spec)
+
+    assert len(offensive_intents) == 1
+    assert offensive_intents[0].slice_id == "T3_ambig_mid_pos_sell"
+    assert len(offensive_candidates) == 1
+    assert offensive_candidates[0].intent_source == "offensive"
+    assert len(baseline_intents) == 1
+    assert baseline_intents[0].strategy_tag == "phase3:v44_ny:normal@breakout/er_mid/der_pos"
+    assert len(baseline_candidates) == 1
+    assert baseline_candidates[0].intent_source == "baseline"

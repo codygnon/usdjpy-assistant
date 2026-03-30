@@ -2729,6 +2729,19 @@ def _append_phase3_minute_diagnostics(
                 f"\tv44_tp2_pips={exit_plan.get('tp2_pips', '')}"
                 f"\tv44_trail_buffer_pips={exit_plan.get('trail_buffer_pips', '')}"
             )
+        additive_truth = exec_result.get("phase3_additive_truth") if isinstance(exec_result, dict) else None
+        additive_extra = ""
+        if isinstance(additive_truth, dict):
+            extras = []
+            for key in (
+                "open_book_count_before",
+                "candidate_count",
+                "accepted_count",
+                "rejected_count",
+            ):
+                if additive_truth.get(key) not in (None, ""):
+                    extras.append(f"additive_{key}={additive_truth.get(key)}")
+            additive_extra = "\t" + "\t".join(extras) if extras else ""
 
         ts = pd.Timestamp.now(tz="UTC").isoformat()
         line = (
@@ -2737,7 +2750,7 @@ def _append_phase3_minute_diagnostics(
             f"blocking={blocking_count}\t"
             f"filters=[{'; '.join(blocking_details)}]\treason={reason!r}"
             f"\townership_cell={audit_cell}\tregime={audit_regime}\tdefensive_flags={audit_flags}"
-            f"{session_extra}{parity_extra}{exit_extra}\n"
+            f"{session_extra}{parity_extra}{exit_extra}{additive_extra}\n"
         )
         diag_path = log_dir / "phase3_minute_diagnostics.log"
         with open(diag_path, "a", encoding="utf-8") as f:
@@ -6338,6 +6351,9 @@ def main() -> None:
                         "ownership_cell": str((ownership_audit or {}).get("ownership_cell") or "") if isinstance(ownership_audit, dict) else "",
                         "regime_label": str((ownership_audit or {}).get("regime_label") or "") if isinstance(ownership_audit, dict) else "",
                         "defensive_flags": _defensive_flags,
+                        "additive_mode": str(exec_result.get("phase3_additive_mode") or ""),
+                        "additive_truth": dict(exec_result.get("phase3_additive_truth") or {}),
+                        "additive_envelope": dict(exec_result.get("phase3_additive_envelope") or {}),
                     }
                     if phase3_state.get("last_phase3_eval") != _last_phase3_eval:
                         phase3_state["last_phase3_eval"] = _last_phase3_eval
@@ -6353,62 +6369,70 @@ def main() -> None:
                             print(f"[{profile.profile_name}] Failed to persist phase3_state: {e}")
 
                     if dec.attempted:
-                        if dec.placed:
-                            side = dec.side or "buy"
-                            fill_price = getattr(dec, "fill_price", None)
-                            entry_price = float(fill_price) if fill_price is not None else (tick.ask if side == "buy" else tick.bid)
-                            sl_price = exec_result.get("sl_price")
-                            tp1_price = exec_result.get("tp1_price")
-                            risk_usd_planned = exec_result.get("risk_usd_planned")
-                            _p3_units = exec_result.get("units")
-                            _p3_size_lots = (float(_p3_units) / 100_000.0) if _p3_units is not None and int(_p3_units) > 0 else None
-                            _phase3_open_snapshot = _phase3_trade_open_context_snapshot(
-                                strategy_tag=strategy_tag,
-                                entry_price=entry_price,
-                                sl_price=sl_price,
-                                tp1_price=tp1_price,
-                                sizing_config=phase3_sizing if phase3_sizing else None,
-                                pip_size=float(getattr(profile, "pip_size", 0.01) or 0.01),
-                                exec_result=exec_result,
-                            )
-                            _v44_exit_plan = (exec_result.get("v44_exit_plan") or {}) if isinstance(exec_result, dict) else {}
-                            print(f"[{profile.profile_name}] TRADE PLACED: phase3_integrated:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
-                            _entry_session = None
-                            if strategy_tag:
-                                if "v14" in strategy_tag or "mean_reversion" in strategy_tag:
-                                    _entry_session = "tokyo"
-                                elif "london" in strategy_tag:
-                                    _entry_session = "london"
-                                elif "v44_ny" in strategy_tag:
-                                    _entry_session = "ny"
-                            _insert_trade_for_policy(
-                                profile=profile,
-                                adapter=adapter,
-                                store=store,
-                                policy_type="phase3_integrated",
-                                policy_id=pol.id,
-                                side=side,
-                                entry_price=entry_price,
-                                dec=dec,
-                                stop_price=sl_price,
-                                target_price=tp1_price,
-                                size_lots=_p3_size_lots,
-                                entry_type=strategy_tag,
-                                entry_session=_entry_session,
-                                risk_usd_planned=risk_usd_planned,
-                                managed_tp1_pips=_phase3_open_snapshot.get("tp1_pips"),
-                                managed_tp1_close_pct=_v44_exit_plan.get("tp1_close_pct"),
-                                managed_be_plus_pips=_v44_exit_plan.get("be_offset_pips"),
-                                managed_trail_mode=str(_v44_exit_plan.get("mode") or ""),
-                            )
-                            _invalidate_trades_df_cache()
-                            _append_trade_open_event(
-                                log_dir, f"phase3_integrated:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
-                                side, entry_price,
-                                trigger_type=strategy_tag or "",
-                                entry_type=strategy_tag or "",
-                                context_snapshot=_phase3_open_snapshot,
-                            )
+                        _phase3_placements = exec_result.get("placements")
+                        if not isinstance(_phase3_placements, list) or not _phase3_placements:
+                            _phase3_placements = [exec_result] if dec.placed else []
+                        if _phase3_placements:
+                            for _p3_placement in _phase3_placements:
+                                _p3_dec = _p3_placement.get("decision") if isinstance(_p3_placement, dict) else None
+                                if not getattr(_p3_dec, "placed", False):
+                                    continue
+                                _p3_tag = _p3_placement.get("strategy_tag")
+                                side = getattr(_p3_dec, "side", None) or "buy"
+                                fill_price = getattr(_p3_dec, "fill_price", None)
+                                entry_price = float(fill_price) if fill_price is not None else (tick.ask if side == "buy" else tick.bid)
+                                sl_price = _p3_placement.get("sl_price")
+                                tp1_price = _p3_placement.get("tp1_price")
+                                risk_usd_planned = _p3_placement.get("risk_usd_planned")
+                                _p3_units = _p3_placement.get("units")
+                                _p3_size_lots = (float(_p3_units) / 100_000.0) if _p3_units is not None and int(_p3_units) > 0 else None
+                                _phase3_open_snapshot = _phase3_trade_open_context_snapshot(
+                                    strategy_tag=_p3_tag,
+                                    entry_price=entry_price,
+                                    sl_price=sl_price,
+                                    tp1_price=tp1_price,
+                                    sizing_config=phase3_sizing if phase3_sizing else None,
+                                    pip_size=float(getattr(profile, "pip_size", 0.01) or 0.01),
+                                    exec_result=_p3_placement if isinstance(_p3_placement, dict) else exec_result,
+                                )
+                                _v44_exit_plan = (_p3_placement.get("v44_exit_plan") or {}) if isinstance(_p3_placement, dict) else {}
+                                print(f"[{profile.profile_name}] TRADE PLACED: phase3_integrated:{pol.id} | side={side} | entry={entry_price:.3f} | {getattr(_p3_dec, 'reason', dec.reason)}")
+                                _entry_session = None
+                                if _p3_tag:
+                                    if "v14" in _p3_tag or "mean_reversion" in _p3_tag:
+                                        _entry_session = "tokyo"
+                                    elif "london" in _p3_tag:
+                                        _entry_session = "london"
+                                    elif "v44_ny" in _p3_tag:
+                                        _entry_session = "ny"
+                                _insert_trade_for_policy(
+                                    profile=profile,
+                                    adapter=adapter,
+                                    store=store,
+                                    policy_type="phase3_integrated",
+                                    policy_id=pol.id,
+                                    side=side,
+                                    entry_price=entry_price,
+                                    dec=_p3_dec,
+                                    stop_price=sl_price,
+                                    target_price=tp1_price,
+                                    size_lots=_p3_size_lots,
+                                    entry_type=_p3_tag,
+                                    entry_session=_entry_session,
+                                    risk_usd_planned=risk_usd_planned,
+                                    managed_tp1_pips=_phase3_open_snapshot.get("tp1_pips"),
+                                    managed_tp1_close_pct=_v44_exit_plan.get("tp1_close_pct"),
+                                    managed_be_plus_pips=_v44_exit_plan.get("be_offset_pips"),
+                                    managed_trail_mode=str(_v44_exit_plan.get("mode") or ""),
+                                )
+                                _invalidate_trades_df_cache()
+                                _append_trade_open_event(
+                                    log_dir, f"phase3_integrated:{pol.id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}",
+                                    side, entry_price,
+                                    trigger_type=_p3_tag or "",
+                                    entry_type=_p3_tag or "",
+                                    context_snapshot=_phase3_open_snapshot,
+                                )
                         else:
                             print(f"[{profile.profile_name}] phase3 {pol.id} mode={mode} -> {dec.reason}")
                     if phase3_is_new or args.once:

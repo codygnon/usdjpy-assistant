@@ -301,6 +301,19 @@ class SqliteStore:
             df = pd.read_sql_query("SELECT * FROM executions WHERE profile=? ORDER BY timestamp_utc", conn, params=[profile])
         return df
 
+    def read_executions_tail_df(self, profile: str, limit: int = 50000) -> pd.DataFrame:
+        """Last N execution rows by timestamp_utc (newest first in SQL, returned chronological)."""
+        limit = max(1, min(int(limit), 200_000))
+        with self.connect() as conn:
+            df = pd.read_sql_query(
+                "SELECT * FROM executions WHERE profile=? ORDER BY timestamp_utc DESC LIMIT ?",
+                conn,
+                params=[profile, limit],
+            )
+        if df.empty:
+            return df
+        return df.iloc[::-1].reset_index(drop=True)
+
     def insert_execution(self, row: dict[str, Any]) -> None:
         cols = list(row.keys())
         q = f"INSERT OR REPLACE INTO executions ({', '.join(cols)}) VALUES ({', '.join(['?'] * len(cols))})"

@@ -176,6 +176,12 @@ const CONTEXT_CATEGORY_LABELS: Record<string, string> = {
   decision: 'Decision State',
   session: 'Session',
   frozen: 'Frozen Package',
+  additive: 'Additive Book',
+  baseline: 'Baseline Book',
+  offensive: 'Offensive Book',
+  conflict: 'Conflict Policy',
+  margin: 'Margin State',
+  quarantine: 'Quarantine',
   v14: 'Tokyo / V14',
   london: 'London / V2',
   v44: 'New York / V44',
@@ -189,6 +195,10 @@ function isPhase3PresetName(name: string | null | undefined): boolean {
 function isDefendedPhase3Preset(name: string | null | undefined): boolean {
   const normalized = String(name || '').trim().toLowerCase();
   return normalized === PHASE3_DEFENDED_PRESET_ID || normalized.startsWith(`${PHASE3_DEFENDED_PRESET_ID} `);
+}
+
+function hasAdditivePayload(items: ContextItem[]): boolean {
+  return items.some((item) => ['additive', 'baseline', 'offensive', 'conflict', 'margin', 'quarantine'].includes(item.category));
 }
 
 function hasPhase3Payload(context: ContextItem[], filters: FilterReport[]): boolean {
@@ -255,6 +265,69 @@ function ContextSection({
 }
 
 function Phase3StatusStrip({ items, presetName }: { items: ContextItem[]; presetName: string }) {
+  if (isDefendedPhase3Preset(presetName) && hasAdditivePayload(items)) {
+    const statusTiles = [
+      {
+        label: 'Package',
+        value: getContextValue(items, 'Frozen Package', 'Phase 3 Frozen V7 Defended'),
+        accent: colors.blue,
+      },
+      {
+        label: 'Additive Mode',
+        value: getContextValue(items, 'Additive Mode', 'waiting'),
+        accent: colors.amber,
+      },
+      {
+        label: 'Open Book',
+        value: getContextValue(items, 'Open Book', '0'),
+        accent: colors.textSecondary,
+      },
+      {
+        label: 'Baseline',
+        value: getContextValue(items, 'Baseline Intents', '0'),
+        accent: colors.green,
+      },
+      {
+        label: 'Offensive',
+        value: getContextValue(items, 'Offensive Intents', '0'),
+        accent: colors.blue,
+      },
+      {
+        label: 'First Block',
+        value: getContextValue(items, 'First Block', 'none'),
+        accent: colors.red,
+      },
+    ];
+    return (
+      <div style={{
+        backgroundColor: colors.panel,
+        borderRadius: 8,
+        border: `1px solid ${colors.border}`,
+        padding: 12,
+      }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: colors.textSecondary, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>
+          Phase 3 Status
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+          {statusTiles.map((tile) => (
+            <div key={tile.label} style={{
+              padding: 10,
+              borderRadius: 8,
+              backgroundColor: colors.panelHover,
+              border: `1px solid ${tile.accent}44`,
+            }}>
+              <div style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.8 }}>
+                {tile.label}
+              </div>
+              <div style={{ fontSize: 13, color: tile.accent, fontWeight: 700, ...mono }}>
+                {tile.value}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
   const statusTiles = [
     {
       label: 'Package',
@@ -324,6 +397,52 @@ function Phase3StatusStrip({ items, presetName }: { items: ContextItem[]; preset
 }
 
 function Phase3ContextPanel({ items, presetName }: { items: ContextItem[]; presetName: string }) {
+  if (isDefendedPhase3Preset(presetName) && hasAdditivePayload(items)) {
+    const runtimeItems = getContextItemsByCategory(items, 'runtime');
+    const frozenItems = getContextItemsByCategory(items, 'frozen');
+    const decisionItems = getContextItemsByCategory(items, 'decision');
+    const additiveItems = getContextItemsByCategory(items, 'additive');
+    const baselineItems = getContextItemsByCategory(items, 'baseline');
+    const offensiveItems = getContextItemsByCategory(items, 'offensive');
+    const conflictItems = getContextItemsByCategory(items, 'conflict');
+    const marginItems = getContextItemsByCategory(items, 'margin');
+    const quarantineItems = getContextItemsByCategory(items, 'quarantine');
+    return (
+      <div style={{
+        backgroundColor: colors.panel,
+        borderRadius: 8,
+        padding: 14,
+        border: `1px solid ${colors.border}`,
+        minHeight: 120,
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 1 }}>
+            Phase 3 Additive Context
+          </div>
+          <div style={{
+            padding: '4px 10px',
+            borderRadius: 999,
+            fontSize: 11,
+            fontWeight: 700,
+            color: colors.green,
+            backgroundColor: `${colors.green}18`,
+            border: `1px solid ${colors.green}44`,
+          }}>
+            Additive-Truth View
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+          <ContextSection title="Package" items={[...frozenItems, ...runtimeItems.filter((item) => item.key === 'Config Hash' || item.key === 'Config Date')]} emptyLabel="No package metadata yet" />
+          <ContextSection title="Decision State" items={decisionItems} emptyLabel="No additive decision yet" />
+          <ContextSection title="Additive Book" items={additiveItems} emptyLabel="No additive book snapshot yet" />
+          <ContextSection title="Baseline Book" items={baselineItems} emptyLabel="No baseline intent data yet" />
+          <ContextSection title="Offensive Book" items={offensiveItems} emptyLabel="No offensive intent data yet" />
+          <ContextSection title="Conflict / Margin" items={[...conflictItems, ...marginItems]} emptyLabel="No conflict or margin diagnostics yet" />
+          <ContextSection title="Quarantine" items={quarantineItems} emptyLabel="Legacy session panels are not available for defended additive mode." />
+        </div>
+      </div>
+    );
+  }
   const runtimeItems = getContextItemsByCategory(items, 'runtime');
   const frozenItems = getContextItemsByCategory(items, 'frozen');
   const decisionItems = getContextItemsByCategory(items, 'decision');
@@ -1201,7 +1320,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
   const [dashboardOffline, setDashboardOffline] = useState(false);
   const [trail, setTrail] = useState<Array<{ time: string; spread: number; blocked: number; trend: string }>>([]);
   const [trailExpanded, setTrailExpanded] = useState(false);
-  const [phase3Tab, setPhase3Tab] = useState<'overview' | 'tokyo' | 'london' | 'ny' | 'defensive' | 'paper'>('overview');
+  const [phase3Tab, setPhase3Tab] = useState<'overview' | 'additive' | 'tokyo' | 'london' | 'ny' | 'defensive' | 'paper'>('overview');
   const [phase3Provenance, setPhase3Provenance] = useState<Phase3Provenance | null>(null);
   const [phase3Acceptance, setPhase3Acceptance] = useState<Phase3AcceptanceSummary | null>(null);
   const [phase3Monitor, setPhase3Monitor] = useState<Phase3DefensiveMonitor | null>(null);
@@ -1406,7 +1525,13 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     return () => { mounted = false; clearInterval(id); };
   }, [isPageVisible, isPhase3Preset, profileName, profilePath]);
 
-  const tabButtons: Array<{ id: 'overview' | 'tokyo' | 'london' | 'ny' | 'defensive' | 'paper'; label: string }> = [
+  const defendedAdditive = isDefendedPhase3Preset(presetName) && hasAdditivePayload(context);
+  const tabButtons: Array<{ id: 'overview' | 'additive' | 'tokyo' | 'london' | 'ny' | 'defensive' | 'paper'; label: string }> = defendedAdditive ? [
+    { id: 'overview', label: 'Overview' },
+    { id: 'additive', label: 'Additive Book' },
+    { id: 'defensive', label: 'Defensive' },
+    { id: 'paper', label: 'Paper Acceptance' },
+  ] : [
     { id: 'overview', label: 'Overview' },
     { id: 'tokyo', label: 'Tokyo / V14' },
     { id: 'london', label: 'London / V2' },
@@ -1417,6 +1542,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
 
   const filterContextForTab = (tab: typeof phase3Tab): ContextItem[] => {
     if (tab === 'overview') return context;
+    if (tab === 'additive') return context.filter((item) => ['runtime', 'decision', 'frozen', 'additive', 'baseline', 'offensive', 'conflict', 'margin', 'quarantine'].includes(item.category));
     if (tab === 'tokyo') return context.filter((item) => ['runtime', 'decision', 'session', 'frozen', 'v14'].includes(item.category));
     if (tab === 'london') return context.filter((item) => ['runtime', 'decision', 'session', 'frozen', 'london'].includes(item.category));
     if (tab === 'ny') return context.filter((item) => ['runtime', 'decision', 'session', 'frozen', 'v44'].includes(item.category));
@@ -1441,6 +1567,24 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
         isPhase3
       />
       <TradeLog title="Closed Trades (Last 30)" events={recentClosedEvents} />
+      <ExecutionLog executions={executions} />
+    </>
+  );
+
+  const renderPhase3AdditiveTab = () => (
+    <>
+      <Phase3DecisionSample decisions={phase3Decisions} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <Phase3ContextPanel items={filterContextForTab('additive')} presetName={presetName} />
+        <TradeLog title="Additive Placements" events={recentOpenEvents} />
+      </div>
+      <FilterTable
+        filters={filters}
+        candidateSide={dashState?.entry_candidate_side ?? null}
+        candidateTrigger={dashState?.entry_candidate_trigger ?? null}
+        lastBlockReason={dashState?.last_block_reason ?? null}
+        isPhase3
+      />
       <ExecutionLog executions={executions} />
     </>
   );
@@ -1492,6 +1636,8 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     switch (phase3Tab) {
       case 'overview':
         return renderPhase3Overview();
+      case 'additive':
+        return renderPhase3AdditiveTab();
       case 'tokyo':
         return renderPhase3SessionTab('tokyo');
       case 'london':

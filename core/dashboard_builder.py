@@ -337,6 +337,100 @@ def _phase3_dict_to_filter_report(d: dict) -> FilterReport:
     )
 
 
+def _phase3_additive_payload(eval_result: Optional[dict], phase3_state: Optional[dict]) -> tuple[dict[str, Any], dict[str, Any]]:
+    fallback_eval = phase3_state.get("last_phase3_eval", {}) if isinstance(phase3_state, dict) and isinstance(phase3_state.get("last_phase3_eval"), dict) else {}
+    envelope = dict((eval_result or {}).get("phase3_additive_envelope") or {})
+    if not envelope:
+        envelope = dict(fallback_eval.get("additive_envelope") or {})
+    truth = dict((eval_result or {}).get("phase3_additive_truth") or {})
+    if not truth:
+        truth = dict(fallback_eval.get("additive_truth") or {})
+    return envelope, truth
+
+
+def _phase3_additive_filter_reports(
+    active_preset_name: str | None,
+    eval_result: Optional[dict],
+    phase3_state: Optional[dict],
+) -> list[FilterReport]:
+    if not (str(active_preset_name or "").strip().lower() == FROZEN_PHASE3_DEFENDED_PRESET_ID or str(active_preset_name or "").strip().lower().startswith(f"{FROZEN_PHASE3_DEFENDED_PRESET_ID} ")):
+        return []
+    envelope, truth = _phase3_additive_payload(eval_result, phase3_state)
+    accepted = list(envelope.get("accepted") or [])
+    rejected = list(envelope.get("rejected") or [])
+    offensive_intents = list(envelope.get("offensive_intents") or [])
+    filters = [
+        FilterReport(
+            filter_id="phase3_additive_mode",
+            display_name="Additive Runtime",
+            enabled=True,
+            is_clear=True,
+            current_value="defended_additive_runtime_v1",
+            explanation="Defended preset is using additive-book routing instead of session-first routing.",
+        ),
+        FilterReport(
+            filter_id="phase3_additive_book",
+            display_name="Additive Book",
+            enabled=True,
+            is_clear=True,
+            current_value=f"open={truth.get('open_book_count_before', 0)} / candidates={truth.get('candidate_count', 0)} / accepted={truth.get('accepted_count', len(accepted))}",
+            explanation="Baseline and offensive intents are counted from the additive envelope.",
+        ),
+        FilterReport(
+            filter_id="phase3_additive_baseline",
+            display_name="Baseline Intents",
+            enabled=True,
+            is_clear=True,
+            current_value=f"{truth.get('baseline_candidate_count', len(envelope.get('baseline_intents') or []))} generated",
+            explanation="Baseline candidates bypass old session-routed filter panels.",
+        ),
+        FilterReport(
+            filter_id="phase3_additive_offensive",
+            display_name="Offensive Slices",
+            enabled=True,
+            is_clear=True,
+            current_value=f"{truth.get('offensive_candidate_count', len(offensive_intents))} generated / {truth.get('accepted_offensive_count', sum(1 for row in accepted if str(row.get('intent_source')) == 'offensive'))} accepted",
+            explanation="Offensive slice admission now comes from the additive envelope, not session-only filters.",
+        ),
+    ]
+    if rejected:
+        first = dict(rejected[0] or {})
+        filters.append(
+            FilterReport(
+                filter_id="phase3_additive_first_block",
+                display_name="First Additive Block",
+                enabled=True,
+                is_clear=False,
+                current_value=str(first.get("intent_source") or "blocked"),
+                threshold=str(first.get("slice_id") or ""),
+                block_reason=str(first.get("reason") or "blocked"),
+                explanation="This is the first additive reject recorded on the current bar.",
+            )
+        )
+    else:
+        filters.append(
+            FilterReport(
+                filter_id="phase3_additive_first_block",
+                display_name="First Additive Block",
+                enabled=True,
+                is_clear=True,
+                current_value="none",
+                explanation="No additive candidates were rejected on the current bar.",
+            )
+        )
+    filters.append(
+        FilterReport(
+            filter_id="phase3_additive_quarantine",
+            display_name="Legacy Session Panels",
+            enabled=True,
+            is_clear=True,
+            current_value="quarantined",
+            explanation="Tokyo/London/NY session-routed panels are quarantined for the defended additive runtime until they are rebuilt from additive truth.",
+        )
+    )
+    return filters
+
+
 def build_dashboard_filters(
     *,
     profile: Any,
@@ -877,6 +971,16 @@ def build_dashboard_filters(
                 pass
 
     elif policy_type == "phase3_integrated" and policy is not None:
+        additive_filters = _phase3_additive_filter_reports(getattr(profile, "active_preset_name", None), eval_result, phase3_state)
+        if additive_filters:
+            cfg = {}
+            try:
+                from core.phase3_integrated_engine import load_phase3_sizing_config
+                cfg = load_phase3_sizing_config(preset_id=getattr(profile, "active_preset_name", None)) or {}
+            except Exception:
+                cfg = {}
+            additive_filters[:0] = _phase3_defended_filter_reports(getattr(profile, "active_preset_name", None), cfg or {})
+            return additive_filters
         from core.phase3_integrated_engine import (
             classify_session, compute_bb_width_regime, _compute_adx, _compute_atr,
             report_phase3_session, report_phase3_strategy, report_phase3_regime,
