@@ -3929,11 +3929,13 @@ const PHASE3_DEFENDED_PRESET_ID = 'phase3_integrated_v7_defended';
 const PHASE3_GENERIC_PRESET_ID = 'phase3_integrated_usd_jpy';
 
 function isPhase3DefendedPreset(presetId: string | null | undefined): boolean {
-  return String(presetId || '').trim().toLowerCase() === PHASE3_DEFENDED_PRESET_ID;
+  const normalized = String(presetId || '').trim().toLowerCase();
+  return normalized === PHASE3_DEFENDED_PRESET_ID || normalized.startsWith(`${PHASE3_DEFENDED_PRESET_ID} `);
 }
 
 function isPhase3GenericPreset(presetId: string | null | undefined): boolean {
-  return String(presetId || '').trim().toLowerCase() === PHASE3_GENERIC_PRESET_ID;
+  const normalized = String(presetId || '').trim().toLowerCase();
+  return normalized === PHASE3_GENERIC_PRESET_ID || normalized.startsWith(`${PHASE3_GENERIC_PRESET_ID} `);
 }
 
 function getPhase3PresetRuleChips(presetId: string): string[] {

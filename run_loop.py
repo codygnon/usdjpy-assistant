@@ -6093,10 +6093,37 @@ def main() -> None:
                     dec = exec_result["decision"]
                     p3_state_updates = exec_result.get("phase3_state_updates", {})
                     strategy_tag = exec_result.get("strategy_tag")
+                    ownership_audit = exec_result.get("phase3_ownership_audit") if isinstance(exec_result, dict) else None
 
-                    # Persist state updates
+                    _persist_phase3_state = False
                     if p3_state_updates:
                         phase3_state.update(p3_state_updates)
+                        _persist_phase3_state = True
+
+                    _defensive_flags = []
+                    if isinstance(ownership_audit, dict):
+                        if ownership_audit.get("defensive_global_standdown"):
+                            _defensive_flags.append("standdown")
+                        if ownership_audit.get("defensive_london_cluster_block"):
+                            _defensive_flags.append("ldn_cluster")
+                        if ownership_audit.get("defensive_v44_regime_block"):
+                            _defensive_flags.append("v44_regime")
+                    _last_phase3_eval = {
+                        "evaluated_at_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                        "strategy_tag": str(strategy_tag or ""),
+                        "reason": str(getattr(dec, "reason", "") or ""),
+                        "attempted": bool(getattr(dec, "attempted", False)),
+                        "placed": bool(getattr(dec, "placed", False)),
+                        "ownership_cell": str((ownership_audit or {}).get("ownership_cell") or "") if isinstance(ownership_audit, dict) else "",
+                        "regime_label": str((ownership_audit or {}).get("regime_label") or "") if isinstance(ownership_audit, dict) else "",
+                        "defensive_flags": _defensive_flags,
+                    }
+                    if phase3_state.get("last_phase3_eval") != _last_phase3_eval:
+                        phase3_state["last_phase3_eval"] = _last_phase3_eval
+                        _persist_phase3_state = True
+
+                    # Persist state updates
+                    if _persist_phase3_state:
                         try:
                             current_state_data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
                             current_state_data["phase3_state"] = phase3_state

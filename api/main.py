@@ -10,6 +10,7 @@ import re
 import signal
 import subprocess
 import sys
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -371,6 +372,90 @@ def _pick_best_trade_events_log_dir(profile_name: str, profile_path: Optional[st
             best_mtime = mt
             best_dir = d
     return best_dir
+
+
+def _strip_wrapped_quotes(value: str | None) -> str:
+    text = str(value or "").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
+        return text[1:-1]
+    return text
+
+
+def _parse_phase3_diag_filters(raw_filters: str | None) -> list[str]:
+    text = str(raw_filters or "").strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    if not text:
+        return []
+    return [part.strip() for part in text.split(";") if part.strip()]
+
+
+def _load_phase3_decision_rows_from_diagnostics(
+    log_dir: Path | None,
+    *,
+    days: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    if log_dir is None:
+        return []
+    diag_path = log_dir / "phase3_minute_diagnostics.log"
+    if not diag_path.exists():
+        return []
+
+    from datetime import timedelta
+
+    since_dt = datetime.now(timezone.utc) - timedelta(days=days)
+    recent_lines: deque[str] = deque(maxlen=limit)
+    try:
+        with diag_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if "bar=" not in line or "reason=" not in line:
+                    continue
+                recent_lines.append(line.rstrip("\n"))
+    except Exception:
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for raw_line in recent_lines:
+        parts = raw_line.split("\t")
+        if not parts:
+            continue
+        ts_raw = str(parts[0] or "").strip()
+        try:
+            ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if ts < since_dt:
+                continue
+        except Exception:
+            continue
+
+        fields: dict[str, str] = {}
+        for part in parts[1:]:
+            if "=" not in part:
+                continue
+            key, value = part.split("=", 1)
+            fields[key.strip()] = value.strip()
+
+        bar_time = str(fields.get("bar") or "").strip()
+        session = str(fields.get("session") or "").strip() or None
+        reason_text = _strip_wrapped_quotes(fields.get("reason"))
+        placed = str(fields.get("placed") or "0").strip() == "1"
+        blocking_ids = _parse_phase3_diag_filters(fields.get("filters"))
+        rows.append(
+            {
+                "timestamp_utc": ts.isoformat(),
+                "signal_id": f"eval:phase3_integrated:diag:{bar_time}" if bar_time else None,
+                "mode": None,
+                "attempted": 1 if placed or reason_text else 0,
+                "placed": 1 if placed else 0,
+                "reason": reason_text,
+                "reason_text": reason_text,
+                "blocking_filter_ids": blocking_ids,
+                "phase3_session": session,
+            }
+        )
+    return rows
 
 
 def _get_display_currency(profile: ProfileV1) -> tuple[str, float]:
@@ -1563,26 +1648,24 @@ def get_phase3_decisions(profile_name: str, days: int = 3, limit: int = 5000, pr
     active_profile_name = log_dir.name if log_dir is not None else profile_name
     store = _store_for(profile_name, log_dir=log_dir)
     df = store.read_executions_df(active_profile_name)
-    if df.empty:
-        return []
-    df = df.where(pd.notna(df), None)
-    if "signal_id" not in df.columns:
-        return []
-
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    df = df[df["timestamp_utc"] >= since]
-    df = df[df["signal_id"].astype(str).str.startswith("eval:phase3_integrated:")]
-    df = df.tail(limit)
-    cfg = _load_phase3_sizing_cfg_api()
-    rows = df.to_dict(orient="records")
     enriched: list[dict[str, Any]] = []
-    for row in rows:
-        out = dict(row)
-        out["phase3_session"] = infer_phase3_session_from_signal_id(out.get("signal_id"), cfg)
-        out["blocking_filter_ids"] = parse_phase3_blocking_filter_ids(out.get("reason"))
-        out["reason_text"] = extract_phase3_reason_text(out.get("reason"))
-        enriched.append(out)
-    return enriched
+    if not df.empty and "signal_id" in df.columns:
+        df = df.where(pd.notna(df), None)
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        df = df[df["timestamp_utc"] >= since]
+        df = df[df["signal_id"].astype(str).str.startswith("eval:phase3_integrated:")]
+        df = df.tail(limit)
+        cfg = _load_phase3_sizing_cfg_api()
+        rows = df.to_dict(orient="records")
+        for row in rows:
+            out = dict(row)
+            out["phase3_session"] = infer_phase3_session_from_signal_id(out.get("signal_id"), cfg)
+            out["blocking_filter_ids"] = parse_phase3_blocking_filter_ids(out.get("reason"))
+            out["reason_text"] = extract_phase3_reason_text(out.get("reason"))
+            enriched.append(out)
+    if enriched:
+        return enriched
+    return _load_phase3_decision_rows_from_diagnostics(log_dir, days=days, limit=limit)
 
 
 @app.get("/api/data/{profile_name}/phase3-blockers-breakdown")
@@ -1600,34 +1683,33 @@ def get_phase3_blockers_breakdown(profile_name: str, days: int = 7, limit: int =
     active_profile_name = log_dir.name if log_dir is not None else profile_name
     store = _store_for(profile_name, log_dir=log_dir)
     df = store.read_executions_df(active_profile_name)
-    if df.empty or "reason" not in df.columns or "signal_id" not in df.columns:
-        return {}
-
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    df = df[df["timestamp_utc"] >= since]
-    df = df[df["signal_id"].astype(str).str.startswith("eval:phase3_integrated:")].tail(limit)
-    if df.empty:
-        return {}
-
     counts: dict[str, int] = {}
-    for r in df["reason"].tolist():
-        if r is None:
-            continue
-        s = str(r)
-        if "blocks=" not in s:
-            continue
-        try:
-            blocks_part = s.split("blocks=", 1)[1].strip()
-            # stop at next separator if present
-            for stop in (" | ", "\t", "\n"):
-                if stop in blocks_part:
-                    blocks_part = blocks_part.split(stop, 1)[0]
-            for bid in [b.strip() for b in blocks_part.split(",") if b.strip()]:
-                counts[bid] = int(counts.get(bid, 0)) + 1
-        except Exception:
-            continue
+    if not df.empty and "reason" in df.columns and "signal_id" in df.columns:
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        df = df[df["timestamp_utc"] >= since]
+        df = df[df["signal_id"].astype(str).str.startswith("eval:phase3_integrated:")].tail(limit)
+        for r in df["reason"].tolist():
+            if r is None:
+                continue
+            s = str(r)
+            if "blocks=" not in s:
+                continue
+            try:
+                blocks_part = s.split("blocks=", 1)[1].strip()
+                for stop in (" | ", "\t", "\n"):
+                    if stop in blocks_part:
+                        blocks_part = blocks_part.split(stop, 1)[0]
+                for bid in [b.strip() for b in blocks_part.split(",") if b.strip()]:
+                    counts[bid] = int(counts.get(bid, 0)) + 1
+            except Exception:
+                continue
+    if counts:
+        return dict(sorted(counts.items(), key=lambda kv: kv[1], reverse=True))
 
-    # Sort by count desc for stable output
+    for row in _load_phase3_decision_rows_from_diagnostics(log_dir, days=days, limit=limit):
+        for bid in list(row.get("blocking_filter_ids") or []):
+            counts[bid] = int(counts.get(bid, 0)) + 1
+
     return dict(sorted(counts.items(), key=lambda kv: kv[1], reverse=True))
 
 

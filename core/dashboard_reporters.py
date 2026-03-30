@@ -2109,8 +2109,13 @@ def collect_uncle_parsh_context(
 
 
 
+def _is_defended_phase3_preset_name(active_preset_name: str | None) -> bool:
+    normalized = str(active_preset_name or "").strip().lower()
+    return normalized == FROZEN_PHASE3_DEFENDED_PRESET_ID or normalized.startswith(f"{FROZEN_PHASE3_DEFENDED_PRESET_ID} ")
+
+
 def _phase3_defended_context_items(active_preset_name: str | None, cfg: dict[str, Any]) -> list[ContextItem]:
-    if active_preset_name != FROZEN_PHASE3_DEFENDED_PRESET_ID:
+    if not _is_defended_phase3_preset_name(active_preset_name):
         return []
     ldn_cfg = cfg.get("london_v2", {}) if isinstance(cfg.get("london_v2"), dict) else {}
     v44_cfg = cfg.get("v44_ny", {}) if isinstance(cfg.get("v44_ny"), dict) else {}
@@ -2191,26 +2196,45 @@ def collect_phase3_context(
         except Exception:
             pass
 
+    _fallback_eval = phase3_state.get("last_phase3_eval", {}) if isinstance(phase3_state.get("last_phase3_eval"), dict) else {}
     _audit = eval_result.get("phase3_ownership_audit") if isinstance(eval_result, dict) else None
     _strategy_tag = str((eval_result or {}).get("strategy_tag") or "") if isinstance(eval_result, dict) else ""
+    if not _strategy_tag:
+        _strategy_tag = str(_fallback_eval.get("strategy_tag") or "")
     if _strategy_tag:
         items.append(ContextItem("Strategy Tag", _strategy_tag, "decision"))
+    _audit_cell = ""
+    _audit_regime = ""
+    _flags: list[str] = []
     if isinstance(_audit, dict):
         _audit_cell = str(_audit.get("ownership_cell") or "")
         _audit_regime = str(_audit.get("regime_label") or "")
-        _flags = []
         if _audit.get("defensive_global_standdown"):
             _flags.append("standdown")
         if _audit.get("defensive_london_cluster_block"):
             _flags.append("ldn_cluster")
         if _audit.get("defensive_v44_regime_block"):
             _flags.append("v44_regime")
-        if _audit_cell:
-            items.append(ContextItem("Ownership Cell", _audit_cell, "decision"))
-        if _audit_regime:
-            items.append(ContextItem("Regime Label", _audit_regime, "decision"))
-        if _flags:
-            items.append(ContextItem("Defensive Flags", ", ".join(_flags), "decision"))
+    if not _audit_cell:
+        _audit_cell = str(_fallback_eval.get("ownership_cell") or "")
+    if not _audit_regime:
+        _audit_regime = str(_fallback_eval.get("regime_label") or "")
+    if not _flags:
+        _flags = [str(flag).strip() for flag in list(_fallback_eval.get("defensive_flags") or []) if str(flag).strip()]
+    if _audit_cell:
+        items.append(ContextItem("Ownership Cell", _audit_cell, "decision"))
+    if _audit_regime:
+        items.append(ContextItem("Regime Label", _audit_regime, "decision"))
+    if _flags:
+        items.append(ContextItem("Defensive Flags", ", ".join(_flags), "decision"))
+    _decision_reason = ""
+    dec = eval_result.get("decision") if eval_result else None
+    if dec is not None and getattr(dec, "reason", None):
+        _decision_reason = str(dec.reason)
+    if not _decision_reason:
+        _decision_reason = str(_fallback_eval.get("reason") or "")
+    if _decision_reason:
+        items.append(ContextItem("Last decision", _decision_reason, "decision"))
 
     # Common: time and session
     items.append(ContextItem("UTC", now_utc.strftime("%H:%M"), "session"))
@@ -2228,9 +2252,6 @@ def collect_phase3_context(
         items.append(ContextItem("Bid", f"{tick.bid:.3f}", "price"))
         items.append(ContextItem("Ask", f"{tick.ask:.3f}", "price"))
         items.append(ContextItem("Spread", f"{(tick.ask - tick.bid) / pip_size:.1f}p", "price"))
-        dec = eval_result.get("decision") if eval_result else None
-        if dec is not None and getattr(dec, "reason", None):
-            items.append(ContextItem("Last decision", str(dec.reason), "decision"))
         return items
 
     from core.phase3_integrated_engine import (
@@ -2520,9 +2541,6 @@ def collect_phase3_context(
             items.append(ContextItem("Cooldown", "clear", "v44"))
 
     # Last decision and price
-    dec = eval_result.get("decision") if eval_result else None
-    if dec is not None and getattr(dec, "reason", None):
-        items.append(ContextItem("Last decision", str(dec.reason), "decision"))
     items.append(ContextItem("Bid", f"{tick.bid:.3f}", "price"))
     items.append(ContextItem("Ask", f"{tick.ask:.3f}", "price"))
     items.append(ContextItem("Spread", f"{(tick.ask - tick.bid) / pip_size:.1f}p", "price"))

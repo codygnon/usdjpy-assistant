@@ -186,7 +186,8 @@ function isPhase3PresetName(name: string | null | undefined): boolean {
 }
 
 function isDefendedPhase3Preset(name: string | null | undefined): boolean {
-  return String(name || '').trim().toLowerCase() === PHASE3_DEFENDED_PRESET_ID;
+  const normalized = String(name || '').trim().toLowerCase();
+  return normalized === PHASE3_DEFENDED_PRESET_ID || normalized.startsWith(`${PHASE3_DEFENDED_PRESET_ID} `);
 }
 
 function hasPhase3Payload(context: ContextItem[], filters: FilterReport[]): boolean {
