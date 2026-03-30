@@ -234,6 +234,7 @@ def execute_v44_ny_session(
     sdat = dict(phase3_state.get(session_key, {}))
     sdat.setdefault("trade_count", 0)
     sdat.setdefault("consecutive_losses", 0)
+    sdat.setdefault("stopped", False)
     sdat.setdefault("wins_closed", 0)
     sdat.setdefault("cooldown_until", None)
     sdat.setdefault("last_entry_time", None)
@@ -295,11 +296,29 @@ def execute_v44_ny_session(
         return _return_no_trade(reason_text="v44_ny: range mode disabled")
 
     open_count = int(phase3_state.get("open_trade_count", 0))
+    store_phase3_open_count = 0
+    v44_open_count = 0
+    if store is not None:
+        try:
+            profile_name = getattr(profile, "profile_name", "") or getattr(profile, "name", "") or str(profile)
+            for open_trade in store.list_open_trades(profile_name):
+                row = dict(open_trade)
+                entry_type = str(row.get("entry_type") or "")
+                if entry_type.startswith("phase3:"):
+                    store_phase3_open_count += 1
+                if not entry_type.startswith("phase3:v44"):
+                    continue
+                v44_open_count += 1
+        except Exception:
+            store_phase3_open_count = 0
+            v44_open_count = 0
     green_light_active = bool(v44_gl_enabled and int(sdat.get("wins_closed", 0)) >= int(v44_gl_min_wins))
     effective_max_open = int(v44_max_open)
     if effective_max_open > 0 and green_light_active and int(v44_gl_max_open) > effective_max_open:
         effective_max_open = int(v44_gl_max_open)
     effective_max_entries_day = 0 if int(v44_max_entries_day) <= 0 else int(v44_max_entries_day) + (int(v44_gl_extra_entries) if green_light_active else 0)
+    session_stopped = bool(sdat.get("stopped")) or int(sdat.get("consecutive_losses", 0)) >= int(v44_session_stop_losses)
+    sdat["stopped"] = bool(session_stopped)
     cooldown_until = sdat.get("cooldown_until")
     cooldown_active = False
     if cooldown_until:
@@ -327,12 +346,17 @@ def execute_v44_ny_session(
     parity_context.update(
         {
             "open_trade_count_before": int(open_count),
+            "store_phase3_open_count_before": int(store_phase3_open_count),
+            "v44_open_trade_count_before": int(v44_open_count),
             "trade_count_before": int(sdat.get("trade_count", 0)),
             "green_light_active": int(green_light_active),
             "effective_max_open": int(effective_max_open),
             "max_open_unlimited": int(effective_max_open <= 0),
             "effective_max_entries_day": int(effective_max_entries_day),
             "max_entries_unlimited": int(effective_max_entries_day <= 0),
+            "session_stop_losses_limit": int(v44_session_stop_losses),
+            "session_stop_losses_count": int(sdat.get("consecutive_losses", 0)),
+            "session_stopped": int(session_stopped),
             "cooldown_until": str(cooldown_until or ""),
             "cooldown_active": int(cooldown_active),
             "exhaustion_cooldown_until": str(exhaustion_cooldown_until or ""),
@@ -682,6 +706,25 @@ def execute_v44_ny_session(
         print(f"[phase3] DEFENSIVE VETO: v44_ny blocked in cell {_v44_cell_str} (side={side}, strength={strength})")
         return _return_no_trade(reason_text=_block_reason or "v44_ny: defensive veto", attempted=True, side_value=side)
 
+    same_side_open_count = 0
+    opposite_side_open_count = 0
+    if store is not None:
+        try:
+            profile_name = getattr(profile, "profile_name", "") or getattr(profile, "name", "") or str(profile)
+            for open_trade in store.list_open_trades(profile_name):
+                row = dict(open_trade)
+                entry_type = str(row.get("entry_type") or "")
+                if not entry_type.startswith("phase3:v44"):
+                    continue
+                trade_side = str(row.get("side") or "").lower()
+                if trade_side == str(side or "").lower():
+                    same_side_open_count += 1
+                elif trade_side in {"buy", "sell"}:
+                    opposite_side_open_count += 1
+        except Exception:
+            same_side_open_count = 0
+            opposite_side_open_count = 0
+
     entry_price = tick.ask if side == "buy" else tick.bid
     is_news_trend_entry = "news trend" in str(reason).lower()
     risk_pct_for_trade = float(v44_news_trend_risk_pct) if is_news_trend_entry else float(v44_risk_pct)
@@ -734,6 +777,8 @@ def execute_v44_ny_session(
             "strength": str(strength),
             "side": str(side),
             "queued_confirmed": int(queued_confirmed),
+            "same_side_open_count_before": int(same_side_open_count),
+            "opposite_side_open_count_before": int(opposite_side_open_count),
             "sl_pips": round(float(sl_pips), 4),
             "tp1_pips": round(float(tp1_pips), 4),
             "lot_cap_applied": float(v44_max_lot if v44_sizing_mode == "multiplier" else v44_rp_max_lot),

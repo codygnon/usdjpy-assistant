@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -89,6 +90,7 @@ def run_trace(
     start_index: int,
     trace_mode: str = "replay",
     max_bars: int | None = None,
+    warmup_bars: int = 0,
 ) -> dict[str, Any]:
     m1 = _load_m1(csv_path)
     frames = _precompute_frames(m1)
@@ -99,8 +101,9 @@ def run_trace(
     store = ReplayStore()
     trace = []
     start = max(0, start_index)
+    warmup_start = max(0, start - max(0, int(warmup_bars)))
     stop = len(m1) if max_bars is None else min(len(m1), start + max(0, int(max_bars)))
-    for idx in range(start, stop):
+    for idx in range(warmup_start, stop):
         snapshot = _data_snapshot(frames, idx)
         if snapshot["M15"].empty or snapshot["H1"].empty:
             continue
@@ -133,6 +136,8 @@ def run_trace(
                 preset_id=PHASE3_DEFENDED_PRESET_ID,
             )
         phase3_state.update(result.get("phase3_state_updates") or {})
+        if idx < start:
+            continue
         envelope = dict(result.get("decision_envelope") or {})
         envelope["bar_time_utc"] = str(m1.iloc[idx]["time"])
         trace.append(envelope)
@@ -142,6 +147,8 @@ def run_trace(
         "preset_id": PHASE3_DEFENDED_PRESET_ID,
         "trace_mode": trace_mode,
         "start_index": start,
+        "warmup_start_index": warmup_start,
+        "warmup_bars": int(max(0, warmup_bars)),
         "max_bars": None if max_bars is None else int(max_bars),
         "trace": trace,
     }
@@ -156,15 +163,20 @@ def compare_traces(left_path: Path, right_path: Path, out_path: Path) -> dict[st
     right_rows = list(right.get("trace") or [])
     count = min(len(left_rows), len(right_rows))
     diffs = []
+    dimension_counts: dict[str, int] = {}
     for idx in range(count):
         diff = compare_phase3_envelopes(dict(left_rows[idx]), dict(right_rows[idx]))
         if not diff.matches:
+            dimensions = _categorize_mismatches(diff.mismatches)
+            for dimension in dimensions:
+                dimension_counts[dimension] = int(dimension_counts.get(dimension, 0)) + 1
             diffs.append(
                 {
                     "index": idx,
                     "left_bar_time_utc": left_rows[idx].get("bar_time_utc"),
                     "right_bar_time_utc": right_rows[idx].get("bar_time_utc"),
                     "mismatches": diff.mismatches,
+                    "dimensions": dimensions,
                 }
             )
     payload = {
@@ -173,10 +185,120 @@ def compare_traces(left_path: Path, right_path: Path, out_path: Path) -> dict[st
         "right": str(right_path),
         "shared_count": count,
         "diff_count": len(diffs),
+        "dimension_counts": dimension_counts,
         "diffs": diffs,
     }
     out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return payload
+
+
+def parse_phase3_diagnostics_log(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not path.exists():
+        return rows
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = [part for part in line.split("\t") if part]
+        if not parts:
+            continue
+        row: dict[str, Any] = {"logged_at_utc": parts[0]}
+        for token in parts[1:]:
+            if "=" not in token:
+                continue
+            key, value = token.split("=", 1)
+            row[key] = value.strip()
+        rows.append(row)
+    return rows
+
+
+def compare_trace_to_diagnostics(trace_path: Path, diagnostics_path: Path, out_path: Path) -> dict[str, Any]:
+    trace_payload = json.loads(trace_path.read_text(encoding="utf-8"))
+    trace_rows = list(trace_payload.get("trace") or [])
+    diag_rows = parse_phase3_diagnostics_log(diagnostics_path)
+    diag_by_bar = {str(row.get("bar") or ""): row for row in diag_rows if row.get("bar")}
+    diffs: list[dict[str, Any]] = []
+    matched = 0
+    for idx, trace_row in enumerate(trace_rows):
+        bar_time = str(trace_row.get("bar_time_utc") or "")
+        diag_row = diag_by_bar.get(bar_time)
+        if not diag_row:
+            diffs.append(
+                {
+                    "index": idx,
+                    "bar_time_utc": bar_time,
+                    "dimensions": ["runtime_forensic"],
+                    "mismatches": ["missing diagnostics row"],
+                }
+            )
+            continue
+        matched += 1
+        mismatches: list[str] = []
+        expected_session = str(trace_row.get("session") or "none")
+        if str(diag_row.get("session") or "none") != expected_session:
+            mismatches.append(f"session: {diag_row.get('session')!r} != {expected_session!r}")
+        expected_strategy = _diagnostic_strategy_family(trace_row)
+        if str(diag_row.get("strategy") or "") != expected_strategy:
+            mismatches.append(f"strategy: {diag_row.get('strategy')!r} != {expected_strategy!r}")
+        expected_placed = "1" if trace_row.get("placed") else "0"
+        if str(diag_row.get("placed") or "") != expected_placed:
+            mismatches.append(f"placed: {diag_row.get('placed')!r} != {expected_placed!r}")
+        expected_reason = str(trace_row.get("reason") or "")
+        actual_reason = str(diag_row.get("reason") or "").strip("'")
+        if actual_reason != expected_reason:
+            mismatches.append(f"reason: {actual_reason!r} != {expected_reason!r}")
+        expected_cell = str(trace_row.get("ownership_cell") or "")
+        if str(diag_row.get("ownership_cell") or "") != expected_cell:
+            mismatches.append(f"ownership_cell: {diag_row.get('ownership_cell')!r} != {expected_cell!r}")
+        if mismatches:
+            diffs.append(
+                {
+                    "index": idx,
+                    "bar_time_utc": bar_time,
+                    "dimensions": ["runtime_forensic", "surface"],
+                    "mismatches": mismatches,
+                }
+            )
+    payload = {
+        "schema": "phase3_runtime_forensic_diff_v1",
+        "trace": str(trace_path),
+        "diagnostics_log": str(diagnostics_path),
+        "shared_count": matched,
+        "diff_count": len(diffs),
+        "diffs": diffs,
+    }
+    out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
+
+
+def _diagnostic_strategy_family(trace_row: dict[str, Any]) -> str:
+    strategy_tag = str(trace_row.get("strategy_tag") or "")
+    if strategy_tag.startswith("phase3:v44_ny"):
+        return "v44_ny"
+    if strategy_tag.startswith("phase3:london_v2_d"):
+        return "london_v2_d"
+    if strategy_tag.startswith("phase3:london_v2_arb"):
+        return "london_v2_arb"
+    if strategy_tag.startswith("phase3:v14"):
+        return "v14"
+    return ""
+
+
+def _categorize_mismatches(mismatches: list[str]) -> list[str]:
+    categories: set[str] = set()
+    for item in mismatches:
+        if re.search(r"^(session|strategy_tag|strategy_family|blocking_filter_ids|reason):", item):
+            categories.add("entry")
+        if re.search(r"(ownership_cell|attribution)", item):
+            categories.add("surface")
+        if re.search(r"(size_units|entry_price|sl_price|tp1_price)", item):
+            categories.add("sizing")
+        if re.search(r"(exit_policy|managed_exit_plan)", item):
+            categories.add("exit")
+        if re.search(r"(parity_state)", item):
+            categories.add("state")
+    return sorted(categories or {"uncategorized"})
 
 
 def main() -> int:
@@ -190,7 +312,10 @@ def main() -> int:
     ap.add_argument("--spread-pips", type=float, default=1.5)
     ap.add_argument("--start-index", type=int, default=120)
     ap.add_argument("--max-bars", type=int, default=None)
+    ap.add_argument("--warmup-bars", type=int, default=0)
     ap.add_argument("--trace-mode", choices=["replay", "live_style"], default="replay")
+    ap.add_argument("--compare-trace", type=Path)
+    ap.add_argument("--compare-diagnostics", type=Path)
     args = ap.parse_args()
 
     if args.compare_left and args.compare_right and args.out:
@@ -198,9 +323,14 @@ def main() -> int:
         print(args.out)
         print(f"diff_count={payload['diff_count']}")
         return 0
+    if args.compare_trace and args.compare_diagnostics and args.out:
+        payload = compare_trace_to_diagnostics(args.compare_trace, args.compare_diagnostics, args.out)
+        print(args.out)
+        print(f"diff_count={payload['diff_count']}")
+        return 0
 
     if not args.input_csv or not args.out:
-        ap.error("--input-csv and --out are required unless using --compare-left/--compare-right")
+        ap.error("--input-csv and --out are required unless using a compare mode")
     payload = run_trace(
         args.input_csv,
         args.out,
@@ -210,6 +340,7 @@ def main() -> int:
         start_index=args.start_index,
         trace_mode=args.trace_mode,
         max_bars=args.max_bars,
+        warmup_bars=args.warmup_bars,
     )
     print(args.out)
     print(f"rows={len(payload['trace'])}")

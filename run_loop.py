@@ -2428,11 +2428,18 @@ def _phase3_trade_open_context_snapshot(
         if isinstance(parity_context, dict):
             for key in (
                 "open_trade_count_before",
+                "store_phase3_open_count_before",
+                "v44_open_trade_count_before",
+                "same_side_open_count_before",
+                "opposite_side_open_count_before",
                 "trade_count_before",
                 "effective_max_open",
                 "max_open_unlimited",
                 "effective_max_entries_day",
                 "max_entries_unlimited",
+                "session_stop_losses_limit",
+                "session_stop_losses_count",
+                "session_stopped",
                 "cooldown_active",
                 "cooldown_until",
                 "exhaustion_cooldown_active",
@@ -2575,11 +2582,18 @@ def _append_phase3_minute_diagnostics(
             ny_news_side = sd.get("news_trend_side")
             ny_news_event = sd.get("news_event_time")
             ny_open_count_before = sd.get("parity_open_trade_count_before")
+            ny_store_open_count_before = sd.get("parity_store_phase3_open_count_before")
+            ny_v44_open_count_before = sd.get("parity_v44_open_trade_count_before")
+            ny_same_side_before = sd.get("parity_same_side_open_count_before")
+            ny_opposite_side_before = sd.get("parity_opposite_side_open_count_before")
             ny_trade_count_before = sd.get("parity_trade_count_before")
             ny_max_open = sd.get("parity_effective_max_open")
             ny_max_open_unlimited = sd.get("parity_max_open_unlimited")
             ny_max_entries = sd.get("parity_effective_max_entries_day")
             ny_max_entries_unlimited = sd.get("parity_max_entries_unlimited")
+            ny_session_stop_limit = sd.get("parity_session_stop_losses_limit")
+            ny_session_stop_count = sd.get("parity_session_stop_losses_count")
+            ny_session_stopped = sd.get("parity_session_stopped")
             ny_cooldown_active = sd.get("parity_cooldown_active")
             ny_cooldown_until = sd.get("parity_cooldown_until")
             ny_exhaustion_active = sd.get("parity_exhaustion_cooldown_active")
@@ -2606,6 +2620,14 @@ def _append_phase3_minute_diagnostics(
                 extras.append(f"ny_news_event={ny_news_event}")
             if ny_open_count_before is not None:
                 extras.append(f"ny_open_before={int(ny_open_count_before)}")
+            if ny_store_open_count_before is not None:
+                extras.append(f"ny_store_open_before={int(ny_store_open_count_before)}")
+            if ny_v44_open_count_before is not None:
+                extras.append(f"ny_v44_open_before={int(ny_v44_open_count_before)}")
+            if ny_same_side_before is not None:
+                extras.append(f"ny_same_side_before={int(ny_same_side_before)}")
+            if ny_opposite_side_before is not None:
+                extras.append(f"ny_opposite_side_before={int(ny_opposite_side_before)}")
             if ny_trade_count_before is not None:
                 extras.append(f"ny_trade_count_before={int(ny_trade_count_before)}")
             if ny_max_open is not None:
@@ -2616,6 +2638,12 @@ def _append_phase3_minute_diagnostics(
                 extras.append(f"ny_max_entries={int(ny_max_entries)}")
             if ny_max_entries_unlimited is not None:
                 extras.append(f"ny_max_entries_unlimited={int(bool(ny_max_entries_unlimited))}")
+            if ny_session_stop_limit is not None:
+                extras.append(f"ny_stop_limit={int(ny_session_stop_limit)}")
+            if ny_session_stop_count is not None:
+                extras.append(f"ny_stop_count={int(ny_session_stop_count)}")
+            if ny_session_stopped is not None:
+                extras.append(f"ny_session_stopped={int(bool(ny_session_stopped))}")
             if ny_cooldown_active is not None:
                 extras.append(f"ny_cd_active={int(bool(ny_cooldown_active))}")
             if ny_cooldown_until:
@@ -2663,11 +2691,18 @@ def _append_phase3_minute_diagnostics(
             extras = []
             for key in (
                 "open_trade_count_before",
+                "store_phase3_open_count_before",
+                "v44_open_trade_count_before",
+                "same_side_open_count_before",
+                "opposite_side_open_count_before",
                 "trade_count_before",
                 "effective_max_open",
                 "max_open_unlimited",
                 "effective_max_entries_day",
                 "max_entries_unlimited",
+                "session_stop_losses_limit",
+                "session_stop_losses_count",
+                "session_stopped",
                 "cooldown_active",
                 "cooldown_until",
                 "exhaustion_cooldown_active",
@@ -4206,9 +4241,9 @@ def main() -> None:
                                 adapter=adapter,
                                 store=store,
                                 policy_type=pol_type,
-                                policy_id=pol.id,
-                                side=side,
-                                entry_price=entry_price,
+                                    policy_id=pol.id,
+                                    side=side,
+                                    entry_price=entry_price,
                                 dec=dec,
                                 stop_price=sl_price,
                                 target_price=tp_price,
@@ -6327,6 +6362,16 @@ def main() -> None:
                             risk_usd_planned = exec_result.get("risk_usd_planned")
                             _p3_units = exec_result.get("units")
                             _p3_size_lots = (float(_p3_units) / 100_000.0) if _p3_units is not None and int(_p3_units) > 0 else None
+                            _phase3_open_snapshot = _phase3_trade_open_context_snapshot(
+                                strategy_tag=strategy_tag,
+                                entry_price=entry_price,
+                                sl_price=sl_price,
+                                tp1_price=tp1_price,
+                                sizing_config=phase3_sizing if phase3_sizing else None,
+                                pip_size=float(getattr(profile, "pip_size", 0.01) or 0.01),
+                                exec_result=exec_result,
+                            )
+                            _v44_exit_plan = (exec_result.get("v44_exit_plan") or {}) if isinstance(exec_result, dict) else {}
                             print(f"[{profile.profile_name}] TRADE PLACED: phase3_integrated:{pol.id} | side={side} | entry={entry_price:.3f} | {dec.reason}")
                             _entry_session = None
                             if strategy_tag:
@@ -6351,6 +6396,10 @@ def main() -> None:
                                 entry_type=strategy_tag,
                                 entry_session=_entry_session,
                                 risk_usd_planned=risk_usd_planned,
+                                managed_tp1_pips=_phase3_open_snapshot.get("tp1_pips"),
+                                managed_tp1_close_pct=_v44_exit_plan.get("tp1_close_pct"),
+                                managed_be_plus_pips=_v44_exit_plan.get("be_offset_pips"),
+                                managed_trail_mode=str(_v44_exit_plan.get("mode") or ""),
                             )
                             _invalidate_trades_df_cache()
                             _append_trade_open_event(
@@ -6358,15 +6407,7 @@ def main() -> None:
                                 side, entry_price,
                                 trigger_type=strategy_tag or "",
                                 entry_type=strategy_tag or "",
-                                context_snapshot=_phase3_trade_open_context_snapshot(
-                                    strategy_tag=strategy_tag,
-                                    entry_price=entry_price,
-                                    sl_price=sl_price,
-                                    tp1_price=tp1_price,
-                                    sizing_config=phase3_sizing if phase3_sizing else None,
-                                    pip_size=float(getattr(profile, "pip_size", 0.01) or 0.01),
-                                    exec_result=exec_result,
-                                ),
+                                context_snapshot=_phase3_open_snapshot,
                             )
                         else:
                             print(f"[{profile.profile_name}] phase3 {pol.id} mode={mode} -> {dec.reason}")

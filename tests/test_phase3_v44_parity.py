@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 
+import core.phase3_integrated_engine as phase3_engine
 from core.phase3_ny_session import execute_v44_ny_session
 from core.phase3_v44_evaluator import evaluate_v44_entry
 
@@ -144,3 +145,82 @@ def test_execute_v44_ny_session_treats_zero_max_open_as_unlimited() -> None:
     assert result["v44_parity_context"]["open_trade_count_before"] == 5
     assert result["v44_parity_context"]["max_entries_unlimited"] == 1
     assert result["v44_exit_plan"]["mode"] == "managed_partial_runner"
+
+
+def test_apply_phase3_session_outcome_marks_ny_session_stopped_after_loss_limit() -> None:
+    phase3_state = {
+        "session_ny_2025-04-04": {
+            "consecutive_losses": 2,
+            "wins_closed": 0,
+            "win_streak": 0,
+        }
+    }
+
+    result = phase3_engine.apply_phase3_session_outcome(
+        phase3_state=phase3_state,
+        phase3_sizing_cfg={"v44_ny": {"session_stop_losses": 3, "cooldown_loss_bars": 1, "cooldown_win_bars": 1}},
+        entry_session="ny",
+        action="hard_sl",
+        side="buy",
+        entry_type="phase3:v44_ny:strong",
+        is_loss=True,
+        key_date="2025-04-04",
+        now_utc=pd.Timestamp("2025-04-04T14:05:00Z"),
+    )
+
+    assert result["consecutive_losses"] == 3
+    assert result["stopped"] is True
+    assert phase3_state["session_ny_2025-04-04"]["stopped"] is True
+
+
+def test_manage_v44_exit_uses_managed_tp1_pips_fallback(monkeypatch) -> None:
+    class _Adapter:
+        def __init__(self) -> None:
+            self.partial_calls = []
+            self.stop_updates = []
+
+        def close_position(self, **kwargs):
+            self.partial_calls.append(kwargs)
+
+        def update_position_stop_loss(self, position_id, symbol, stop_price):
+            self.stop_updates.append((position_id, symbol, stop_price))
+
+    class _Store:
+        def __init__(self) -> None:
+            self.updates = []
+
+        def update_trade(self, trade_id, updates):
+            self.updates.append((trade_id, dict(updates)))
+
+    monkeypatch.setattr(phase3_engine, "_phase3_position_meta", lambda position, side: (123, 1.0, None))
+
+    adapter = _Adapter()
+    store = _Store()
+    result = phase3_engine._manage_v44_exit(
+        adapter=adapter,
+        profile=SimpleNamespace(symbol="USDJPY", pip_size=0.01),
+        store=store,
+        tick=SimpleNamespace(bid=150.051, ask=150.053),
+        trade_row={
+            "trade_id": "t1",
+            "side": "buy",
+            "entry_price": 150.000,
+            "entry_type": "phase3:v44_ny:normal@ambiguous/er_high/der_pos",
+            "target_price": None,
+            "managed_tp1_pips": 5.0,
+            "stop_price": 149.920,
+            "tp1_partial_done": 0,
+        },
+        position=object(),
+        v44_config={
+            "be_offset_pips": 0.5,
+            "normal_tp1_close_pct": 0.5,
+            "normal_tp2_pips": 3.0,
+            "normal_trail_buffer": 3.0,
+            "trail_start_after_tp1_mult": 0.5,
+        },
+    )
+
+    assert result["action"] == "tp1_partial"
+    assert adapter.partial_calls, "expected a partial close at the managed TP1 fallback"
+    assert store.updates and store.updates[0][1]["tp1_partial_done"] == 1

@@ -2336,7 +2336,7 @@ def collect_phase3_context(
         # No-reentry timer (after stopout): show if either direction is blocked
         try:
             from core.phase3_integrated_engine import load_phase3_sizing_config
-            _v14_cfg = (load_phase3_sizing_config() or {}).get("v14", {})
+            _v14_cfg = (load_phase3_sizing_config(preset_id=active_preset_name) or {}).get("v14", {})
             _no_reentry_min = int(_v14_cfg.get("no_reentry_same_direction_after_stop_minutes", 0))
             if _no_reentry_min > 0:
                 for _dir in ("buy", "sell"):
@@ -2406,7 +2406,7 @@ def collect_phase3_context(
             _v44_strength = classify_v44_strength(slope, is_london=False)
             try:
                 from core.phase3_integrated_engine import load_phase3_sizing_config
-                _v44_cfg2 = (load_phase3_sizing_config() or {}).get("v44_ny", {})
+                _v44_cfg2 = (load_phase3_sizing_config(preset_id=active_preset_name) or {}).get("v44_ny", {})
                 _strength_allow = str(_v44_cfg2.get("ny_strength_allow", "strong_normal")).lower()
                 _allow_map = {
                     "strong_only": {"strong"},
@@ -2423,7 +2423,7 @@ def collect_phase3_context(
         if h4_df is not None and not h4_df.empty and len(h4_df) >= 16:
             try:
                 from core.phase3_integrated_engine import load_phase3_sizing_config
-                _v44_cfg3 = (load_phase3_sizing_config() or {}).get("v44_ny", {})
+                _v44_cfg3 = (load_phase3_sizing_config(preset_id=active_preset_name) or {}).get("v44_ny", {})
                 _h4_adx_min = float(_v44_cfg3.get("h4_adx_min", 0.0))
                 if _h4_adx_min > 0:
                     _h4_adx = _compute_adx(h4_df)
@@ -2484,8 +2484,16 @@ def collect_phase3_context(
         consec_losses = int(sd.get("consecutive_losses", 0))
         wins_closed = int(sd.get("wins_closed", 0))
         win_streak = int(sd.get("win_streak", 0))
-        items.append(ContextItem("Trades", f"{trade_count}/{V44_MAX_ENTRIES_DAY}", "v44"))
-        items.append(ContextItem("Consec losses", f"{consec_losses}/{V44_SESSION_STOP_LOSSES} ({'STOP' if consec_losses >= V44_SESSION_STOP_LOSSES else 'OK'})", "v44"))
+        try:
+            from core.phase3_integrated_engine import load_phase3_sizing_config
+            _v44_cfg_live = (load_phase3_sizing_config(preset_id=active_preset_name) or {}).get("v44_ny", {})
+        except Exception:
+            _v44_cfg_live = {}
+        _trade_cap = int(_v44_cfg_live.get("max_entries_per_day", V44_MAX_ENTRIES_DAY))
+        _stop_limit = int(_v44_cfg_live.get("session_stop_losses", V44_SESSION_STOP_LOSSES))
+        _trade_cap_label = str(_trade_cap) if _trade_cap > 0 else "unlimited"
+        items.append(ContextItem("Trades", f"{trade_count}/{_trade_cap_label}", "v44"))
+        items.append(ContextItem("Consec losses", f"{consec_losses}/{_stop_limit} ({'STOP' if consec_losses >= _stop_limit else 'OK'})", "v44"))
         items.append(ContextItem("Wins closed", str(wins_closed), "v44"))
         items.append(ContextItem("Win streak", str(win_streak), "v44"))
         _ny_cell = str(sd.get("ownership_cell") or "")
@@ -2509,7 +2517,7 @@ def collect_phase3_context(
         # GL (Golden Lion) mode
         try:
             from core.phase3_integrated_engine import load_phase3_sizing_config
-            _v44_cfg = (load_phase3_sizing_config() or {}).get("v44_ny", {})
+            _v44_cfg = (load_phase3_sizing_config(preset_id=active_preset_name) or {}).get("v44_ny", {})
             _gl_enabled = bool(_v44_cfg.get("gl_enabled", False))
             _gl_min_wins = max(1, int(_v44_cfg.get("gl_min_wins", 1)))
             _gl_extra = int(_v44_cfg.get("gl_extra_entries", 0))

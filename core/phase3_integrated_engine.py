@@ -254,6 +254,8 @@ def apply_phase3_session_outcome(
     scope = str(v44_cfg.get("win_streak_scope", "session")).lower()
     if scope != "session":
         phase3_state["v44_win_streak_global"] = 0 if is_loss else (int(phase3_state.get("v44_win_streak_global", 0)) + 1)
+    session_stop_losses = int(v44_cfg.get("session_stop_losses", V44_SESSION_STOP_LOSSES))
+    sd["stopped"] = bool(int(sd.get("consecutive_losses", 0)) >= int(session_stop_losses))
     cd_win_bars = int(v44_cfg.get("cooldown_win_bars", V44_COOLDOWN_WIN))
     cd_loss_bars = int(v44_cfg.get("cooldown_loss_bars", V44_COOLDOWN_LOSS))
     cd_minutes = max(0, (cd_loss_bars if is_loss else cd_win_bars) * 5)
@@ -1302,6 +1304,7 @@ def _manage_v44_exit(
     tp1_done = int(trade_row.get("tp1_partial_done") or 0) == 1
     entry_type = str(trade_row.get("entry_type") or "")
     is_news = ":news" in entry_type
+    stop_price = trade_row.get("stop_price")
     if ":weak" in entry_type:
         tp1_close_pct = weak_tp1_close_pct
     elif ":normal" in entry_type:
@@ -1310,7 +1313,21 @@ def _manage_v44_exit(
         tp1_close_pct = strong_tp1_close_pct
     tp1_price = trade_row.get("target_price")
     if tp1_price is None:
-        tp1_price = entry + (V44_STRONG_TP1_PIPS * pip if side == "buy" else -V44_STRONG_TP1_PIPS * pip)
+        tp1_pips = trade_row.get("managed_tp1_pips")
+        if tp1_pips is None:
+            try:
+                sl_pips = abs(float(entry) - float(stop_price)) / pip if stop_price is not None else 7.0
+            except Exception:
+                sl_pips = 7.0
+            if is_news:
+                tp1_pips = float(cfg.get("news_trend_tp_rr", 1.5)) * float(sl_pips)
+            elif ":weak" in entry_type:
+                tp1_pips = float(cfg.get("weak_tp1_pips", 1.2)) * float(sl_pips)
+            elif ":normal" in entry_type:
+                tp1_pips = float(cfg.get("normal_tp1_pips", 1.75)) * float(sl_pips)
+            else:
+                tp1_pips = float(cfg.get("strong_tp1_pips", V44_STRONG_TP1_PIPS)) * float(sl_pips)
+        tp1_price = entry + (float(tp1_pips) * pip if side == "buy" else -float(tp1_pips) * pip)
     tp1_price = float(tp1_price)
     reached_tp1 = tp_check_price >= tp1_price if side == "buy" else tp_check_price <= tp1_price
 
@@ -1876,7 +1893,7 @@ def report_phase3_london_caps(phase3_state: dict) -> list[dict]:
     return reports
 
 
-def report_phase3_ny_caps(phase3_state: dict, now_utc: datetime) -> list[dict]:
+def report_phase3_ny_caps(phase3_state: dict, now_utc: datetime, v44_cfg: Optional[dict[str, Any]] = None) -> list[dict]:
     """NY session caps: max open, session stop losses, cooldown."""
     reports = []
     today = now_utc.date().isoformat()
@@ -1885,17 +1902,20 @@ def report_phase3_ny_caps(phase3_state: dict, now_utc: datetime) -> list[dict]:
     trade_count = int(sdat.get("trade_count", 0))
     consecutive_losses = int(sdat.get("consecutive_losses", 0))
     open_count = int(phase3_state.get("open_trade_count", 0))
+    cfg = v44_cfg or {}
+    max_open = int(cfg.get("max_open_positions", V44_MAX_OPEN))
+    session_stop_losses = int(cfg.get("session_stop_losses", V44_SESSION_STOP_LOSSES))
 
     reports.append({
         "name": "NY Max open",
-        "value": f"{open_count}/{V44_MAX_OPEN}",
-        "ok": open_count < V44_MAX_OPEN,
+        "value": f"{open_count}/{max_open if max_open > 0 else 'unlimited'}",
+        "ok": True if max_open <= 0 else open_count < max_open,
         "detail": "Phase 3 open positions",
     })
     reports.append({
         "name": "NY Session stop losses",
-        "value": f"{consecutive_losses}/{V44_SESSION_STOP_LOSSES}",
-        "ok": consecutive_losses < V44_SESSION_STOP_LOSSES,
-        "detail": f"stop after {V44_SESSION_STOP_LOSSES}",
+        "value": f"{consecutive_losses}/{session_stop_losses}",
+        "ok": consecutive_losses < session_stop_losses,
+        "detail": f"stop after {session_stop_losses}",
     })
     return reports

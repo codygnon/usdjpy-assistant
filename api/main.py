@@ -1707,8 +1707,11 @@ def get_phase3_decisions(profile_name: str, days: int = 3, limit: int = 5000, pr
     enriched: list[dict[str, Any]] = []
     if not df.empty and "signal_id" in df.columns:
         df = df.where(pd.notna(df), None)
-        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-        df = df[df["timestamp_utc"] >= since]
+        since_dt = datetime.now(timezone.utc) - timedelta(days=days)
+        ts_col = "timestamp_utc" if "timestamp_utc" in df.columns else ("timestamp" if "timestamp" in df.columns else None)
+        if ts_col is not None:
+            ts = pd.to_datetime(df[ts_col], utc=True, errors="coerce")
+            df = df[ts >= since_dt]
         df = df[df["signal_id"].astype(str).str.startswith("eval:phase3_integrated:")]
         df = df.tail(limit)
         cfg = _load_phase3_sizing_cfg_api()
@@ -1741,8 +1744,11 @@ def get_phase3_blockers_breakdown(profile_name: str, days: int = 7, limit: int =
     df = store.read_executions_df(active_profile_name)
     counts: dict[str, int] = {}
     if not df.empty and "reason" in df.columns and "signal_id" in df.columns:
-        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-        df = df[df["timestamp_utc"] >= since]
+        since_dt = datetime.now(timezone.utc) - timedelta(days=days)
+        ts_col = "timestamp_utc" if "timestamp_utc" in df.columns else ("timestamp" if "timestamp" in df.columns else None)
+        if ts_col is not None:
+            ts = pd.to_datetime(df[ts_col], utc=True, errors="coerce")
+            df = df[ts >= since_dt]
         df = df[df["signal_id"].astype(str).str.startswith("eval:phase3_integrated:")].tail(limit)
         for r in df["reason"].tolist():
             if r is None:
@@ -1771,8 +1777,7 @@ def get_phase3_blockers_breakdown(profile_name: str, days: int = 7, limit: int =
 
 @app.get("/api/data/{profile_name}/phase3-provenance")
 def get_phase3_provenance(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
-    dashboard = _get_dashboard_impl(profile_name, profile_path)
-    if "error" in dashboard:
+    def _waiting_payload() -> dict[str, Any]:
         return {
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "package_id": None,
@@ -1797,20 +1802,26 @@ def get_phase3_provenance(profile_name: str, profile_path: Optional[str] = None)
                 "decision_timestamp_utc": None,
             },
         }
+    try:
+        dashboard = _get_dashboard_impl(profile_name, profile_path)
+        if "error" in dashboard:
+            return _waiting_payload()
 
-    latest_decision = None
-    decisions = get_phase3_decisions(profile_name, days=7, limit=2000, profile_path=profile_path)
-    if decisions:
-        latest_decision = decisions[-1]
-    return build_phase3_provenance_payload(
-        preset_name=str(dashboard.get("preset_name") or ""),
-        context_items=list(dashboard.get("context") or []),
-        filters=list(dashboard.get("filters") or []),
-        latest_decision=latest_decision,
-        sizing_cfg=_load_phase3_sizing_cfg_api(),
-        dashboard_timestamp_utc=dashboard.get("timestamp_utc"),
-        last_block_reason=dashboard.get("last_block_reason"),
-    )
+        latest_decision = None
+        decisions = get_phase3_decisions(profile_name, days=7, limit=2000, profile_path=profile_path)
+        if decisions:
+            latest_decision = decisions[-1]
+        return build_phase3_provenance_payload(
+            preset_name=str(dashboard.get("preset_name") or ""),
+            context_items=list(dashboard.get("context") or []),
+            filters=list(dashboard.get("filters") or []),
+            latest_decision=latest_decision,
+            sizing_cfg=_load_phase3_sizing_cfg_api(),
+            dashboard_timestamp_utc=dashboard.get("timestamp_utc"),
+            last_block_reason=dashboard.get("last_block_reason"),
+        )
+    except Exception:
+        return _waiting_payload()
 
 
 @app.get("/api/system/phase3-paper-acceptance")

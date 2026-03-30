@@ -41,6 +41,8 @@ class Phase3DecisionEnvelope:
     sl_price: float | None = None
     tp1_price: float | None = None
     exit_policy: Phase3ExitPolicy | None = None
+    parity_state: dict[str, Any] = field(default_factory=dict)
+    managed_exit_plan: dict[str, Any] = field(default_factory=dict)
     attribution: dict[str, Any] = field(default_factory=dict)
     raw_decision: dict[str, Any] = field(default_factory=dict)
 
@@ -188,8 +190,11 @@ def normalize_phase3_decision_envelope(
         sl_price=exec_result.get("sl_price"),
         tp1_price=exec_result.get("tp1_price"),
         exit_policy=_exit_policy_for_strategy(strategy_tag, sizing_config),
+        parity_state=dict(exec_result.get("v44_parity_context") or {}),
+        managed_exit_plan=dict(exec_result.get("v44_exit_plan") or {}),
         attribution={
             "ownership_audit": ownership_audit or {},
+            "overlay_state": dict(exec_result.get("phase3_overlay_state") or {}),
             "package_spec": phase3_package_spec_to_dict(spec),
         },
         raw_decision={
@@ -322,6 +327,10 @@ def compare_phase3_envelopes(left: dict[str, Any], right: dict[str, Any]) -> Pha
             mismatch.append(f"{key}: {left.get(key)!r} != {right.get(key)!r}")
     if left.get("reason") != right.get("reason"):
         mismatch.append(f"reason: {left.get('reason')!r} != {right.get('reason')!r}")
+    if left.get("parity_state") != right.get("parity_state"):
+        mismatch.append("parity_state differs")
+    if left.get("managed_exit_plan") != right.get("managed_exit_plan"):
+        mismatch.append("managed_exit_plan differs")
     if left.get("attribution") != right.get("attribution"):
         mismatch.append("attribution differs")
     left_exit = left.get("exit_policy") or {}

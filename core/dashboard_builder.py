@@ -268,7 +268,8 @@ def _side_from_m5(data_by_tf: dict, policy: Any) -> str:
 
 
 def _phase3_defended_filter_reports(active_preset_name: str | None, cfg: dict[str, Any]) -> list[FilterReport]:
-    if active_preset_name != FROZEN_PHASE3_DEFENDED_PRESET_ID:
+    normalized = str(active_preset_name or "").strip().lower()
+    if not (normalized == FROZEN_PHASE3_DEFENDED_PRESET_ID or normalized.startswith(f"{FROZEN_PHASE3_DEFENDED_PRESET_ID} ")):
         return []
     reports: list[FilterReport] = []
     ldn_cfg = cfg.get("london_v2", {}) if isinstance(cfg.get("london_v2"), dict) else {}
@@ -985,7 +986,7 @@ def build_dashboard_filters(
                 )
                 filters.append(_phase3_dict_to_filter_report(report_phase3_ny_atr_filter(atr_ok, atr_cap, atr_lookback)))
             if phase3_state is not None:
-                for d in report_phase3_ny_caps(phase3_state, now_utc):
+                for d in report_phase3_ny_caps(phase3_state, now_utc, v44_cfg):
                     filters.append(_phase3_dict_to_filter_report(d))
 
     elif policy_type == "uncle_parsh_h1_breakout" and policy is not None:
