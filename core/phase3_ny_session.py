@@ -707,7 +707,10 @@ def execute_v44_ny_session(
             side=side,
             lots=units / 100000.0,
             stop_price=round(float(sl_price), 3),
-            target_price=round(float(tp1_price), 3),
+            # V44 TP1 is managed by the Phase 3 exit engine as a partial-close trigger.
+            # Sending TP1 as a broker-native TP causes the whole position to close before
+            # the partial + runner logic can execute.
+            target_price=None,
             comment=comment,
         )
     except Exception as e:
