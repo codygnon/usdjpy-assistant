@@ -320,6 +320,13 @@ DEFAULTS: dict[str, object] = {
     "v5_news_trend_risk_pct": 0.5,
     "v5_news_trend_tp_rr": 1.5,
     "v5_news_trend_sl_pips": 8.0,
+    "v5_trial10_exit_enabled": False,
+    "v5_trial10_exit_tp1_pips": 0.0,
+    "v5_trial10_exit_be_extra_pips": 0.0,
+    "v5_trial10_exit_trail_buffer_pips": 0.0,
+    "v5_trial10_exit_runner_mode": "fixed_tp2_then_trail",
+    "v5_trial10_exit_apply_profiles": "Strong,Normal",
+    "v5_trial10_exit_skip_news": True,
     "v5_normal_mid_atr_allowed": False,
     "v5_atr_pct_low_normal": 0.33,
     "v5_nonmover_exit_enabled": False,
@@ -515,6 +522,8 @@ class OpenPosition:
     wr_size_scale: float = 1.0
     conviction_scale: float = 1.0
     peak_mfe_pips: float = 0.0
+    be_offset_pips: float = 0.0
+    runner_mode: str = "fixed_tp2_then_trail"
 
 
 @dataclass
@@ -913,6 +922,13 @@ def _full_parser() -> argparse.ArgumentParser:
     p.add_argument("--v5-news-trend-risk-pct", type=float)
     p.add_argument("--v5-news-trend-tp-rr", type=float)
     p.add_argument("--v5-news-trend-sl-pips", type=float)
+    p.add_argument("--v5-trial10-exit-enabled", type=parse_bool, nargs="?", const=True)
+    p.add_argument("--v5-trial10-exit-tp1-pips", type=float)
+    p.add_argument("--v5-trial10-exit-be-extra-pips", type=float)
+    p.add_argument("--v5-trial10-exit-trail-buffer-pips", type=float)
+    p.add_argument("--v5-trial10-exit-runner-mode", choices=["fixed_tp2_then_trail", "trail_only_after_tp1"], type=str)
+    p.add_argument("--v5-trial10-exit-apply-profiles", type=str)
+    p.add_argument("--v5-trial10-exit-skip-news", type=parse_bool, nargs="?", const=True)
     p.add_argument("--v5-normal-mid-atr-allowed", type=parse_bool, nargs="?", const=True)
     p.add_argument("--v5-atr-pct-low-normal", type=float)
     p.add_argument("--v5-nonmover-exit-enabled", type=parse_bool, nargs="?", const=True)
@@ -3719,6 +3735,43 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             float(args.v5_weak_size_mult),
         )
 
+    def _trial10_exit_params(
+        sess_name: str,
+        strength_name: str,
+        regime_name: str,
+        signal_mode_name: str,
+        profile_name: str,
+        spread_now_pips: float,
+    ) -> Optional[dict[str, object]]:
+        if not bool(getattr(args, "v5_trial10_exit_enabled", False)):
+            return None
+        if str(sess_name) != "ny_overlap":
+            return None
+        if str(regime_name).upper().startswith("NEWS") or str(signal_mode_name) == "news_trend_confirm":
+            if bool(getattr(args, "v5_trial10_exit_skip_news", True)):
+                return None
+        allowed_profiles = {
+            s.strip()
+            for s in str(getattr(args, "v5_trial10_exit_apply_profiles", "Strong,Normal")).split(",")
+            if s.strip()
+        }
+        if str(profile_name) not in allowed_profiles:
+            return None
+        tp1_pips = float(getattr(args, "v5_trial10_exit_tp1_pips", 0.0))
+        trail_buf = float(getattr(args, "v5_trial10_exit_trail_buffer_pips", 0.0))
+        if tp1_pips <= 0.0 or trail_buf <= 0.0:
+            return None
+        be_extra = float(getattr(args, "v5_trial10_exit_be_extra_pips", 0.0))
+        runner_mode = str(getattr(args, "v5_trial10_exit_runner_mode", "fixed_tp2_then_trail")).strip().lower()
+        if runner_mode not in {"fixed_tp2_then_trail", "trail_only_after_tp1"}:
+            runner_mode = "fixed_tp2_then_trail"
+        return {
+            "tp1_pips": tp1_pips,
+            "be_offset_pips": float(spread_now_pips) + be_extra,
+            "trail_buffer_pips": trail_buf,
+            "runner_mode": runner_mode,
+        }
+
     def _strength_allowed(sess: str, strength: str, p5_now: int, slope_abs: float) -> bool:
         def _norm_allow(v: object) -> str:
             s = str(v)
@@ -4338,7 +4391,11 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                         _close_leg(pos, float(pos.tp1_price), leg)
                         pos.lots_remaining = max(0.0, float(pos.lots_initial) - leg)
                         pos.tp1_filled = True
-                        pos.stop_price = float(pos.entry_price) + (float(args.v5_be_offset) * PIP_SIZE if pos.side == "buy" else -float(args.v5_be_offset) * PIP_SIZE)
+                        pos.stop_price = float(pos.entry_price) + (
+                            float(getattr(pos, "be_offset_pips", float(args.v5_be_offset))) * PIP_SIZE
+                            if pos.side == "buy"
+                            else -float(getattr(pos, "be_offset_pips", float(args.v5_be_offset))) * PIP_SIZE
+                        )
                     elif bool(args.v5_stale_exit_enabled):
                         bars_since_entry = int(i - int(pos.entry_bar_index))
                         stale_bars = int(args.v5_stale_exit_bars)
@@ -4361,7 +4418,10 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
                             add_block("v5_nonmover_exit")
                             continue
                 else:
-                    tp2_hit = (bid_high >= float(pos.tp2_price)) if pos.side == "buy" else (ask_low <= float(pos.tp2_price))
+                    runner_mode = str(getattr(pos, "runner_mode", "fixed_tp2_then_trail")).lower()
+                    tp2_hit = False if runner_mode == "trail_only_after_tp1" else (
+                        (bid_high >= float(pos.tp2_price)) if pos.side == "buy" else (ask_low <= float(pos.tp2_price))
+                    )
                     stop_hit = (bid_low <= float(pos.stop_price)) if pos.side == "buy" else (ask_high >= float(pos.stop_price))
                     if tp2_hit and stop_hit:
                         add_block("v5_intrabar_conflict_tp2_stop")
@@ -5713,6 +5773,21 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             tp1_close_pct = 1.0
             trail_buf = 999.0
             tp1_mult = tp1_pips / max(1e-9, float(sl_dist))
+        trial10_exit = _trial10_exit_params(
+            sess_name=str(sess),
+            strength_name=str(strength),
+            regime_name=str(entry_regime),
+            signal_mode_name=str(entry_signal_mode),
+            profile_name=str(entry_profile_label),
+            spread_now_pips=float(spread_pips),
+        )
+        be_offset_pips = float(args.v5_be_offset)
+        runner_mode = "fixed_tp2_then_trail"
+        if trial10_exit is not None:
+            tp1_pips = float(trial10_exit["tp1_pips"])
+            trail_buf = float(trial10_exit["trail_buffer_pips"])
+            be_offset_pips = float(trial10_exit["be_offset_pips"])
+            runner_mode = str(trial10_exit["runner_mode"])
         tp1_price = entry_price + tp1_pips * PIP_SIZE if entry_side == "buy" else entry_price - tp1_pips * PIP_SIZE
         tp2_price = entry_price + tp2_pips * PIP_SIZE if entry_side == "buy" else entry_price - tp2_pips * PIP_SIZE
 
@@ -5758,6 +5833,8 @@ def run_backtest_v5(args: argparse.Namespace) -> dict:
             wr_size_scale=float(wr_scale),
             conviction_scale=float(conviction_scale),
             peak_mfe_pips=0.0,
+            be_offset_pips=float(be_offset_pips),
+            runner_mode=str(runner_mode),
         )
         open_positions.append(new_pos)
         if pullback_reentry_trigger and pullback_reentry_state_key is not None:
@@ -6816,6 +6893,13 @@ def main(argv: list[str]) -> int:
                 "news_trend_risk_pct": float(args.v5_news_trend_risk_pct),
                 "news_trend_tp_rr": float(args.v5_news_trend_tp_rr),
                 "news_trend_sl_pips": float(args.v5_news_trend_sl_pips),
+                "trial10_exit_enabled": bool(getattr(args, "v5_trial10_exit_enabled", False)),
+                "trial10_exit_tp1_pips": float(getattr(args, "v5_trial10_exit_tp1_pips", 0.0)),
+                "trial10_exit_be_extra_pips": float(getattr(args, "v5_trial10_exit_be_extra_pips", 0.0)),
+                "trial10_exit_trail_buffer_pips": float(getattr(args, "v5_trial10_exit_trail_buffer_pips", 0.0)),
+                "trial10_exit_runner_mode": str(getattr(args, "v5_trial10_exit_runner_mode", "fixed_tp2_then_trail")),
+                "trial10_exit_apply_profiles": str(getattr(args, "v5_trial10_exit_apply_profiles", "Strong,Normal")),
+                "trial10_exit_skip_news": bool(getattr(args, "v5_trial10_exit_skip_news", True)),
                 "normal_mid_atr_allowed": bool(args.v5_normal_mid_atr_allowed),
                 "atr_pct_low_normal": float(args.v5_atr_pct_low_normal),
                 "rolling_wr_lookback": int(args.v5_rolling_wr_lookback),

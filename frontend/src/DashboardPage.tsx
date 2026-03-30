@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
 import {
-  getDashboard, getTradeEvents, getExecutions, startLoop, stopLoop, getRuntimeState, updateRuntimeState,
+  getDashboard, getTradeEvents, getExecutions, getPhase3Decisions, getPhase3DefensiveMonitor, getPhase3PaperAcceptance, getPhase3Provenance, startLoop, stopLoop, getRuntimeState, updateRuntimeState,
   type DashboardState, type TradeEvent, type FilterReport, type ContextItem,
-  type DailySummary, type RuntimeState,
+  type DailySummary, type Phase3AcceptanceSummary, type Phase3DecisionRow, type Phase3DefensiveMonitor, type Phase3Provenance, type RuntimeState,
 } from './api';
 
 // ---------------------------------------------------------------------------
@@ -22,6 +22,7 @@ const colors = {
 };
 
 const mono: React.CSSProperties = { fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace' };
+const PHASE3_DEFENDED_PRESET_ID = 'phase3_integrated_v7_defended';
 
 function useDocumentVisible(): boolean {
   const [isVisible, setIsVisible] = useState(
@@ -170,7 +171,509 @@ const CONTEXT_CATEGORY_LABELS: Record<string, string> = {
   ema_zone: 'EMA Zone',
   filters: 'Filters',
   price: 'Price',
+  runtime: 'Runtime Health',
+  decision: 'Decision State',
+  session: 'Session',
+  frozen: 'Frozen Package',
+  v14: 'Tokyo / V14',
+  london: 'London / V2',
+  v44: 'New York / V44',
 };
+
+function isPhase3PresetName(name: string | null | undefined): boolean {
+  const normalized = String(name || '').toLowerCase();
+  return normalized.includes('phase3_integrated') || normalized.includes('phase 3');
+}
+
+function isDefendedPhase3Preset(name: string | null | undefined): boolean {
+  return String(name || '').trim().toLowerCase() === PHASE3_DEFENDED_PRESET_ID;
+}
+
+function hasPhase3Payload(context: ContextItem[], filters: FilterReport[]): boolean {
+  return context.some((item) => ['runtime', 'decision', 'frozen', 'v14', 'london', 'v44'].includes(item.category))
+    || filters.some((filter) => filter.filter_id.startsWith('phase3_') || filter.filter_id.startsWith('ny_') || filter.filter_id.startsWith('tokyo') || filter.filter_id.startsWith('london'));
+}
+
+function getContextItem(items: ContextItem[], key: string): ContextItem | undefined {
+  return items.find((item) => item.key === key);
+}
+
+function getContextValue(items: ContextItem[], key: string, fallback = 'waiting'): string {
+  return getContextItem(items, key)?.value || fallback;
+}
+
+function getContextItemsByCategory(items: ContextItem[], category: string): ContextItem[] {
+  return items.filter((item) => item.category === category);
+}
+
+function ContextValue({ item, fallback = 'waiting' }: { item?: ContextItem; fallback?: string }) {
+  return (
+    <span style={{
+      color: item?.valueColor === 'green' ? colors.green : item?.valueColor === 'red' ? colors.red : colors.textPrimary,
+      fontSize: 15,
+      ...mono,
+    }}>
+      {item?.value || fallback}
+    </span>
+  );
+}
+
+function ContextSection({
+  title,
+  items,
+  emptyLabel,
+}: {
+  title: string;
+  items: ContextItem[];
+  emptyLabel?: string;
+}) {
+  return (
+    <div style={{
+      backgroundColor: colors.panelHover,
+      border: `1px solid ${colors.border}`,
+      borderRadius: 8,
+      padding: 12,
+      minHeight: 120,
+    }}>
+      <div style={{ fontSize: 12, color: colors.blue, fontWeight: 700, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.8 }}>
+        {title}
+      </div>
+      {items.length === 0 ? (
+        <div style={{ color: colors.textSecondary, fontSize: 12 }}>{emptyLabel || 'No data yet'}</div>
+      ) : (
+        items.map((item) => (
+          <div key={`${title}-${item.key}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '3px 0' }}>
+            <span style={{ color: colors.textSecondary, fontSize: 13 }}>{item.key}</span>
+            <ContextValue item={item} />
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+function Phase3StatusStrip({ items, presetName }: { items: ContextItem[]; presetName: string }) {
+  const statusTiles = [
+    {
+      label: 'Package',
+      value: getContextValue(items, 'Frozen Package', isDefendedPhase3Preset(presetName) ? 'Phase 3 Frozen V7 Defended' : 'Phase 3 active'),
+      accent: colors.blue,
+    },
+    {
+      label: 'Session',
+      value: getContextValue(items, 'Active Session', 'not in session'),
+      accent: colors.amber,
+    },
+    {
+      label: 'Window',
+      value: getContextValue(items, 'Window', 'waiting'),
+      accent: colors.textSecondary,
+    },
+    {
+      label: 'Ownership Cell',
+      value: getContextValue(items, 'Ownership Cell', getContextValue(items, 'NY Ownership Cell', 'no eval yet')),
+      accent: colors.green,
+    },
+    {
+      label: 'Last Decision',
+      value: getContextValue(items, 'Last decision', 'no eval yet'),
+      accent: colors.textSecondary,
+    },
+    {
+      label: 'Defensive State',
+      value: getContextValue(
+        items,
+        'Defensive Flags',
+        isDefendedPhase3Preset(presetName) ? getContextValue(items, 'Defensive Veto', 'veto armed') : 'clear'
+      ),
+      accent: colors.red,
+    },
+  ];
+
+  return (
+    <div style={{
+      backgroundColor: colors.panel,
+      borderRadius: 8,
+      border: `1px solid ${colors.border}`,
+      padding: 12,
+    }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: colors.textSecondary, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>
+        Phase 3 Status
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+        {statusTiles.map((tile) => (
+          <div key={tile.label} style={{
+            padding: 10,
+            borderRadius: 8,
+            backgroundColor: colors.panelHover,
+            border: `1px solid ${tile.accent}44`,
+          }}>
+            <div style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.8 }}>
+              {tile.label}
+            </div>
+            <div style={{ fontSize: 13, color: tile.accent, fontWeight: 700, ...mono }}>
+              {tile.value}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Phase3ContextPanel({ items, presetName }: { items: ContextItem[]; presetName: string }) {
+  const runtimeItems = getContextItemsByCategory(items, 'runtime');
+  const frozenItems = getContextItemsByCategory(items, 'frozen');
+  const decisionItems = getContextItemsByCategory(items, 'decision');
+  const sessionItems = getContextItemsByCategory(items, 'session');
+  const packageItems = [
+    ...frozenItems.filter((item) => item.key === 'Frozen Package'),
+    ...runtimeItems.filter((item) => item.key === 'Config Hash' || item.key === 'Config Date'),
+  ];
+  const runtimeHealthItems = [
+    ...runtimeItems.filter((item) => item.key !== 'Config Hash' && item.key !== 'Config Date'),
+    ...sessionItems.filter((item) => item.key === 'Phase 3 open'),
+  ];
+  const primarySessionItems = sessionItems.filter((item) =>
+    ['UTC', 'Day', 'Active Session', 'Strategy', 'Window'].includes(item.key)
+  );
+  const defendedRuleItems = frozenItems.filter((item) => item.key !== 'Frozen Package');
+  const sessionDetailItems = [
+    ...getContextItemsByCategory(items, 'v14'),
+    ...getContextItemsByCategory(items, 'london'),
+    ...getContextItemsByCategory(items, 'v44'),
+  ];
+
+  return (
+    <div style={{
+      backgroundColor: colors.panel,
+      borderRadius: 8,
+      padding: 14,
+      border: `1px solid ${colors.border}`,
+      minHeight: 120,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 1 }}>
+          Phase 3 Operator Context
+        </div>
+        <div style={{
+          padding: '4px 10px',
+          borderRadius: 999,
+          fontSize: 11,
+          fontWeight: 700,
+          color: isDefendedPhase3Preset(presetName) ? colors.green : colors.blue,
+          backgroundColor: isDefendedPhase3Preset(presetName) ? `${colors.green}18` : `${colors.blue}18`,
+          border: `1px solid ${isDefendedPhase3Preset(presetName) ? colors.green : colors.blue}44`,
+        }}>
+          {isDefendedPhase3Preset(presetName) ? 'Frozen Defended Package Active' : 'Phase 3 Structured View'}
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+        <ContextSection title="Package" items={packageItems} emptyLabel="No package metadata yet" />
+        <ContextSection title="Runtime Health" items={runtimeHealthItems} emptyLabel="No runtime-health samples yet" />
+        <ContextSection title="Session" items={primarySessionItems} emptyLabel="Not in an active session" />
+        <ContextSection title="Decision State" items={decisionItems} emptyLabel="No Phase 3 evaluation yet" />
+        <ContextSection title="Defended Rules" items={defendedRuleItems} emptyLabel="No frozen rule overlay active" />
+        <ContextSection title="Session Detail" items={sessionDetailItems} emptyLabel="No session detail available yet" />
+      </div>
+    </div>
+  );
+}
+
+function phase3FamilyLabel(family: string | null | undefined): string {
+  switch (String(family || '')) {
+    case 'v14':
+      return 'V14';
+    case 'london_v2_d':
+      return 'L1';
+    case 'london_v2_arb':
+      return 'L2/ARB';
+    case 'v44_ny':
+      return 'V44';
+    default:
+      return String(family || '').trim() || 'Phase 3';
+  }
+}
+
+function phase3SessionLabel(session: string | null | undefined): string {
+  switch (String(session || '')) {
+    case 'tokyo':
+      return 'Tokyo';
+    case 'london':
+      return 'London';
+    case 'ny':
+      return 'NY';
+    default:
+      return String(session || '').trim() || '—';
+  }
+}
+
+function StatusChip({ label, color }: { label: string; color: string }) {
+  return (
+    <span style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+      padding: '4px 8px',
+      borderRadius: 999,
+      fontSize: 11,
+      fontWeight: 700,
+      color,
+      backgroundColor: `${color}18`,
+      border: `1px solid ${color}44`,
+      whiteSpace: 'nowrap',
+    }}>
+      {label}
+    </span>
+  );
+}
+
+function AttributionBadges({ event }: { event: Pick<TradeEvent, 'phase3_session' | 'phase3_strategy_family' | 'ownership_cell' | 'has_cell_attribution'> }) {
+  const badges: Array<{ label: string; color: string }> = [];
+  if (event.phase3_session) badges.push({ label: phase3SessionLabel(event.phase3_session), color: colors.amber });
+  if (event.phase3_strategy_family) badges.push({ label: phase3FamilyLabel(event.phase3_strategy_family), color: colors.blue });
+  if (event.ownership_cell) badges.push({ label: event.ownership_cell, color: colors.green });
+  else if (event.has_cell_attribution) badges.push({ label: '@cell', color: colors.green });
+  if (badges.length === 0) return null;
+  return (
+    <>
+      {badges.map((badge) => (
+        <StatusChip key={`${badge.label}-${badge.color}`} label={badge.label} color={badge.color} />
+      ))}
+    </>
+  );
+}
+
+function Phase3SectionCard({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div style={{
+      backgroundColor: colors.panel,
+      borderRadius: 8,
+      padding: 12,
+      border: `1px solid ${colors.border}`,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline', marginBottom: 8, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 1 }}>
+          {title}
+        </div>
+        {subtitle && <div style={{ fontSize: 11, color: colors.textSecondary }}>{subtitle}</div>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Phase3MetricGrid({ rows }: { rows: Array<{ label: string; value: string | number | null | undefined; color?: string }> }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+      {rows.map((row) => (
+        <div key={row.label} style={{ padding: 10, borderRadius: 8, backgroundColor: colors.panelHover, border: `1px solid ${colors.border}` }}>
+          <div style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.7 }}>{row.label}</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: row.color || colors.textPrimary, ...mono }}>
+            {row.value == null || row.value === '' ? '—' : String(row.value)}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Phase3DecisionSample({
+  decisions,
+  sessionFilter,
+}: {
+  decisions: Phase3DecisionRow[];
+  sessionFilter?: 'tokyo' | 'london' | 'ny';
+}) {
+  const filtered = sessionFilter ? decisions.filter((row) => row.phase3_session === sessionFilter) : decisions;
+  const sample = filtered.slice(-12).reverse();
+  return (
+    <Phase3SectionCard
+      title="Recent Phase 3 Decisions"
+      subtitle={sessionFilter ? `${phase3SessionLabel(sessionFilter)} sample` : 'Latest per-bar evaluations'}
+    >
+      {sample.length === 0 ? (
+        <div style={{ color: colors.textSecondary, fontSize: 12 }}>No Phase 3 decision rows yet.</div>
+      ) : (
+        <div style={{ maxHeight: 260, overflowY: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ color: colors.textSecondary, borderBottom: `1px solid ${colors.border}` }}>
+                <th style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 500 }}>Time</th>
+                <th style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 500 }}>Session</th>
+                <th style={{ textAlign: 'center', padding: '4px 6px', fontWeight: 500 }}>Placed</th>
+                <th style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 500 }}>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sample.map((row, idx) => (
+                <tr key={`${row.timestamp_utc || 'row'}-${idx}`} style={{ borderBottom: `1px solid ${colors.border}22` }}>
+                  <td style={{ padding: '4px 6px', ...mono, color: colors.textSecondary }}>{String(row.timestamp_utc || '').slice(11, 19)}</td>
+                  <td style={{ padding: '4px 6px' }}>{phase3SessionLabel(row.phase3_session)}</td>
+                  <td style={{ padding: '4px 6px', textAlign: 'center', color: row.placed ? colors.green : colors.red }}>{row.placed ? 'Yes' : 'No'}</td>
+                  <td style={{ padding: '4px 6px', maxWidth: 460, overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.reason_text || row.reason || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Phase3SectionCard>
+  );
+}
+
+function Phase3ProvenanceCard({ provenance }: { provenance: Phase3Provenance | null }) {
+  if (!provenance) {
+    return (
+      <Phase3SectionCard title="Decision Provenance">
+        <div style={{ color: colors.textSecondary, fontSize: 12 }}>Decision provenance unavailable.</div>
+      </Phase3SectionCard>
+    );
+  }
+  const statusColor = provenance.outcome === 'placed' ? colors.green : provenance.outcome === 'blocked' ? colors.red : colors.amber;
+  return (
+    <Phase3SectionCard title="Decision Provenance" subtitle={provenance.generated_at_utc ? `Updated ${String(provenance.generated_at_utc).slice(11, 19)} UTC` : undefined}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+        <StatusChip label={`Outcome: ${provenance.outcome.toUpperCase()}`} color={statusColor} />
+        {provenance.session && <StatusChip label={phase3SessionLabel(provenance.session)} color={colors.amber} />}
+        {provenance.strategy_family && <StatusChip label={phase3FamilyLabel(provenance.strategy_family)} color={colors.blue} />}
+        {provenance.ownership_cell && <StatusChip label={provenance.ownership_cell} color={colors.green} />}
+      </div>
+      <Phase3MetricGrid rows={[
+        { label: 'Package', value: provenance.package_id || provenance.preset_name || '—', color: colors.blue },
+        { label: 'Window', value: provenance.window_label || 'waiting' },
+        { label: 'Strategy Tag', value: provenance.strategy_tag || 'no evaluated Phase 3 decision yet' },
+        { label: 'Regime', value: provenance.regime_label || '—' },
+        { label: 'Blocking Rules', value: provenance.blocking_filter_ids.length > 0 ? provenance.blocking_filter_ids.join(', ') : 'clear' },
+        { label: 'Last Block Reason', value: provenance.last_block_reason || provenance.reason || '—', color: provenance.outcome === 'blocked' ? colors.red : colors.textPrimary },
+      ]} />
+      <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <div style={{ padding: 10, borderRadius: 8, backgroundColor: colors.panelHover, border: `1px solid ${colors.border}` }}>
+          <div style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.7 }}>Exit Policy</div>
+          {provenance.exit_policy ? (
+            <div style={{ color: colors.textPrimary, fontSize: 12, lineHeight: 1.6 }}>
+              <div>{provenance.exit_policy.label}</div>
+              <div style={mono}>TP1 {provenance.exit_policy.tp1_r.toFixed(2)}R / BE {provenance.exit_policy.be_offset_pips.toFixed(1)} / TP2 {provenance.exit_policy.tp2_r.toFixed(1)}R</div>
+            </div>
+          ) : (
+            <div style={{ color: colors.textSecondary, fontSize: 12 }}>No exit policy assigned yet.</div>
+          )}
+        </div>
+        <div style={{ padding: 10, borderRadius: 8, backgroundColor: colors.panelHover, border: `1px solid ${colors.border}` }}>
+          <div style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.7 }}>Frozen Modifiers</div>
+          {provenance.frozen_modifiers.length === 0 ? (
+            <div style={{ color: colors.textSecondary, fontSize: 12 }}>No frozen modifiers active.</div>
+          ) : (
+            provenance.frozen_modifiers.map((modifier) => (
+              <div key={modifier.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, padding: '2px 0' }}>
+                <span style={{ color: colors.textSecondary }}>{modifier.label}</span>
+                <span style={{ color: colors.textPrimary, ...mono }}>{modifier.value}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </Phase3SectionCard>
+  );
+}
+
+function Phase3AcceptanceWidget({ acceptance }: { acceptance: Phase3AcceptanceSummary | null }) {
+  if (!acceptance || !acceptance.available) {
+    return (
+      <Phase3SectionCard title="Observed-Fire Acceptance">
+        <div style={{ color: colors.textSecondary, fontSize: 12 }}>Paper acceptance artifact not available yet.</div>
+      </Phase3SectionCard>
+    );
+  }
+  const observed = acceptance.observed_summary?.OBSERVED_count ?? 0;
+  const awaiting = acceptance.observed_summary?.IMPLEMENTED_AND_INSTRUMENTED_AWAITING_OBSERVED_FIRE_count ?? 0;
+  const broken = acceptance.observed_summary?.BROKEN_count ?? 0;
+  const verdictColor = acceptance.verdict?.includes('BLOCKED') ? colors.red : acceptance.verdict?.includes('ACCEPTED') ? colors.green : colors.amber;
+  return (
+    <Phase3SectionCard title="Observed-Fire Acceptance" subtitle={acceptance.package_under_test || undefined}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+        <StatusChip label={acceptance.verdict || 'Awaiting validation'} color={verdictColor} />
+        <StatusChip label={`Observed ${observed}`} color={colors.green} />
+        <StatusChip label={`Awaiting ${awaiting}`} color={colors.amber} />
+        <StatusChip label={`Broken ${broken}`} color={colors.red} />
+      </div>
+      <div style={{ color: colors.textSecondary, fontSize: 12, marginBottom: 10 }}>{acceptance.verdict_note || 'No acceptance note recorded.'}</div>
+      <div style={{ display: 'grid', gap: 8 }}>
+        {acceptance.rules.map((rule) => {
+          const color = rule.status.includes('BROKEN') ? colors.red : rule.status.includes('OBSERVED') ? colors.green : colors.amber;
+          return (
+            <div key={rule.id} style={{ padding: 10, borderRadius: 8, backgroundColor: colors.panelHover, border: `1px solid ${colors.border}` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' }}>
+                <div style={{ color: colors.textPrimary, fontWeight: 700, fontSize: 13 }}>{rule.label}</div>
+                <StatusChip label={rule.status} color={color} />
+              </div>
+              <div style={{ color: colors.textSecondary, fontSize: 12 }}>{rule.requirement}</div>
+              {rule.evidence_pointer && <div style={{ color: colors.textSecondary, fontSize: 11, marginTop: 4 }}>{rule.evidence_pointer}</div>}
+            </div>
+          );
+        })}
+      </div>
+      {acceptance.immediate_next_action && (
+        <div style={{ marginTop: 10, padding: 10, borderRadius: 8, backgroundColor: `${colors.amber}10`, border: `1px solid ${colors.amber}33`, color: colors.amber, fontSize: 12 }}>
+          Next action: {acceptance.immediate_next_action}
+        </div>
+      )}
+    </Phase3SectionCard>
+  );
+}
+
+function Phase3DefensiveMonitorPanel({ monitor }: { monitor: Phase3DefensiveMonitor | null }) {
+  if (!monitor || !monitor.available) {
+    return (
+      <Phase3SectionCard title="Defensive Monitor">
+        <div style={{ color: colors.textSecondary, fontSize: 12 }}>Defensive monitor artifact not available yet.</div>
+      </Phase3SectionCard>
+    );
+  }
+  const baseline500k = (monitor.research_baseline_blocked_trade_counts as Record<string, any> | null)?.['500k'];
+  const baseline1000k = (monitor.research_baseline_blocked_trade_counts as Record<string, any> | null)?.['1000k'];
+  return (
+    <Phase3SectionCard title="Defensive Monitor" subtitle={monitor.frozen_package_id || undefined}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+        <StatusChip label={monitor.strategy || 'v44_ny'} color={colors.blue} />
+        <StatusChip label={monitor.ownership_cell || 'ambiguous/er_low/der_neg'} color={colors.green} />
+        <StatusChip label={monitor.paper_monitor_executed ? 'Monitor Run' : 'Monitor Not Yet Run'} color={monitor.paper_monitor_executed ? colors.green : colors.amber} />
+        {monitor.pause_recommended != null && <StatusChip label={monitor.pause_recommended ? 'Pause Recommended' : 'No Pause Flag'} color={monitor.pause_recommended ? colors.red : colors.green} />}
+      </div>
+      <Phase3MetricGrid rows={[
+        { label: 'Log Path', value: monitor.log_path_used || 'not available' },
+        { label: 'Guardrail Status', value: monitor.guardrail_status ? JSON.stringify(monitor.guardrail_status) : 'not available' },
+        { label: '500k Baseline', value: baseline500k ? `${baseline500k.blocked_count} blocked / ${baseline500k.blocked_net_usd} USD` : '—' },
+        { label: '1000k Baseline', value: baseline1000k ? `${baseline1000k.blocked_count} blocked / ${baseline1000k.blocked_net_usd} USD` : '—' },
+      ]} />
+      {monitor.paper_monitor_skip_reason && (
+        <div style={{ marginTop: 10, color: colors.textSecondary, fontSize: 12 }}>{monitor.paper_monitor_skip_reason}</div>
+      )}
+      {monitor.searched_locations.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.7 }}>Searched Locations</div>
+          <ul style={{ margin: 0, paddingLeft: 18, color: colors.textSecondary, fontSize: 12 }}>
+            {monitor.searched_locations.slice(0, 6).map((location) => <li key={location}>{location}</li>)}
+          </ul>
+        </div>
+      )}
+      {monitor.next_command_when_log_exists && (
+        <div style={{ marginTop: 10, padding: 10, borderRadius: 8, backgroundColor: `${colors.blue}10`, border: `1px solid ${colors.blue}33`, color: colors.textPrimary, fontSize: 12 }}>
+          <div style={{ color: colors.textSecondary, marginBottom: 4 }}>Next command when log exists</div>
+          <div style={mono}>{monitor.next_command_when_log_exists}</div>
+        </div>
+      )}
+    </Phase3SectionCard>
+  );
+}
 
 function ContextPanel({ items }: { items: ContextItem[] }) {
   const grouped: Record<string, ContextItem[]> = {};
@@ -209,15 +712,28 @@ function ContextPanel({ items }: { items: ContextItem[] }) {
 // Filter Status Table
 // ---------------------------------------------------------------------------
 
-function FilterRow({ filter, depth = 0 }: { filter: FilterReport; depth?: number }) {
+function FilterRow({
+  filter,
+  depth = 0,
+  emphasizeBlocked = false,
+}: {
+  filter: FilterReport;
+  depth?: number;
+  emphasizeBlocked?: boolean;
+}) {
   const [expanded, setExpanded] = useState(true);
   if (!filter.enabled) return null;
   const hasSubs = filter.sub_filters && filter.sub_filters.length > 0;
+  const rowTint = !filter.is_clear && emphasizeBlocked ? `${colors.red}12` : 'transparent';
 
   return (
     <>
       <tr
-        style={{ borderBottom: `1px solid ${colors.border}22`, cursor: hasSubs ? 'pointer' : 'default' }}
+        style={{
+          borderBottom: `1px solid ${colors.border}22`,
+          cursor: hasSubs ? 'pointer' : 'default',
+          backgroundColor: rowTint,
+        }}
         onClick={hasSubs ? () => setExpanded(e => !e) : undefined}
       >
         <td style={{
@@ -242,9 +758,62 @@ function FilterRow({ filter, depth = 0 }: { filter: FilterReport; depth?: number
         </td>
       </tr>
       {hasSubs && expanded && filter.sub_filters.map(sub => (
-        <FilterRow key={sub.filter_id} filter={sub} depth={depth + 1} />
+        <FilterRow key={sub.filter_id} filter={sub} depth={depth + 1} emphasizeBlocked={emphasizeBlocked} />
       ))}
     </>
+  );
+}
+
+function classifyPhase3FilterGroup(filter: FilterReport): 'frozen' | 'entry' | 'session' | 'diagnostics' {
+  if (filter.filter_id.startsWith('phase3_frozen_')) return 'frozen';
+  if (['allowed_to_trade', 'last_decision', 'session', 'strategy'].includes(filter.filter_id)) return 'entry';
+  if (
+    filter.filter_id.includes('london') ||
+    filter.filter_id.includes('tokyo') ||
+    filter.filter_id.includes('ny_') ||
+    filter.filter_id === 'regime' ||
+    filter.filter_id === 'adx' ||
+    filter.filter_id === 'atr' ||
+    filter.filter_id.includes('range') ||
+    filter.filter_id.includes('levels')
+  ) {
+    return 'session';
+  }
+  return 'diagnostics';
+}
+
+function FilterGroupTable({
+  title,
+  filters,
+  emphasizeBlocked,
+}: {
+  title: string;
+  filters: FilterReport[];
+  emphasizeBlocked?: boolean;
+}) {
+  if (filters.length === 0) return null;
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ fontSize: 12, color: colors.blue, fontWeight: 700, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.8 }}>
+        {title}
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr style={{ color: colors.textSecondary, borderBottom: `1px solid ${colors.border}`, fontSize: 11 }}>
+            <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500 }}>Filter</th>
+            <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500 }}>Current Value</th>
+            <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500 }}>Threshold</th>
+            <th style={{ textAlign: 'center', padding: '4px 8px', fontWeight: 500 }}>Status</th>
+            <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500 }}>Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filters.map((filter) => (
+            <FilterRow key={filter.filter_id} filter={filter} emphasizeBlocked={emphasizeBlocked} />
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -253,11 +822,13 @@ function FilterTable({
   candidateSide,
   candidateTrigger,
   lastBlockReason,
+  isPhase3 = false,
 }: {
   filters: FilterReport[];
   candidateSide: 'buy' | 'sell' | null;
   candidateTrigger: 'zone_entry' | 'tiered_pullback' | null;
   lastBlockReason?: string | null;
+  isPhase3?: boolean;
 }) {
   const enabledFilters = filters.filter(f => f.enabled);
   if (enabledFilters.length === 0) {
@@ -294,6 +865,14 @@ function FilterTable({
     .filter(f => !isRelevantBlocker(f) && !f.is_clear)
     .map(f => f.display_name);
   const allClear = relevantBlockers.length === 0;
+  const groupedPhase3Filters = isPhase3
+    ? {
+        frozen: enabledFilters.filter((f) => classifyPhase3FilterGroup(f) === 'frozen'),
+        entry: enabledFilters.filter((f) => classifyPhase3FilterGroup(f) === 'entry'),
+        session: enabledFilters.filter((f) => classifyPhase3FilterGroup(f) === 'session'),
+        diagnostics: enabledFilters.filter((f) => classifyPhase3FilterGroup(f) === 'diagnostics'),
+      }
+    : null;
 
   return (
     <div style={{
@@ -301,24 +880,8 @@ function FilterTable({
       border: `1px solid ${colors.border}`,
     }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: colors.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Filter Status</div>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead>
-          <tr style={{ color: colors.textSecondary, borderBottom: `1px solid ${colors.border}`, fontSize: 11 }}>
-            <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500 }}>Filter</th>
-            <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500 }}>Current Value</th>
-            <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500 }}>Threshold</th>
-            <th style={{ textAlign: 'center', padding: '4px 8px', fontWeight: 500 }}>Status</th>
-            <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500 }}>Reason</th>
-          </tr>
-        </thead>
-        <tbody>
-          {enabledFilters.map(f => (
-            <FilterRow key={f.filter_id} filter={f} />
-          ))}
-        </tbody>
-      </table>
       <div style={{
-        marginTop: 8, padding: '4px 8px', fontSize: 12, borderRadius: 4,
+        marginTop: 8, padding: '6px 10px', fontSize: 12, borderRadius: 6,
         backgroundColor: !hasCandidateContext
           ? colors.amber + '11'
           : allClear
@@ -343,6 +906,11 @@ function FilterTable({
             ? 'Entry: CLEAR'
             : `Entry: BLOCKED by ${relevantBlockers.join(', ')}`}
       </div>
+      {lastBlockReason && (
+        <div style={{ marginTop: 6, padding: '6px 10px', fontSize: 11, color: colors.amber, backgroundColor: 'rgba(245, 158, 11, 0.1)', borderRadius: 6 }}>
+          Top blocker: {lastBlockReason}
+        </div>
+      )}
       {otherWarnings.length > 0 && (
         <div style={{ marginTop: 6, fontSize: 11, color: colors.textSecondary }}>
           Other warnings: {otherWarnings.join(', ')}
@@ -353,10 +921,15 @@ function FilterTable({
           Candidate: {candidateSide?.toUpperCase()} {candidateTrigger === 'zone_entry' ? 'zone entry' : 'tiered pullback'}
         </div>
       )}
-      {lastBlockReason && (
-        <div style={{ marginTop: 4, padding: '4px 8px', fontSize: 11, color: '#f59e0b', backgroundColor: 'rgba(245, 158, 11, 0.1)', borderRadius: 4 }}>
-          Block: {lastBlockReason}
-        </div>
+      {isPhase3 && groupedPhase3Filters ? (
+        <>
+          <FilterGroupTable title="Frozen Rules" filters={groupedPhase3Filters.frozen} />
+          <FilterGroupTable title="Entry Readiness" filters={groupedPhase3Filters.entry} emphasizeBlocked />
+          <FilterGroupTable title="Session Gates" filters={groupedPhase3Filters.session} emphasizeBlocked />
+          <FilterGroupTable title="Diagnostics" filters={groupedPhase3Filters.diagnostics} />
+        </>
+      ) : (
+        <FilterGroupTable title="All Filters" filters={enabledFilters} />
       )}
     </div>
   );
@@ -386,6 +959,7 @@ function TradeCard({ event, isNew }: { event: TradeEvent; isNew: boolean }) {
         }}>{isClose ? 'CLOSE' : 'OPEN'}</span>
         <SideBadge side={event.side} />
         <EntryTypePill type={event.entry_type} />
+        <AttributionBadges event={event} />
         {event.trigger_type && <span style={{ color: colors.textSecondary, fontSize: 10 }}>{event.trigger_type}</span>}
         <span style={{ ...mono, color: colors.textPrimary }}>{event.price.toFixed(3)}</span>
         {!isClose && event.spread_at_entry != null && (
@@ -574,6 +1148,11 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
   const [dashboardOffline, setDashboardOffline] = useState(false);
   const [trail, setTrail] = useState<Array<{ time: string; spread: number; blocked: number; trend: string }>>([]);
   const [trailExpanded, setTrailExpanded] = useState(false);
+  const [phase3Tab, setPhase3Tab] = useState<'overview' | 'tokyo' | 'london' | 'ny' | 'defensive' | 'paper'>('overview');
+  const [phase3Provenance, setPhase3Provenance] = useState<Phase3Provenance | null>(null);
+  const [phase3Acceptance, setPhase3Acceptance] = useState<Phase3AcceptanceSummary | null>(null);
+  const [phase3Monitor, setPhase3Monitor] = useState<Phase3DefensiveMonitor | null>(null);
+  const [phase3Decisions, setPhase3Decisions] = useState<Phase3DecisionRow[]>([]);
 
   const loopRunning = dashboardOffline ? false : (dashState?.loop_running ?? false);
   const tick = (dashState && Number.isFinite(dashState.bid) && Number.isFinite(dashState.ask))
@@ -698,6 +1277,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
   const filters: FilterReport[] = dashState?.filters || [];
   const dailySummary: DailySummary | null = dashState?.daily_summary || null;
   const presetName = dashState?.preset_name || '';
+  const isPhase3Preset = isPhase3PresetName(presetName) || hasPhase3Payload(context, filters);
   const loopLog: Array<{ts: string; level: string; msg: string}> = (dashState as unknown as Record<string, unknown>)?.loop_log as Array<{ts: string; level: string; msg: string}> || [];
   const openEvents = events.filter((e) => e.event_type === 'open');
   const closedEvents = events.filter((e) => e.event_type === 'close');
@@ -712,6 +1292,143 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     if (age == null) return 'Stale data';
     return `Stale ${Math.round(age)}s`;
   })();
+
+  useEffect(() => {
+    setPhase3Tab('overview');
+  }, [profileName]);
+
+  useEffect(() => {
+    if (!isPhase3Preset) {
+      setPhase3Tab('overview');
+      setPhase3Provenance(null);
+      setPhase3Acceptance(null);
+      setPhase3Monitor(null);
+      setPhase3Decisions([]);
+    }
+  }, [isPhase3Preset]);
+
+  useEffect(() => {
+    if (!isPageVisible || !isPhase3Preset) return;
+    let mounted = true;
+    const poll = () => {
+      getPhase3Provenance(profileName, profilePath)
+        .then((data) => { if (mounted) setPhase3Provenance(data); })
+        .catch(() => { if (mounted) setPhase3Provenance(null); });
+      getPhase3PaperAcceptance()
+        .then((data) => { if (mounted) setPhase3Acceptance(data); })
+        .catch(() => { if (mounted) setPhase3Acceptance(null); });
+      getPhase3DefensiveMonitor()
+        .then((data) => { if (mounted) setPhase3Monitor(data); })
+        .catch(() => { if (mounted) setPhase3Monitor(null); });
+      getPhase3Decisions(profileName, 7, 2000)
+        .then((rows) => { if (mounted) setPhase3Decisions(rows || []); })
+        .catch(() => { if (mounted) setPhase3Decisions([]); });
+    };
+    poll();
+    const id = setInterval(poll, 10000);
+    return () => { mounted = false; clearInterval(id); };
+  }, [isPageVisible, isPhase3Preset, profileName, profilePath]);
+
+  const tabButtons: Array<{ id: 'overview' | 'tokyo' | 'london' | 'ny' | 'defensive' | 'paper'; label: string }> = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'tokyo', label: 'Tokyo / V14' },
+    { id: 'london', label: 'London / V2' },
+    { id: 'ny', label: 'New York / V44' },
+    { id: 'defensive', label: 'Defensive' },
+    { id: 'paper', label: 'Paper Acceptance' },
+  ];
+
+  const filterContextForTab = (tab: typeof phase3Tab): ContextItem[] => {
+    if (tab === 'overview') return context;
+    if (tab === 'tokyo') return context.filter((item) => ['runtime', 'decision', 'session', 'frozen', 'v14'].includes(item.category));
+    if (tab === 'london') return context.filter((item) => ['runtime', 'decision', 'session', 'frozen', 'london'].includes(item.category));
+    if (tab === 'ny') return context.filter((item) => ['runtime', 'decision', 'session', 'frozen', 'v44'].includes(item.category));
+    if (tab === 'defensive') return context.filter((item) => ['runtime', 'decision', 'frozen', 'v44'].includes(item.category));
+    if (tab === 'paper') return context.filter((item) => ['runtime', 'decision', 'frozen'].includes(item.category));
+    return context;
+  };
+
+  const renderPhase3Overview = () => (
+    <>
+      <Phase3ProvenanceCard provenance={phase3Provenance} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <Phase3ContextPanel items={context} presetName={presetName} />
+        <TradeLog title="Trade Log (Last 30)" events={recentOpenEvents} />
+      </div>
+      <Phase3DecisionSample decisions={phase3Decisions} />
+      <FilterTable
+        filters={filters}
+        candidateSide={dashState?.entry_candidate_side ?? null}
+        candidateTrigger={dashState?.entry_candidate_trigger ?? null}
+        lastBlockReason={dashState?.last_block_reason ?? null}
+        isPhase3
+      />
+      <TradeLog title="Closed Trades (Last 30)" events={recentClosedEvents} />
+      <ExecutionLog executions={executions} />
+    </>
+  );
+
+  const renderPhase3SessionTab = (session: 'tokyo' | 'london' | 'ny') => (
+    <>
+      <Phase3DecisionSample decisions={phase3Decisions} sessionFilter={session} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <Phase3ContextPanel items={filterContextForTab(session)} presetName={presetName} />
+        <TradeLog title={`${phase3SessionLabel(session)} Trade Log`} events={recentOpenEvents.filter((event) => event.phase3_session === session)} />
+      </div>
+      <FilterTable
+        filters={filters}
+        candidateSide={dashState?.entry_candidate_side ?? null}
+        candidateTrigger={dashState?.entry_candidate_trigger ?? null}
+        lastBlockReason={dashState?.last_block_reason ?? null}
+        isPhase3
+      />
+      <ExecutionLog executions={executions} />
+    </>
+  );
+
+  const renderPhase3DefensiveTab = () => (
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <Phase3DefensiveMonitorPanel monitor={phase3Monitor} />
+        <Phase3ContextPanel items={filterContextForTab('defensive')} presetName={presetName} />
+      </div>
+      <FilterTable
+        filters={filters}
+        candidateSide={dashState?.entry_candidate_side ?? null}
+        candidateTrigger={dashState?.entry_candidate_trigger ?? null}
+        lastBlockReason={dashState?.last_block_reason ?? null}
+        isPhase3
+      />
+      <ExecutionLog executions={executions} />
+    </>
+  );
+
+  const renderPhase3PaperTab = () => (
+    <>
+      <Phase3AcceptanceWidget acceptance={phase3Acceptance} />
+      <Phase3ProvenanceCard provenance={phase3Provenance} />
+      <Phase3DecisionSample decisions={phase3Decisions} />
+    </>
+  );
+
+  const renderPhase3TabContent = () => {
+    switch (phase3Tab) {
+      case 'overview':
+        return renderPhase3Overview();
+      case 'tokyo':
+        return renderPhase3SessionTab('tokyo');
+      case 'london':
+        return renderPhase3SessionTab('london');
+      case 'ny':
+        return renderPhase3SessionTab('ny');
+      case 'defensive':
+        return renderPhase3DefensiveTab();
+      case 'paper':
+        return renderPhase3PaperTab();
+      default:
+        return renderPhase3Overview();
+    }
+  };
 
   return (
     <div style={{ backgroundColor: colors.bg, color: colors.textPrimary, minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -761,25 +1478,62 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
             No run-loop dashboard data yet. Start the loop to populate dashboard context and filters.
           </div>
         )}
-        {/* Two-column: Context + Trade Log */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <ContextPanel items={context} />
-          <TradeLog title="Trade Log (Last 30)" events={recentOpenEvents} />
-        </div>
-
-        {/* Filter Status */}
-        <FilterTable
-          filters={filters}
-          candidateSide={dashState?.entry_candidate_side ?? null}
-          candidateTrigger={dashState?.entry_candidate_trigger ?? null}
-          lastBlockReason={dashState?.last_block_reason ?? null}
-        />
-
-        {/* Closed Trades */}
-        <TradeLog title="Closed Trades (Last 30)" events={recentClosedEvents} />
-
-        {/* Execution Log: reasons candidate trades were not placed + loop errors */}
-        <ExecutionLog executions={executions} />
+        {isPhase3Preset && (
+          <Phase3StatusStrip items={context} presetName={presetName} />
+        )}
+        {isPhase3Preset ? (
+          <>
+            <div style={{
+              backgroundColor: colors.panel,
+              borderRadius: 8,
+              border: `1px solid ${colors.border}`,
+              padding: 8,
+              display: 'flex',
+              gap: 8,
+              flexWrap: 'wrap',
+            }}>
+              {tabButtons.map((tab) => {
+                const active = tab.id === phase3Tab;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setPhase3Tab(tab.id)}
+                    style={{
+                      border: `1px solid ${active ? colors.blue : colors.border}`,
+                      backgroundColor: active ? `${colors.blue}18` : 'transparent',
+                      color: active ? colors.blue : colors.textSecondary,
+                      borderRadius: 999,
+                      padding: '6px 12px',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+            {renderPhase3TabContent()}
+          </>
+        ) : (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <ContextPanel items={context} />
+              <TradeLog title="Trade Log (Last 30)" events={recentOpenEvents} />
+            </div>
+            <FilterTable
+              filters={filters}
+              candidateSide={dashState?.entry_candidate_side ?? null}
+              candidateTrigger={dashState?.entry_candidate_trigger ?? null}
+              lastBlockReason={dashState?.last_block_reason ?? null}
+              isPhase3={false}
+            />
+            <TradeLog title="Closed Trades (Last 30)" events={recentClosedEvents} />
+            <ExecutionLog executions={executions} />
+          </>
+        )}
 
         {/* Loop Log — OG style */}
         {loopLog.length > 0 && (

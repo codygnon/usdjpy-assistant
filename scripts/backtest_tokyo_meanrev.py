@@ -21,6 +21,11 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+from core.v14_entry_evaluator import evaluate_v14_entry_signal
+
 PIP_SIZE = 0.01
 TOKYO_TZ = "Asia/Tokyo"
 
@@ -2114,6 +2119,7 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
             continue
         diag["bars_reached_signal_scoring"] += 1
 
+        # --- V14 entry signal evaluation (delegated to core.v14_entry_evaluator) ---
         P = float(row["pivot_P"])
         R1 = float(row["pivot_R1"])
         R2 = float(row["pivot_R2"])
@@ -2121,74 +2127,215 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
         S1 = float(row["pivot_S1"])
         S2 = float(row["pivot_S2"])
         S3 = float(row["pivot_S3"])
-        bb_u = float(row["bb_upper"])
-        bb_l = float(row["bb_lower"])
-        rsi = float(row["rsi_m5"])
-        sar = float(row["sar_value"])
-        sar_dir = str(row["sar_direction"])
 
-        # Regime gate score/classification.
-        regime_label = "neutral"
-        regime_size_mult = 1.0
-        if regime_enabled:
-            score = 0
-            atr_fast = float(row.get("atr_m15", np.nan))
-            atr_slow = float(row.get("atr_m15_slow", np.nan))
-            atr_ratio = (atr_fast / atr_slow) if (not pd.isna(atr_fast) and not pd.isna(atr_slow) and atr_slow > 0) else np.nan
-            if not pd.isna(atr_ratio):
-                if atr_ratio > atr_ratio_trend:
-                    score -= 1
-                elif atr_ratio < atr_ratio_calm:
-                    score += 1
-            bbw = float(row.get("bb_width", np.nan))
-            bbw_hi = float(row.get("bb_width_q_high", np.nan))
-            bbw_lo = float(row.get("bb_width_q_low", np.nan))
-            if not pd.isna(bbw) and not pd.isna(bbw_hi) and bbw > bbw_hi:
-                score -= 1
-            elif not pd.isna(bbw) and not pd.isna(bbw_lo) and bbw < bbw_lo:
-                score += 1
-            adx = float(row.get("adx_m15", np.nan))
-            if not pd.isna(adx):
-                if adx > adx_trend:
-                    score -= 1
-                elif adx < adx_range:
-                    score += 1
-            if S1 <= mid_close <= R1:
-                score += 1
-            if (mid_close <= S2) or (mid_close >= R2):
-                score -= 1
-            if score >= favorable_min_score:
-                regime_label = "favorable"
-                regime_gate_stats["bars_favorable"] += 1
-            elif score == neutral_min_score:
-                regime_label = "neutral"
-                regime_size_mult = neutral_size_mult
-                regime_gate_stats["bars_neutral"] += 1
+        _v14_cfg_params = {
+            "tokyo_v2_scoring": tokyo_v2_scoring,
+            "confluence_min_long": confluence_min_long,
+            "confluence_min_short": confluence_min_short,
+            "long_rsi_soft_entry": long_rsi_soft_entry,
+            "long_rsi_bonus": long_rsi_bonus,
+            "short_rsi_soft_entry": short_rsi_soft_entry,
+            "short_rsi_bonus": short_rsi_bonus,
+            "tol": tol,
+            "atr_max": atr_max,
+            "core_gate_use_zone": core_gate_use_zone,
+            "core_gate_use_bb": core_gate_use_bb,
+            "core_gate_use_sar": core_gate_use_sar,
+            "core_gate_use_rsi": core_gate_use_rsi,
+            "core_gate_required": core_gate_required,
+            "regime_enabled": regime_enabled,
+            "atr_ratio_trend": atr_ratio_trend,
+            "atr_ratio_calm": atr_ratio_calm,
+            "adx_trend": adx_trend,
+            "adx_range": adx_range,
+            "favorable_min_score": favorable_min_score,
+            "neutral_min_score": neutral_min_score,
+            "neutral_size_mult": neutral_size_mult,
+            "ss_enabled": ss_enabled,
+            "ss_comp": ss_comp,
+            "combo_filter_enabled": combo_filter_enabled,
+            "combo_filter_mode": combo_filter_mode,
+            "combo_allow": combo_allow,
+            "combo_block": combo_block,
+            "ss_filter_enabled": ss_filter_enabled,
+            "ss_filter_min_score": ss_filter_min_score,
+            "cq_enabled": cq_enabled,
+            "top_combos": top_combos,
+            "bottom_combos": bottom_combos,
+            "high_quality_mult": high_quality_mult,
+            "medium_quality_mult": medium_quality_mult,
+            "low_quality_skip": low_quality_skip,
+            "rejection_bonus_enabled": rejection_bonus_enabled,
+            "div_track_enabled": div_track_enabled,
+            "session_env_enabled": session_env_enabled,
+            "session_env_log_ir_pos": session_env_log_ir_pos,
+        }
+        _v14_candidate = evaluate_v14_entry_signal(
+            row=row,
+            mid_close=mid_close,
+            mid_open=mid_open,
+            mid_high=mid_high,
+            mid_low=mid_low,
+            pivot_levels={"P": P, "R1": R1, "R2": R2, "R3": R3, "S1": S1, "S2": S2, "S3": S3},
+            cfg_params=_v14_cfg_params,
+            sst=sst,
+        )
+
+        # --- Update diagnostic counters from evaluator result ---
+        if _v14_candidate is None:
+            # Regime gate blocked or no signal (ambiguous / no confluence)
+            if regime_enabled:
+                # We need to recheck regime to update the right counter.
+                # The evaluator already computed this; for diagnostics we detect
+                # "no candidate" without knowing the exact sub-reason, but we
+                # can distinguish regime-blocked from no-signal by re-running
+                # the lightweight regime check.
+                from core.v14_entry_evaluator import _score_regime_gate
+                _rl, _rm, _rb = _score_regime_gate(
+                    row=row, mid_close=mid_close, R1=R1, R2=R2, S1=S1, S2=S2,
+                    regime_enabled=regime_enabled,
+                    atr_ratio_trend=atr_ratio_trend, atr_ratio_calm=atr_ratio_calm,
+                    adx_trend=adx_trend, adx_range=adx_range,
+                    favorable_min_score=favorable_min_score,
+                    neutral_min_score=neutral_min_score,
+                    neutral_size_mult=neutral_size_mult,
+                )
+                if _rl == "favorable":
+                    regime_gate_stats["bars_favorable"] += 1
+                elif _rl == "neutral":
+                    regime_gate_stats["bars_neutral"] += 1
+                if _rb:
+                    regime_gate_stats["bars_unfavorable"] += 1
+                    regime_gate_stats["trades_blocked_by_regime"] += 1
+                    diag["blocked_regime_gate_unfavorable"] += 1
+                    continue
+            # Not regime-blocked, so must be no-signal or ambiguous.
+            # Update condition-level diagnostics from row indicators.
+            bb_u = float(row["bb_upper"])
+            bb_l = float(row["bb_lower"])
+            rsi = float(row["rsi_m5"])
+            cond_long_zone = mid_close <= (S1 + tol)
+            cond_short_zone = mid_close >= (R1 - tol)
+            cond_long_bb = (mid_close <= bb_l) or (mid_low <= bb_l)
+            cond_short_bb = (mid_close >= bb_u) or (mid_high >= bb_u)
+            cond_long_sar = bool(row.get("sar_flip_bullish_recent", False))
+            cond_short_sar = bool(row.get("sar_flip_bearish_recent", False))
+            cond_long_rsi_soft = rsi < long_rsi_soft_entry
+            cond_short_rsi_soft = rsi > short_rsi_soft_entry
+            if cond_long_zone:
+                diag["bars_with_long_signal_zone"] += 1
+            if cond_short_zone:
+                diag["bars_with_short_signal_zone"] += 1
+            if cond_long_bb or cond_short_bb:
+                diag["bars_with_bb_touch"] += 1
+            if cond_long_sar or cond_short_sar:
+                diag["bars_with_sar_flip"] += 1
+            diag["long_cond_zone_true"] += int(cond_long_zone)
+            diag["long_cond_bb_true"] += int(cond_long_bb)
+            diag["long_cond_sar_true"] += int(cond_long_sar)
+            diag["long_cond_rsi_soft_true"] += int(cond_long_rsi_soft)
+            diag["short_cond_zone_true"] += int(cond_short_zone)
+            diag["short_cond_bb_true"] += int(cond_short_bb)
+            diag["short_cond_sar_true"] += int(cond_short_sar)
+            diag["short_cond_rsi_soft_true"] += int(cond_short_rsi_soft)
+            # Recompute scores for diag counters (same as evaluator)
+            if tokyo_v2_scoring:
+                cond_long_rsi_ext = rsi < long_rsi_bonus
+                cond_short_rsi_ext = rsi > short_rsi_bonus
+                cond_long_s2 = mid_close <= (S2 + tol)
+                cond_short_r2 = mid_close >= (R2 - tol)
+                cond_atr_low = float(row["atr_m15"]) <= atr_max
+                long_conditions = {
+                    "pivot_S1": bool(cond_long_zone), "pivot_S2": bool(cond_long_s2),
+                    "bb_lower": bool(cond_long_bb), "sar_flip": bool(cond_long_sar),
+                    "rsi_oversold": bool(cond_long_rsi_soft), "rsi_extreme": bool(cond_long_rsi_ext),
+                    "atr_low": bool(cond_atr_low),
+                }
+                short_conditions = {
+                    "pivot_R1": bool(cond_short_zone), "pivot_R2": bool(cond_short_r2),
+                    "bb_upper": bool(cond_short_bb), "sar_flip": bool(cond_short_sar),
+                    "rsi_overbought": bool(cond_short_rsi_soft), "rsi_extreme": bool(cond_short_rsi_ext),
+                    "atr_low": bool(cond_atr_low),
+                }
+                for k, v in long_conditions.items():
+                    condition_check_counts[f"long_{k}"] += 1
+                    condition_hit_counts[f"long_{k}"] += int(v)
+                for k, v in short_conditions.items():
+                    condition_check_counts[f"short_{k}"] += 1
+                    condition_hit_counts[f"short_{k}"] += int(v)
+                long_score = int(sum(1 for v in long_conditions.values() if v))
+                short_score = int(sum(1 for v in short_conditions.values() if v))
             else:
-                regime_label = "unfavorable"
-                regime_gate_stats["bars_unfavorable"] += 1
-                regime_gate_stats["trades_blocked_by_regime"] += 1
-                diag["blocked_regime_gate_unfavorable"] += 1
-                continue
+                long_score = 0
+                short_score = 0
+            if long_score >= 1:
+                diag["signals_score_ge_1"] += 1
+                sst["signals_generated"] = int(sst.get("signals_generated", 0)) + 1
+            if short_score >= 1:
+                diag["signals_score_ge_1"] += 1
+                sst["signals_generated"] = int(sst.get("signals_generated", 0)) + 1
+            if long_score >= 2:
+                diag["signals_score_ge_2"] += 1
+            if short_score >= 2:
+                diag["signals_score_ge_2"] += 1
+            if long_score >= 3:
+                diag["signals_score_ge_3"] += 1
+            if short_score >= 3:
+                diag["signals_score_ge_3"] += 1
+            long_signal = long_score >= confluence_min_long
+            short_signal = short_score >= confluence_min_short
+            diag["long_confluence_min_met"] += int(long_signal)
+            diag["short_confluence_min_met"] += int(short_signal)
+            if tokyo_v2_scoring:
+                if long_score == max(0, confluence_min_long - 1):
+                    near_miss_candidates.append({"index": int(i), "datetime": str(ts), "direction": "long", "price": float(mid_close), "score": int(long_score), "met_conditions": [k for k, v in long_conditions.items() if v], "failed_conditions": [k for k, v in long_conditions.items() if not v]})
+                if short_score == max(0, confluence_min_short - 1):
+                    near_miss_candidates.append({"index": int(i), "datetime": str(ts), "direction": "short", "price": float(mid_close), "score": int(short_score), "met_conditions": [k for k, v in short_conditions.items() if v], "failed_conditions": [k for k, v in short_conditions.items() if not v]})
+            if long_signal and short_signal:
+                diag["bars_with_confluence_met"] += 1
+                diag["blocked_ambiguous_both_signals"] += 1
+            elif long_signal or short_signal:
+                diag["bars_with_confluence_met"] += 1
+                diag["blocked_no_signal"] += 0  # not blocked, but evaluator returned None for ambiguous
+            else:
+                diag["blocked_no_signal"] += 1
+            continue  # evaluator returned None -> no entry candidate
+        # Evaluator returned a candidate dict.
+        # Unpack needed fields and update diagnostics.
+        long_signal = bool(_v14_candidate["long_signal"])
+        short_signal = bool(_v14_candidate["short_signal"])
+        long_score = int(_v14_candidate["long_score"])
+        short_score = int(_v14_candidate["short_score"])
+        direction = str(_v14_candidate["direction"])
+        combo = str(_v14_candidate["confluence_combo"])
+        signal_strength_score = int(_v14_candidate["signal_strength_score"])
+        signal_strength_tier = str(_v14_candidate["signal_strength_tier"])
+        quality_label = str(_v14_candidate["quality_label"])
+        quality_mult = float(_v14_candidate["quality_mult"])
+        regime_label = str(_v14_candidate["regime_label"])
+        regime_size_mult = float(_v14_candidate["regime_mult"])
+        bb_u = float(_v14_candidate["bb_upper"])
+        bb_l = float(_v14_candidate["bb_lower"])
+        rsi = float(_v14_candidate["rsi_m5"])
+        sar = float(_v14_candidate["sar_value"])
+        sar_dir = str(_v14_candidate["sar_direction"])
+        cond_long_zone = bool(_v14_candidate["cond_long_zone"])
+        cond_short_zone = bool(_v14_candidate["cond_short_zone"])
+        cond_long_bb = bool(_v14_candidate["cond_long_bb"])
+        cond_short_bb = bool(_v14_candidate["cond_short_bb"])
+        cond_long_sar = bool(_v14_candidate["cond_long_sar"])
+        cond_short_sar = bool(_v14_candidate["cond_short_sar"])
+        cond_long_rsi_soft = bool(_v14_candidate["cond_long_rsi_soft"])
+        cond_short_rsi_soft = bool(_v14_candidate["cond_short_rsi_soft"])
 
-        long_signal = False
-        short_signal = False
-        long_score = 0
-        short_score = 0
-        cond_long_zone = mid_close <= (S1 + tol)
-        cond_short_zone = mid_close >= (R1 - tol)
-        cond_long_bb = (mid_close <= bb_l) or (mid_low <= bb_l)
-        cond_short_bb = (mid_close >= bb_u) or (mid_high >= bb_u)
-        cond_long_sar = bool(row.get("sar_flip_bullish_recent", False))
-        cond_short_sar = bool(row.get("sar_flip_bearish_recent", False))
-        cond_long_rsi_soft = rsi < long_rsi_soft_entry
-        cond_short_rsi_soft = rsi > short_rsi_soft_entry
-        cond_long_rsi_ext = rsi < long_rsi_bonus
-        cond_short_rsi_ext = rsi > short_rsi_bonus
-        cond_long_s2 = mid_close <= (S2 + tol)
-        cond_short_r2 = mid_close >= (R2 - tol)
-        cond_atr_low = float(row["atr_m15"]) <= atr_max
+        # Regime gate diagnostic counters
+        if regime_enabled:
+            if regime_label == "favorable":
+                regime_gate_stats["bars_favorable"] += 1
+            elif regime_label == "neutral":
+                regime_gate_stats["bars_neutral"] += 1
 
+        # Condition-level diagnostic counters
         if cond_long_zone:
             diag["bars_with_long_signal_zone"] += 1
         if cond_short_zone:
@@ -2206,315 +2353,123 @@ def run_one(cfg: dict, run_cfg: dict) -> dict:
         diag["short_cond_sar_true"] += int(cond_short_sar)
         diag["short_cond_rsi_soft_true"] += int(cond_short_rsi_soft)
 
-        if tokyo_v2_scoring:
-            long_conditions = {
-                "pivot_S1": bool(cond_long_zone),
-                "pivot_S2": bool(cond_long_s2),
-                "bb_lower": bool(cond_long_bb),
-                "sar_flip": bool(cond_long_sar),
-                "rsi_oversold": bool(cond_long_rsi_soft),
-                "rsi_extreme": bool(cond_long_rsi_ext),
-                "atr_low": bool(cond_atr_low),
-            }
-            short_conditions = {
-                "pivot_R1": bool(cond_short_zone),
-                "pivot_R2": bool(cond_short_r2),
-                "bb_upper": bool(cond_short_bb),
-                "sar_flip": bool(cond_short_sar),
-                "rsi_overbought": bool(cond_short_rsi_soft),
-                "rsi_extreme": bool(cond_short_rsi_ext),
-                "atr_low": bool(cond_atr_low),
-            }
-
-            for k, v in long_conditions.items():
+        # V2 scoring condition counters
+        if tokyo_v2_scoring and _v14_candidate.get("long_conditions"):
+            for k, v in _v14_candidate["long_conditions"].items():
                 condition_check_counts[f"long_{k}"] += 1
                 condition_hit_counts[f"long_{k}"] += int(v)
-            for k, v in short_conditions.items():
+            for k, v in _v14_candidate["short_conditions"].items():
                 condition_check_counts[f"short_{k}"] += 1
                 condition_hit_counts[f"short_{k}"] += int(v)
 
-            long_score = int(sum(1 for v in long_conditions.values() if v))
-            short_score = int(sum(1 for v in short_conditions.values() if v))
-            if long_score >= 1:
-                diag["signals_score_ge_1"] += 1
-                sst["signals_generated"] = int(sst.get("signals_generated", 0)) + 1
-            if short_score >= 1:
-                diag["signals_score_ge_1"] += 1
-                sst["signals_generated"] = int(sst.get("signals_generated", 0)) + 1
-            if long_score >= 2:
-                diag["signals_score_ge_2"] += 1
-            if short_score >= 2:
-                diag["signals_score_ge_2"] += 1
-            if long_score >= 3:
-                diag["signals_score_ge_3"] += 1
-            if short_score >= 3:
-                diag["signals_score_ge_3"] += 1
+        # Score-level diagnostic counters
+        if long_score >= 1:
+            diag["signals_score_ge_1"] += 1
+            sst["signals_generated"] = int(sst.get("signals_generated", 0)) + 1
+        if short_score >= 1:
+            diag["signals_score_ge_1"] += 1
+            sst["signals_generated"] = int(sst.get("signals_generated", 0)) + 1
+        if long_score >= 2:
+            diag["signals_score_ge_2"] += 1
+        if short_score >= 2:
+            diag["signals_score_ge_2"] += 1
+        if long_score >= 3:
+            diag["signals_score_ge_3"] += 1
+        if short_score >= 3:
+            diag["signals_score_ge_3"] += 1
+        diag["long_confluence_min_met"] += int(long_signal)
+        diag["short_confluence_min_met"] += int(short_signal)
+        diag["bars_with_confluence_met"] += 1
 
-            long_signal = long_score >= confluence_min_long
-            short_signal = short_score >= confluence_min_short
-            diag["long_confluence_min_met"] += int(long_signal)
-            diag["short_confluence_min_met"] += int(short_signal)
-
+        if tokyo_v2_scoring and _v14_candidate.get("long_conditions"):
+            long_conditions = _v14_candidate["long_conditions"]
+            short_conditions = _v14_candidate["short_conditions"]
             if long_score == max(0, confluence_min_long - 1):
-                near_miss_candidates.append(
-                    {
-                        "index": int(i),
-                        "datetime": str(ts),
-                        "direction": "long",
-                        "price": float(mid_close),
-                        "score": int(long_score),
-                        "met_conditions": [k for k, v in long_conditions.items() if v],
-                        "failed_conditions": [k for k, v in long_conditions.items() if not v],
-                    }
-                )
+                near_miss_candidates.append({"index": int(i), "datetime": str(ts), "direction": "long", "price": float(mid_close), "score": int(long_score), "met_conditions": [k for k, v in long_conditions.items() if v], "failed_conditions": [k for k, v in long_conditions.items() if not v]})
             if short_score == max(0, confluence_min_short - 1):
-                near_miss_candidates.append(
-                    {
-                        "index": int(i),
-                        "datetime": str(ts),
-                        "direction": "short",
-                        "price": float(mid_close),
-                        "score": int(short_score),
-                        "met_conditions": [k for k, v in short_conditions.items() if v],
-                        "failed_conditions": [k for k, v in short_conditions.items() if not v],
-                    }
-                )
-        else:
-            long_core_flags = []
-            if core_gate_use_zone:
-                long_core_flags.append(bool(cond_long_zone))
-            if core_gate_use_bb:
-                long_core_flags.append(bool(cond_long_bb))
-            if core_gate_use_sar:
-                long_core_flags.append(bool(cond_long_sar))
-            if core_gate_use_rsi:
-                long_core_flags.append(bool(cond_long_rsi_soft))
-            long_core_ok = (sum(1 for x in long_core_flags if x) >= max(1, min(core_gate_required, len(long_core_flags)))) if long_core_flags else True
-            if long_core_ok:
-                diag["long_all_core_conditions_true"] += 1
-                long_score += 1 if cond_long_zone else 0
-                long_score += 1 if cond_long_bb else 0
-                long_score += 1 if cond_long_sar else 0
-                long_score += 1 if cond_long_rsi_ext else 0
-                long_score += 1 if cond_long_s2 else 0
-                long_signal = long_score >= confluence_min_long
-                diag["long_confluence_min_met"] += int(long_signal)
+                near_miss_candidates.append({"index": int(i), "datetime": str(ts), "direction": "short", "price": float(mid_close), "score": int(short_score), "met_conditions": [k for k, v in short_conditions.items() if v], "failed_conditions": [k for k, v in short_conditions.items() if not v]})
 
-            short_core_flags = []
-            if core_gate_use_zone:
-                short_core_flags.append(bool(cond_short_zone))
-            if core_gate_use_bb:
-                short_core_flags.append(bool(cond_short_bb))
-            if core_gate_use_sar:
-                short_core_flags.append(bool(cond_short_sar))
-            if core_gate_use_rsi:
-                short_core_flags.append(bool(cond_short_rsi_soft))
-            short_core_ok = (sum(1 for x in short_core_flags if x) >= max(1, min(core_gate_required, len(short_core_flags)))) if short_core_flags else True
-            if short_core_ok:
-                diag["short_all_core_conditions_true"] += 1
-                short_score += 1 if cond_short_zone else 0
-                short_score += 1 if cond_short_bb else 0
-                short_score += 1 if cond_short_sar else 0
-                short_score += 1 if cond_short_rsi_ext else 0
-                short_score += 1 if cond_short_r2 else 0
-                short_signal = short_score >= confluence_min_short
-                diag["short_confluence_min_met"] += int(short_signal)
-            if long_score >= 1:
-                diag["signals_score_ge_1"] += 1
-                sst["signals_generated"] = int(sst.get("signals_generated", 0)) + 1
-            if short_score >= 1:
-                diag["signals_score_ge_1"] += 1
-                sst["signals_generated"] = int(sst.get("signals_generated", 0)) + 1
-            if long_score >= 2:
-                diag["signals_score_ge_2"] += 1
-            if short_score >= 2:
-                diag["signals_score_ge_2"] += 1
-            if long_score >= 3:
-                diag["signals_score_ge_3"] += 1
-            if short_score >= 3:
-                diag["signals_score_ge_3"] += 1
-        if long_signal or short_signal:
-            diag["bars_with_confluence_met"] += 1
-        if long_signal and short_signal:
-            diag["blocked_ambiguous_both_signals"] += 1
+        # Post-confluence filter blocks (evaluator computed these)
+        _blocked = _v14_candidate.get("_blocked_reason")
+        if _blocked == "combo_filter":
+            combo_filter_stats["trades_blocked_by_combo"] += 1
+            diag["blocked_combo_filter"] += 1
             continue
-        if not long_signal and not short_signal:
-            diag["blocked_no_signal"] += 1
+        if _blocked == "signal_strength_filter":
+            ss_filter_stats["trades_below_threshold_skipped"] += 1
+            diag["blocked_signal_strength_filter"] += 1
+            continue
+        if _blocked == "low_quality_combo":
+            signal_quality_stats["low_quality_skipped"] += 1
+            diag["blocked_low_quality_combo"] += 1
+            continue
+
+        diag["signals_pre_v7_filters"] += 1
+        diag["signal_long"] += int(direction == "long")
+        diag["signal_short"] += int(direction == "short")
+
+        # Build sig_obj from evaluator candidate.
+        sig_obj = {
+            "direction": direction,
+            "session_day": session_day,
+            "signal_index": int(i),
+            "signal_time": ts,
+            "expiry_index": int(i + (confirmation_window_bars if confirmation_type == "m1" else confirmation_window_bars * 5)),
+            "confluence_score": int(_v14_candidate["confluence_score"]),
+            "confluence_combo": combo,
+            "signal_strength_score": signal_strength_score,
+            "signal_strength_tier": signal_strength_tier,
+            "quality_label": quality_label,
+            "quality_mult": quality_mult,
+            "regime_label": regime_label,
+            "regime_mult": regime_size_mult,
+            "from_zone": bool(_v14_candidate["from_zone"]),
+            "P": P, "R1": R1, "R2": R2, "R3": R3,
+            "S1": S1, "S2": S2, "S3": S3,
+            "bb_upper": bb_u, "bb_lower": bb_l,
+            "sar_value": sar, "sar_direction": sar_dir,
+            "rsi_m5": rsi,
+            "atr_m15": float(_v14_candidate["atr_m15"]),
+            "bb_mid": float(_v14_candidate["bb_mid"]),
+            "rejection_confirmed": bool(_v14_candidate["rejection_confirmed"]),
+            "rejection_low": _v14_candidate["rejection_low"],
+            "rejection_high": _v14_candidate["rejection_high"],
+            "rejection_wick_ratio": _v14_candidate["rejection_wick_ratio"],
+            "divergence_present": bool(_v14_candidate["divergence_present"]),
+            "inside_ir": bool(_v14_candidate["inside_ir"]),
+            "quality_markers": str(_v14_candidate["quality_markers"]),
+            "session_midpoint": _v14_candidate["session_midpoint"],
+            "distance_to_ir_boundary_pips": _v14_candidate["distance_to_ir_boundary_pips"],
+            "distance_to_midpoint_pips": _v14_candidate["distance_to_midpoint_pips"],
+            "distance_to_pivot_pips": float(_v14_candidate["distance_to_pivot_pips"]),
+            "entry_delay_type": "immediate",
+            "momentum_delays": 0,
+        }
+        entry_confirmation_stats["signals_generated"] += 1
+        if confirmation_enabled and confirmation_window_bars > 0:
+            has_pending_same = any(
+                ps["session_day"] == session_day and ps["direction"] == direction and i <= int(ps["expiry_index"])
+                for ps in pending_signals
+            )
+            if not has_pending_same:
+                pending_signals.append(sig_obj)
         else:
-            direction = "long" if long_signal else "short"
-            diag["signals_pre_v7_filters"] += 1
-            A = bool(cond_long_zone if direction == "long" else cond_short_zone)
-            B = bool(cond_long_bb if direction == "long" else cond_short_bb)
-            C = bool(cond_long_sar if direction == "long" else cond_short_sar)
-            D = bool((rsi < long_rsi_bonus) if direction == "long" else (rsi > short_rsi_bonus))
-            E = bool((mid_close <= (S2 + tol)) if direction == "long" else (mid_close >= (R2 - tol)))
-            combo = "".join(x for x,ok in [("A",A),("B",B),("C",C),("D",D),("E",E)] if ok)
-            signal_strength_score = 0
-            signal_strength_tier = "weak"
-            if ss_enabled:
-                cc_map = ss_comp.get("confluence_count", {"2": 1, "3": 2, "4": 3, "5": 4})
-                cscore = int(long_score if direction == "long" else short_score)
-                signal_strength_score += int(cc_map.get(str(cscore), 0))
-                bb_pen = ((bb_l - mid_close) / PIP_SIZE) if direction == "long" else ((mid_close - bb_u) / PIP_SIZE)
-                if float(bb_pen) > float(ss_comp.get("bb_penetration_bonus_pips", 2)):
-                    signal_strength_score += 1
-                rsi_ext = float(ss_comp.get("rsi_extreme_bonus_threshold", 25))
-                if (direction == "long" and rsi < rsi_ext) or (direction == "short" and rsi > (100.0 - rsi_ext)):
-                    signal_strength_score += 1
-                if E:
-                    signal_strength_score += 1
-                same_flip = bool(row.get("sar_flip_bullish", False)) if direction == "long" else bool(row.get("sar_flip_bearish", False))
-                if same_flip:
-                    signal_strength_score += 1
-                fav_hours = set(int(h) for h in ss_comp.get("favorable_hour", [17, 18, 21]))
-                if int(row["hour_utc"]) in fav_hours:
-                    signal_strength_score += 1
-                if signal_strength_score <= 3:
-                    signal_strength_tier = "weak"
-                elif signal_strength_score <= 6:
-                    signal_strength_tier = "moderate"
-                else:
-                    signal_strength_tier = "strong"
-            if combo_filter_enabled:
-                allow = True
-                if combo_filter_mode == "allowlist":
-                    allow = combo in combo_allow
-                elif combo_filter_mode == "blocklist":
-                    allow = combo not in combo_block
-                if not allow:
-                    combo_filter_stats["trades_blocked_by_combo"] += 1
-                    diag["blocked_combo_filter"] += 1
-                    continue
-            if ss_filter_enabled and int(signal_strength_score) < ss_filter_min_score:
-                ss_filter_stats["trades_below_threshold_skipped"] += 1
-                diag["blocked_signal_strength_filter"] += 1
-                continue
-            quality_label = "medium"
-            quality_mult = medium_quality_mult
-            if cq_enabled:
-                if combo in top_combos:
-                    quality_label = "high"
-                    quality_mult = high_quality_mult
-                elif combo in bottom_combos:
-                    quality_label = "low"
-                    quality_mult = 0.0
-                    if low_quality_skip:
-                        signal_quality_stats["low_quality_skipped"] += 1
-                        diag["blocked_low_quality_combo"] += 1
-                        continue
-            diag["signal_long"] += int(direction == "long")
-            diag["signal_short"] += int(direction == "short")
-
-            # V10 quality markers (log-only except rejection bonus used during sizing/SL).
-            rejection_confirmed = False
-            rejection_low = np.nan
-            rejection_high = np.nan
-            rejection_wick_ratio = np.nan
-            if rejection_bonus_enabled:
-                if direction == "long":
-                    rejection_confirmed = bool(row.get("rej_bull_recent", False))
-                    rejection_low = float(row.get("rej_bull_low_recent", np.nan))
-                    rejection_wick_ratio = float(row.get("rej_wick_ratio_bull", np.nan))
-                else:
-                    rejection_confirmed = bool(row.get("rej_bear_recent", False))
-                    rejection_high = float(row.get("rej_bear_high_recent", np.nan))
-                    rejection_wick_ratio = float(row.get("rej_wick_ratio_bear", np.nan))
-            divergence_present = False
-            if div_track_enabled:
-                divergence_present = bool(row.get("rsi_div_bull_recent", False)) if direction == "long" else bool(row.get("rsi_div_bear_recent", False))
-            session_midpoint = np.nan
-            inside_ir = False
-            dist_ir_boundary = np.nan
-            if session_env_enabled:
-                s_hi = float(sst.get("session_high", np.nan))
-                s_lo = float(sst.get("session_low", np.nan))
-                if np.isfinite(s_hi) and np.isfinite(s_lo):
-                    session_midpoint = (s_hi + s_lo) / 2.0
-                if session_env_log_ir_pos and bool(sst.get("ir_ready", False)):
-                    ir_hi = float(sst.get("ir_high", np.nan))
-                    ir_lo = float(sst.get("ir_low", np.nan))
-                    if np.isfinite(ir_hi) and np.isfinite(ir_lo):
-                        inside_ir = bool(ir_lo <= mid_close <= ir_hi)
-                        dist_ir_boundary = min(abs(mid_close - ir_lo), abs(mid_close - ir_hi)) / PIP_SIZE
-            dist_to_midpoint = abs(mid_close - session_midpoint) / PIP_SIZE if np.isfinite(session_midpoint) else np.nan
-            dist_to_pivot = abs(mid_close - P) / PIP_SIZE
-            marker_list = []
-            if rejection_confirmed:
-                marker_list.append("rejection")
-            if divergence_present:
-                marker_list.append("divergence")
-            if inside_ir:
-                marker_list.append("inside_ir")
-            quality_markers = ",".join(marker_list)
-
-            sig_obj = {
-                "direction": direction,
-                "session_day": session_day,
-                "signal_index": int(i),
-                "signal_time": ts,
-                "expiry_index": int(i + (confirmation_window_bars if confirmation_type == "m1" else confirmation_window_bars * 5)),
-                "confluence_score": int(long_score if long_signal else short_score),
-                "confluence_combo": combo,
-                "signal_strength_score": int(signal_strength_score),
-                "signal_strength_tier": str(signal_strength_tier),
-                "quality_label": quality_label,
-                "quality_mult": float(quality_mult),
-                "regime_label": regime_label,
-                "regime_mult": float(regime_size_mult),
-                "from_zone": bool(mid_close <= (S2 + tol) if direction == "long" else mid_close >= (R2 - tol)),
-                "P": P,
-                "R1": R1,
-                "R2": R2,
-                "R3": R3,
-                "S1": S1,
-                "S2": S2,
-                "S3": S3,
-                "bb_upper": bb_u,
-                "bb_lower": bb_l,
-                "sar_value": sar,
-                "sar_direction": sar_dir,
-                "rsi_m5": rsi,
-                "atr_m15": float(row["atr_m15"]),
-                "bb_mid": float(row["bb_mid"]),
-                "rejection_confirmed": bool(rejection_confirmed),
-                "rejection_low": float(rejection_low) if np.isfinite(rejection_low) else np.nan,
-                "rejection_high": float(rejection_high) if np.isfinite(rejection_high) else np.nan,
-                "rejection_wick_ratio": float(rejection_wick_ratio) if np.isfinite(rejection_wick_ratio) else np.nan,
-                "divergence_present": bool(divergence_present),
-                "inside_ir": bool(inside_ir),
-                "quality_markers": quality_markers,
-                "session_midpoint": float(session_midpoint) if np.isfinite(session_midpoint) else np.nan,
-                "distance_to_ir_boundary_pips": float(dist_ir_boundary) if np.isfinite(dist_ir_boundary) else np.nan,
-                "distance_to_midpoint_pips": float(dist_to_midpoint) if np.isfinite(dist_to_midpoint) else np.nan,
-                "distance_to_pivot_pips": float(dist_to_pivot),
-                "entry_delay_type": "immediate",
-                "momentum_delays": 0,
-            }
-            entry_confirmation_stats["signals_generated"] += 1
-            if confirmation_enabled and confirmation_window_bars > 0:
-                has_pending_same = any(
-                    ps["session_day"] == session_day and ps["direction"] == direction and i <= int(ps["expiry_index"])
-                    for ps in pending_signals
-                )
-                if not has_pending_same:
-                    pending_signals.append(sig_obj)
-            else:
-                sig_obj["confirmation_delay_candles"] = 0
-                sig_obj["confirmation_close"] = float(mid_close)
-                entry_px_now = ask_close if direction == "long" else bid_close
-                opened_now = try_open_position(
-                    sig=sig_obj,
-                    sdir=direction,
-                    entry_price=float(entry_px_now),
-                    ts=ts,
-                    i=i,
-                    row=row,
-                    sst=sst,
-                    spread_pips_now=spread_pips_now,
-                )
-                if opened_now:
-                    entry_confirmation_stats["signals_confirmed"] += 1
-                    entry_confirmation_stats["confirmation_delays"].append(0)
+            sig_obj["confirmation_delay_candles"] = 0
+            sig_obj["confirmation_close"] = float(mid_close)
+            entry_px_now = ask_close if direction == "long" else bid_close
+            opened_now = try_open_position(
+                sig=sig_obj,
+                sdir=direction,
+                entry_price=float(entry_px_now),
+                ts=ts,
+                i=i,
+                row=row,
+                sst=sst,
+                spread_pips_now=spread_pips_now,
+            )
+            if opened_now:
+                entry_confirmation_stats["signals_confirmed"] += 1
+                entry_confirmation_stats["confirmation_delays"].append(0)
 
         # Confirmation entries (must be on a later bar than signal bar).
         for sig in list(pending_signals):

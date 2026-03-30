@@ -377,13 +377,25 @@ export async function getRejectionBreakdown(profileName: string): Promise<Record
   return fetchJson<Record<string, number>>(`${API_BASE}/data/${profileName}/rejection-breakdown`);
 }
 
+export interface Phase3DecisionRow {
+  timestamp_utc?: string | null;
+  signal_id?: string | null;
+  mode?: string | null;
+  attempted?: number | boolean | null;
+  placed?: number | boolean | null;
+  reason?: string | null;
+  reason_text?: string | null;
+  blocking_filter_ids?: string[];
+  phase3_session?: string | null;
+}
+
 export async function getPhase3Decisions(
   profileName: string,
   days = 3,
   limit = 5000
-): Promise<Record<string, unknown>[]> {
+): Promise<Phase3DecisionRow[]> {
   const params = new URLSearchParams({ days: String(days), limit: String(limit) });
-  return fetchJson<Record<string, unknown>[]>(`${API_BASE}/data/${profileName}/phase3-decisions?${params}`);
+  return fetchJson<Phase3DecisionRow[]>(`${API_BASE}/data/${profileName}/phase3-decisions?${params}`);
 }
 
 export async function getPhase3BlockersBreakdown(
@@ -393,6 +405,91 @@ export async function getPhase3BlockersBreakdown(
 ): Promise<Record<string, number>> {
   const params = new URLSearchParams({ days: String(days), limit: String(limit) });
   return fetchJson<Record<string, number>>(`${API_BASE}/data/${profileName}/phase3-blockers-breakdown?${params}`);
+}
+
+export interface Phase3Provenance {
+  generated_at_utc: string;
+  package_id: string | null;
+  preset_name: string;
+  session: string | null;
+  strategy_tag: string | null;
+  strategy_family: string | null;
+  window_label: string | null;
+  ownership_cell: string | null;
+  regime_label: string | null;
+  defensive_flags: string[];
+  attempted: boolean;
+  placed: boolean;
+  outcome: 'placed' | 'blocked' | 'waiting';
+  reason: string | null;
+  blocking_filter_ids: string[];
+  last_block_reason: string | null;
+  exit_policy: {
+    label: string;
+    tp1_r: number;
+    be_offset_pips: number;
+    tp2_r: number;
+  } | null;
+  frozen_modifiers: Array<{
+    id: string;
+    label: string;
+    value: string;
+  }>;
+  data_freshness: {
+    dashboard_timestamp_utc: string | null;
+    decision_timestamp_utc: string | null;
+  };
+}
+
+export interface Phase3AcceptanceSummary {
+  available: boolean;
+  generated_at_utc: string | null;
+  package_under_test: string | null;
+  verdict: string | null;
+  verdict_note: string | null;
+  observed_summary: {
+    OBSERVED_count?: number;
+    IMPLEMENTED_AND_INSTRUMENTED_AWAITING_OBSERVED_FIRE_count?: number;
+    BROKEN_count?: number;
+  } | null;
+  rules: Array<{
+    id: string;
+    label: string;
+    requirement: string;
+    status: string;
+    evidence_pointer?: string | null;
+  }>;
+  immediate_next_action: string | null;
+}
+
+export interface Phase3DefensiveMonitor {
+  available: boolean;
+  generated_at_utc: string | null;
+  frozen_package_id: string | null;
+  strategy: string | null;
+  ownership_cell: string | null;
+  paper_monitor_executed: boolean | null;
+  paper_monitor_skip_reason: string | null;
+  log_path_used: string | null;
+  guardrail_status: Record<string, unknown> | null;
+  pause_recommended: boolean | null;
+  rollback_reference: Record<string, unknown> | null;
+  next_command_when_log_exists: string | null;
+  searched_locations: string[];
+  research_baseline_blocked_trade_counts: Record<string, unknown> | null;
+}
+
+export async function getPhase3Provenance(profileName: string, profilePath?: string): Promise<Phase3Provenance> {
+  const params = profilePath ? `?profile_path=${encodeURIComponent(profilePath)}` : '';
+  return fetchJson<Phase3Provenance>(`${API_BASE}/data/${profileName}/phase3-provenance${params}`);
+}
+
+export async function getPhase3PaperAcceptance(): Promise<Phase3AcceptanceSummary> {
+  return fetchJson<Phase3AcceptanceSummary>(`${API_BASE}/system/phase3-paper-acceptance`);
+}
+
+export async function getPhase3DefensiveMonitor(): Promise<Phase3DefensiveMonitor> {
+  return fetchJson<Phase3DefensiveMonitor>(`${API_BASE}/system/phase3-defensive-monitor`);
 }
 
 export async function getQuickStats(profileName: string, profilePath?: string, sync = false): Promise<QuickStats> {
@@ -601,6 +698,11 @@ export interface OpenTrade {
   mt5_position_id?: number;
   unrealized_pl?: number;
   financing?: number;
+  phase3_session?: string | null;
+  phase3_strategy_family?: string | null;
+  phase3_strategy_variant?: string | null;
+  ownership_cell?: string | null;
+  has_cell_attribution?: boolean;
 }
 
 export async function getOpenTrades(profileName: string, profilePath?: string, sync = true): Promise<OpenTrade[]> {
@@ -632,6 +734,11 @@ export interface AdvancedTrade {
   entry_type: string | null;
   reversal_risk_tier: string | null;
   tier_number: number | null;
+  phase3_session?: string | null;
+  phase3_strategy_family?: string | null;
+  phase3_strategy_variant?: string | null;
+  ownership_cell?: string | null;
+  has_cell_attribution?: boolean;
 }
 
 export interface AdvancedAnalyticsResponse {
@@ -694,6 +801,11 @@ export interface PositionInfo {
   stop_price: number | null;
   target_price: number | null;
   breakeven_applied: boolean;
+  phase3_session?: string | null;
+  phase3_strategy_family?: string | null;
+  phase3_strategy_variant?: string | null;
+  ownership_cell?: string | null;
+  has_cell_attribution?: boolean;
 }
 
 export interface DailySummary {
@@ -739,6 +851,11 @@ export interface TradeEvent {
   exit_reason: string | null;
   context_snapshot: Record<string, unknown>;
   spread_at_entry: number | null;
+  phase3_session?: string | null;
+  phase3_strategy_family?: string | null;
+  phase3_strategy_variant?: string | null;
+  ownership_cell?: string | null;
+  has_cell_attribution?: boolean;
 }
 
 export async function getDashboard(profileName: string, profilePath?: string): Promise<DashboardState> {

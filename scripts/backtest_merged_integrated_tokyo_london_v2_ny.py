@@ -185,6 +185,19 @@ def _group_monthly(trades: list[TradeRow]) -> list[dict[str, Any]]:
 
 
 def _convert_v44_embedded_to_flat(embedded: dict[str, Any], input_csv: str, out_json: str) -> dict[str, Any]:
+    # Newer research configs are already flat v5 configs. Preserve them as-is
+    # instead of trying to reinterpret them as nested "embedded" configs.
+    if (
+        isinstance(embedded, dict)
+        and str(embedded.get("version", "")).lower() == "v5"
+        and "ny_start" in embedded
+        and any(str(k).startswith("v5_") for k in embedded.keys())
+    ):
+        flat = dict(embedded)
+        flat["inputs"] = [input_csv]
+        flat["out"] = out_json
+        return flat
+
     cfg = dict(embedded)
     v5 = dict(cfg.pop("v5", {}))
     sessions_utc = dict(cfg.pop("sessions_utc", {}))
@@ -262,10 +275,34 @@ def _run_v44_in_process(v44_config_path: Path, input_csv: str) -> tuple[dict[str
     with tempfile.TemporaryDirectory(prefix="phase3_v44_") as td:
         tmp_cfg = Path(td) / "v44_flat.json"
         flat = _convert_v44_embedded_to_flat(embedded, input_csv, str(Path(td) / "v44_out.json"))
+        # Preserve official Phase 3 behavior for flat V5 configs too.  The
+        # early-return in _convert_v44_embedded_to_flat() can otherwise leave
+        # session mode as "both", which inflates London-session V44 entries.
+        flat["v5_sessions"] = "ny_only"
         tmp_cfg.write_text(json.dumps(flat, indent=2), encoding="utf-8")
         args = v44_engine.parse_args(["--config", str(tmp_cfg)])
         results = v44_engine.run_backtest_v5(args)
     return results, embedded
+
+
+def _build_variant_k_trades(
+    input_csv: str,
+    starting_equity: float,
+) -> tuple[list[TradeRow], dict[str, Any]]:
+    # Reuse the researched Variant K pre-coupling builder, but couple and report
+    # on the exact official integrated generator path.
+    from scripts import backtest_variant_k_london_cluster as variant_k
+
+    kept, baseline, _, _, blocked_cluster, blocked_global = variant_k.build_variant_k_pre_coupling_kept(input_csv)
+    all_raw = sorted(kept, key=lambda x: (x.exit_time, x.entry_time))
+    all_trades = _apply_shared_equity_coupling(all_raw, float(starting_equity), v14_max_units=baseline["v14_max_units"])
+    meta = {
+        "variant": "K",
+        "blocked_cluster": blocked_cluster,
+        "blocked_global": blocked_global,
+        "baseline_v14_max_units": baseline["v14_max_units"],
+    }
+    return all_trades, meta
 
 
 def _extract_v14_trades(report: dict[str, Any], default_entry_equity: float) -> list[TradeRow]:
@@ -424,6 +461,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--input", required=True)
     p.add_argument("--output", required=True)
     p.add_argument("--starting-equity", type=float, default=100000.0)
+    p.add_argument("--variant", choices=["baseline", "k"], default="baseline")
     return p.parse_args()
 
 
@@ -443,14 +481,18 @@ def main() -> int:
     v2_trades_df, v2_diag, v2_cfg = _run_v2_in_process(Path(args.london_v2_config), m1)
     v44_results, v44_embedded = _run_v44_in_process(Path(args.v44_config), input_csv)
 
-    v44_base_eq = _safe_float(v44_embedded.get("v5", {}).get("account_size", args.starting_equity), args.starting_equity)
-    v14_trades_raw = _extract_v14_trades(v14_report, default_entry_equity=float(args.starting_equity))
-    v2_trades_raw = _extract_v2_trades(v2_trades_df, default_entry_equity=float(args.starting_equity))
-    v44_trades_raw = _extract_v44_trades(v44_results, default_entry_equity=float(v44_base_eq))
+    if args.variant == "baseline":
+        v44_base_eq = _safe_float(v44_embedded.get("v5", {}).get("account_size", args.starting_equity), args.starting_equity)
+        v14_trades_raw = _extract_v14_trades(v14_report, default_entry_equity=float(args.starting_equity))
+        v2_trades_raw = _extract_v2_trades(v2_trades_df, default_entry_equity=float(args.starting_equity))
+        v44_trades_raw = _extract_v44_trades(v44_results, default_entry_equity=float(v44_base_eq))
 
-    all_raw = sorted(v14_trades_raw + v2_trades_raw + v44_trades_raw, key=lambda x: (x.exit_time, x.entry_time))
-    v14_max_units = _safe_int(v14_cfg.get("position_sizing", {}).get("max_units", 500000), 500000)
-    all_trades = _apply_shared_equity_coupling(all_raw, float(args.starting_equity), v14_max_units=v14_max_units)
+        all_raw = sorted(v14_trades_raw + v2_trades_raw + v44_trades_raw, key=lambda x: (x.exit_time, x.entry_time))
+        v14_max_units = _safe_int(v14_cfg.get("position_sizing", {}).get("max_units", 500000), 500000)
+        all_trades = _apply_shared_equity_coupling(all_raw, float(args.starting_equity), v14_max_units=v14_max_units)
+        variant_notes: dict[str, Any] = {"variant": "baseline"}
+    else:
+        all_trades, variant_notes = _build_variant_k_trades(input_csv, float(args.starting_equity))
 
     v14_trades = [t for t in all_trades if t.strategy == "v14"]
     v2_trades = [t for t in all_trades if t.strategy == "london_v2"]
@@ -493,6 +535,7 @@ def main() -> int:
         "date_range": date_range,
         "starting_equity": float(args.starting_equity),
         "ending_equity": float(args.starting_equity + combined_stats["net_usd"]),
+        "variant": args.variant,
         "combined": combined_stats,
         "v14_subset": {
             **v14_stats,
@@ -523,6 +566,7 @@ def main() -> int:
             "v2_config_active_days": v2_cfg.get("session", {}).get("active_days_utc", []),
             "v14_active_days": v14_cfg.get("session_filter", {}).get("active_days_utc", []),
             "v44_sessions_utc": v44_embedded.get("sessions_utc", {}),
+            "variant_notes": variant_notes,
         },
     }
 

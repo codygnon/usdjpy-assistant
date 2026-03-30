@@ -6,6 +6,8 @@ it receives — zero hardcoded filter names.
 """
 from __future__ import annotations
 
+from core.presets import FROZEN_PHASE3_DEFENDED_PRESET_ID
+
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -2105,6 +2107,32 @@ def collect_uncle_parsh_context(
     return items
 
 
+
+
+def _phase3_defended_context_items(active_preset_name: str | None, cfg: dict[str, Any]) -> list[ContextItem]:
+    if active_preset_name != FROZEN_PHASE3_DEFENDED_PRESET_ID:
+        return []
+    ldn_cfg = cfg.get("london_v2", {}) if isinstance(cfg.get("london_v2"), dict) else {}
+    v44_cfg = cfg.get("v44_ny", {}) if isinstance(cfg.get("v44_ny"), dict) else {}
+    v14_cfg = cfg.get("v14", {}) if isinstance(cfg.get("v14"), dict) else {}
+    blocked_days = ldn_cfg.get("d_suppress_weekdays") or []
+    veto_cells = v44_cfg.get("defensive_veto_cells") or []
+    cell_scale_overrides = v14_cfg.get("cell_scale_overrides") or {}
+    t3_scale = cell_scale_overrides.get("ambiguous/er_mid/der_pos:sell")
+    items = [ContextItem("Frozen Package", "Phase 3 Frozen V7 Defended", "frozen")]
+    if blocked_days:
+        items.append(ContextItem("L1 Weekdays", ", ".join(str(d) for d in blocked_days) + " blocked", "frozen"))
+    items.append(ContextItem(
+        "L1 Exit",
+        f"TP1 {float(ldn_cfg.get('d_tp1_r', 0.0)):.2f}R / BE {float(ldn_cfg.get('d_be_offset_pips', 0.0)):.1f} / TP2 {float(ldn_cfg.get('d_tp2_r', 0.0)):.1f}R",
+        "frozen",
+    ))
+    if veto_cells:
+        items.append(ContextItem("Defensive Veto", f"v44_ny blocked in {', '.join(str(c) for c in veto_cells)}", "frozen"))
+    if t3_scale is not None:
+        items.append(ContextItem("T3 Scale", f"ambiguous/er_mid/der_pos:sell = {float(t3_scale):.2f}x", "frozen"))
+    return items
+
 def collect_phase3_context(
     policy: Any,
     data_by_tf: dict,
@@ -2112,6 +2140,7 @@ def collect_phase3_context(
     eval_result: Optional[dict],
     phase3_state: dict,
     pip_size: float,
+    active_preset_name: Optional[str] = None,
 ) -> list[ContextItem]:
     """Collect context items for Phase 3 Integrated dashboard; varies by active session."""
     from datetime import datetime, timezone
@@ -2140,6 +2169,48 @@ def collect_phase3_context(
     except Exception:
         _p3_sizing = {}
     session = classify_session(now_utc, _p3_sizing)
+    items.extend(_phase3_defended_context_items(active_preset_name, _p3_sizing))
+
+    # Runtime-health and current-eval context shared across all sessions.
+    _cfg_hash = str(phase3_state.get("effective_phase3_config_hash") or "")
+    _cfg_date = str(phase3_state.get("effective_phase3_config_date") or "")
+    if _cfg_hash:
+        items.append(ContextItem("Config Hash", _cfg_hash[:12], "runtime"))
+    if _cfg_date:
+        items.append(ContextItem("Config Date", _cfg_date, "runtime"))
+    _arrival_lag = phase3_state.get("last_m1_arrival_lag_sec")
+    if _arrival_lag is not None:
+        try:
+            items.append(ContextItem("M1 Arrival Lag", f"{float(_arrival_lag):.1f}s", "runtime"))
+        except Exception:
+            pass
+    _retry_count = phase3_state.get("last_m1_retry_count")
+    if _retry_count is not None:
+        try:
+            items.append(ContextItem("M1 Retry Count", str(int(_retry_count)), "runtime"))
+        except Exception:
+            pass
+
+    _audit = eval_result.get("phase3_ownership_audit") if isinstance(eval_result, dict) else None
+    _strategy_tag = str((eval_result or {}).get("strategy_tag") or "") if isinstance(eval_result, dict) else ""
+    if _strategy_tag:
+        items.append(ContextItem("Strategy Tag", _strategy_tag, "decision"))
+    if isinstance(_audit, dict):
+        _audit_cell = str(_audit.get("ownership_cell") or "")
+        _audit_regime = str(_audit.get("regime_label") or "")
+        _flags = []
+        if _audit.get("defensive_global_standdown"):
+            _flags.append("standdown")
+        if _audit.get("defensive_london_cluster_block"):
+            _flags.append("ldn_cluster")
+        if _audit.get("defensive_v44_regime_block"):
+            _flags.append("v44_regime")
+        if _audit_cell:
+            items.append(ContextItem("Ownership Cell", _audit_cell, "decision"))
+        if _audit_regime:
+            items.append(ContextItem("Regime Label", _audit_regime, "decision"))
+        if _flags:
+            items.append(ContextItem("Defensive Flags", ", ".join(_flags), "decision"))
 
     # Common: time and session
     items.append(ContextItem("UTC", now_utc.strftime("%H:%M"), "session"))
@@ -2396,6 +2467,24 @@ def collect_phase3_context(
         items.append(ContextItem("Consec losses", f"{consec_losses}/{V44_SESSION_STOP_LOSSES} ({'STOP' if consec_losses >= V44_SESSION_STOP_LOSSES else 'OK'})", "v44"))
         items.append(ContextItem("Wins closed", str(wins_closed), "v44"))
         items.append(ContextItem("Win streak", str(win_streak), "v44"))
+        _ny_cell = str(sd.get("ownership_cell") or "")
+        if _ny_cell:
+            items.append(ContextItem("NY Ownership Cell", _ny_cell, "v44"))
+        _news_status = sd.get("news_status")
+        if _news_status is not None:
+            items.append(ContextItem("News Status", str(_news_status), "v44"))
+        _news_wait = sd.get("news_wait_minutes")
+        if _news_wait is not None:
+            try:
+                items.append(ContextItem("News Wait", f"{float(_news_wait):.1f}m", "v44"))
+            except Exception:
+                pass
+        _news_confirm = sd.get("news_confirm_progress")
+        if _news_confirm:
+            items.append(ContextItem("News Confirm", str(_news_confirm), "v44"))
+        _news_side = sd.get("news_trend_side")
+        if _news_side:
+            items.append(ContextItem("News Side", str(_news_side), "v44"))
         # GL (Golden Lion) mode
         try:
             from core.phase3_integrated_engine import load_phase3_sizing_config

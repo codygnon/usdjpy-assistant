@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from core.dashboard_models import FilterReport
+from core.presets import FROZEN_PHASE3_DEFENDED_PRESET_ID
 from core.signal_engine import drop_incomplete_last_bar
 from core.dashboard_reporters import (
     report_session_filter,
@@ -263,6 +264,61 @@ def _side_from_m5(data_by_tf: dict, policy: Any) -> str:
     except Exception:
         return "buy"
 
+
+
+
+def _phase3_defended_filter_reports(active_preset_name: str | None, cfg: dict[str, Any]) -> list[FilterReport]:
+    if active_preset_name != FROZEN_PHASE3_DEFENDED_PRESET_ID:
+        return []
+    reports: list[FilterReport] = []
+    ldn_cfg = cfg.get("london_v2", {}) if isinstance(cfg.get("london_v2"), dict) else {}
+    v44_cfg = cfg.get("v44_ny", {}) if isinstance(cfg.get("v44_ny"), dict) else {}
+    v14_cfg = cfg.get("v14", {}) if isinstance(cfg.get("v14"), dict) else {}
+    blocked_days = ldn_cfg.get("d_suppress_weekdays") or []
+    veto_cells = v44_cfg.get("defensive_veto_cells") or []
+    cell_scale_overrides = v14_cfg.get("cell_scale_overrides") or {}
+    t3_scale = cell_scale_overrides.get("ambiguous/er_mid/der_pos:sell")
+    reports.append(FilterReport(
+        filter_id="phase3_frozen_package",
+        display_name="Frozen Package",
+        enabled=True,
+        is_clear=True,
+        current_value="Phase 3 Frozen V7 Defended",
+        explanation="Promoted defended package is active for this profile.",
+    ))
+    reports.append(FilterReport(
+        filter_id="phase3_frozen_l1_weekdays",
+        display_name="L1 Weekday Rule",
+        enabled=True,
+        is_clear=True,
+        current_value=", ".join(str(d) for d in blocked_days) + " blocked" if blocked_days else "no suppression",
+        explanation="Setup D is suppressed on the defended preset weekdays.",
+    ))
+    reports.append(FilterReport(
+        filter_id="phase3_frozen_l1_exit",
+        display_name="L1 Exit Policy",
+        enabled=True,
+        is_clear=True,
+        current_value=f"TP1 {float(ldn_cfg.get('d_tp1_r', 0.0)):.2f}R / BE {float(ldn_cfg.get('d_be_offset_pips', 0.0)):.1f} / TP2 {float(ldn_cfg.get('d_tp2_r', 0.0)):.1f}R",
+        explanation="Setup D uses the defended frozen exit override.",
+    ))
+    reports.append(FilterReport(
+        filter_id="phase3_frozen_defensive_veto",
+        display_name="Defensive Veto",
+        enabled=True,
+        is_clear=True,
+        current_value=f"v44_ny blocked in {', '.join(str(c) for c in veto_cells)}" if veto_cells else "off",
+        explanation="The defended preset keeps the V44 defensive veto active.",
+    ))
+    reports.append(FilterReport(
+        filter_id="phase3_frozen_t3_scale",
+        display_name="T3 Scale",
+        enabled=True,
+        is_clear=True,
+        current_value=f"ambiguous/er_mid/der_pos:sell = {float(t3_scale):.2f}x" if t3_scale is not None else "default",
+        explanation="The defended preset keeps the reduced T3 sell sizing.",
+    ))
+    return reports
 
 def _phase3_dict_to_filter_report(d: dict) -> FilterReport:
     """Convert Phase 3 report dict (name, value, ok, detail) to FilterReport."""
@@ -833,6 +889,7 @@ def build_dashboard_filters(
             ADX_PERIOD, ATR_PERIOD, load_phase3_sizing_config, uk_london_open_utc,
         )
         cfg = load_phase3_sizing_config()
+        filters.extend(_phase3_defended_filter_reports(getattr(profile, "active_preset_name", None), cfg or {}))
         m1_closed = data_by_tf.get("M1")
         if m1_closed is not None and not m1_closed.empty:
             try:

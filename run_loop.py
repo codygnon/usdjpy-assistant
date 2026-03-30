@@ -1754,8 +1754,9 @@ def _run_trade_management(
                 from core.phase3_integrated_engine import (
                     manage_phase3_exit,
                     load_phase3_sizing_config,
-                    V44_COOLDOWN_WIN,
-                    V44_COOLDOWN_LOSS,
+                    infer_phase3_entry_session,
+                    phase3_trade_key_date,
+                    apply_phase3_session_outcome,
                 )
                 phase3_sizing_cfg = load_phase3_sizing_config() or {}
                 p3_exit = manage_phase3_exit(
@@ -1777,16 +1778,7 @@ def _run_trade_management(
                         full_close_actions = {"session_end_close", "time_decay_close", "hard_sl", "tp2_full", "tp1_full"}
                         if action in full_close_actions:
                             now_utc = pd.Timestamp.now(tz="UTC")
-                            key_date = now_utc.date().isoformat()
-                            try:
-                                _ts = pd.Timestamp(trade_row.get("timestamp_utc"))
-                                if _ts.tzinfo is None:
-                                    _ts = _ts.tz_localize("UTC")
-                                else:
-                                    _ts = _ts.tz_convert("UTC")
-                                key_date = _ts.date().isoformat()
-                            except Exception:
-                                pass
+                            key_date = phase3_trade_key_date(trade_row.get("timestamp_utc"), now_utc)
                             closed_pips_est = p3_exit.get("closed_pips_est")
                             if closed_pips_est is None:
                                 _stored_pips = trade_row.get("pips")
@@ -1799,64 +1791,18 @@ def _run_trade_management(
                             except Exception:
                                 pips_eval = 0.0
                             is_loss = True if action == "hard_sl" else (pips_eval < 0.0)
-                            _et = str(entry_type or "")
-                            entry_session = str(trade_row.get("entry_session") or "").lower()
-                            if entry_session not in {"tokyo", "london", "ny"}:
-                                if _et.startswith("phase3:v14"):
-                                    entry_session = "tokyo"
-                                elif _et.startswith("phase3:london_v2"):
-                                    entry_session = "london"
-                                elif _et.startswith("phase3:v44"):
-                                    entry_session = "ny"
-                            if entry_session == "tokyo":
-                                k = f"session_tokyo_{key_date}"
-                                sd = dict(phase3_state.get(k, {}))
-                                if is_loss:
-                                    sd["consecutive_losses"] = int(sd.get("consecutive_losses", 0)) + 1
-                                    sd["win_streak"] = 0
-                                    if action == "hard_sl":
-                                        sd[f"last_stopout_time_{side}"] = now_utc.isoformat()
-                                else:
-                                    sd["consecutive_losses"] = 0
-                                    sd["wins_closed"] = int(sd.get("wins_closed", 0)) + 1
-                                    sd["win_streak"] = int(sd.get("win_streak", 0)) + 1
-                                phase3_state[k] = sd
-                            elif entry_session == "london":
-                                k = f"session_london_{key_date}"
-                                sd = dict(phase3_state.get(k, {}))
-                                if is_loss:
-                                    sd["consecutive_losses"] = int(sd.get("consecutive_losses", 0)) + 1
-                                    sd["win_streak"] = 0
-                                else:
-                                    sd["consecutive_losses"] = 0
-                                    sd["wins_closed"] = int(sd.get("wins_closed", 0)) + 1
-                                    sd["win_streak"] = int(sd.get("win_streak", 0)) + 1
-                                _ldn_cfg = phase3_sizing_cfg.get("london_v2", {})
-                                _disable_reset = bool(_ldn_cfg.get("disable_channel_reset_after_exit", False))
-                                if not _disable_reset:
-                                    _channels = dict(sd.get("channels", {}))
-                                    if _et.startswith("phase3:london_v2_arb"):
-                                        _channels["A_long" if side == "buy" else "A_short"] = "WAITING_RESET"
-                                    elif _et.startswith("phase3:london_v2_d"):
-                                        _channels["D_long" if side == "buy" else "D_short"] = "WAITING_RESET"
-                                    sd["channels"] = _channels
-                                phase3_state[k] = sd
-                            elif entry_session == "ny":
-                                k = f"session_ny_{key_date}"
-                                sd = dict(phase3_state.get(k, {}))
-                                sd["consecutive_losses"] = int(sd.get("consecutive_losses", 0)) + 1 if is_loss else 0
-                                sd["wins_closed"] = int(sd.get("wins_closed", 0)) + (0 if is_loss else 1)
-                                sd["win_streak"] = 0 if is_loss else (int(sd.get("win_streak", 0)) + 1)
-                                v44_cfg = phase3_sizing_cfg.get("v44_ny", {})
-                                _scope = str(v44_cfg.get("win_streak_scope", "session")).lower()
-                                if _scope != "session":
-                                    phase3_state["v44_win_streak_global"] = 0 if is_loss else (int(phase3_state.get("v44_win_streak_global", 0)) + 1)
-                                cd_win_bars = int(v44_cfg.get("cooldown_win_bars", V44_COOLDOWN_WIN))
-                                cd_loss_bars = int(v44_cfg.get("cooldown_loss_bars", V44_COOLDOWN_LOSS))
-                                cd_minutes = max(0, (cd_loss_bars if is_loss else cd_win_bars) * 5)
-                                if cd_minutes > 0:
-                                    sd["cooldown_until"] = (now_utc + pd.Timedelta(minutes=cd_minutes)).isoformat()
-                                phase3_state[k] = sd
+                            entry_session = infer_phase3_entry_session(entry_type, trade_row.get("entry_session"))
+                            apply_phase3_session_outcome(
+                                phase3_state=phase3_state,
+                                phase3_sizing_cfg=phase3_sizing_cfg,
+                                entry_session=entry_session,
+                                entry_type=entry_type,
+                                is_loss=is_loss,
+                                action=str(action or ""),
+                                side=side,
+                                key_date=key_date,
+                                now_utc=now_utc,
+                            )
                             # Immediately write estimated exit data to DB so that V14 session_loss_stop
                             # and V44 daily/weekly loss limits see the closed trade on the next loop poll
                             # (rather than waiting for sync_closed_trades which runs every ~12 loops).
@@ -2337,6 +2283,7 @@ def _build_and_write_dashboard(
                 eval_result,
                 phase3_state or {},
                 pip_size,
+                active_preset_name=getattr(profile, "active_preset_name", None),
             )
 
         if isinstance(previous_state, dict):
@@ -2546,12 +2493,30 @@ def _append_phase3_minute_diagnostics(
                     f"\tlondon_asian_pips={float(ar.get('pips', 0.0)):.1f}"
                     f"\tlondon_asian_ok={int(bool(ar.get('is_valid', False)))}"
                 )
+        audit = exec_result.get("phase3_ownership_audit") if isinstance(exec_result, dict) else None
+        audit_cell = ""
+        audit_regime = ""
+        audit_flags = ""
+        if isinstance(audit, dict):
+            audit_cell = str(audit.get("ownership_cell") or "")
+            audit_regime = str(audit.get("regime_label") or "")
+            fbits = []
+            if audit.get("defensive_global_standdown"):
+                fbits.append("standdown")
+            if audit.get("defensive_london_cluster_block"):
+                fbits.append("ldn_cluster")
+            if audit.get("defensive_v44_regime_block"):
+                fbits.append("v44_regime")
+            audit_flags = ",".join(fbits)
+
         ts = pd.Timestamp.now(tz="UTC").isoformat()
         line = (
             f"{ts}\tbar={m1_bar_time}\tis_new={int(is_new)}\tplaced={int(placed)}\t"
             f"session={session or 'none'}\tstrategy={strategy_tag or ''}\t"
             f"blocking={blocking_count}\t"
-            f"filters=[{'; '.join(blocking_details)}]\treason={reason!r}{session_extra}\n"
+            f"filters=[{'; '.join(blocking_details)}]\treason={reason!r}"
+            f"\townership_cell={audit_cell}\tregime={audit_regime}\tdefensive_flags={audit_flags}"
+            f"{session_extra}\n"
         )
         diag_path = log_dir / "phase3_minute_diagnostics.log"
         with open(diag_path, "a", encoding="utf-8") as f:
@@ -6107,12 +6072,10 @@ def main() -> None:
                     if not getattr(pol, "enabled", True) or pol_type != "phase3_integrated":
                         continue
 
-                    from core.phase3_integrated_engine import (
-                        execute_phase3_integrated_policy_demo_only,
-                        load_phase3_sizing_config,
-                    )
+                    from core.phase3_integrated_engine import load_phase3_sizing_config
+                    from core.phase3_shared_engine import evaluate_phase3_bar
                     phase3_sizing = load_phase3_sizing_config()
-                    exec_result = execute_phase3_integrated_policy_demo_only(
+                    exec_result = evaluate_phase3_bar(
                         adapter=adapter,
                         profile=profile,
                         log_dir=log_dir,
@@ -6125,6 +6088,7 @@ def main() -> None:
                         store=store,
                         sizing_config=phase3_sizing if phase3_sizing else None,
                         is_new_m1=(phase3_is_new or args.once),
+                        preset_id=getattr(profile, "active_preset_name", None),
                     )
                     dec = exec_result["decision"]
                     p3_state_updates = exec_result.get("phase3_state_updates", {})

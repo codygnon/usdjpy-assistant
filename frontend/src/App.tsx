@@ -3925,6 +3925,26 @@ function sanitizeTrial10TierPeriods(periods: number[] | null | undefined): numbe
 }
 
 const TEMP_SETTINGS_DRAFT_VERSION = 1;
+const PHASE3_DEFENDED_PRESET_ID = 'phase3_integrated_v7_defended';
+const PHASE3_GENERIC_PRESET_ID = 'phase3_integrated_usd_jpy';
+
+function isPhase3DefendedPreset(presetId: string | null | undefined): boolean {
+  return String(presetId || '').trim().toLowerCase() === PHASE3_DEFENDED_PRESET_ID;
+}
+
+function isPhase3GenericPreset(presetId: string | null | undefined): boolean {
+  return String(presetId || '').trim().toLowerCase() === PHASE3_GENERIC_PRESET_ID;
+}
+
+function getPhase3PresetRuleChips(presetId: string): string[] {
+  if (isPhase3DefendedPreset(presetId)) {
+    return ['L1 Mon/Tue blocked', 'L1 3.25R / BE 1.0 / TP2 2.0', 'V44 veto active', 'T3 0.25x'];
+  }
+  if (isPhase3GenericPreset(presetId)) {
+    return ['Generic Phase 3', 'Research sizing config', 'Legacy/reference preset'];
+  }
+  return [];
+}
 
 function getTempSettingsDraftScope(profileData: Record<string, unknown> | null): string {
   if (!profileData) return 'generic';
@@ -5683,6 +5703,18 @@ function PresetsPage({ profile }: { profile: Profile }) {
   };
 
   const selectedPreset = presets.find((p) => p.id === selected);
+  const sortedPresets = useMemo(() => {
+    const rank = (preset: api.Preset): number => {
+      if (isPhase3DefendedPreset(preset.id)) return 0;
+      if (isPhase3GenericPreset(preset.id)) return 1;
+      return 2;
+    };
+    return [...presets].sort((a, b) => {
+      const rankDiff = rank(a) - rank(b);
+      if (rankDiff !== 0) return rankDiff;
+      return a.name.localeCompare(b.name);
+    });
+  }, [presets]);
 
   const activePresetName = currentProfile?.active_preset_name as string | undefined;
   const risk = currentProfile?.risk as Record<string, unknown> | undefined;
@@ -5739,6 +5771,31 @@ function PresetsPage({ profile }: { profile: Profile }) {
               <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--accent)' }}>
                 {activePresetName}
               </div>
+              {isPhase3DefendedPreset(activePresetName) && (
+                <div style={{ marginTop: 12, padding: 12, borderRadius: 8, border: '1px solid rgba(16, 185, 129, 0.45)', background: 'rgba(16, 185, 129, 0.08)' }}>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--success)', fontWeight: 700, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.8 }}>
+                    Frozen Package
+                  </div>
+                  <div style={{ color: 'var(--text-primary)', fontWeight: 600, marginBottom: 8 }}>
+                    Promoted defended Phase 3 runtime
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {getPhase3PresetRuleChips(activePresetName).map((chip) => (
+                      <span key={chip} style={{
+                        fontSize: '0.72rem',
+                        fontWeight: 700,
+                        padding: '4px 8px',
+                        borderRadius: 999,
+                        color: 'var(--success)',
+                        background: 'rgba(16, 185, 129, 0.15)',
+                        border: '1px solid rgba(16, 185, 129, 0.4)',
+                      }}>
+                        {chip}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button
@@ -8496,14 +8553,27 @@ function PresetsPage({ profile }: { profile: Profile }) {
       )}
 
       <div className="grid-3 mb-4">
-        {presets.map((p) => {
+        {sortedPresets.map((p) => {
           const isActive = activePresetName === p.id;
+          const isDefended = isPhase3DefendedPreset(p.id);
+          const isPhase3Legacy = isPhase3GenericPreset(p.id);
+          const ruleChips = getPhase3PresetRuleChips(p.id);
           return (
           <div
             key={p.id}
             className={`preset-card ${selected === p.id ? 'selected' : ''}`}
             onClick={() => setSelected(p.id)}
-            style={isActive ? { borderColor: 'var(--success)', borderWidth: 2 } : {}}
+            style={{
+              ...(isActive ? { borderColor: 'var(--success)', borderWidth: 2 } : {}),
+              ...(isDefended ? {
+                background: 'linear-gradient(160deg, rgba(16, 185, 129, 0.14) 0%, rgba(59, 130, 246, 0.08) 100%)',
+                boxShadow: '0 10px 28px rgba(16, 185, 129, 0.08)',
+              } : {}),
+              ...(isPhase3Legacy ? {
+                opacity: 0.92,
+                borderStyle: 'dashed',
+              } : {}),
+            }}
           >
             {isActive && (
               <div style={{ 
@@ -8520,8 +8590,66 @@ function PresetsPage({ profile }: { profile: Profile }) {
                 ACTIVE
               </div>
             )}
+            {isDefended && (
+              <div style={{
+                position: 'absolute',
+                top: 10,
+                left: 10,
+                background: 'var(--success)',
+                color: 'white',
+                fontSize: '0.65rem',
+                fontWeight: 700,
+                padding: '3px 8px',
+                borderRadius: 999,
+              }}>
+                FROZEN PACKAGE
+              </div>
+            )}
+            {isPhase3Legacy && (
+              <div style={{
+                position: 'absolute',
+                top: 10,
+                left: 10,
+                background: 'rgba(148, 163, 184, 0.18)',
+                color: 'var(--text-secondary)',
+                fontSize: '0.65rem',
+                fontWeight: 700,
+                padding: '3px 8px',
+                borderRadius: 999,
+                border: '1px solid var(--border)',
+              }}>
+                LEGACY PHASE 3
+              </div>
+            )}
+            {isDefended && (
+              <div style={{ marginTop: 18, marginBottom: 8, color: 'var(--success)', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8 }}>
+                Recommended research-backed operator preset
+              </div>
+            )}
+            {isPhase3Legacy && (
+              <div style={{ marginTop: 18, marginBottom: 8, color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8 }}>
+                Reference / generic Phase 3 preset
+              </div>
+            )}
             <div className="preset-name">{p.name}</div>
             <div className="preset-description">{p.description}</div>
+            {ruleChips.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                {ruleChips.map((chip) => (
+                  <span key={chip} style={{
+                    fontSize: '0.68rem',
+                    fontWeight: 700,
+                    padding: '3px 8px',
+                    borderRadius: 999,
+                    color: isDefended ? 'var(--success)' : 'var(--text-secondary)',
+                    background: isDefended ? 'rgba(16, 185, 129, 0.12)' : 'var(--bg-tertiary)',
+                    border: isDefended ? '1px solid rgba(16, 185, 129, 0.35)' : '1px solid var(--border)',
+                  }}>
+                    {chip}
+                  </span>
+                ))}
+              </div>
+            )}
             <button
               className="btn btn-secondary"
               style={{ marginTop: 8, fontSize: '0.75rem', padding: '4px 8px' }}
@@ -10524,7 +10652,7 @@ function LogsPage({ profile }: { profile: Profile }) {
   const [tradesDisplayCurrency, setTradesDisplayCurrency] = useState<string | undefined>(undefined);
   const [executions, setExecutions] = useState<Record<string, unknown>[]>([]);
   const [phase3Days, setPhase3Days] = useState(7);
-  const [phase3Decisions, setPhase3Decisions] = useState<Record<string, unknown>[]>([]);
+  const [phase3Decisions, setPhase3Decisions] = useState<api.Phase3DecisionRow[]>([]);
   const [phase3Blockers, setPhase3Blockers] = useState<Record<string, number>>({});
   const [phase3Loading, setPhase3Loading] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -11286,6 +11414,25 @@ function LogsPage({ profile }: { profile: Profile }) {
                 trades.slice(0, visibleTradeCount).map((t, i) => {
                   const openedBy = String(t.opened_by || '');
                   const exitReason = String(t.exit_reason || '');
+                  const phase3Session = String(t.phase3_session || '');
+                  const phase3Family = String(t.phase3_strategy_family || '');
+                  const ownershipCell = String(t.ownership_cell || '');
+                  const strategyLabel = phase3Family === 'v14'
+                    ? 'V14'
+                    : phase3Family === 'london_v2_d'
+                      ? 'L1'
+                      : phase3Family === 'london_v2_arb'
+                        ? 'L2/ARB'
+                        : phase3Family === 'v44_ny'
+                          ? 'V44'
+                          : '';
+                  const sessionLabel = phase3Session === 'tokyo'
+                    ? 'Tokyo'
+                    : phase3Session === 'london'
+                      ? 'London'
+                      : phase3Session === 'ny'
+                        ? 'NY'
+                        : '';
                   
                   // Format exit_reason for display
                   const formatExitReason = (reason: string): { text: string; color: string } => {
@@ -11350,15 +11497,37 @@ function LogsPage({ profile }: { profile: Profile }) {
                         )}
                       </td>
                       <td>
-                        <span style={{ 
-                          fontSize: '0.75rem', 
-                          padding: '2px 6px', 
-                          borderRadius: 4,
-                          background: openedBy === 'program' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(156, 163, 175, 0.2)',
-                          color: openedBy === 'program' ? 'var(--accent)' : 'var(--text-secondary)'
-                        }}>
-                          {openedBy === 'program' ? 'Bot' : openedBy === 'manual' ? 'Manual' : '-'}
-                        </span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <span style={{ 
+                            fontSize: '0.75rem', 
+                            padding: '2px 6px', 
+                            borderRadius: 4,
+                            background: openedBy === 'program' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(156, 163, 175, 0.2)',
+                            color: openedBy === 'program' ? 'var(--accent)' : 'var(--text-secondary)',
+                            width: 'fit-content',
+                          }}>
+                            {openedBy === 'program' ? 'Bot' : openedBy === 'manual' ? 'Manual' : '-'}
+                          </span>
+                          {(sessionLabel || strategyLabel || ownershipCell) && (
+                            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                              {sessionLabel && (
+                                <span style={{ fontSize: '0.68rem', padding: '1px 6px', borderRadius: 999, background: 'rgba(245, 158, 11, 0.16)', color: '#f59e0b' }}>
+                                  {sessionLabel}
+                                </span>
+                              )}
+                              {strategyLabel && (
+                                <span style={{ fontSize: '0.68rem', padding: '1px 6px', borderRadius: 999, background: 'rgba(59, 130, 246, 0.16)', color: 'var(--accent)' }}>
+                                  {strategyLabel}
+                                </span>
+                              )}
+                              {ownershipCell && (
+                                <span style={{ fontSize: '0.68rem', padding: '1px 6px', borderRadius: 999, background: 'rgba(34, 197, 94, 0.16)', color: 'var(--success)' }}>
+                                  {ownershipCell}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td>
                         <span style={{ fontSize: '0.75rem', color: exitDisplay.color }}>

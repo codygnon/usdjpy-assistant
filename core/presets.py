@@ -46,7 +46,10 @@ class PresetId(str, Enum):
     M5_M1_EMA_CROSS_9_21 = "m5_m1_ema_cross_9_21"
     UNCLE_PARSH_H1_BREAKOUT = "uncle_parsh_h1_breakout"
     PHASE3_INTEGRATED_USD_JPY = "phase3_integrated_usd_jpy"
+    PHASE3_INTEGRATED_V7_DEFENDED = "phase3_integrated_v7_defended"
 
+
+FROZEN_PHASE3_DEFENDED_PRESET_ID = PresetId.PHASE3_INTEGRATED_V7_DEFENDED.value
 
 # ---------------------------------------------------------------------------
 # Preset definitions
@@ -2311,6 +2314,53 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                 {
                     "type": "phase3_integrated",
                     "id": "phase3_integrated_v14",
+                    "enabled": True,
+                },
+            ],
+        },
+    },
+
+    PresetId.PHASE3_INTEGRATED_V7_DEFENDED: {
+        "name": "Phase 3 Frozen V7 Defended",
+        "description": "Promoted frozen Phase 3 package: defended v7_pfdd with L1 Monday/Tuesday suppression, L1 exit override (3.25R / BE 1.0 / TP2 2.0), V44 defensive veto in ambiguous/er_low/der_neg, and T3 0.25x scaling.",
+        "pros": [
+            "Promoted frozen package backed by the runtime sizing config and parity contract",
+            "Selectable for any profile without changing broker credentials or deployment-specific settings",
+            "Dashboard can surface the defended package overrides directly when active",
+        ],
+        "cons": [
+            "Overrides remain config-driven; there is still no per-field Phase 3 editor in the UI",
+        ],
+        "risk": {
+            "max_lots": 5.0,
+            "require_stop": True,
+            "min_stop_pips": 12,
+            "max_spread_pips": 5,
+            "max_trades_per_day": 20,
+            "max_open_trades": 6,
+            "cooldown_minutes_after_loss": 0,
+        },
+        "strategy": {
+            "filters": {
+                "alignment": {"enabled": False},
+                "ema_stack_filter": {"enabled": False},
+                "atr_filter": {"enabled": False},
+                "session_filter": {"enabled": False},
+            },
+            "setups": {},
+        },
+        "trade_management": {
+            "target": {"mode": "fixed_pips", "pips_default": 8.0},
+            "stop_loss": None,
+            "breakeven": {"enabled": False},
+        },
+        "execution": {
+            "loop_poll_seconds": 5.0,
+            "loop_poll_seconds_fast": 2.0,
+            "policies": [
+                {
+                    "type": "phase3_integrated",
+                    "id": "phase3_integrated_v7_defended",
                     "enabled": True,
                 },
             ],

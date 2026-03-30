@@ -11,6 +11,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+from core.london_v2_entry_evaluator import (
+    evaluate_london_v2_entry_signal,
+)
+
 
 PIP_SIZE = 0.01
 ROUND_UNITS = 100
@@ -856,171 +863,28 @@ def run_backtest(df: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, p
                 continue
             nxt_ts = pd.Timestamp(day_df.iloc[i + 1]["time"])
 
-            # Setup A (breakout)
-            if cfg["setups"]["A"]["enabled"] and asian_valid:
-                a_start, a_end = windows["A"]
-                if a_start <= ts < a_end:
-                    long_break = float(row["close"]) > asian_high + float(cfg["setups"]["A"]["breakout_buffer_pips"]) * PIP_SIZE
-                    short_break = float(row["close"]) < asian_low - float(cfg["setups"]["A"]["breakout_buffer_pips"]) * PIP_SIZE
-                    if long_break and bool(cfg["setups"]["A"].get("allow_long", True)) and channels[("A", "long")]["state"] == "ARMED":
-                        pending_entries.append(
-                            {
-                                "setup_type": "A",
-                                "direction": "long",
-                                "execute_time": nxt_ts,
-                                "raw_sl": asian_low - float(cfg["setups"]["A"]["sl_buffer_pips"]) * PIP_SIZE,
-                                "asian_range_pips": asian_range_pips,
-                                "lor_range_pips": lor_range_pips if lor_valid else None,
-                                "is_reentry": channels[("A", "long")]["entries"] > 0,
-                            }
-                        )
-                        channels[("A", "long")]["state"] = "PENDING"
-                    if short_break and bool(cfg["setups"]["A"].get("allow_short", True)) and channels[("A", "short")]["state"] == "ARMED":
-                        pending_entries.append(
-                            {
-                                "setup_type": "A",
-                                "direction": "short",
-                                "execute_time": nxt_ts,
-                                "raw_sl": asian_high + float(cfg["setups"]["A"]["sl_buffer_pips"]) * PIP_SIZE,
-                                "asian_range_pips": asian_range_pips,
-                                "lor_range_pips": lor_range_pips if lor_valid else None,
-                                "is_reentry": channels[("A", "short")]["entries"] > 0,
-                            }
-                        )
-                        channels[("A", "short")]["state"] = "PENDING"
-
-            # Setup B (false breakout reversal)
-            if cfg["setups"]["B"]["enabled"] and asian_valid:
-                b_start, b_end = windows["B"]
-                if b_start <= ts < b_end:
-                    # short candidate: upside break then close back inside
-                    if float(row["high"]) > asian_high:
-                        b_candidates["short"].append({"expire_i": i + 2, "wick_high": float(row["high"])})
-                    for cand in b_candidates["short"]:
-                        cand["wick_high"] = max(float(cand["wick_high"]), float(row["high"]))
-                    short_confirm = float(row["close"]) < asian_high - float(cfg["setups"]["B"]["close_back_inside_pips"]) * PIP_SIZE
-                    if short_confirm and bool(cfg["setups"]["B"].get("allow_short", True)) and channels[("B", "short")]["state"] == "ARMED":
-                        active = [c for c in b_candidates["short"] if c["expire_i"] >= i]
-                        if active:
-                            wick_high = max(float(c["wick_high"]) for c in active)
-                            pending_entries.append(
-                                {
-                                    "setup_type": "B",
-                                    "direction": "short",
-                                    "execute_time": nxt_ts,
-                                    "raw_sl": wick_high + float(cfg["setups"]["B"]["sl_wick_buffer_pips"]) * PIP_SIZE,
-                                    "asian_range_pips": asian_range_pips,
-                                    "lor_range_pips": lor_range_pips if lor_valid else None,
-                                    "is_reentry": channels[("B", "short")]["entries"] > 0,
-                                }
-                            )
-                            channels[("B", "short")]["state"] = "PENDING"
-                            b_candidates["short"] = []
-                    b_candidates["short"] = [c for c in b_candidates["short"] if c["expire_i"] >= i]
-
-                    # long candidate: downside break then close back inside
-                    if float(row["low"]) < asian_low:
-                        b_candidates["long"].append({"expire_i": i + 2, "wick_low": float(row["low"])})
-                    for cand in b_candidates["long"]:
-                        cand["wick_low"] = min(float(cand["wick_low"]), float(row["low"]))
-                    long_confirm = float(row["close"]) > asian_low + float(cfg["setups"]["B"]["close_back_inside_pips"]) * PIP_SIZE
-                    if long_confirm and bool(cfg["setups"]["B"].get("allow_long", True)) and channels[("B", "long")]["state"] == "ARMED":
-                        active = [c for c in b_candidates["long"] if c["expire_i"] >= i]
-                        if active:
-                            wick_low = min(float(c["wick_low"]) for c in active)
-                            pending_entries.append(
-                                {
-                                    "setup_type": "B",
-                                    "direction": "long",
-                                    "execute_time": nxt_ts,
-                                    "raw_sl": wick_low - float(cfg["setups"]["B"]["sl_wick_buffer_pips"]) * PIP_SIZE,
-                                    "asian_range_pips": asian_range_pips,
-                                    "lor_range_pips": lor_range_pips if lor_valid else None,
-                                    "is_reentry": channels[("B", "long")]["entries"] > 0,
-                                }
-                            )
-                            channels[("B", "long")]["state"] = "PENDING"
-                            b_candidates["long"] = []
-                    b_candidates["long"] = [c for c in b_candidates["long"] if c["expire_i"] >= i]
-
-            # Setup C (level bounce)
-            if cfg["setups"]["C"]["enabled"] and asian_valid:
-                c_start, c_end = windows["C"]
-                if c_start <= ts < c_end:
-                    body = abs(float(row["close"]) - float(row["open"]))
-                    long_cond = (
-                        float(row["low"]) <= asian_low + float(cfg["setups"]["C"]["bounce_zone_pips"]) * PIP_SIZE
-                        and float(row["low"]) >= asian_low
-                        and float(row["close"]) > float(row["open"])
-                        and float(row["close"]) >= asian_low + float(cfg["setups"]["C"]["min_close_offset_pips"]) * PIP_SIZE
-                        and body >= float(cfg["setups"]["C"]["min_body_pips"]) * PIP_SIZE
-                    )
-                    short_cond = (
-                        float(row["high"]) >= asian_high - float(cfg["setups"]["C"]["bounce_zone_pips"]) * PIP_SIZE
-                        and float(row["high"]) <= asian_high
-                        and float(row["close"]) < float(row["open"])
-                        and float(row["close"]) <= asian_high - float(cfg["setups"]["C"]["min_close_offset_pips"]) * PIP_SIZE
-                        and body >= float(cfg["setups"]["C"]["min_body_pips"]) * PIP_SIZE
-                    )
-                    if long_cond and bool(cfg["setups"]["C"].get("allow_long", True)) and channels[("C", "long")]["state"] == "ARMED":
-                        pending_entries.append(
-                            {
-                                "setup_type": "C",
-                                "direction": "long",
-                                "execute_time": nxt_ts,
-                                "raw_sl": asian_low - float(cfg["setups"]["C"]["sl_buffer_pips"]) * PIP_SIZE,
-                                "asian_range_pips": asian_range_pips,
-                                "lor_range_pips": lor_range_pips if lor_valid else None,
-                                "is_reentry": channels[("C", "long")]["entries"] > 0,
-                            }
-                        )
-                        channels[("C", "long")]["state"] = "PENDING"
-                    if short_cond and bool(cfg["setups"]["C"].get("allow_short", True)) and channels[("C", "short")]["state"] == "ARMED":
-                        pending_entries.append(
-                            {
-                                "setup_type": "C",
-                                "direction": "short",
-                                "execute_time": nxt_ts,
-                                "raw_sl": asian_high + float(cfg["setups"]["C"]["sl_buffer_pips"]) * PIP_SIZE,
-                                "asian_range_pips": asian_range_pips,
-                                "lor_range_pips": lor_range_pips if lor_valid else None,
-                                "is_reentry": channels[("C", "short")]["entries"] > 0,
-                            }
-                        )
-                        channels[("C", "short")]["state"] = "PENDING"
-
-            # Setup D (LOR breakout)
-            if cfg["setups"]["D"]["enabled"] and lor_valid:
-                d_start, d_end = windows["D"]
-                if d_start <= ts < d_end:
-                    long_break = float(row["close"]) > lor_high + float(cfg["setups"]["D"]["breakout_buffer_pips"]) * PIP_SIZE
-                    short_break = float(row["close"]) < lor_low - float(cfg["setups"]["D"]["breakout_buffer_pips"]) * PIP_SIZE
-                    if long_break and bool(cfg["setups"]["D"].get("allow_long", True)) and channels[("D", "long")]["state"] == "ARMED":
-                        pending_entries.append(
-                            {
-                                "setup_type": "D",
-                                "direction": "long",
-                                "execute_time": nxt_ts,
-                                "raw_sl": lor_low - float(cfg["setups"]["D"]["sl_buffer_pips"]) * PIP_SIZE,
-                                "asian_range_pips": asian_range_pips if asian_valid else None,
-                                "lor_range_pips": lor_range_pips,
-                                "is_reentry": channels[("D", "long")]["entries"] > 0,
-                            }
-                        )
-                        channels[("D", "long")]["state"] = "PENDING"
-                    if short_break and bool(cfg["setups"]["D"].get("allow_short", True)) and channels[("D", "short")]["state"] == "ARMED":
-                        pending_entries.append(
-                            {
-                                "setup_type": "D",
-                                "direction": "short",
-                                "execute_time": nxt_ts,
-                                "raw_sl": lor_high + float(cfg["setups"]["D"]["sl_buffer_pips"]) * PIP_SIZE,
-                                "asian_range_pips": asian_range_pips if asian_valid else None,
-                                "lor_range_pips": lor_range_pips,
-                                "is_reentry": channels[("D", "short")]["entries"] > 0,
-                            }
-                        )
-                        channels[("D", "short")]["state"] = "PENDING"
+            # Signal generation via extracted evaluator (core.london_v2_entry_evaluator)
+            _lv2_entries, b_candidates = evaluate_london_v2_entry_signal(
+                row=row,
+                cfg=cfg,
+                asian_high=asian_high,
+                asian_low=asian_low,
+                asian_range_pips=asian_range_pips,
+                asian_valid=asian_valid,
+                lor_high=lor_high,
+                lor_low=lor_low,
+                lor_range_pips=lor_range_pips if lor_valid else 0.0,
+                lor_valid=lor_valid,
+                ts=ts,
+                nxt_ts=nxt_ts,
+                bar_index=i,
+                windows=windows,
+                channels=channels,
+                b_candidates=b_candidates,
+            )
+            for _pe in _lv2_entries:
+                pending_entries.append(_pe)
+                channels[(_pe["setup_type"], _pe["direction"])]["state"] = "PENDING"
 
     trades_df = pd.DataFrame(trades_out)
     if trades_df.empty:

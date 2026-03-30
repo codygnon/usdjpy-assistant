@@ -44,6 +44,15 @@ if DATA_BASE != BASE_DIR:
 sys.path.insert(0, str(BASE_DIR))
 
 from core.execution_state import RuntimeState, load_state, save_state
+from core.phase3_operator import (
+    build_phase3_acceptance_payload,
+    build_phase3_defensive_monitor_payload,
+    build_phase3_provenance_payload,
+    enrich_phase3_attribution,
+    extract_phase3_reason_text,
+    infer_phase3_session_from_signal_id,
+    parse_phase3_blocking_filter_ids,
+)
 from core.presets import PresetId, apply_preset, get_preset_patch, list_presets
 from core.profile import (
     ProfileV1,
@@ -203,6 +212,90 @@ def _runtime_state_path(profile_name: str) -> Path:
 
 def _loop_pid_path(profile_name: str) -> Path:
     return LOGS_DIR / profile_name / "loop.pid"
+
+
+def _research_out_path(filename: str) -> Path:
+    return BASE_DIR / "research_out" / filename
+
+
+def _load_phase3_sizing_cfg_api() -> dict[str, Any]:
+    try:
+        from core.phase3_integrated_engine import load_phase3_sizing_config
+
+        return load_phase3_sizing_config() or {}
+    except Exception:
+        return {}
+
+
+def _enrich_phase3_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [enrich_phase3_attribution(row) for row in rows]
+
+
+def _apply_phase3_sync_close_state_update(
+    *,
+    profile_name: str,
+    trade_row: dict[str, Any],
+    updates: dict[str, Any],
+) -> None:
+    entry_type = str(trade_row.get("entry_type") or "")
+    if not entry_type.startswith("phase3:"):
+        return
+    try:
+        from core.phase3_integrated_engine import (
+            load_phase3_sizing_config,
+            infer_phase3_entry_session,
+            phase3_trade_key_date,
+            apply_phase3_session_outcome,
+        )
+
+        state_path = _runtime_state_path(profile_name)
+        runtime_data: dict[str, Any] = {}
+        if state_path.exists():
+            try:
+                runtime_data = json.loads(state_path.read_text(encoding="utf-8"))
+            except Exception:
+                runtime_data = {}
+        phase3_state = dict(runtime_data.get("phase3_state", {}) or {})
+
+        exit_ts = updates.get("exit_timestamp_utc") or pd.Timestamp.now(tz="UTC").isoformat()
+        now_utc = pd.Timestamp(exit_ts)
+        if now_utc.tzinfo is None:
+            now_utc = now_utc.tz_localize("UTC")
+        else:
+            now_utc = now_utc.tz_convert("UTC")
+        pips_val = updates.get("pips")
+        try:
+            pips_float = float(pips_val)
+        except Exception:
+            pips_float = 0.0
+        action = str(updates.get("exit_reason") or "")
+        is_loss = True if action == "hard_sl" else (pips_float < 0.0)
+        entry_session = infer_phase3_entry_session(entry_type, trade_row.get("entry_session"))
+        if entry_session not in {"tokyo", "london", "ny"}:
+            return
+        key_date = phase3_trade_key_date(trade_row.get("timestamp_utc"), now_utc)
+        phase3_sizing_cfg = load_phase3_sizing_config() or {}
+        sd = apply_phase3_session_outcome(
+            phase3_state=phase3_state,
+            phase3_sizing_cfg=phase3_sizing_cfg,
+            entry_session=entry_session,
+            entry_type=entry_type,
+            is_loss=is_loss,
+            action=action,
+            side=str(trade_row.get("side") or "").lower(),
+            key_date=key_date,
+            now_utc=now_utc,
+        )
+        runtime_data["phase3_state"] = phase3_state
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(json.dumps(runtime_data, indent=2), encoding="utf-8")
+        if entry_session == "ny":
+            print(
+                f"[api] phase3 sync state update: session=ny loss={1 if is_loss else 0} "
+                f"consec={int(sd.get('consecutive_losses', 0))} trade_id={trade_row.get('trade_id')}"
+            )
+    except Exception as e:
+        print(f"[api] phase3 sync state update failed for {trade_row.get('trade_id')}: {e}")
 
 
 def _candidate_log_dirs(profile_name: str, profile_path: Optional[str] = None) -> list[Path]:
@@ -1160,7 +1253,7 @@ def get_trades(
     df = store.read_trades_df(profile_name).tail(limit)
     # Convert NaN to None for JSON
     df = df.where(pd.notna(df), None)
-    records = df.to_dict(orient="records")
+    records = _enrich_phase3_rows(df.to_dict(orient="records"))
 
     if not resolved_profile_path or not resolved_profile_path.exists():
         return records
@@ -1478,7 +1571,16 @@ def get_phase3_decisions(profile_name: str, days: int = 3, limit: int = 5000) ->
     df = df[df["timestamp_utc"] >= since]
     df = df[df["signal_id"].astype(str).str.startswith("eval:phase3_integrated:")]
     df = df.tail(limit)
-    return df.to_dict(orient="records")
+    cfg = _load_phase3_sizing_cfg_api()
+    rows = df.to_dict(orient="records")
+    enriched: list[dict[str, Any]] = []
+    for row in rows:
+        out = dict(row)
+        out["phase3_session"] = infer_phase3_session_from_signal_id(out.get("signal_id"), cfg)
+        out["blocking_filter_ids"] = parse_phase3_blocking_filter_ids(out.get("reason"))
+        out["reason_text"] = extract_phase3_reason_text(out.get("reason"))
+        enriched.append(out)
+    return enriched
 
 
 @app.get("/api/data/{profile_name}/phase3-blockers-breakdown")
@@ -1523,6 +1625,63 @@ def get_phase3_blockers_breakdown(profile_name: str, days: int = 7, limit: int =
 
     # Sort by count desc for stable output
     return dict(sorted(counts.items(), key=lambda kv: kv[1], reverse=True))
+
+
+@app.get("/api/data/{profile_name}/phase3-provenance")
+def get_phase3_provenance(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
+    dashboard = _get_dashboard_impl(profile_name, profile_path)
+    if "error" in dashboard:
+        return {
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "package_id": None,
+            "preset_name": "",
+            "session": None,
+            "strategy_tag": None,
+            "strategy_family": None,
+            "window_label": None,
+            "ownership_cell": None,
+            "regime_label": None,
+            "defensive_flags": [],
+            "attempted": False,
+            "placed": False,
+            "outcome": "waiting",
+            "reason": None,
+            "blocking_filter_ids": [],
+            "last_block_reason": None,
+            "exit_policy": None,
+            "frozen_modifiers": [],
+            "data_freshness": {
+                "dashboard_timestamp_utc": None,
+                "decision_timestamp_utc": None,
+            },
+        }
+
+    latest_decision = None
+    decisions = get_phase3_decisions(profile_name, days=7, limit=2000)
+    if decisions:
+        latest_decision = decisions[-1]
+    return build_phase3_provenance_payload(
+        preset_name=str(dashboard.get("preset_name") or ""),
+        context_items=list(dashboard.get("context") or []),
+        filters=list(dashboard.get("filters") or []),
+        latest_decision=latest_decision,
+        sizing_cfg=_load_phase3_sizing_cfg_api(),
+        dashboard_timestamp_utc=dashboard.get("timestamp_utc"),
+        last_block_reason=dashboard.get("last_block_reason"),
+    )
+
+
+@app.get("/api/system/phase3-paper-acceptance")
+def get_phase3_paper_acceptance() -> dict[str, Any]:
+    return build_phase3_acceptance_payload(_research_out_path("paper_acceptance_validation.json"))
+
+
+@app.get("/api/system/phase3-defensive-monitor")
+def get_phase3_defensive_monitor() -> dict[str, Any]:
+    return build_phase3_defensive_monitor_payload(
+        _research_out_path("defensive_paper_guardrail_profile.json"),
+        _research_out_path("defensive_paper_pain_report.json"),
+    )
 
 
 @app.get("/api/data/{profile_name}/stats")
@@ -2349,6 +2508,9 @@ def get_advanced_analytics(
             "post_sl_recovery_pips": recovery,
             "preset_name": str(row.get("preset_name") or ""),
             "exit_reason": str(row.get("exit_reason") or ""),
+            "entry_type": str(row.get("entry_type") or ""),
+            "reversal_risk_tier": str(row.get("reversal_risk_tier") or ""),
+            "tier_number": None if pd.isna(row.get("tier_number")) else int(row.get("tier_number")),
         })
 
     total_profit_currency = None
@@ -2357,7 +2519,7 @@ def get_advanced_analytics(
         total_profit_currency = round(sum(profits), 2)
 
     payload = {
-        "trades": trades_list,
+        "trades": _enrich_phase3_rows(trades_list),
         "display_currency": curr,
         "source": "database",
         "starting_balance": starting_balance,
@@ -2443,7 +2605,7 @@ def get_open_trades(profile_name: str, profile_path: Optional[str] = None, sync:
             except (TypeError, ValueError):
                 pass
         result = filtered
-    return result
+    return _enrich_phase3_rows(result)
 
 
 def _sync_open_trades_with_broker(profile: ProfileV1, store: SqliteStore) -> int:
@@ -2591,6 +2753,11 @@ def _sync_open_trades_with_broker(profile: ProfileV1, store: SqliteStore) -> int
                 print(f"[api] post_sl_recovery failed for {trade_id}: {_e}")
 
         store.close_trade(trade_id=trade_id, updates=updates)
+        _apply_phase3_sync_close_state_update(
+            profile_name=profile.profile_name,
+            trade_row=trade_row,
+            updates=updates,
+        )
         print(f"[api] synced closed trade {trade_id}: {exit_reason}, pips={pips:.2f}")
         synced += 1
 
@@ -2747,6 +2914,11 @@ def close_trade_endpoint(profile_name: str, trade_id: str, profile_path: str) ->
         if profit_value is not None:
             updates["profit"] = float(profit_value)
         store.close_trade(trade_id=trade_id, updates=updates)
+        _apply_phase3_sync_close_state_update(
+            profile_name=profile.profile_name,
+            trade_row=trade.to_dict(),
+            updates=updates,
+        )
         _cache_invalidate_profile(profile_name)
         
         return {
@@ -2945,6 +3117,11 @@ def _aggressive_sync_with_broker(profile: ProfileV1, store: SqliteStore) -> int:
                 print(f"[api] post_sl_recovery failed for {trade_id}: {_e}")
 
         store.close_trade(trade_id=trade_id, updates=updates)
+        _apply_phase3_sync_close_state_update(
+            profile_name=profile.profile_name,
+            trade_row=trade_row,
+            updates=updates,
+        )
         print(f"[api] aggressive sync: closed {trade_id} with exit_reason={exit_reason}, pips={pips:.2f}")
         synced += 1
 
@@ -3920,6 +4097,17 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         intraday_fib_snapshot=intraday_fib_corridor_snapshot,
                         conviction_snapshot=_conviction_snap_api,
                     )
+                elif _policy_type == "phase3_integrated":
+                    from core.dashboard_reporters import collect_phase3_context
+                    context_items = collect_phase3_context(
+                        policy_for_context or _policy,
+                        data_by_tf,
+                        _tick,
+                        {},
+                        phase3_state_for_filters or {},
+                        pip_size,
+                        active_preset_name=getattr(profile, "active_preset_name", None),
+                    )
                 context = [asdict(item) for item in context_items]
             except Exception as e:
                 print(f"[api] dashboard context error for '{profile_name}': {e}")
@@ -4494,6 +4682,7 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
                     result["loop_log"] = []
             except Exception:
                 result["loop_log"] = []
+            result["positions"] = _enrich_phase3_rows(list(result.get("positions") or []))
             return _strip_trial10_directional_cap_filter(result)
 
         live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
@@ -4509,6 +4698,7 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
                     live["loop_log"] = []
             except Exception:
                 live["loop_log"] = []
+            live["positions"] = _enrich_phase3_rows(list(live.get("positions") or []))
             return _strip_trial10_directional_cap_filter(live)
 
         return _strip_trial10_directional_cap_filter({
@@ -4577,6 +4767,7 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
     result["data_source"] = "run_loop_file"
     result.setdefault("entry_candidate_side", None)
     result.setdefault("entry_candidate_trigger", None)
+    result["positions"] = _enrich_phase3_rows(list(result.get("positions") or []))
     result = _strip_trial10_directional_cap_filter(result)
     _dashboard_live_cache[profile_name] = (now, result)
     return result
@@ -4590,7 +4781,8 @@ def get_trade_events(profile_name: str, limit: int = 50, profile_path: Optional[
     log_dir = _pick_best_trade_events_log_dir(profile_name, profile_path)
     _backfill_trade_event_tier_labels(profile_name, log_dir)
     events = read_trade_events(log_dir, limit=limit)
-    return _hydrate_trade_event_close_financials(profile_name, events, log_dir=log_dir)
+    events = _hydrate_trade_event_close_financials(profile_name, events, log_dir=log_dir)
+    return _enrich_phase3_rows(events)
 
 
 def _hydrate_trade_event_close_financials(profile_name: str, events: list[dict[str, Any]], log_dir: Optional[Path] = None) -> list[dict[str, Any]]:
