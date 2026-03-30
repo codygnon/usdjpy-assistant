@@ -53,6 +53,34 @@ def test_compare_phase3_envelopes_reports_field_drift() -> None:
     assert any("ownership_cell" in row for row in diff.mismatches)
 
 
+def test_compare_phase3_envelopes_reports_reason_and_attribution_drift() -> None:
+    left = {
+        "session": "ny",
+        "strategy_tag": "phase3:v44_ny:strong@cell",
+        "strategy_family": "v44_ny",
+        "ownership_cell": "cell",
+        "attempted": True,
+        "placed": False,
+        "blocking_filter_ids": [],
+        "size_units": 100000,
+        "entry_price": 150.1,
+        "sl_price": 149.9,
+        "tp1_price": 150.4,
+        "reason": "v44: ATR percentile block",
+        "attribution": {"ownership_audit": {"ownership_cell": "cell"}},
+        "exit_policy": {"label": "V44 session exit"},
+    }
+    right = dict(left)
+    right["reason"] = "v44: directional conditions not met"
+    right["attribution"] = {"ownership_audit": {"ownership_cell": "other_cell"}}
+
+    diff = compare_phase3_envelopes(left, right)
+
+    assert diff.matches is False
+    assert any("reason:" in row for row in diff.mismatches)
+    assert any("attribution differs" in row for row in diff.mismatches)
+
+
 def test_evaluate_phase3_bar_precomputes_and_forwards_ownership_audit(monkeypatch) -> None:
     fake_audit = {
         "schema": "phase3_ownership_audit_v1",

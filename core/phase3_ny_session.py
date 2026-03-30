@@ -49,6 +49,25 @@ def execute_v44_ny_session(
         "phase3_state_updates": {},
         "strategy_tag": None,
     }
+    session_key: str | None = None
+    sdat: dict[str, Any] | None = None
+    parity_context: dict[str, Any] = {
+        "policy_surface": "frozen_v44_strict_policy",
+    }
+
+    def _sync_parity_context() -> dict[str, Any]:
+        ctx = dict(parity_context)
+        if isinstance(sdat, dict):
+            for key, value in ctx.items():
+                sdat[f"parity_{key}"] = value
+        return ctx
+
+    def _return_no_trade(*, reason_text: str, attempted: bool = False, side_value: Optional[str] = None) -> dict:
+        no_trade["decision"] = ExecutionDecision(attempted=attempted, placed=False, reason=reason_text, side=side_value)
+        if session_key is not None and isinstance(sdat, dict):
+            no_trade["phase3_state_updates"] = {session_key: sdat}
+        no_trade["v44_parity_context"] = _sync_parity_context()
+        return no_trade
 
     v44_config = (sizing_config or {}).get("v44_ny", {})
     v44_start_delay_min = int(v44_config.get("start_delay_minutes", 5))
@@ -63,27 +82,35 @@ def execute_v44_ny_session(
     _day0 = _ts_now.normalize()
     ny_start_ts = _day0 + pd.Timedelta(hours=v44_ny_start_hour) + pd.Timedelta(minutes=max(0, v44_start_delay_min))
     ny_end_ts = _day0 + pd.Timedelta(hours=v44_ny_end_hour)
+    parity_context.update(
+        {
+            "ny_window_mode": str(v44_config.get("ny_window_mode", "fixed_utc")),
+            "ny_start_hour": float(v44_ny_start_hour),
+            "ny_end_hour": float(v44_ny_end_hour),
+            "start_delay_minutes": int(v44_start_delay_min),
+            "entry_spread_limit_pips": float(v44_max_entry_spread),
+        }
+    )
 
     if _ts_now < ny_start_ts:
-        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: start delay active", side=None)
-        return no_trade
+        return _return_no_trade(reason_text="v44_ny: start delay active")
     if (tick.ask - tick.bid) / pip > v44_max_entry_spread:
-        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: spread veto", side=None)
-        return no_trade
+        return _return_no_trade(reason_text="v44_ny: spread veto")
 
     m1_df = _drop_incomplete_tf(data_by_tf.get("M1"), "M1")
     h1_df = _drop_incomplete_tf(data_by_tf.get("H1"), "H1")
     m5_df = _drop_incomplete_tf(data_by_tf.get("M5"), "M5")
     h4_df = _drop_incomplete_tf(data_by_tf.get("H4"), "H4")
     if h1_df is None or h1_df.empty or m5_df is None or m5_df.empty or m1_df is None or m1_df.empty:
-        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: missing M1/H1/M5", side=None)
-        return no_trade
+        return _return_no_trade(reason_text="v44_ny: missing M1/H1/M5")
 
     v44_max_open = int(v44_config.get("max_open_positions", support.V44_MAX_OPEN))
     v44_risk_pct = _as_risk_fraction(v44_config.get("risk_per_trade_pct", 0.5), 0.005)
     v44_rp_min_lot = float(v44_config.get("rp_min_lot", 1.0))
     v44_rp_max_lot = float(v44_config.get("rp_max_lot", 20.0))
     v44_max_entries_day = int(v44_config.get("max_entries_per_day", support.V44_MAX_ENTRIES_DAY))
+    v44_allow_internal_overlap = bool(v44_config.get("allow_internal_overlap", True))
+    v44_allow_opposite_side_overlap = bool(v44_config.get("allow_opposite_side_overlap", True))
     v44_session_stop_losses = int(v44_config.get("session_stop_losses", support.V44_SESSION_STOP_LOSSES))
     v44_ny_strength_allow = str(v44_config.get("ny_strength_allow", v44_config.get("strength_allow", "strong_normal"))).lower()
     v44_strong_tp1_pips = float(v44_config.get("strong_tp1_pips", support.V44_STRONG_TP1_PIPS))
@@ -169,6 +196,18 @@ def execute_v44_ny_session(
         "weak": float(v44_config.get("hybrid_weak_boost", 0.0)),
     }
     v44_hybrid_ny_boost = float(v44_config.get("hybrid_ny_boost", 1.0))
+    parity_context.update(
+        {
+            "allow_internal_overlap": int(v44_allow_internal_overlap),
+            "allow_opposite_side_overlap": int(v44_allow_opposite_side_overlap),
+            "configured_max_open_positions": int(v44_max_open),
+            "configured_max_entries_per_day": int(v44_max_entries_day),
+            "sizing_mode": str(v44_sizing_mode),
+            "max_lot": float(v44_max_lot),
+            "rp_max_lot": float(v44_rp_max_lot),
+            "risk_per_trade_pct": float(v44_risk_pct),
+        }
+    )
 
     today = now_utc.date().isoformat()
     prev_day = str(phase3_state.get("ny_last_day") or "")
@@ -232,9 +271,7 @@ def execute_v44_ny_session(
         try:
             sess_range_pips = (float(sdat.get("session_high")) - float(sdat.get("session_low"))) / pip
             if sess_range_pips > float(v44_session_range_cap_pips):
-                no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44_ny: session range cap ({sess_range_pips:.1f}p > {v44_session_range_cap_pips:.1f}p)", side=None)
-                no_trade["phase3_state_updates"] = {session_key: sdat}
-                return no_trade
+                return _return_no_trade(reason_text=f"v44_ny: session range cap ({sess_range_pips:.1f}p > {v44_session_range_cap_pips:.1f}p)")
         except Exception:
             pass
 
@@ -253,23 +290,57 @@ def execute_v44_ny_session(
     sdat["trend_mode_efficiency_min"] = float(v44_trend_mode_efficiency_min)
     sdat["range_mode_efficiency_max"] = float(v44_range_mode_efficiency_max)
     if v44_dual_mode_enabled and session_mode == "neutral":
-        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: dual mode neutral", side=None)
-        no_trade["phase3_state_updates"] = {session_key: sdat}
-        return no_trade
+        return _return_no_trade(reason_text="v44_ny: dual mode neutral")
     if v44_dual_mode_enabled and session_mode == "range_fade" and not v44_range_fade_enabled:
-        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: range mode disabled", side=None)
-        no_trade["phase3_state_updates"] = {session_key: sdat}
-        return no_trade
+        return _return_no_trade(reason_text="v44_ny: range mode disabled")
 
     open_count = int(phase3_state.get("open_trade_count", 0))
     green_light_active = bool(v44_gl_enabled and int(sdat.get("wins_closed", 0)) >= int(v44_gl_min_wins))
     effective_max_open = int(v44_max_open)
-    if green_light_active and int(v44_gl_max_open) > effective_max_open:
+    if effective_max_open > 0 and green_light_active and int(v44_gl_max_open) > effective_max_open:
         effective_max_open = int(v44_gl_max_open)
-    if open_count >= effective_max_open:
-        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44_ny: max open {open_count}/{effective_max_open}", side=None)
-        no_trade["phase3_state_updates"] = {session_key: sdat}
-        return no_trade
+    effective_max_entries_day = 0 if int(v44_max_entries_day) <= 0 else int(v44_max_entries_day) + (int(v44_gl_extra_entries) if green_light_active else 0)
+    cooldown_until = sdat.get("cooldown_until")
+    cooldown_active = False
+    if cooldown_until:
+        try:
+            cooldown_ts = pd.Timestamp(cooldown_until)
+            if cooldown_ts.tzinfo is None:
+                cooldown_ts = cooldown_ts.tz_localize("UTC")
+            else:
+                cooldown_ts = cooldown_ts.tz_convert("UTC")
+            cooldown_active = _ts_now < cooldown_ts
+        except Exception:
+            cooldown_active = False
+    exhaustion_cooldown_until = sdat.get("exhaustion_cooldown_until")
+    exhaustion_cooldown_active = False
+    if exhaustion_cooldown_until:
+        try:
+            exhaustion_ts = pd.Timestamp(exhaustion_cooldown_until)
+            if exhaustion_ts.tzinfo is None:
+                exhaustion_ts = exhaustion_ts.tz_localize("UTC")
+            else:
+                exhaustion_ts = exhaustion_ts.tz_convert("UTC")
+            exhaustion_cooldown_active = _ts_now < exhaustion_ts
+        except Exception:
+            exhaustion_cooldown_active = False
+    parity_context.update(
+        {
+            "open_trade_count_before": int(open_count),
+            "trade_count_before": int(sdat.get("trade_count", 0)),
+            "green_light_active": int(green_light_active),
+            "effective_max_open": int(effective_max_open),
+            "max_open_unlimited": int(effective_max_open <= 0),
+            "effective_max_entries_day": int(effective_max_entries_day),
+            "max_entries_unlimited": int(effective_max_entries_day <= 0),
+            "cooldown_until": str(cooldown_until or ""),
+            "cooldown_active": int(cooldown_active),
+            "exhaustion_cooldown_until": str(exhaustion_cooldown_until or ""),
+            "exhaustion_cooldown_active": int(exhaustion_cooldown_active),
+        }
+    )
+    if effective_max_open > 0 and open_count >= effective_max_open:
+        return _return_no_trade(reason_text=f"v44_ny: max open {open_count}/{effective_max_open}")
 
     if v44_skip_days_raw:
         try:
@@ -277,16 +348,14 @@ def execute_v44_ny_session(
         except Exception:
             skip_days = set()
         if now_utc.weekday() in skip_days:
-            no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: skip day", side=None)
-            return no_trade
+            return _return_no_trade(reason_text="v44_ny: skip day")
     if v44_skip_months_raw:
         try:
             skip_months = {int(x.strip()) for x in v44_skip_months_raw.split(",") if str(x).strip() != ""}
         except Exception:
             skip_months = set()
         if now_utc.month in skip_months:
-            no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: skip month", side=None)
-            return no_trade
+            return _return_no_trade(reason_text="v44_ny: skip month")
 
     if store is not None and (v44_daily_loss_limit_pips > 0 or v44_weekly_loss_limit_pips > 0 or v44_daily_loss_limit_usd > 0):
         try:
@@ -302,11 +371,9 @@ def execute_v44_ny_session(
                 day_pips = sum(float(t["pips"] or 0) for t in day_trades if str(t["entry_type"] or "").startswith("phase3:v44") and t["pips"] is not None)
                 day_usd = sum(float(t["profit"] or 0) for t in day_trades if str(t["entry_type"] or "").startswith("phase3:v44") and t["profit"] is not None)
                 if v44_daily_loss_limit_pips > 0 and day_pips <= -v44_daily_loss_limit_pips:
-                    no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44_ny: daily loss limit ({day_pips:.1f}p <= -{v44_daily_loss_limit_pips:.0f}p)", side=None)
-                    return no_trade
+                    return _return_no_trade(reason_text=f"v44_ny: daily loss limit ({day_pips:.1f}p <= -{v44_daily_loss_limit_pips:.0f}p)")
                 if v44_daily_loss_limit_usd > 0 and day_usd <= -v44_daily_loss_limit_usd:
-                    no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44_ny: daily loss USD ({day_usd:.2f} <= -{v44_daily_loss_limit_usd:.2f})", side=None)
-                    return no_trade
+                    return _return_no_trade(reason_text=f"v44_ny: daily loss USD ({day_usd:.2f} <= -{v44_daily_loss_limit_usd:.2f})")
             if v44_weekly_loss_limit_pips > 0:
                 wk_start = now_utc.date() - pd.Timedelta(days=now_utc.weekday())
                 week_pips = 0.0
@@ -320,16 +387,14 @@ def execute_v44_ny_session(
                         wk_trades = store.get_trades_for_date(profile_name, d_str)
                     week_pips += sum(float(t["pips"] or 0) for t in wk_trades if str(t["entry_type"] or "").startswith("phase3:v44") and t["pips"] is not None)
                 if week_pips <= -v44_weekly_loss_limit_pips:
-                    no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44_ny: weekly loss limit ({week_pips:.1f}p <= -{v44_weekly_loss_limit_pips:.0f}p)", side=None)
-                    return no_trade
+                    return _return_no_trade(reason_text=f"v44_ny: weekly loss limit ({week_pips:.1f}p <= -{v44_weekly_loss_limit_pips:.0f}p)")
         except Exception:
             pass
 
     if v44_h4_adx_min > 0 and h4_df is not None and len(h4_df) >= 14:
         h4_adx_val = _compute_adx(h4_df)
         if h4_adx_val < v44_h4_adx_min:
-            no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44_ny: H4 ADX {h4_adx_val:.1f} < min {v44_h4_adx_min:.1f}", side=None)
-            return no_trade
+            return _return_no_trade(reason_text=f"v44_ny: H4 ADX {h4_adx_val:.1f} < min {v44_h4_adx_min:.1f}")
 
     if v44_h1_slope_min > 0 and h1_df is not None and len(h1_df) >= max(2, v44_slope_bars + 1):
         _h1_close = h1_df["close"].astype(float)
@@ -338,9 +403,7 @@ def execute_v44_ny_session(
         if len(_h1_ema) > _sb:
             _h1_slope_mag = abs((float(_h1_ema.iloc[-1]) - float(_h1_ema.iloc[-1 - _sb])) / (float(_sb) * pip))
             if _h1_slope_mag < float(v44_h1_slope_min):
-                no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44_ny: H1 slope weak ({_h1_slope_mag:.2f} < {v44_h1_slope_min:.2f})", side=None)
-                no_trade["phase3_state_updates"] = {session_key: sdat}
-                return no_trade
+                return _return_no_trade(reason_text=f"v44_ny: H1 slope weak ({_h1_slope_mag:.2f} < {v44_h1_slope_min:.2f})")
     if v44_h1_slope_consistent_bars > 0 and h1_df is not None and len(h1_df) >= int(v44_h1_slope_consistent_bars) + 2:
         _h1_close = h1_df["close"].astype(float)
         _h1_fast = _compute_ema(_h1_close, period=v44_h1_ema_fast)
@@ -361,9 +424,7 @@ def execute_v44_ny_session(
                     consistent = False
                     break
             if not consistent:
-                no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: H1 slope inconsistent", side=None)
-                no_trade["phase3_state_updates"] = {session_key: sdat}
-                return no_trade
+                return _return_no_trade(reason_text="v44_ny: H1 slope inconsistent")
 
     if v44_exhaustion_gate_enabled:
         exh_cooldown = sdat.get("exhaustion_cooldown_until")
@@ -371,8 +432,7 @@ def execute_v44_ny_session(
             try:
                 exh_cd_dt = pd.Timestamp(exh_cooldown).tz_localize("UTC") if pd.Timestamp(exh_cooldown).tzinfo is None else pd.Timestamp(exh_cooldown).tz_convert("UTC")
                 if pd.Timestamp(now_utc) < exh_cd_dt:
-                    no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44_ny: exhaustion gate cooldown until {exh_cooldown}", side=None)
-                    return no_trade
+                    return _return_no_trade(reason_text=f"v44_ny: exhaustion gate cooldown until {exh_cooldown}")
             except Exception:
                 pass
         if m5_df is not None and not m5_df.empty and "time" in m5_df.columns:
@@ -389,14 +449,12 @@ def execute_v44_ny_session(
                 if ex_range_pips > v44_exhaustion_max_range_pips:
                     cd_until = (now_utc + pd.Timedelta(minutes=v44_exhaustion_cooldown_minutes)).isoformat()
                     sdat["exhaustion_cooldown_until"] = cd_until
-                    no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44_ny: exhaustion gate ({ex_range_pips:.1f}p > {v44_exhaustion_max_range_pips:.0f}p)", side=None)
-                    no_trade["phase3_state_updates"] = {session_key: sdat}
-                    return no_trade
+                    parity_context["exhaustion_cooldown_until"] = str(cd_until)
+                    parity_context["exhaustion_cooldown_active"] = 1
+                    return _return_no_trade(reason_text=f"v44_ny: exhaustion gate ({ex_range_pips:.1f}p > {v44_exhaustion_max_range_pips:.0f}p)")
 
     if _ts_now >= (ny_end_ts - pd.Timedelta(minutes=max(0, v44_entry_cutoff_minutes))):
-        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44_ny: entry cutoff ({v44_entry_cutoff_minutes}m before session end)", side=None)
-        no_trade["phase3_state_updates"] = {session_key: sdat}
-        return no_trade
+        return _return_no_trade(reason_text=f"v44_ny: entry cutoff ({v44_entry_cutoff_minutes}m before session end)")
 
     news_events: tuple[pd.Timestamp, ...] = tuple()
     in_news_window = False
@@ -417,11 +475,8 @@ def execute_v44_ny_session(
             sdat["news_event_time"] = latest_ev.isoformat()
         sdat["news_status"] = "in_window" if in_news_window else "clear"
         if in_news_window and not v44_news_trend_enabled:
-            no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: news window block", side=None)
-            no_trade["phase3_state_updates"] = {session_key: sdat}
-            return no_trade
+            return _return_no_trade(reason_text="v44_ny: news window block")
 
-    effective_max_entries_day = int(v44_max_entries_day) + (int(v44_gl_extra_entries) if green_light_active else 0)
     eff_strong_slope = float(v44_strong_slope)
     if green_light_active and v44_gl_slope_relax > 0:
         eff_strong_slope = max(0.0, float(v44_strong_slope) * (1.0 - float(v44_gl_slope_relax)))
@@ -490,9 +545,7 @@ def execute_v44_ny_session(
                         sdat["queued_stats"] = qs
                     else:
                         sdat["queued_pending"] = queued
-                        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44: queued confirmation progress {max(0, rem)} remaining", side=None)
-                        no_trade["phase3_state_updates"] = {session_key: sdat}
-                        return no_trade
+                        return _return_no_trade(reason_text=f"v44: queued confirmation progress {max(0, rem)} remaining")
                 else:
                     queued["last_checked_m5_time"] = latest_m5_ts.isoformat()
                     sdat["queued_pending"] = queued
@@ -541,9 +594,7 @@ def execute_v44_ny_session(
                             ema_ok = float(ef.iloc[-1]) > float(es.iloc[-1]) if nt_side == "buy" else float(ef.iloc[-1]) < float(es.iloc[-1])
                             if not ema_ok:
                                 sdat["news_status"] = "ema_misaligned"
-                                no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: news-trend EMA misaligned", side=None)
-                                no_trade["phase3_state_updates"] = {session_key: sdat}
-                                return no_trade
+                                return _return_no_trade(reason_text="v44_ny: news-trend EMA misaligned")
                         sdat["news_status"] = "ready"
                         side = nt_side
                         strength = "strong"
@@ -553,9 +604,7 @@ def execute_v44_ny_session(
                 else:
                     sdat["news_status"] = "waiting_h1_trend"
         if side is None:
-            no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=reason, side=None)
-            no_trade["phase3_state_updates"] = {session_key: sdat}
-            return no_trade
+            return _return_no_trade(reason_text=reason)
 
     atr_rank = _compute_v44_atr_rank(m5_df, lookback=v44_atr_pct_lookback)
     allow_map = {
@@ -577,9 +626,7 @@ def execute_v44_ny_session(
         if float(atr_rank) < float(v44_gl_normal_atr_cap):
             strength_allowed = True
     if not strength_allowed:
-        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44_ny: strength {strength} blocked by {v44_ny_strength_allow}", side=None)
-        no_trade["phase3_state_updates"] = {session_key: sdat}
-        return no_trade
+        return _return_no_trade(reason_text=f"v44_ny: strength {strength} blocked by {v44_ny_strength_allow}")
 
     if v44_queued_confirm_bars > 0 and (not queued_confirmed):
         cur_pending = sdat.get("queued_pending")
@@ -599,12 +646,8 @@ def execute_v44_ny_session(
                 qs["generated"] = int(qs.get("generated", 0)) + 1
                 qs["replaced"] = int(qs.get("replaced", 0)) + 1
                 sdat["queued_stats"] = qs
-                no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44: queued signal replaced with {side}", side=None)
-                no_trade["phase3_state_updates"] = {session_key: sdat}
-                return no_trade
-            no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44: queued signal already pending ({cur_side})", side=None)
-            no_trade["phase3_state_updates"] = {session_key: sdat}
-            return no_trade
+                return _return_no_trade(reason_text=f"v44: queued signal replaced with {side}")
+            return _return_no_trade(reason_text=f"v44: queued signal already pending ({cur_side})")
         exp_ts = _ts_now + pd.Timedelta(minutes=max(5, int(v44_queued_confirm_bars) * 5))
         sdat["queued_pending"] = {
             "side": side,
@@ -617,9 +660,7 @@ def execute_v44_ny_session(
         qs = dict(sdat.get("queued_stats", {}))
         qs["generated"] = int(qs.get("generated", 0)) + 1
         sdat["queued_stats"] = qs
-        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44: signal queued for {v44_queued_confirm_bars} confirmations ({strength})", side=None)
-        no_trade["phase3_state_updates"] = {session_key: sdat}
-        return no_trade
+        return _return_no_trade(reason_text=f"v44: signal queued for {v44_queued_confirm_bars} confirmations ({strength})")
 
     if v44_regime_block_enabled:
         if isinstance(ownership_audit, dict):
@@ -631,9 +672,7 @@ def execute_v44_ny_session(
             _blocked, _regime_label, _block_reason = support._v44_regime_block(m5_df, m15_df, h1_df, pip)
         sdat["regime_label"] = _regime_label
         if _blocked:
-            no_trade["decision"] = ExecutionDecision(attempted=True, placed=False, reason=f"v44_ny: {_block_reason}", side=side)
-            no_trade["phase3_state_updates"] = {session_key: sdat}
-            return no_trade
+            return _return_no_trade(reason_text=f"v44_ny: {_block_reason}", attempted=True, side_value=side)
 
     _v44_cell_str = str((ownership_audit or {}).get("ownership_cell") or "") or None
     if _v44_cell_str:
@@ -641,9 +680,7 @@ def execute_v44_ny_session(
     _blocked, _block_reason = v44_defensive_veto_block_from_state(ownership_cell=_v44_cell_str, overlay_state=overlay_state)
     if _blocked:
         print(f"[phase3] DEFENSIVE VETO: v44_ny blocked in cell {_v44_cell_str} (side={side}, strength={strength})")
-        no_trade["decision"] = ExecutionDecision(attempted=True, placed=False, reason=_block_reason or "v44_ny: defensive veto", side=side)
-        no_trade["phase3_state_updates"] = {session_key: sdat}
-        return no_trade
+        return _return_no_trade(reason_text=_block_reason or "v44_ny: defensive veto", attempted=True, side_value=side)
 
     entry_price = tick.ask if side == "buy" else tick.bid
     is_news_trend_entry = "news trend" in str(reason).lower()
@@ -692,9 +729,19 @@ def execute_v44_ny_session(
             bonus_factor = min(v44_rp_max_lot_mult, 1.0 + (v44_rp_win_bonus_pct / 100.0) * bonus_steps)
             lot = max(v44_rp_min_lot, min(v44_rp_max_lot, raw_lot * bonus_factor))
             units = int(lot * 100000.0)
+    parity_context.update(
+        {
+            "strength": str(strength),
+            "side": str(side),
+            "queued_confirmed": int(queued_confirmed),
+            "sl_pips": round(float(sl_pips), 4),
+            "tp1_pips": round(float(tp1_pips), 4),
+            "lot_cap_applied": float(v44_max_lot if v44_sizing_mode == "multiplier" else v44_rp_max_lot),
+            "units": int(units),
+        }
+    )
     if units <= 0:
-        no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason="v44_ny: size=0", side=None)
-        return no_trade
+        return _return_no_trade(reason_text="v44_ny: size=0")
 
     strategy_tag = "phase3:v44_ny:news" if is_news_trend_entry else f"phase3:v44_ny:{strength}"
     if _v44_cell_str:
@@ -716,8 +763,9 @@ def execute_v44_ny_session(
     except Exception as e:
         return {
             "decision": ExecutionDecision(attempted=True, placed=False, reason=f"v44_ny order error: {e}", side=side),
-            "phase3_state_updates": {},
+            "phase3_state_updates": {session_key: sdat} if session_key is not None and isinstance(sdat, dict) else {},
             "strategy_tag": strategy_tag,
+            "v44_parity_context": _sync_parity_context(),
         }
 
     confirmed_fill, confirmed_deal_id = _phase3_order_confirmed(adapter, profile, dec)
@@ -733,13 +781,56 @@ def execute_v44_ny_session(
                 deal_id=getattr(dec, "deal_id", None),
                 fill_price=getattr(dec, "fill_price", None),
             ),
-            "phase3_state_updates": {},
+            "phase3_state_updates": {session_key: sdat} if session_key is not None and isinstance(sdat, dict) else {},
             "strategy_tag": strategy_tag,
+            "v44_parity_context": _sync_parity_context(),
         }
 
     sdat["trade_count"] = int(sdat.get("trade_count", 0)) + 1
     sdat["last_entry_time"] = now_utc.isoformat()
     risk_usd_planned = float(sl_pips) * (pip / entry_price) * float(units) if units > 0 else 0.0
+    parity_context.update(
+        {
+            "trade_count_after": int(sdat.get("trade_count", 0)),
+            "last_entry_time": str(sdat.get("last_entry_time") or ""),
+        }
+    )
+    if is_news_trend_entry:
+        exit_plan = {
+            "mode": "news_full_tp1",
+            "tp1_price": round(float(tp1_price), 3),
+            "tp1_close_pct": 100.0,
+            "be_offset_pips": 0.0,
+            "tp2_pips": 0.0,
+            "trail_buffer_pips": 0.0,
+        }
+    elif strength == "weak":
+        exit_plan = {
+            "mode": "managed_partial_runner",
+            "tp1_price": round(float(tp1_price), 3),
+            "tp1_close_pct": float(v44_config.get("weak_tp1_close_pct", 0.6)) * 100.0,
+            "be_offset_pips": float(v44_config.get("be_offset_pips", 0.5)),
+            "tp2_pips": float(v44_config.get("weak_tp2_pips", 2.0)),
+            "trail_buffer_pips": float(v44_config.get("weak_trail_buffer", 2.0)),
+        }
+    elif strength == "normal":
+        exit_plan = {
+            "mode": "managed_partial_runner",
+            "tp1_price": round(float(tp1_price), 3),
+            "tp1_close_pct": float(v44_config.get("normal_tp1_close_pct", 0.5)) * 100.0,
+            "be_offset_pips": float(v44_config.get("be_offset_pips", 0.5)),
+            "tp2_pips": float(v44_config.get("normal_tp2_pips", 3.0)),
+            "trail_buffer_pips": float(v44_config.get("normal_trail_buffer", 3.0)),
+        }
+    else:
+        exit_plan = {
+            "mode": "managed_partial_runner",
+            "tp1_price": round(float(tp1_price), 3),
+            "tp1_close_pct": float(v44_config.get("strong_tp1_close_pct", 0.3)) * 100.0,
+            "be_offset_pips": float(v44_config.get("be_offset_pips", 0.5)),
+            "tp2_pips": float(v44_config.get("strong_tp2_pips", 5.0)),
+            "trail_buffer_pips": float(v44_config.get("strong_trail_buffer", 4.0)),
+        }
 
     return {
         "decision": ExecutionDecision(
@@ -760,4 +851,6 @@ def execute_v44_ny_session(
         "entry_price": float(entry_price),
         "sl_pips": float(sl_pips),
         "risk_usd_planned": float(risk_usd_planned),
+        "v44_parity_context": _sync_parity_context(),
+        "v44_exit_plan": exit_plan,
     }

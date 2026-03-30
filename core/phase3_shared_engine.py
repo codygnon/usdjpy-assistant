@@ -223,7 +223,13 @@ def evaluate_phase3_bar(
     )
 
     spec = load_phase3_package_spec(preset_id=preset_id)
-    effective_cfg = sizing_config or load_phase3_sizing_config()
+    if sizing_config is not None:
+        effective_cfg = sizing_config
+    else:
+        try:
+            effective_cfg = load_phase3_sizing_config(preset_id=preset_id)
+        except TypeError:
+            effective_cfg = load_phase3_sizing_config()
     # Prefer the canonical spec projection when present so both live and replay
     # resolve the defended package the same way.
     if spec.runtime_overrides:
@@ -275,8 +281,10 @@ def evaluate_phase3_bar_replay(
     mode: str = "ARMED_AUTO_DEMO",
     preset_id: str | None = PHASE3_DEFENDED_PRESET_ID,
     equity: float = 100000.0,
+    adapter=None,
+    store=None,
 ) -> dict[str, Any]:
-    adapter = ReplayAdapter(equity=equity)
+    adapter = adapter or ReplayAdapter(equity=equity)
     return evaluate_phase3_bar(
         adapter=adapter,
         profile=profile,
@@ -287,7 +295,7 @@ def evaluate_phase3_bar_replay(
         tick=tick,
         mode=mode,
         phase3_state=phase3_state,
-        store=ReplayStore(),
+        store=store or ReplayStore(),
         sizing_config=sizing_config,
         is_new_m1=True,
         preset_id=preset_id,
@@ -312,6 +320,10 @@ def compare_phase3_envelopes(left: dict[str, Any], right: dict[str, Any]) -> Pha
     for key in keys:
         if left.get(key) != right.get(key):
             mismatch.append(f"{key}: {left.get(key)!r} != {right.get(key)!r}")
+    if left.get("reason") != right.get("reason"):
+        mismatch.append(f"reason: {left.get('reason')!r} != {right.get('reason')!r}")
+    if left.get("attribution") != right.get("attribution"):
+        mismatch.append("attribution differs")
     left_exit = left.get("exit_policy") or {}
     right_exit = right.get("exit_policy") or {}
     for key in ("label", "tp1_r", "be_offset_pips", "tp2_r"):

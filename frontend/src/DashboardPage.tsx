@@ -86,7 +86,7 @@ function PipsValue({ pips }: { pips: number }) {
 
 function HeaderBar({
   loopRunning, profileName, mode, tick, onToggleLoop, presetName, onModeChange, staleLabel,
-  exitSystemOnly, onExitSystemOnlyChange,
+  exitSystemOnly, onExitSystemOnlyChange, loopToggling,
 }: {
   loopRunning: boolean;
   profileName: string;
@@ -98,6 +98,7 @@ function HeaderBar({
   staleLabel?: string | null;
   exitSystemOnly: boolean;
   onExitSystemOnlyChange: (enabled: boolean) => void;
+  loopToggling?: boolean;
 }) {
   const [utcTime, setUtcTime] = useState(new Date().toISOString().slice(11, 19));
   useEffect(() => {
@@ -110,11 +111,11 @@ function HeaderBar({
       display: 'flex', alignItems: 'center', gap: 12, padding: '8px 16px',
       backgroundColor: colors.panel, borderBottom: `1px solid ${colors.border}`,
     }}>
-      <button onClick={onToggleLoop} style={{
-        padding: '4px 14px', borderRadius: 4, border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 12,
-        backgroundColor: loopRunning ? colors.red : colors.green,
-        color: '#fff',
-      }}>{loopRunning ? 'Stop' : 'Start'}</button>
+      <button onClick={onToggleLoop} disabled={loopToggling} style={{
+        padding: '4px 14px', borderRadius: 4, border: 'none', cursor: loopToggling ? 'wait' : 'pointer', fontWeight: 600, fontSize: 12,
+        backgroundColor: loopToggling ? colors.textSecondary : (loopRunning ? colors.red : colors.green),
+        color: '#fff', opacity: loopToggling ? 0.7 : 1,
+      }}>{loopToggling ? '...' : (loopRunning ? 'Stop' : 'Start')}</button>
       <StatusDot running={loopRunning} />
       <span style={{ color: colors.textSecondary, fontSize: 12, ...mono }}>UTC {utcTime}</span>
       <span style={{ color: colors.textPrimary, fontSize: 13, fontWeight: 600 }}>{presetName || profileName}</span>
@@ -1196,6 +1197,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
   const [dashState, setDashState] = useState<DashboardState | null>(null);
   const [runtime, setRuntime] = useState<RuntimeState | null>(null);
   const [loopError, setLoopError] = useState<string | null>(null);
+  const [loopToggling, setLoopToggling] = useState(false);
   const [dashboardOffline, setDashboardOffline] = useState(false);
   const [trail, setTrail] = useState<Array<{ time: string; spread: number; blocked: number; trend: string }>>([]);
   const [trailExpanded, setTrailExpanded] = useState(false);
@@ -1283,20 +1285,44 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
   }, [profileName]);
 
   const handleToggleLoop = useCallback(async () => {
+    if (loopToggling) return;
+    setLoopToggling(true);
     try {
       setLoopError(null);
       if (loopRunning) {
         await stopLoop(profileName);
+        // Optimistic update — mark loop as stopped immediately
+        setDashState(prev => prev ? { ...prev, loop_running: false } : prev);
+        setDashboardOffline(false);
       } else {
-        await startLoop(profileName, profilePath);
+        const res = await startLoop(profileName, profilePath);
+        if (res.status === 'already_running') {
+          // Stale PID — stop first, then start again
+          await stopLoop(profileName);
+          await startLoop(profileName, profilePath);
+        }
+        // Optimistic update — mark loop as started immediately
+        setDashState(prev => prev ? { ...prev, loop_running: true, stale: false } : prev);
+        setDashboardOffline(false);
       }
-      const s = await getDashboard(profileName, profilePath);
-      if (s && !s.error) setDashState(s);
+      // Wait for process to stabilize, then re-poll dashboard with short retries.
+      for (let i = 0; i < 4; i++) {
+        await new Promise(r => setTimeout(r, i === 0 ? 1200 : 1000));
+        const s = await getDashboard(profileName, profilePath);
+        if (s && !s.error) {
+          setDashState(s);
+          setDashboardOffline(false);
+          // If loop state converged, stop retrying early.
+          if (Boolean(s.loop_running) === Boolean(!loopRunning)) break;
+        }
+      }
     } catch (e) {
       console.error('Loop toggle error:', e);
       setLoopError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoopToggling(false);
     }
-  }, [loopRunning, profileName, profilePath]);
+  }, [loopRunning, loopToggling, profileName, profilePath]);
 
   const handleModeChange = useCallback(async (mode: string) => {
     try {
@@ -1502,6 +1528,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
         staleLabel={staleLabel}
         exitSystemOnly={runtime?.exit_system_only ?? false}
         onExitSystemOnlyChange={handleExitSystemOnlyChange}
+        loopToggling={loopToggling}
       />
 
       {/* Main content */}

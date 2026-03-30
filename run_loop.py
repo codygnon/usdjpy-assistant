@@ -1758,7 +1758,7 @@ def _run_trade_management(
                     phase3_trade_key_date,
                     apply_phase3_session_outcome,
                 )
-                phase3_sizing_cfg = load_phase3_sizing_config() or {}
+                phase3_sizing_cfg = load_phase3_sizing_config(preset_id=getattr(profile, "active_preset_name", None)) or {}
                 p3_exit = manage_phase3_exit(
                     adapter=adapter,
                     profile=profile,
@@ -2399,6 +2399,7 @@ def _phase3_trade_open_context_snapshot(
     tp1_price: float | None,
     sizing_config: dict[str, Any] | None,
     pip_size: float,
+    exec_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     snapshot: dict[str, Any] = {}
     tag = str(strategy_tag or "")
@@ -2421,6 +2422,32 @@ def _phase3_trade_open_context_snapshot(
     cfg = sizing_config or {}
     if "phase3:v44_ny:" not in tag:
         return snapshot
+
+    if isinstance(exec_result, dict):
+        parity_context = exec_result.get("v44_parity_context")
+        if isinstance(parity_context, dict):
+            for key in (
+                "open_trade_count_before",
+                "trade_count_before",
+                "effective_max_open",
+                "max_open_unlimited",
+                "effective_max_entries_day",
+                "max_entries_unlimited",
+                "cooldown_active",
+                "cooldown_until",
+                "exhaustion_cooldown_active",
+                "exhaustion_cooldown_until",
+                "sizing_mode",
+                "max_lot",
+                "rp_max_lot",
+                "allow_internal_overlap",
+                "allow_opposite_side_overlap",
+            ):
+                if key in parity_context:
+                    snapshot[f"v44_{key}"] = parity_context[key]
+        exit_plan = exec_result.get("v44_exit_plan")
+        if isinstance(exit_plan, dict):
+            snapshot["v44_exit_plan"] = dict(exit_plan)
 
     v44_cfg = cfg.get("v44_ny", {}) if isinstance(cfg.get("v44_ny"), dict) else {}
     strength = "strong"
@@ -2503,7 +2530,7 @@ def _append_phase3_minute_diagnostics(
     try:
         from core.phase3_integrated_engine import classify_session, load_phase3_sizing_config
         from core.dashboard_builder import build_dashboard_filters
-        cfg = load_phase3_sizing_config()
+        cfg = load_phase3_sizing_config(preset_id=getattr(profile, "active_preset_name", None))
         bar_ts = pd.Timestamp(m1_bar_time)
         if bar_ts.tzinfo is None:
             bar_ts = bar_ts.tz_localize("UTC")
@@ -2547,6 +2574,19 @@ def _append_phase3_minute_diagnostics(
             ny_news_confirm = sd.get("news_confirm_progress")
             ny_news_side = sd.get("news_trend_side")
             ny_news_event = sd.get("news_event_time")
+            ny_open_count_before = sd.get("parity_open_trade_count_before")
+            ny_trade_count_before = sd.get("parity_trade_count_before")
+            ny_max_open = sd.get("parity_effective_max_open")
+            ny_max_open_unlimited = sd.get("parity_max_open_unlimited")
+            ny_max_entries = sd.get("parity_effective_max_entries_day")
+            ny_max_entries_unlimited = sd.get("parity_max_entries_unlimited")
+            ny_cooldown_active = sd.get("parity_cooldown_active")
+            ny_cooldown_until = sd.get("parity_cooldown_until")
+            ny_exhaustion_active = sd.get("parity_exhaustion_cooldown_active")
+            ny_exhaustion_until = sd.get("parity_exhaustion_cooldown_until")
+            ny_sizing_mode = sd.get("parity_sizing_mode")
+            ny_rp_max_lot = sd.get("parity_rp_max_lot")
+            ny_max_lot = sd.get("parity_max_lot")
             extras = []
             if ny_mode is not None:
                 extras.append(f"ny_mode={ny_mode}")
@@ -2564,6 +2604,32 @@ def _append_phase3_minute_diagnostics(
                 extras.append(f"ny_news_side={ny_news_side}")
             if ny_news_event:
                 extras.append(f"ny_news_event={ny_news_event}")
+            if ny_open_count_before is not None:
+                extras.append(f"ny_open_before={int(ny_open_count_before)}")
+            if ny_trade_count_before is not None:
+                extras.append(f"ny_trade_count_before={int(ny_trade_count_before)}")
+            if ny_max_open is not None:
+                extras.append(f"ny_max_open={int(ny_max_open)}")
+            if ny_max_open_unlimited is not None:
+                extras.append(f"ny_max_open_unlimited={int(bool(ny_max_open_unlimited))}")
+            if ny_max_entries is not None:
+                extras.append(f"ny_max_entries={int(ny_max_entries)}")
+            if ny_max_entries_unlimited is not None:
+                extras.append(f"ny_max_entries_unlimited={int(bool(ny_max_entries_unlimited))}")
+            if ny_cooldown_active is not None:
+                extras.append(f"ny_cd_active={int(bool(ny_cooldown_active))}")
+            if ny_cooldown_until:
+                extras.append(f"ny_cd_until={ny_cooldown_until}")
+            if ny_exhaustion_active is not None:
+                extras.append(f"ny_exh_cd_active={int(bool(ny_exhaustion_active))}")
+            if ny_exhaustion_until:
+                extras.append(f"ny_exh_cd_until={ny_exhaustion_until}")
+            if ny_sizing_mode:
+                extras.append(f"ny_sizing={ny_sizing_mode}")
+            if ny_rp_max_lot is not None:
+                extras.append(f"ny_rp_max_lot={float(ny_rp_max_lot):.2f}")
+            if ny_max_lot is not None:
+                extras.append(f"ny_max_lot={float(ny_max_lot):.2f}")
             session_extra = "\t" + "\t".join(extras) if extras else ""
         elif session == "tokyo":
             session_key = f"session_tokyo_{bar_ts.date().isoformat()}"
@@ -2591,6 +2657,43 @@ def _append_phase3_minute_diagnostics(
             if audit.get("defensive_v44_regime_block"):
                 fbits.append("v44_regime")
             audit_flags = ",".join(fbits)
+        parity_ctx = exec_result.get("v44_parity_context") if isinstance(exec_result, dict) else None
+        parity_extra = ""
+        if isinstance(parity_ctx, dict):
+            extras = []
+            for key in (
+                "open_trade_count_before",
+                "trade_count_before",
+                "effective_max_open",
+                "max_open_unlimited",
+                "effective_max_entries_day",
+                "max_entries_unlimited",
+                "cooldown_active",
+                "cooldown_until",
+                "exhaustion_cooldown_active",
+                "exhaustion_cooldown_until",
+                "sizing_mode",
+                "max_lot",
+                "rp_max_lot",
+                "allow_internal_overlap",
+                "allow_opposite_side_overlap",
+                "units",
+                "sl_pips",
+                "tp1_pips",
+            ):
+                if parity_ctx.get(key) not in (None, ""):
+                    extras.append(f"v44_{key}={parity_ctx.get(key)}")
+            parity_extra = "\t" + "\t".join(extras) if extras else ""
+        exit_plan = exec_result.get("v44_exit_plan") if isinstance(exec_result, dict) else None
+        exit_extra = ""
+        if isinstance(exit_plan, dict):
+            exit_extra = (
+                f"\tv44_exit_mode={exit_plan.get('mode', '')}"
+                f"\tv44_tp1_close_pct={exit_plan.get('tp1_close_pct', '')}"
+                f"\tv44_be_offset_pips={exit_plan.get('be_offset_pips', '')}"
+                f"\tv44_tp2_pips={exit_plan.get('tp2_pips', '')}"
+                f"\tv44_trail_buffer_pips={exit_plan.get('trail_buffer_pips', '')}"
+            )
 
         ts = pd.Timestamp.now(tz="UTC").isoformat()
         line = (
@@ -2599,7 +2702,7 @@ def _append_phase3_minute_diagnostics(
             f"blocking={blocking_count}\t"
             f"filters=[{'; '.join(blocking_details)}]\treason={reason!r}"
             f"\townership_cell={audit_cell}\tregime={audit_regime}\tdefensive_flags={audit_flags}"
-            f"{session_extra}\n"
+            f"{session_extra}{parity_extra}{exit_extra}\n"
         )
         diag_path = log_dir / "phase3_minute_diagnostics.log"
         with open(diag_path, "a", encoding="utf-8") as f:
@@ -6157,7 +6260,7 @@ def main() -> None:
 
                     from core.phase3_integrated_engine import load_phase3_sizing_config
                     from core.phase3_shared_engine import evaluate_phase3_bar
-                    phase3_sizing = load_phase3_sizing_config()
+                    phase3_sizing = load_phase3_sizing_config(preset_id=getattr(profile, "active_preset_name", None))
                     exec_result = evaluate_phase3_bar(
                         adapter=adapter,
                         profile=profile,
@@ -6262,6 +6365,7 @@ def main() -> None:
                                     tp1_price=tp1_price,
                                     sizing_config=phase3_sizing if phase3_sizing else None,
                                     pip_size=float(getattr(profile, "pip_size", 0.01) or 0.01),
+                                    exec_result=exec_result,
                                 ),
                             )
                         else:

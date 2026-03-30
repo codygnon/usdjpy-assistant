@@ -95,6 +95,8 @@ def run_trace(
     profile = _profile(symbol, pip_size)
     policy = _policy("phase3_integrated_v7_defended")
     phase3_state: dict[str, Any] = {}
+    adapter = ReplayAdapter(equity=100000.0)
+    store = ReplayStore()
     trace = []
     start = max(0, start_index)
     stop = len(m1) if max_bars is None else min(len(m1), start + max(0, int(max_bars)))
@@ -105,7 +107,7 @@ def run_trace(
         tick = _tick_from_bar(m1.iloc[idx], pip_size, spread_pips)
         if trace_mode == "live_style":
             result = evaluate_phase3_bar(
-                adapter=ReplayAdapter(equity=100000.0),
+                adapter=adapter,
                 profile=profile,
                 log_dir=None,
                 policy=policy,
@@ -114,18 +116,20 @@ def run_trace(
                 tick=tick,
                 mode="ARMED_AUTO_DEMO",
                 phase3_state=phase3_state,
-                store=ReplayStore(),
+                store=store,
                 sizing_config=None,
                 is_new_m1=True,
                 preset_id=PHASE3_DEFENDED_PRESET_ID,
             )
         else:
             result = evaluate_phase3_bar_replay(
+                adapter=adapter,
                 profile=profile,
                 policy=policy,
                 data_by_tf=snapshot,
                 tick=tick,
                 phase3_state=phase3_state,
+                store=store,
                 preset_id=PHASE3_DEFENDED_PRESET_ID,
             )
         phase3_state.update(result.get("phase3_state_updates") or {})

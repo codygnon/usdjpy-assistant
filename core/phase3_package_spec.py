@@ -51,6 +51,10 @@ def default_phase3_artifact_paths() -> dict[str, Path]:
     }
 
 
+def uses_defended_phase3_package(preset_id: str | None) -> bool:
+    return str(preset_id or "").strip().lower() == PHASE3_DEFENDED_PRESET_ID
+
+
 def load_phase3_package_spec(
     *,
     preset_id: str | None = None,
@@ -66,12 +70,15 @@ def load_phase3_package_spec(
     package_id = str(candidate.get("candidate_name") or DEFENDED_PACKAGE_ID)
     package_family = str(candidate.get("package_family") or "phase3_integrated")
     status = str(candidate.get("status") or "runtime_projection")
+    defended_active = uses_defended_phase3_package(preset_id)
     base_cell_scales = {
         str(k): float(v)
         for k, v in dict(candidate.get("base_cell_scales") or {}).items()
         if isinstance(v, (int, float))
     }
-    overrides = dict(candidate.get("overrides") or {})
+    overrides = dict(candidate.get("overrides") or {}) if defended_active else {}
+    strict_policy = dict(candidate.get("strict_policy") or {}) if defended_active else {}
+    defended_base_cell_scales = base_cell_scales if defended_active else {}
 
     frozen_modifiers: list[Phase3FrozenModifier] = []
     l1_weekdays = list(overrides.get("l1_weekday_disable") or [])
@@ -83,11 +90,11 @@ def load_phase3_package_spec(
     defensive_veto = dict(overrides.get("defensive_veto") or {})
     if defensive_veto:
         frozen_modifiers.append(Phase3FrozenModifier("defensive_veto", defensive_veto))
-    if "T3_ambig_mid_pos_sell" in base_cell_scales:
+    if "T3_ambig_mid_pos_sell" in defended_base_cell_scales:
         frozen_modifiers.append(
             Phase3FrozenModifier(
                 "t3_cell_scale_override",
-                {"ambiguous/er_mid/der_pos:sell": float(base_cell_scales["T3_ambig_mid_pos_sell"])},
+                {"ambiguous/er_mid/der_pos:sell": float(defended_base_cell_scales["T3_ambig_mid_pos_sell"])},
             )
         )
 
@@ -98,10 +105,10 @@ def load_phase3_package_spec(
             preset_id=preset_id,
             status=status,
             source_artifact=str(paper_candidate_path),
-            base_cell_scales=base_cell_scales,
+            base_cell_scales=defended_base_cell_scales,
             runtime_overrides=overrides,
             frozen_modifiers=frozen_modifiers,
-            strict_policy=dict(candidate.get("strict_policy") or {}),
+            strict_policy=strict_policy,
         )
     )
     if runtime_cfg:
@@ -113,10 +120,10 @@ def load_phase3_package_spec(
         preset_id=preset_id,
         status=status,
         source_artifact=str(paper_candidate_path) if paper_candidate_path.exists() else None,
-        base_cell_scales=base_cell_scales,
+        base_cell_scales=defended_base_cell_scales,
         runtime_overrides=merged_runtime_overrides,
         frozen_modifiers=frozen_modifiers,
-        strict_policy=dict(candidate.get("strict_policy") or {}),
+        strict_policy=strict_policy,
     )
 
 
@@ -132,6 +139,7 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 def project_runtime_config_from_spec(spec: Phase3PackageSpec) -> dict[str, Any]:
     overrides = dict(spec.runtime_overrides or {})
+    strict_policy = dict(spec.strict_policy or {})
     projected: dict[str, Any] = {
         "v14": {
             "cell_scale_overrides": {},
@@ -155,6 +163,23 @@ def project_runtime_config_from_spec(spec: Phase3PackageSpec) -> dict[str, Any]:
     defensive_veto = dict(overrides.get("defensive_veto") or {})
     if defensive_veto.get("strategy") == "v44_ny" and defensive_veto.get("ownership_cell"):
         projected["v44_ny"]["defensive_veto_cells"] = [str(defensive_veto["ownership_cell"])]
+
+    if strict_policy:
+        projected["v44_ny"]["strict_policy_name"] = str(strict_policy.get("name") or "")
+        if "allow_internal_overlap" in strict_policy:
+            projected["v44_ny"]["allow_internal_overlap"] = bool(strict_policy.get("allow_internal_overlap"))
+        if "allow_opposite_side_overlap" in strict_policy:
+            projected["v44_ny"]["allow_opposite_side_overlap"] = bool(strict_policy.get("allow_opposite_side_overlap"))
+        if "max_open_offensive" in strict_policy:
+            max_open = strict_policy.get("max_open_offensive")
+            projected["v44_ny"]["max_open_positions"] = 0 if max_open is None else int(max_open)
+        if "max_entries_per_day" in strict_policy:
+            max_entries = strict_policy.get("max_entries_per_day")
+            projected["v44_ny"]["max_entries_per_day"] = 0 if max_entries is None else int(max_entries)
+        if "max_lot_per_trade" in strict_policy and strict_policy.get("max_lot_per_trade") is not None:
+            max_lot = float(strict_policy["max_lot_per_trade"])
+            projected["v44_ny"]["max_lot"] = max_lot
+            projected["v44_ny"]["rp_max_lot"] = max_lot
 
     t3_scale = spec.base_cell_scales.get("T3_ambig_mid_pos_sell")
     if t3_scale is not None:

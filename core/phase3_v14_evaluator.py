@@ -214,5 +214,6 @@ def compute_v14_units_from_config(
     risk_amount = equity * risk_pct * day_mult
     pip_value_per_unit = pip_size / current_price
     units = risk_amount / (sl_pips * pip_value_per_unit)
-    units = min(units, equity * leverage, float(max_units))
+    max_margin_units = (equity * leverage) / current_price
+    units = min(units, max_margin_units, float(max_units))
     return int(math.floor(max(0.0, units)))

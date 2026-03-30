@@ -611,6 +611,32 @@ def _normalized_trade_pips(row: Any, pip_size: float) -> float | None:
     return raw
 
 
+def _pid_looks_like_run_loop(pid: int) -> bool:
+    """Best-effort check that PID is our run_loop process."""
+    # Preferred path: psutil if installed.
+    try:
+        import psutil  # type: ignore
+
+        proc = psutil.Process(int(pid))
+        cmdline = " ".join(proc.cmdline()).lower()
+        if "run_loop.py" in cmdline or "run_loop" in cmdline:
+            return True
+    except Exception:
+        pass
+
+    # Fallback path: inspect /proc on Linux-like systems.
+    try:
+        cmdline_path = Path(f"/proc/{int(pid)}/cmdline")
+        if cmdline_path.exists():
+            raw = cmdline_path.read_bytes().decode("utf-8", errors="ignore").replace("\x00", " ").lower()
+            if "run_loop.py" in raw or "run_loop" in raw:
+                return True
+    except Exception:
+        pass
+
+    return False
+
+
 def _is_loop_running(profile_name: str) -> bool:
     proc = _loop_processes.get(profile_name)
     if proc is not None:
@@ -625,6 +651,9 @@ def _is_loop_running(profile_name: str) -> bool:
     try:
         pid = int(pid_path.read_text(encoding="utf-8").strip())
         os.kill(pid, 0)
+        # Verify it's actually our run_loop process (guard recycled PIDs).
+        if not _pid_looks_like_run_loop(pid):
+            raise ProcessLookupError("stale PID")
         return True
     except Exception:
         try:
@@ -1264,6 +1293,15 @@ def stop_loop(profile_name: str) -> dict[str, str]:
         return {"status": "not_running"}
     try:
         pid = int(pid_path.read_text(encoding="utf-8").strip())
+    except Exception:
+        pid_path.unlink(missing_ok=True)
+        return {"status": "not_running"}
+
+    # Never signal an unrelated process if PID got recycled.
+    try:
+        if not _pid_looks_like_run_loop(pid):
+            pid_path.unlink(missing_ok=True)
+            return {"status": "not_running"}
     except Exception:
         pid_path.unlink(missing_ok=True)
         return {"status": "not_running"}
@@ -4836,12 +4874,14 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
                     result["loop_log"] = []
             except Exception:
                 result["loop_log"] = []
-            if prefer_live_phase3 and "error" not in live:
+            # In lean mode, stale file-state should not pin the UI to old timestamps.
+            # Prefer live payload whenever Phase 3 is active OR file-state is stale.
+            if (prefer_live_phase3 or stale) and "error" not in live:
                 result = dict(live)
                 result["loop_running"] = loop_running
-                result["stale"] = stale
-                result["stale_age_seconds"] = stale_age_seconds
-                result["data_source"] = "live_phase3"
+                result["stale"] = False
+                result["stale_age_seconds"] = 0.0
+                result["data_source"] = "live_phase3" if prefer_live_phase3 else "live_fallback"
                 result["loop_log"] = file_state.get("loop_log", result.get("loop_log", []))
             result["positions"] = _enrich_phase3_rows(list(result.get("positions") or []))
             return _strip_trial10_directional_cap_filter(result)

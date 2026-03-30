@@ -108,7 +108,7 @@ def evaluate_v44_entry(
     atr_pct_cap: float = 0.67,
     atr_pct_lookback: int = 200,
 ) -> tuple[Optional[str], str, str]:
-    if int(session_state.get("trade_count", 0)) >= int(max_entries_per_day):
+    if int(max_entries_per_day) > 0 and int(session_state.get("trade_count", 0)) >= int(max_entries_per_day):
         return None, "normal", "v44: max entries/day reached"
     if int(session_state.get("consecutive_losses", 0)) >= int(session_stop_losses):
         return None, "normal", "v44: consecutive loss stop"

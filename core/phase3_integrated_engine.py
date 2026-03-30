@@ -522,6 +522,7 @@ def _normalize_v44_source(v44_src: dict[str, Any]) -> dict[str, Any]:
 def load_phase3_sizing_config(
     config_path: Optional[Path] = None,
     source_paths: Optional[dict[str, Path]] = None,
+    preset_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Load effective Phase 3 config with precedence:
@@ -556,7 +557,7 @@ def load_phase3_sizing_config(
     try:
         from core.phase3_package_spec import load_phase3_package_spec
 
-        canonical_spec = load_phase3_package_spec()
+        canonical_spec = load_phase3_package_spec(preset_id=preset_id)
         if canonical_spec.runtime_overrides:
             effective = _deep_merge(effective, canonical_spec.runtime_overrides)
     except Exception:
