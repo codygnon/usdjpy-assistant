@@ -10,7 +10,6 @@ import re
 import signal
 import subprocess
 import sys
-from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -390,6 +389,27 @@ def _parse_phase3_diag_filters(raw_filters: str | None) -> list[str]:
     return [part.strip() for part in text.split(";") if part.strip()]
 
 
+def _tail_text_lines(path: Path, max_lines: int) -> list[str]:
+    if max_lines <= 0 or not path.exists():
+        return []
+    chunk_size = 8192
+    remaining = max_lines
+    data = bytearray()
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        pos = handle.tell()
+        while pos > 0 and data.count(b"\n") <= max_lines:
+            read_size = min(chunk_size, pos)
+            pos -= read_size
+            handle.seek(pos)
+            data[:0] = handle.read(read_size)
+    text = data.decode("utf-8", errors="ignore")
+    lines = text.splitlines()
+    if len(lines) <= max_lines:
+        return lines
+    return lines[-max_lines:]
+
+
 def _load_phase3_decision_rows_from_diagnostics(
     log_dir: Path | None,
     *,
@@ -405,13 +425,11 @@ def _load_phase3_decision_rows_from_diagnostics(
     from datetime import timedelta
 
     since_dt = datetime.now(timezone.utc) - timedelta(days=days)
-    recent_lines: deque[str] = deque(maxlen=limit)
     try:
-        with diag_path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                if "bar=" not in line or "reason=" not in line:
-                    continue
-                recent_lines.append(line.rstrip("\n"))
+        recent_lines = [
+            line for line in _tail_text_lines(diag_path, max(limit * 4, 500))
+            if "bar=" in line and "reason=" in line
+        ]
     except Exception:
         return []
 
