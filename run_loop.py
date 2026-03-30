@@ -2391,6 +2391,89 @@ def _append_trade_open_event(
         pass
 
 
+def _phase3_trade_open_context_snapshot(
+    *,
+    strategy_tag: str | None,
+    entry_price: float,
+    sl_price: float | None,
+    tp1_price: float | None,
+    sizing_config: dict[str, Any] | None,
+    pip_size: float,
+) -> dict[str, Any]:
+    snapshot: dict[str, Any] = {}
+    tag = str(strategy_tag or "")
+    if not tag.startswith("phase3:"):
+        return snapshot
+
+    pip = float(pip_size or 0.01)
+    if sl_price is not None:
+        try:
+            snapshot["sl_distance_pips"] = abs(float(entry_price) - float(sl_price)) / pip
+        except Exception:
+            pass
+    if tp1_price is not None:
+        try:
+            snapshot["tp1_pips"] = abs(float(tp1_price) - float(entry_price)) / pip
+            snapshot["managed_tp1_price"] = round(float(tp1_price), 3)
+        except Exception:
+            pass
+
+    cfg = sizing_config or {}
+    if "phase3:v44_ny:" not in tag:
+        return snapshot
+
+    v44_cfg = cfg.get("v44_ny", {}) if isinstance(cfg.get("v44_ny"), dict) else {}
+    strength = "strong"
+    if ":weak" in tag:
+        strength = "weak"
+    elif ":normal" in tag:
+        strength = "normal"
+    elif ":news" in tag:
+        strength = "news"
+
+    if strength == "news":
+        snapshot["managed_exit_note"] = "Managed exit: news trade closes full at TP1; no runner."
+        snapshot["managed_runner"] = False
+        return snapshot
+
+    if strength == "weak":
+        tp1_close_pct = float(v44_cfg.get("weak_tp1_close_pct", 0.6))
+        tp2_pips = float(v44_cfg.get("weak_tp2_pips", 2.0))
+        trail_buffer_pips = float(v44_cfg.get("weak_trail_buffer", 2.0))
+    elif strength == "normal":
+        tp1_close_pct = float(v44_cfg.get("normal_tp1_close_pct", 0.5))
+        tp2_pips = float(v44_cfg.get("normal_tp2_pips", 3.0))
+        trail_buffer_pips = float(v44_cfg.get("normal_trail_buffer", 3.0))
+    else:
+        tp1_close_pct = float(v44_cfg.get("strong_tp1_close_pct", 0.3))
+        tp2_pips = float(v44_cfg.get("strong_tp2_pips", 5.0))
+        trail_buffer_pips = float(v44_cfg.get("strong_trail_buffer", 4.0))
+
+    be_offset_pips = float(v44_cfg.get("be_offset_pips", 0.5))
+    side = "buy" if ":buy" in tag else "sell" if ":sell" in tag else None
+    try:
+        # V44 tags do not encode side, so infer TP2 price direction from TP1 vs entry if possible.
+        if tp1_price is not None:
+            side = "buy" if float(tp1_price) >= float(entry_price) else "sell"
+    except Exception:
+        pass
+
+    snapshot["managed_runner"] = True
+    snapshot["managed_tp1_close_pct"] = round(tp1_close_pct * 100.0, 1)
+    snapshot["managed_be_plus_pips"] = be_offset_pips
+    snapshot["managed_tp2_pips"] = tp2_pips
+    snapshot["managed_trail_buffer_pips"] = trail_buffer_pips
+    snapshot["managed_exit_note"] = (
+        f"Managed exit: TP1 closes {tp1_close_pct * 100.0:.0f}%, move SL to BE+{be_offset_pips:.1f}p, "
+        f"runner targets TP2 {tp2_pips:.1f}p then trails."
+    )
+    if side == "buy":
+        snapshot["managed_tp2_price"] = round(float(entry_price) + tp2_pips * pip, 3)
+    elif side == "sell":
+        snapshot["managed_tp2_price"] = round(float(entry_price) - tp2_pips * pip, 3)
+    return snapshot
+
+
 def _event_trigger_label(trigger_type: str | None, decision_reason: str | None) -> str:
     """Create a user-friendly trigger label for dashboard trade events."""
     base = (trigger_type or "").strip()
@@ -6172,6 +6255,14 @@ def main() -> None:
                                 side, entry_price,
                                 trigger_type=strategy_tag or "",
                                 entry_type=strategy_tag or "",
+                                context_snapshot=_phase3_trade_open_context_snapshot(
+                                    strategy_tag=strategy_tag,
+                                    entry_price=entry_price,
+                                    sl_price=sl_price,
+                                    tp1_price=tp1_price,
+                                    sizing_config=phase3_sizing if phase3_sizing else None,
+                                    pip_size=float(getattr(profile, "pip_size", 0.01) or 0.01),
+                                ),
                             )
                         else:
                             print(f"[{profile.profile_name}] phase3 {pol.id} mode={mode} -> {dec.reason}")

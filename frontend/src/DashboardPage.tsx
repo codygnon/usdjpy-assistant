@@ -983,6 +983,56 @@ function TradeCard({ event, isNew }: { event: TradeEvent; isNew: boolean }) {
           )}
         </div>
       )}
+      {!isClose && (
+        event.context_snapshot?.managed_exit_note != null ||
+        event.context_snapshot?.managed_tp1_price != null ||
+        event.context_snapshot?.managed_tp2_price != null
+      ) && (
+        <div style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 8,
+          fontSize: 10,
+          marginTop: 4,
+          color: colors.textSecondary,
+          padding: '6px 8px',
+          borderRadius: 6,
+          backgroundColor: colors.blue + '11',
+          border: `1px solid ${colors.blue}22`,
+        }}>
+          <span style={{ color: colors.blue, fontWeight: 700 }}>Managed Exit</span>
+          {event.context_snapshot?.managed_tp1_price != null && (
+            <span>
+              TP1: <span style={{ color: colors.green, ...mono }}>{Number(event.context_snapshot.managed_tp1_price).toFixed(3)}</span>
+            </span>
+          )}
+          {event.context_snapshot?.managed_tp1_close_pct != null && (
+            <span>
+              Close: <span style={{ color: colors.textPrimary, ...mono }}>{Number(event.context_snapshot.managed_tp1_close_pct).toFixed(0)}%</span>
+            </span>
+          )}
+          {event.context_snapshot?.managed_be_plus_pips != null && (
+            <span>
+              BE: <span style={{ color: colors.textPrimary, ...mono }}>+{Number(event.context_snapshot.managed_be_plus_pips).toFixed(1)}p</span>
+            </span>
+          )}
+          {event.context_snapshot?.managed_tp2_price != null && (
+            <span>
+              Runner TP2: <span style={{ color: colors.green, ...mono }}>{Number(event.context_snapshot.managed_tp2_price).toFixed(3)}</span>
+            </span>
+          )}
+          {event.context_snapshot?.managed_trail_buffer_pips != null && (
+            <span>
+              Trail: <span style={{ color: colors.textPrimary, ...mono }}>{Number(event.context_snapshot.managed_trail_buffer_pips).toFixed(1)}p buffer</span>
+            </span>
+          )}
+          {String(event.context_snapshot?.managed_exit_note || '').trim() && (
+            <span style={{ width: '100%', color: colors.textSecondary }}>
+              {String(event.context_snapshot.managed_exit_note)}
+            </span>
+          )}
+        </div>
+      )}
       {isClose && (
         <div style={{ display: 'flex', gap: 10, fontSize: 11, marginTop: 2 }}>
           {event.pips != null && <PipsValue pips={event.pips} />}
