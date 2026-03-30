@@ -2253,7 +2253,7 @@ def collect_phase3_context(
         if m15_df is not None and not m15_df.empty and len(m15_df) >= ADX_PERIOD + 2:
             adx_val = _compute_adx(m15_df)
             items.append(ContextItem("ADX", f"{adx_val:.1f} ({'OK' if adx_val < ADX_MAX else 'BLOCK'})", "v14"))
-            atr_series = _compute_atr(m15_df, ATR_PERIOD)
+            atr_series = _compute_atr(m15_df)
             atr_val = float(atr_series.iloc[-1]) if pd.notna(atr_series.iloc[-1]) else 0.0
             items.append(ContextItem("ATR (pips)", f"{atr_val / pip_size:.1f}", "v14"))
         today_str = now_utc.strftime("%Y-%m-%d")

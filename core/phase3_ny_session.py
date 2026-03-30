@@ -326,7 +326,7 @@ def execute_v44_ny_session(
             pass
 
     if v44_h4_adx_min > 0 and h4_df is not None and len(h4_df) >= 14:
-        h4_adx_val = _compute_adx(h4_df, 14)
+        h4_adx_val = _compute_adx(h4_df)
         if h4_adx_val < v44_h4_adx_min:
             no_trade["decision"] = ExecutionDecision(attempted=False, placed=False, reason=f"v44_ny: H4 ADX {h4_adx_val:.1f} < min {v44_h4_adx_min:.1f}", side=None)
             return no_trade

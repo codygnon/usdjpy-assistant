@@ -932,9 +932,9 @@ def build_dashboard_filters(
             filters.append(_phase3_dict_to_filter_report(report_phase3_regime(regime)))
         m15_df = data_by_tf.get("M15")
         if m15_df is not None and not m15_df.empty and len(m15_df) >= ADX_PERIOD + 2:
-            adx_val = _compute_adx(m15_df, ADX_PERIOD)
+            adx_val = _compute_adx(m15_df)
             filters.append(_phase3_dict_to_filter_report(report_phase3_adx(adx_val, float(v14_cfg.get("adx_max_for_entry", 35.0)))))
-            atr_series = _compute_atr(m15_df, ATR_PERIOD)
+            atr_series = _compute_atr(m15_df)
             import pandas as _pd
             atr_val = float(atr_series.iloc[-1]) if _pd.notna(atr_series.iloc[-1]) else 0.0
             filters.append(_phase3_dict_to_filter_report(report_phase3_atr(atr_val, float(v14_cfg.get("atr_max_threshold_price_units", 0.30)))))
