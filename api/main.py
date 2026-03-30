@@ -4646,6 +4646,42 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
         }
 
 
+def _dashboard_state_is_phase3(state: Optional[dict[str, Any]]) -> bool:
+    if not isinstance(state, dict):
+        return False
+    preset_name = str(state.get("preset_name") or "").lower()
+    if "phase3_integrated" in preset_name or "phase 3" in preset_name:
+        return True
+    for item in list(state.get("context") or []):
+        if not isinstance(item, dict):
+            continue
+        category = str(item.get("category") or "").lower()
+        key = str(item.get("key") or "").lower()
+        if category in {"runtime", "decision", "frozen", "v14", "london", "v44"}:
+            return True
+        if key in {
+            "active session",
+            "strategy tag",
+            "ownership cell",
+            "regime label",
+            "defensive flags",
+            "frozen package",
+        }:
+            return True
+    for flt in list(state.get("filters") or []):
+        if not isinstance(flt, dict):
+            continue
+        filter_id = str(flt.get("filter_id") or "").lower()
+        if (
+            filter_id.startswith("phase3_")
+            or filter_id.startswith("tokyo")
+            or filter_id.startswith("london")
+            or filter_id.startswith("ny_")
+        ):
+            return True
+    return False
+
+
 def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
     """Internal dashboard implementation."""
     from core.dashboard_models import read_dashboard_state
@@ -4655,6 +4691,8 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
 
         log_dir = _pick_best_dashboard_log_dir(profile_name, profile_path)
         file_state = read_dashboard_state(log_dir)
+        live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
+        prefer_live_phase3 = _dashboard_state_is_phase3(file_state) or _dashboard_state_is_phase3(live)
         if file_state is not None:
             stale_age_seconds: float | None = None
             stale = True
@@ -4682,10 +4720,16 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
                     result["loop_log"] = []
             except Exception:
                 result["loop_log"] = []
+            if prefer_live_phase3 and "error" not in live:
+                result = dict(live)
+                result["loop_running"] = loop_running
+                result["stale"] = stale
+                result["stale_age_seconds"] = stale_age_seconds
+                result["data_source"] = "live_phase3"
+                result["loop_log"] = file_state.get("loop_log", result.get("loop_log", []))
             result["positions"] = _enrich_phase3_rows(list(result.get("positions") or []))
             return _strip_trial10_directional_cap_filter(result)
 
-        live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
         if "error" not in live:
             live["stale"] = True
             live["stale_age_seconds"] = None
@@ -4732,6 +4776,7 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
         return _strip_trial10_directional_cap_filter(live)
 
     file_state = read_dashboard_state(log_dir)
+    prefer_live_phase3 = _dashboard_state_is_phase3(file_state) or _dashboard_state_is_phase3(live)
 
     if file_state is not None:
         # Check freshness
@@ -4746,7 +4791,7 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
             except Exception:
                 pass
 
-        if is_fresh:
+        if is_fresh and not prefer_live_phase3:
             # Use file's rich filters/context (trial-specific), but override
             # positions, prices, and daily summary with live broker data
             file_state["positions"] = live["positions"]
@@ -4764,7 +4809,7 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
 
     result["stale"] = False
     result["stale_age_seconds"] = 0.0
-    result["data_source"] = "run_loop_file"
+    result["data_source"] = "live_phase3" if prefer_live_phase3 else "run_loop_file"
     result.setdefault("entry_candidate_side", None)
     result.setdefault("entry_candidate_trigger", None)
     result["positions"] = _enrich_phase3_rows(list(result.get("positions") or []))
