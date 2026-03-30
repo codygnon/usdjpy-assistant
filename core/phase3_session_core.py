@@ -98,14 +98,14 @@ def resolve_ny_window_hours(now_utc: datetime, v44_cfg: Optional[dict[str, Any]]
     mode = str(cfg.get("ny_window_mode", "dst_auto")).strip().lower()
     if mode == "fixed_utc":
         raw_start = cfg.get("ny_start_hour", 12.0)
-        raw_end = cfg.get("ny_end_hour", 15.0)
+        raw_end = cfg.get("ny_end_hour", 21.0)
         ny_start = float(12.0 if raw_start is None else raw_start)
-        ny_end = float(15.0 if raw_end is None else raw_end)
+        ny_end = float(21.0 if raw_end is None else raw_end)
         if ny_end <= ny_start:
-            ny_end = ny_start + max(1.0, float(cfg.get("ny_duration_hours", 3.0)))
+            ny_end = ny_start + max(1.0, float(cfg.get("ny_duration_hours", 9.0)))
         return ny_start, ny_end
     ny_start = float(us_ny_open_utc(pd.Timestamp(now_utc)))
-    ny_duration = max(1.0, float(cfg.get("ny_duration_hours", 3.0)))
+    ny_duration = max(1.0, float(cfg.get("ny_duration_hours", 9.0)))
     return ny_start, ny_start + ny_duration
 
 
@@ -135,12 +135,12 @@ def classify_phase3_session(
         london_open = float(uk_london_open_utc(pd.Timestamp(now_utc)))
         london_end = london_open + 4.0
         ny_start, ny_end = resolve_ny_window_hours(now_utc, {})
-        if in_hour_window(hour_frac, DEFAULT_TOKYO_START_UTC, DEFAULT_TOKYO_END_UTC) and weekday in DEFAULT_TOKYO_ALLOWED_DAYS:
-            return "tokyo"
         if in_hour_window(hour_frac, london_open, london_end) and weekday in DEFAULT_LONDON_ALLOWED_DAYS:
             return "london"
         if in_hour_window(hour_frac, ny_start, ny_end) and weekday in DEFAULT_NY_ALLOWED_DAYS:
             return "ny"
+        if in_hour_window(hour_frac, DEFAULT_TOKYO_START_UTC, DEFAULT_TOKYO_END_UTC) and weekday in DEFAULT_TOKYO_ALLOWED_DAYS:
+            return "tokyo"
         return None
 
     v14_cfg = effective_config.get("v14", {}) if isinstance(effective_config.get("v14"), dict) else {}
@@ -159,10 +159,10 @@ def classify_phase3_session(
 
     ny_start, ny_end = resolve_ny_window_hours(now_utc, v44_cfg)
 
-    if in_hour_window(hour_frac, tokyo_start, tokyo_end) and weekday in tokyo_days:
-        return "tokyo"
     if in_hour_window(hour_frac, london_open, london_end) and weekday in london_days:
         return "london"
     if in_hour_window(hour_frac, ny_start, ny_end) and weekday in DEFAULT_NY_ALLOWED_DAYS:
         return "ny"
+    if in_hour_window(hour_frac, tokyo_start, tokyo_end) and weekday in tokyo_days:
+        return "tokyo"
     return None

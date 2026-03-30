@@ -2251,7 +2251,7 @@ def collect_phase3_context(
             items.append(ContextItem("Regime", f"{regime} ({'OK' if regime == 'ranging' else 'BLOCK'})", "v14"))
         m15_df = data_by_tf.get("M15")
         if m15_df is not None and not m15_df.empty and len(m15_df) >= ADX_PERIOD + 2:
-            adx_val = _compute_adx(m15_df, ADX_PERIOD)
+            adx_val = _compute_adx(m15_df)
             items.append(ContextItem("ADX", f"{adx_val:.1f} ({'OK' if adx_val < ADX_MAX else 'BLOCK'})", "v14"))
             atr_series = _compute_atr(m15_df, ATR_PERIOD)
             atr_val = float(atr_series.iloc[-1]) if pd.notna(atr_series.iloc[-1]) else 0.0
@@ -2405,7 +2405,7 @@ def collect_phase3_context(
                 _v44_cfg3 = (load_phase3_sizing_config() or {}).get("v44_ny", {})
                 _h4_adx_min = float(_v44_cfg3.get("h4_adx_min", 0.0))
                 if _h4_adx_min > 0:
-                    _h4_adx = _compute_adx(h4_df, 14)
+                    _h4_adx = _compute_adx(h4_df)
                     _h4_ok = _h4_adx >= _h4_adx_min
                     items.append(ContextItem("H4 ADX", f"{_h4_adx:.1f} ({'OK' if _h4_ok else 'BLOCK'} ≥{_h4_adx_min:.0f})", "v44"))
             except Exception:

@@ -13,9 +13,15 @@ def test_classify_phase3_session_uses_configured_tokyo_window() -> None:
             "session_start_utc": "16:00",
             "session_end_utc": "22:00",
             "allowed_trading_days": ["Tuesday", "Wednesday", "Friday"],
-        }
+        },
+        "v44_ny": {
+            "ny_window_mode": "fixed_utc",
+            "ny_start_hour": 12,
+            "ny_end_hour": 15,
+        },
     }
-    now_utc = datetime(2024, 10, 22, 17, 0, tzinfo=timezone.utc)  # Tuesday
+    # 21:30 UTC Tuesday — after NY window, still inside Tokyo 16:00-22:00
+    now_utc = datetime(2024, 10, 22, 21, 30, tzinfo=timezone.utc)
     assert classify_phase3_session(now_utc, cfg) == "tokyo"
 
 
