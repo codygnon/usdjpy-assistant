@@ -147,6 +147,75 @@ def test_execute_v44_ny_session_treats_zero_max_open_as_unlimited() -> None:
     assert result["v44_exit_plan"]["mode"] == "managed_partial_runner"
 
 
+def test_execute_v44_ny_session_defended_strict_policy_overrides_runtime_day_cap(monkeypatch) -> None:
+    class _Adapter:
+        def place_order(self, **kwargs):
+            return SimpleNamespace(order_retcode=0, order_id="order-2", deal_id="deal-2", fill_price=159.561)
+
+    support = SimpleNamespace(
+        ExecutionDecision=SimpleNamespace,
+        _drop_incomplete_tf=lambda df, _tf: df,
+        resolve_ny_window_hours=lambda now_utc, cfg: (12, 15),
+        _as_risk_fraction=lambda value, default: float(value) / 100.0 if float(value) > 1 else float(value),
+        _compute_ema=lambda series, period: series.astype(float).ewm(span=period, adjust=False).mean(),
+        _compute_adx=lambda df: 30.0,
+        _determine_v44_session_mode=lambda *args, **kwargs: "trend",
+        _compute_v44_atr_rank=lambda *args, **kwargs: 0.4,
+        _load_news_events_cached=lambda *args, **kwargs: tuple(),
+        is_in_news_window=lambda *args, **kwargs: False,
+        _v44_most_recent_news_event=lambda *args, **kwargs: None,
+        _v44_news_trend_active_event=lambda *args, **kwargs: None,
+        _account_sizing_value=lambda adapter, fallback=100000.0: 100000.0,
+        compute_v44_h1_trend=lambda *args, **kwargs: "up",
+        compute_v44_sl=lambda side, m5_df, entry_price, pip: entry_price - 0.08,
+        evaluate_v44_entry=lambda *args, **kwargs: ("buy", "strong", "v44: H1 up + M5 strong bullish momentum"),
+        v44_defensive_veto_block_from_state=lambda **kwargs: (False, ""),
+        _phase3_order_confirmed=lambda adapter, profile, dec: (True, "deal-2"),
+        V44_MAX_ENTRY_SPREAD=2.5,
+        V44_MAX_OPEN=3,
+        V44_MAX_ENTRIES_DAY=7,
+        V44_SESSION_STOP_LOSSES=3,
+        V44_STRONG_TP1_PIPS=2.0,
+        V44_H1_EMA_FAST=20,
+        V44_H1_EMA_SLOW=50,
+        V44_M5_EMA_FAST=9,
+        V44_M5_EMA_SLOW=21,
+        V44_SLOPE_BARS=4,
+        V44_STRONG_SLOPE=0.5,
+        V44_WEAK_SLOPE=0.2,
+        V44_MIN_BODY_PIPS=1.5,
+        V44_ATR_PCT_CAP=0.67,
+        V44_ATR_PCT_LOOKBACK=200,
+        PIP_SIZE=0.01,
+    )
+
+    import core.phase3_ny_session as ny_session
+    monkeypatch.setattr(
+        ny_session,
+        "load_phase3_package_spec",
+        lambda preset_id=None: SimpleNamespace(strict_policy={"max_entries_per_day": None}),
+    )
+
+    day = "2025-04-04"
+    result = execute_v44_ny_session(
+        adapter=_Adapter(),
+        profile=SimpleNamespace(symbol="USDJPY", pip_size=0.01, active_preset_name="phase3_integrated_v7_defended"),
+        policy=SimpleNamespace(id="phase3_integrated_v7_defended"),
+        data_by_tf={"M1": _m1_frame(), "M5": _m5_frame(), "H1": _h1_frame(), "H4": _h1_frame().tail(20)},
+        tick=SimpleNamespace(bid=159.55, ask=159.56),
+        phase3_state={f"session_ny_{day}": {"trade_count": 99, "consecutive_losses": 0, "stopped": False}},
+        sizing_config={"v44_ny": {"max_open_positions": 3, "max_entries_per_day": 7, "rp_max_lot": 20.0, "max_lot": 20.0}},
+        now_utc=datetime(2025, 4, 4, 13, 30, tzinfo=timezone.utc),
+        store=None,
+        ownership_audit={"ownership_cell": "ambiguous/er_high/der_pos", "regime_label": "ambiguous"},
+        overlay_state={"defensive_veto_cells": ["ambiguous/er_low/der_neg"]},
+        support=support,
+    )
+    assert result["decision"].placed is True
+    assert result["v44_parity_context"]["max_entries_authority"] == "defended_strict_policy"
+    assert result["v44_parity_context"]["max_entries_unlimited"] == 1
+
+
 def test_apply_phase3_session_outcome_marks_ny_session_stopped_after_loss_limit() -> None:
     phase3_state = {
         "session_ny_2025-04-04": {

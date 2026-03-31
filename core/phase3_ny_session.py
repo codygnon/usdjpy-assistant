@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import pandas as pd
+from core.phase3_package_spec import PHASE3_DEFENDED_PRESET_ID, load_phase3_package_spec
 
 
 def execute_v44_ny_session(
@@ -197,6 +198,18 @@ def execute_v44_ny_session(
     v44_rp_min_lot = float(v44_config.get("rp_min_lot", 1.0))
     v44_rp_max_lot = float(v44_config.get("rp_max_lot", 20.0))
     v44_max_entries_day = _cap_or_zero(v44_config.get("max_entries_per_day", support.V44_MAX_ENTRIES_DAY), support.V44_MAX_ENTRIES_DAY)
+    max_entries_authority = "runtime_v44_config"
+    defended_preset = str(PHASE3_DEFENDED_PRESET_ID).strip().lower()
+    policy_id = str(getattr(policy, "id", "") or "").strip().lower()
+    profile_preset = str(getattr(profile, "active_preset_name", "") or "").strip().lower()
+    if policy_id == defended_preset or profile_preset == defended_preset:
+        try:
+            strict = dict((load_phase3_package_spec(preset_id=PHASE3_DEFENDED_PRESET_ID).strict_policy) or {})
+            if "max_entries_per_day" in strict:
+                v44_max_entries_day = _cap_or_zero(strict.get("max_entries_per_day"), support.V44_MAX_ENTRIES_DAY)
+                max_entries_authority = "defended_strict_policy"
+        except Exception:
+            pass
     v44_allow_internal_overlap = bool(v44_config.get("allow_internal_overlap", True))
     v44_allow_opposite_side_overlap = bool(v44_config.get("allow_opposite_side_overlap", True))
     v44_session_stop_losses = int(v44_config.get("session_stop_losses", support.V44_SESSION_STOP_LOSSES))
@@ -290,6 +303,7 @@ def execute_v44_ny_session(
             "allow_opposite_side_overlap": int(v44_allow_opposite_side_overlap),
             "configured_max_open_positions": int(v44_max_open),
             "configured_max_entries_per_day": int(v44_max_entries_day),
+            "max_entries_authority": max_entries_authority,
             "sizing_mode": str(v44_sizing_mode),
             "max_lot": float(v44_max_lot),
             "rp_max_lot": float(v44_rp_max_lot),
