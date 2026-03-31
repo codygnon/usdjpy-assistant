@@ -3536,7 +3536,7 @@ def _fetch_live_positions(profile_name: str, profile_path: Optional[str] = None)
             age = 0.0
             try:
                 t0 = _pd_dash.to_datetime(t.get("openTime"), utc=True)
-                age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
+                age = (now_utc - t0.to_pydatetime(warn=False)).total_seconds() / 60.0
             except Exception:
                 pass
             sl = tp = None
@@ -3625,7 +3625,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
             age = 0.0
             try:
                 t0 = _pd_dash.to_datetime(t.get("openTime"), utc=True)
-                age = (now_utc - t0.to_pydatetime()).total_seconds() / 60.0
+                age = (now_utc - t0.to_pydatetime(warn=False)).total_seconds() / 60.0
             except Exception:
                 pass
             sl = tp = None
@@ -4913,8 +4913,6 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
             return out
 
         file_state = read_dashboard_state(log_dir)
-        live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
-        prefer_live_phase3 = _dashboard_state_is_phase3(file_state) or _dashboard_state_is_phase3(live)
         if file_state is not None:
             stale_age_seconds: float | None = None
             stale = True
@@ -4942,12 +4940,17 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
                     result["loop_log"] = []
             except Exception:
                 result["loop_log"] = []
-            # In lean mode, stale file-state should not pin the UI to old timestamps.
-            # Prefer live payload whenever Phase 3 is active OR file-state is stale.
-            if (prefer_live_phase3 or stale) and "error" not in live:
-                result = dict(live)
-                result["loop_running"] = loop_running
-                result["stale"] = False
+            # Only build live state when file is moderately stale (< 10 min).
+            # Beyond that the loop is clearly not running — just return the file state
+            # to avoid expensive OANDA fetches that cause 502 timeouts.
+            prefer_live_phase3 = _dashboard_state_is_phase3(file_state)
+            _moderately_stale = stale and (stale_age_seconds is not None and stale_age_seconds < 600)
+            if prefer_live_phase3 and _moderately_stale:
+                live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
+                if "error" not in live:
+                    result = dict(live)
+                    result["loop_running"] = loop_running
+                    result["stale"] = False
                 result["stale_age_seconds"] = 0.0
                 result["data_source"] = "live_phase3" if prefer_live_phase3 else "live_fallback"
                 result["loop_log"] = file_state.get("loop_log", result.get("loop_log", []))
@@ -4956,6 +4959,8 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
             _lean_dashboard_cache[lk] = (_time.monotonic(), dict(out))
             return out
 
+        # No file state — try live build (first load / no loop has ever run)
+        live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
         if "error" not in live:
             live["stale"] = True
             live["stale_age_seconds"] = None
