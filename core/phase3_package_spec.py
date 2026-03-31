@@ -51,8 +51,21 @@ def default_phase3_artifact_paths() -> dict[str, Path]:
     }
 
 
+def _defended_contract_exists() -> bool:
+    try:
+        path = default_phase3_artifact_paths()["paper_candidate"]
+        if not path.exists():
+            return False
+        data = _read_json(path)
+        return bool(data.get("package_family") and data.get("strict_policy"))
+    except Exception:
+        return False
+
+
 def uses_defended_phase3_package(preset_id: str | None) -> bool:
-    return str(preset_id or "").strip().lower() == PHASE3_DEFENDED_PRESET_ID
+    if str(preset_id or "").strip().lower() == PHASE3_DEFENDED_PRESET_ID:
+        return True
+    return _defended_contract_exists()
 
 
 def load_phase3_package_spec(
@@ -115,7 +128,7 @@ def load_phase3_package_spec(
         merged_runtime_overrides = _deep_merge(merged_runtime_overrides, runtime_cfg)
 
     return Phase3PackageSpec(
-        package_id=package_id if (preset_id or "").strip().lower() == PHASE3_DEFENDED_PRESET_ID else (preset_id or package_family),
+        package_id=package_id if uses_defended_phase3_package(preset_id) else (preset_id or package_family),
         package_family=package_family,
         preset_id=preset_id,
         status=status,

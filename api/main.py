@@ -228,11 +228,51 @@ def _research_out_path(filename: str) -> Path:
     return BASE_DIR / "research_out" / filename
 
 
-def _load_phase3_sizing_cfg_api() -> dict[str, Any]:
+def _resolve_phase3_preset_id_api(profile_name: str | None = None, profile_path: str | None = None) -> str | None:
+    try:
+        from core.phase3_package_spec import PHASE3_DEFENDED_PRESET_ID
+
+        defended = str(PHASE3_DEFENDED_PRESET_ID).strip().lower()
+        if profile_path:
+            p = _resolve_profile_path(profile_path)
+            if p.exists():
+                prof = load_profile_v1(p)
+                active = str(getattr(prof, "active_preset_name", "") or "").strip().lower()
+                if active == defended:
+                    return PHASE3_DEFENDED_PRESET_ID
+                for pol in list(getattr(getattr(prof, "execution", None), "policies", []) or []):
+                    if not getattr(pol, "enabled", True):
+                        continue
+                    if str(getattr(pol, "type", "") or "") != "phase3_integrated":
+                        continue
+                    if str(getattr(pol, "id", "") or "").strip().lower() == defended:
+                        return PHASE3_DEFENDED_PRESET_ID
+                return getattr(prof, "active_preset_name", None)
+        return None
+    except Exception:
+        return None
+
+
+def _phase3_policy_id_from_trade_row_api(trade_row: dict[str, Any]) -> str | None:
+    trade_id = str(trade_row.get("trade_id") or "")
+    if trade_id.startswith("phase3_integrated:"):
+        parts = trade_id.split(":")
+        if len(parts) >= 2 and str(parts[1] or "").strip():
+            return str(parts[1]).strip()
+    notes = str(trade_row.get("notes") or "")
+    if notes.startswith("auto:phase3_integrated:"):
+        parts = notes.split(":")
+        if len(parts) >= 3 and str(parts[2] or "").strip():
+            return str(parts[2]).strip()
+    return None
+
+
+def _load_phase3_sizing_cfg_api(profile_name: str | None = None, profile_path: str | None = None, preset_id: str | None = None) -> dict[str, Any]:
     try:
         from core.phase3_integrated_engine import load_phase3_sizing_config
 
-        return load_phase3_sizing_config() or {}
+        effective_preset_id = preset_id if preset_id is not None else _resolve_phase3_preset_id_api(profile_name, profile_path)
+        return load_phase3_sizing_config(preset_id=effective_preset_id) or {}
     except Exception:
         return {}
 
@@ -284,7 +324,16 @@ def _apply_phase3_sync_close_state_update(
         if entry_session not in {"tokyo", "london", "ny"}:
             return
         key_date = phase3_trade_key_date(trade_row.get("timestamp_utc"), now_utc)
-        phase3_sizing_cfg = load_phase3_sizing_config() or {}
+        phase3_policy_id = _phase3_policy_id_from_trade_row_api(trade_row)
+        phase3_preset_id = None
+        try:
+            from core.phase3_package_spec import PHASE3_DEFENDED_PRESET_ID
+
+            if str(phase3_policy_id or "").strip().lower() == str(PHASE3_DEFENDED_PRESET_ID).strip().lower():
+                phase3_preset_id = PHASE3_DEFENDED_PRESET_ID
+        except Exception:
+            phase3_preset_id = None
+        phase3_sizing_cfg = load_phase3_sizing_config(preset_id=phase3_preset_id) or {}
         sd = apply_phase3_session_outcome(
             phase3_state=phase3_state,
             phase3_sizing_cfg=phase3_sizing_cfg,
@@ -1730,7 +1779,7 @@ def get_phase3_decisions(profile_name: str, days: int = 3, limit: int = 5000, pr
             df = df[ts >= since_dt]
         df = df[df["signal_id"].astype(str).str.startswith("eval:phase3_integrated:")]
         df = df.tail(limit)
-        cfg = _load_phase3_sizing_cfg_api()
+        cfg = _load_phase3_sizing_cfg_api(profile_name=profile_name, profile_path=profile_path)
         rows = df.to_dict(orient="records")
         for row in rows:
             out = dict(row)
@@ -1850,7 +1899,7 @@ def get_phase3_provenance(profile_name: str, profile_path: Optional[str] = None)
             context_items=list(dashboard.get("context") or []),
             filters=list(dashboard.get("filters") or []),
             latest_decision=latest_decision,
-            sizing_cfg=_load_phase3_sizing_cfg_api(),
+            sizing_cfg=_load_phase3_sizing_cfg_api(profile_name=profile_name, profile_path=profile_path),
             dashboard_timestamp_utc=dashboard.get("timestamp_utc"),
             last_block_reason=dashboard.get("last_block_reason"),
         )

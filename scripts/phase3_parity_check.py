@@ -21,6 +21,7 @@ from core.phase3_integrated_engine import (
     load_phase3_sizing_config,
 )
 from core.phase3_shared_engine import evaluate_phase3_bar
+from core.phase3_package_spec import PHASE3_DEFENDED_PRESET_ID
 from core.profile import load_profile_v1
 
 ENTRY_BAR_MATCH_MIN = 98.5
@@ -631,7 +632,11 @@ def main() -> None:
     if m1.empty:
         raise RuntimeError("No M1 bars in requested range.")
 
-    phase3_preset_id = getattr(profile, "active_preset_name", None)
+    phase3_preset_id = (
+        PHASE3_DEFENDED_PRESET_ID
+        if str(getattr(policy, "id", "") or "").strip().lower() == str(PHASE3_DEFENDED_PRESET_ID).strip().lower()
+        else getattr(profile, "active_preset_name", None)
+    )
     sizing = load_phase3_sizing_config(preset_id=phase3_preset_id)
     mock_adapter = MockOrderAdapter(equity=args.equity)
     phase3_state: dict[str, Any] = {}

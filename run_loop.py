@@ -1758,8 +1758,10 @@ def _run_trade_management(
                     phase3_trade_key_date,
                     apply_phase3_session_outcome,
                 )
+                phase3_trade_policy_id = _phase3_policy_id_from_trade_row(trade_row or {})
                 phase3_exit_preset_id = _resolve_phase3_effective_preset_id(
                     profile,
+                    policy=SimpleNamespace(id=phase3_trade_policy_id) if phase3_trade_policy_id else None,
                     preferred_preset=getattr(profile, "active_preset_name", None),
                 )
                 phase3_sizing_cfg = load_phase3_sizing_config(preset_id=phase3_exit_preset_id) or {}
@@ -2543,7 +2545,7 @@ def _resolve_phase3_effective_preset_id(
     policy: Any | None = None,
     preferred_preset: str | None = None,
 ) -> str | None:
-    from core.phase3_package_spec import PHASE3_DEFENDED_PRESET_ID
+    from core.phase3_package_spec import PHASE3_DEFENDED_PRESET_ID, uses_defended_phase3_package
 
     defended_id = str(PHASE3_DEFENDED_PRESET_ID).strip().lower()
     profile_preset = str(getattr(profile, "active_preset_name", "") or "").strip().lower()
@@ -2551,18 +2553,28 @@ def _resolve_phase3_effective_preset_id(
     policy_id = str(getattr(policy, "id", "") or "").strip().lower() if policy is not None else ""
     if any(value == defended_id for value in (profile_preset, requested, policy_id)):
         return PHASE3_DEFENDED_PRESET_ID
+    if uses_defended_phase3_package(requested):
+        return PHASE3_DEFENDED_PRESET_ID
 
-    try:
-        for pol in list(getattr(getattr(profile, "execution", None), "policies", []) or []):
-            if not getattr(pol, "enabled", True):
-                continue
-            if str(getattr(pol, "type", "") or "") != "phase3_integrated":
-                continue
-            if str(getattr(pol, "id", "") or "").strip().lower() == defended_id:
-                return PHASE3_DEFENDED_PRESET_ID
-    except Exception:
-        pass
     return preferred_preset if preferred_preset is not None else getattr(profile, "active_preset_name", None)
+
+
+def _phase3_policy_id_from_trade_row(trade_row: dict) -> str | None:
+    trade_id = str(trade_row.get("trade_id") or "")
+    if trade_id.startswith("phase3_integrated:"):
+        parts = trade_id.split(":")
+        if len(parts) >= 2:
+            policy_id = str(parts[1] or "").strip()
+            if policy_id:
+                return policy_id
+    notes = str(trade_row.get("notes") or "")
+    if notes.startswith("auto:phase3_integrated:"):
+        parts = notes.split(":")
+        if len(parts) >= 3:
+            policy_id = str(parts[2] or "").strip()
+            if policy_id:
+                return policy_id
+    return None
 
 
 def _append_phase3_minute_diagnostics(

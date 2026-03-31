@@ -160,7 +160,8 @@ def _defended_locked_updates(
 ) -> tuple[dict[str, Any], list[str]]:
     updates: dict[str, Any] = {}
     locked: list[str] = []
-    if str(preset_id or "").strip().lower() != "phase3_integrated_v7_defended" or canonical_spec is None:
+    from core.phase3_package_spec import uses_defended_phase3_package as _uses_defended
+    if not _uses_defended(preset_id) or canonical_spec is None:
         return updates, locked
 
     can_v14 = (canonical_spec.runtime_overrides or {}).get("v14", {})
@@ -177,11 +178,28 @@ def _defended_locked_updates(
     if isinstance(can_v44, dict) and "defensive_veto_cells" in can_v44:
         _set_nested_path(updates, "v44_ny.defensive_veto_cells", can_v44["defensive_veto_cells"])
         locked.append("v44_ny.defensive_veto_cells")
+    if isinstance(can_v44, dict):
+        for key in (
+            "allow_internal_overlap",
+            "allow_opposite_side_overlap",
+            "max_open_positions",
+            "margin_leverage",
+            "margin_buffer_pct",
+            "max_lot",
+            "rp_max_lot",
+        ):
+            if key in can_v44:
+                _set_nested_path(updates, f"v44_ny.{key}", can_v44[key])
+                locked.append(f"v44_ny.{key}")
 
     if "max_entries_per_day" in can_strict:
         max_entries = can_strict.get("max_entries_per_day")
         _set_nested_path(updates, "v44_ny.max_entries_per_day", None if max_entries is None else int(max_entries))
         locked.append("v44_ny.max_entries_per_day")
+    if "max_open_offensive" in can_strict:
+        max_open = can_strict.get("max_open_offensive")
+        _set_nested_path(updates, "v44_ny.max_open_positions", None if max_open is None else int(max_open))
+        locked.append("v44_ny.max_open_positions")
 
     base_v44 = normalized_cfg.get("v44_ny", {}) if isinstance(normalized_cfg.get("v44_ny"), dict) else {}
     for key in ("ny_window_mode", "ny_start_hour", "ny_end_hour", "start_delay_minutes"):

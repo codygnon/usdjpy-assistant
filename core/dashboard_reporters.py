@@ -2114,6 +2114,10 @@ def _is_defended_phase3_preset_name(active_preset_name: str | None) -> bool:
     return normalized == FROZEN_PHASE3_DEFENDED_PRESET_ID or normalized.startswith(f"{FROZEN_PHASE3_DEFENDED_PRESET_ID} ")
 
 
+def _phase3_effective_preset_name(active_preset_name: str | None) -> str | None:
+    return FROZEN_PHASE3_DEFENDED_PRESET_ID if _is_defended_phase3_preset_name(active_preset_name) else active_preset_name
+
+
 def _phase3_defended_context_items(active_preset_name: str | None, cfg: dict[str, Any]) -> list[ContextItem]:
     if not _is_defended_phase3_preset_name(active_preset_name):
         return []
@@ -2449,7 +2453,7 @@ def collect_phase3_context(
         # No-reentry timer (after stopout): show if either direction is blocked
         try:
             from core.phase3_integrated_engine import load_phase3_sizing_config
-            _v14_cfg = (load_phase3_sizing_config(preset_id=active_preset_name) or {}).get("v14", {})
+            _v14_cfg = (load_phase3_sizing_config(preset_id=_phase3_effective_preset_name(active_preset_name)) or {}).get("v14", {})
             _no_reentry_min = int(_v14_cfg.get("no_reentry_same_direction_after_stop_minutes", 0))
             if _no_reentry_min > 0:
                 for _dir in ("buy", "sell"):
@@ -2519,7 +2523,7 @@ def collect_phase3_context(
             _v44_strength = classify_v44_strength(slope, is_london=False)
             try:
                 from core.phase3_integrated_engine import load_phase3_sizing_config
-                _v44_cfg2 = (load_phase3_sizing_config(preset_id=active_preset_name) or {}).get("v44_ny", {})
+                _v44_cfg2 = (load_phase3_sizing_config(preset_id=_phase3_effective_preset_name(active_preset_name)) or {}).get("v44_ny", {})
                 _strength_allow = str(_v44_cfg2.get("ny_strength_allow", "strong_normal")).lower()
                 _allow_map = {
                     "strong_only": {"strong"},
@@ -2536,7 +2540,7 @@ def collect_phase3_context(
         if h4_df is not None and not h4_df.empty and len(h4_df) >= 16:
             try:
                 from core.phase3_integrated_engine import load_phase3_sizing_config
-                _v44_cfg3 = (load_phase3_sizing_config(preset_id=active_preset_name) or {}).get("v44_ny", {})
+                _v44_cfg3 = (load_phase3_sizing_config(preset_id=_phase3_effective_preset_name(active_preset_name)) or {}).get("v44_ny", {})
                 _h4_adx_min = float(_v44_cfg3.get("h4_adx_min", 0.0))
                 if _h4_adx_min > 0:
                     _h4_adx = _compute_adx(h4_df)
@@ -2599,7 +2603,7 @@ def collect_phase3_context(
         win_streak = int(sd.get("win_streak", 0))
         try:
             from core.phase3_integrated_engine import load_phase3_sizing_config
-            _v44_cfg_live = (load_phase3_sizing_config(preset_id=active_preset_name) or {}).get("v44_ny", {})
+            _v44_cfg_live = (load_phase3_sizing_config(preset_id=_phase3_effective_preset_name(active_preset_name)) or {}).get("v44_ny", {})
         except Exception:
             _v44_cfg_live = {}
         _raw_trade_cap = _v44_cfg_live.get("max_entries_per_day", V44_MAX_ENTRIES_DAY)
@@ -2631,7 +2635,7 @@ def collect_phase3_context(
         # GL (Golden Lion) mode
         try:
             from core.phase3_integrated_engine import load_phase3_sizing_config
-            _v44_cfg = (load_phase3_sizing_config(preset_id=active_preset_name) or {}).get("v44_ny", {})
+            _v44_cfg = (load_phase3_sizing_config(preset_id=_phase3_effective_preset_name(active_preset_name)) or {}).get("v44_ny", {})
             _gl_enabled = bool(_v44_cfg.get("gl_enabled", False))
             _gl_min_wins = max(1, int(_v44_cfg.get("gl_min_wins", 1)))
             _gl_extra = int(_v44_cfg.get("gl_extra_entries", 0))

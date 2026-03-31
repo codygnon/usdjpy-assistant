@@ -234,10 +234,14 @@ def evaluate_phase3_bar(
     )
     from core.phase3_additive_runtime import execute_phase3_defended_additive_policy
 
+    from core.phase3_package_spec import uses_defended_phase3_package as _uses_defended
     policy_id = str(getattr(policy, "id", "") or "").strip().lower()
     profile_preset = str(getattr(profile, "active_preset_name", "") or "").strip().lower()
     requested_preset = str(preset_id or "").strip().lower()
-    defended_active = any(v == PHASE3_DEFENDED_PRESET_ID for v in (policy_id, profile_preset, requested_preset))
+    defended_active = (
+        any(v == PHASE3_DEFENDED_PRESET_ID for v in (policy_id, profile_preset, requested_preset))
+        or _uses_defended(requested_preset)
+    )
     effective_preset_id = PHASE3_DEFENDED_PRESET_ID if defended_active else preset_id
 
     spec = load_phase3_package_spec(preset_id=effective_preset_id)

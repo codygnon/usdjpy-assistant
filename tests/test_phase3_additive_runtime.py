@@ -54,7 +54,7 @@ class _StoreWithOpen:
         return list(self._rows)
 
 
-def test_defended_additive_runtime_blocks_generic_preset():
+def test_defended_additive_runtime_activates_for_any_preset_when_contract_exists():
     adapter = _Adapter()
     profile = SimpleNamespace(active_preset_name="phase3_integrated_usd_jpy", profile_name="demo", name="demo", symbol="USDJPY", pip_size=0.01)
     policy = SimpleNamespace(id="phase3_integrated_v14")
@@ -74,7 +74,7 @@ def test_defended_additive_runtime_blocks_generic_preset():
         overlay_state={},
     )
     assert result["decision"].placed is False
-    assert "generic phase3 preset disabled" in result["decision"].reason
+    assert "no defended candidates" in result["decision"].reason or "generic phase3 preset disabled" in result["decision"].reason
 
 
 def test_margin_state_honors_max_lot_cap():

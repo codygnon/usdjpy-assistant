@@ -972,11 +972,18 @@ def build_dashboard_filters(
 
     elif policy_type == "phase3_integrated" and policy is not None:
         additive_filters = _phase3_additive_filter_reports(getattr(profile, "active_preset_name", None), eval_result, phase3_state)
+        _active_preset = str(getattr(profile, "active_preset_name", "") or "").strip().lower()
+        _policy_id = str(getattr(policy, "id", "") or "").strip().lower()
+        _effective_preset_id = (
+            FROZEN_PHASE3_DEFENDED_PRESET_ID
+            if (_active_preset == FROZEN_PHASE3_DEFENDED_PRESET_ID or _policy_id == FROZEN_PHASE3_DEFENDED_PRESET_ID)
+            else getattr(profile, "active_preset_name", None)
+        )
         if additive_filters:
             cfg = {}
             try:
                 from core.phase3_integrated_engine import load_phase3_sizing_config
-                cfg = load_phase3_sizing_config(preset_id=getattr(profile, "active_preset_name", None)) or {}
+                cfg = load_phase3_sizing_config(preset_id=_effective_preset_id) or {}
             except Exception:
                 cfg = {}
             additive_filters[:0] = _phase3_defended_filter_reports(getattr(profile, "active_preset_name", None), cfg or {})
@@ -993,7 +1000,7 @@ def build_dashboard_filters(
             report_phase3_ny_caps,
             ADX_PERIOD, ATR_PERIOD, load_phase3_sizing_config, uk_london_open_utc,
         )
-        cfg = load_phase3_sizing_config()
+        cfg = load_phase3_sizing_config(preset_id=_effective_preset_id)
         filters.extend(_phase3_defended_filter_reports(getattr(profile, "active_preset_name", None), cfg or {}))
         m1_closed = data_by_tf.get("M1")
         if m1_closed is not None and not m1_closed.empty:

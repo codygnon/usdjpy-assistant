@@ -582,13 +582,17 @@ def execute_phase3_defended_additive_policy(
 ) -> dict[str, Any]:
     from core.phase3_integrated_engine import ExecutionDecision
 
+    from core.phase3_package_spec import uses_defended_phase3_package as _uses_defended
     now_utc = now_utc or datetime.now(timezone.utc)
     profile_preset = str(getattr(profile, "active_preset_name", "") or "").strip().lower()
     policy_id = str(getattr(policy, "id", "") or "").strip().lower()
     requested_preset = str(preset_id or "").strip().lower()
-    defended_active = any(
-        value == PHASE3_DEFENDED_PRESET_ID
-        for value in (profile_preset, policy_id, requested_preset)
+    defended_active = (
+        any(
+            value == PHASE3_DEFENDED_PRESET_ID
+            for value in (profile_preset, policy_id, requested_preset)
+        )
+        or _uses_defended(requested_preset)
     )
     if not defended_active:
         return {
