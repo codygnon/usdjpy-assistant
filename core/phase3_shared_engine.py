@@ -233,12 +233,18 @@ def evaluate_phase3_bar(
     )
     from core.phase3_additive_runtime import execute_phase3_defended_additive_policy
 
-    spec = load_phase3_package_spec(preset_id=preset_id)
+    policy_id = str(getattr(policy, "id", "") or "").strip().lower()
+    profile_preset = str(getattr(profile, "active_preset_name", "") or "").strip().lower()
+    requested_preset = str(preset_id or "").strip().lower()
+    defended_active = any(v == PHASE3_DEFENDED_PRESET_ID for v in (policy_id, profile_preset, requested_preset))
+    effective_preset_id = PHASE3_DEFENDED_PRESET_ID if defended_active else preset_id
+
+    spec = load_phase3_package_spec(preset_id=effective_preset_id)
     if sizing_config is not None:
         effective_cfg = sizing_config
     else:
         try:
-            effective_cfg = load_phase3_sizing_config(preset_id=preset_id)
+            effective_cfg = load_phase3_sizing_config(preset_id=effective_preset_id)
         except TypeError:
             effective_cfg = load_phase3_sizing_config()
     # Prefer the canonical spec projection when present so both live and replay
@@ -249,12 +255,12 @@ def evaluate_phase3_bar(
     # Re-assert defended locked keys after late merges to prevent post-lock drift.
     reasserted_locked: list[str] = []
     try:
-        normalized_preset_id = str(preset_id or "").strip().lower()
+        normalized_preset_id = str(effective_preset_id or "").strip().lower()
         if normalized_preset_id == PHASE3_DEFENDED_PRESET_ID:
             normalized_cfg = {"v44_ny": dict((locked_reference_cfg.get("v44_ny") or {}))}
             effective_cfg, reasserted_locked = apply_defended_locked_keys(
                 effective_cfg,
-                preset_id=preset_id,
+                preset_id=effective_preset_id,
                 canonical_spec=spec,
                 normalized_cfg=normalized_cfg,
             )
@@ -275,7 +281,7 @@ def evaluate_phase3_bar(
     ownership_audit = compute_phase3_ownership_audit_for_data(data_by_tf, pip_size)
     overlay_state = build_phase3_overlay_state(effective_cfg)
 
-    normalized_preset_id = str(preset_id or "").strip().lower()
+    normalized_preset_id = str(effective_preset_id or "").strip().lower()
     if normalized_preset_id == PHASE3_DEFENDED_PRESET_ID:
         exec_result = execute_phase3_defended_additive_policy(
             adapter=adapter,
@@ -315,7 +321,7 @@ def evaluate_phase3_bar(
         normalize_phase3_decision_envelope(
             exec_result=exec_result,
             policy=policy,
-            preset_id=preset_id,
+            preset_id=effective_preset_id,
             sizing_config=effective_cfg,
             ownership_audit=ownership_audit,
         )

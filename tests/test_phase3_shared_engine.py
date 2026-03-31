@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import core.phase3_integrated_engine as phase3_engine
 import core.phase3_shared_engine as shared_engine
+import core.phase3_additive_runtime as additive_runtime
 from core.phase3_shared_engine import compare_phase3_envelopes, normalize_phase3_decision_envelope
 
 
@@ -118,3 +119,40 @@ def test_evaluate_phase3_bar_precomputes_and_forwards_ownership_audit(monkeypatc
     assert result["phase3_ownership_audit"] == fake_audit
     assert result["phase3_overlay_state"] == {"v14_cell_scale_overrides": {}}
     assert result["decision_envelope"]["ownership_cell"] == "ambiguous/er_low/der_neg"
+
+
+def test_evaluate_phase3_bar_uses_defended_path_when_policy_is_defended(monkeypatch) -> None:
+    monkeypatch.setattr(shared_engine, "compute_phase3_ownership_audit_for_data", lambda data_by_tf, pip_size: {"ownership_cell": "x"})
+    monkeypatch.setattr(shared_engine, "build_phase3_overlay_state", lambda sizing_config: {})
+    monkeypatch.setattr(phase3_engine, "load_phase3_sizing_config", lambda preset_id=None: {"v44_ny": {"max_entries_per_day": 7}})
+    additive_called = {"ok": False}
+
+    def _fake_additive(**kwargs):
+        additive_called["ok"] = True
+        return {
+            "decision": SimpleNamespace(attempted=False, placed=False, reason="additive route", side=None),
+            "strategy_tag": None,
+        }
+
+    def _fake_classic(**kwargs):
+        raise AssertionError("classic session router should not be used for defended policy id")
+
+    monkeypatch.setattr(additive_runtime, "execute_phase3_defended_additive_policy", _fake_additive)
+    monkeypatch.setattr(phase3_engine, "execute_phase3_integrated_policy_demo_only", _fake_classic)
+
+    result = shared_engine.evaluate_phase3_bar(
+        adapter=shared_engine.ReplayAdapter(),
+        profile=SimpleNamespace(symbol="USDJPY", pip_size=0.01, active_preset_name="newera8"),
+        log_dir=None,
+        policy=SimpleNamespace(id="phase3_integrated_v7_defended"),
+        context={},
+        data_by_tf={},
+        tick=SimpleNamespace(bid=150.0, ask=150.01),
+        mode="ARMED_AUTO_DEMO",
+        phase3_state={},
+        preset_id="newera8",
+    )
+
+    assert additive_called["ok"] is True
+    assert result["decision"].reason == "additive route"
+    assert result["decision_envelope"]["preset_id"] == "phase3_integrated_v7_defended"

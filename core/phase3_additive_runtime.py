@@ -582,8 +582,10 @@ def execute_phase3_defended_additive_policy(
     from core.phase3_integrated_engine import ExecutionDecision
 
     now_utc = now_utc or datetime.now(timezone.utc)
-    preset_id = getattr(profile, "active_preset_name", None)
-    if str(preset_id or "").strip().lower() != PHASE3_DEFENDED_PRESET_ID:
+    profile_preset = str(getattr(profile, "active_preset_name", "") or "").strip().lower()
+    policy_id = str(getattr(policy, "id", "") or "").strip().lower()
+    defended_active = profile_preset == PHASE3_DEFENDED_PRESET_ID or policy_id == PHASE3_DEFENDED_PRESET_ID
+    if not defended_active:
         return {
             "decision": ExecutionDecision(attempted=False, placed=False, reason="phase3_additive: generic phase3 preset disabled during defended rebuild", side=None),
             "phase3_state_updates": {},
@@ -592,6 +594,7 @@ def execute_phase3_defended_additive_policy(
             "additive_runtime": {"mode": "disabled_non_defended"},
         }
 
+    preset_id = PHASE3_DEFENDED_PRESET_ID
     spec = load_phase3_package_spec(preset_id=preset_id)
     profile_name = getattr(profile, "profile_name", "") or getattr(profile, "name", "") or str(profile)
     open_trades = _open_phase3_trades(store, profile_name)
