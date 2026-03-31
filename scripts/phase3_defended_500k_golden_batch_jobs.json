@@ -1,0 +1,20 @@
+[
+  {
+    "out": "research_out/phase3_defended_500k_active_apr4_ny_golden.json",
+    "start_index": 166200,
+    "max_bars": 200,
+    "warmup_bars": 240
+  },
+  {
+    "out": "research_out/phase3_defended_500k_active_ldn_tue2_golden.json",
+    "start_index": 28780,
+    "max_bars": 200,
+    "warmup_bars": 240
+  },
+  {
+    "out": "research_out/phase3_defended_500k_active_ny13_golden.json",
+    "start_index": 131720,
+    "max_bars": 200,
+    "warmup_bars": 240
+  }
+]

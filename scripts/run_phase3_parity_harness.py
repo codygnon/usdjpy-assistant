@@ -81,7 +81,9 @@ def _policy(policy_id: str) -> Any:
     return SimpleNamespace(id=policy_id, type="phase3_integrated", enabled=True)
 
 
-def run_trace(
+def _run_trace_with_frames(
+    m1: pd.DataFrame,
+    frames: dict[str, pd.DataFrame],
     csv_path: Path,
     out_path: Path,
     *,
@@ -93,8 +95,6 @@ def run_trace(
     max_bars: int | None = None,
     warmup_bars: int = 0,
 ) -> dict[str, Any]:
-    m1 = _load_m1(csv_path)
-    frames = _precompute_frames(m1)
     profile = _profile(symbol, pip_size)
     policy = _policy("phase3_integrated_v7_defended")
     phase3_state: dict[str, Any] = {}
@@ -156,6 +156,67 @@ def run_trace(
     }
     out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return payload
+
+
+def run_trace(
+    csv_path: Path,
+    out_path: Path,
+    *,
+    symbol: str,
+    pip_size: float,
+    spread_pips: float,
+    start_index: int,
+    trace_mode: str = "replay",
+    max_bars: int | None = None,
+    warmup_bars: int = 0,
+) -> dict[str, Any]:
+    m1 = _load_m1(csv_path)
+    frames = _precompute_frames(m1)
+    return _run_trace_with_frames(
+        m1,
+        frames,
+        csv_path,
+        out_path,
+        symbol=symbol,
+        pip_size=pip_size,
+        spread_pips=spread_pips,
+        start_index=start_index,
+        trace_mode=trace_mode,
+        max_bars=max_bars,
+        warmup_bars=warmup_bars,
+    )
+
+
+def run_traces_batch(
+    csv_path: Path,
+    jobs: list[dict[str, Any]],
+    *,
+    symbol: str,
+    pip_size: float,
+    spread_pips: float,
+    trace_mode: str = "replay",
+) -> list[dict[str, Any]]:
+    """Load CSV and precompute MTF frames once, then emit multiple trace windows."""
+    m1 = _load_m1(csv_path)
+    frames = _precompute_frames(m1)
+    out: list[dict[str, Any]] = []
+    for job in jobs:
+        out_path = Path(job["out"])
+        payload = _run_trace_with_frames(
+            m1,
+            frames,
+            csv_path,
+            out_path,
+            symbol=symbol,
+            pip_size=pip_size,
+            spread_pips=spread_pips,
+            start_index=int(job["start_index"]),
+            trace_mode=str(job.get("trace_mode") or trace_mode),
+            max_bars=job.get("max_bars"),
+            warmup_bars=int(job.get("warmup_bars") or 0),
+        )
+        out.append(payload)
+    return out
 
 
 def compare_traces(left_path: Path, right_path: Path, out_path: Path) -> dict[str, Any]:
@@ -677,6 +738,12 @@ def main() -> int:
     ap.add_argument("--compare-offline-rows", action="store_true")
     ap.add_argument("--dataset-key", default="500k")
     ap.add_argument("--package-family", default="v7_pfdd")
+    ap.add_argument(
+        "--batch-jobs",
+        type=Path,
+        default=None,
+        help="JSON array of {out, start_index, max_bars?, warmup_bars?}; loads CSV once (efficient multi-window regen).",
+    )
     args = ap.parse_args()
 
     if args.compare_left and args.compare_right and args.out:
@@ -708,6 +775,25 @@ def main() -> int:
         )
         print(args.out)
         print(f"missing_count={payload['missing_count']} extra_count={payload['extra_count']}")
+        return 0
+
+    if args.batch_jobs is not None:
+        if not args.input_csv:
+            ap.error("--batch-jobs requires --input-csv")
+        raw = json.loads(args.batch_jobs.read_text(encoding="utf-8"))
+        if not isinstance(raw, list):
+            raise SystemExit("--batch-jobs file must be a JSON array")
+        payloads = run_traces_batch(
+            args.input_csv,
+            raw,
+            symbol=args.symbol,
+            pip_size=args.pip_size,
+            spread_pips=args.spread_pips,
+            trace_mode=args.trace_mode,
+        )
+        for p, job in zip(payloads, raw, strict=True):
+            outp = job.get("out")
+            print(f"{outp} rows={len(p['trace'])}")
         return 0
 
     if not args.input_csv or not args.out:
