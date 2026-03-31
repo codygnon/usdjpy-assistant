@@ -6363,10 +6363,12 @@ def execute_kt_cg_trial_7_policy_demo_only(
         # Live broker position ids: cap counts only actually open positions (not stale DB rows)
         _live_pos_ids: set[int] = set()
         _live_pos_meta: dict[int, tuple[str, float, bool]] = {}
+        _live_pos_fetched = False  # True once we successfully queried broker positions
         try:
             positions = open_positions
             if (positions is None or not positions) and adapter is not None:
                 positions = adapter.get_open_positions(profile.symbol)
+            _live_pos_fetched = True  # fetch succeeded (even if empty = 0 positions)
             for pos in positions or []:
                 pid = pos.get("id") if isinstance(pos, dict) else getattr(pos, "ticket", None)
                 pos_side = None
@@ -6429,7 +6431,9 @@ def execute_kt_cg_trial_7_policy_demo_only(
 
         def _row_still_open(row: dict) -> bool:
             if not _live_pos_ids:
-                return True
+                # If we successfully fetched and got 0 positions, nothing is open.
+                # Only assume "still open" if the fetch itself failed.
+                return not _live_pos_fetched
             pid = row.get("mt5_position_id")
             if pid is None:
                 return False

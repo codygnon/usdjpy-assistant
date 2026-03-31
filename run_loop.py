@@ -1877,7 +1877,7 @@ def _run_trade_management(
 def _is_transient_broker_error(e: Exception) -> bool:
     """Return True for transient HTTP errors (502/503/504/429) that don't need dashboard logging."""
     msg = str(e)
-    return any(code in msg for code in (": 502 ", ": 503 ", ": 504 ", ": 429 ", "502 non-JSON", "503 non-JSON", "504 non-JSON"))
+    return any(code in msg for code in (": 500 ", ": 502 ", ": 503 ", ": 504 ", ": 429 ", "500 An internal", "502 non-JSON", "503 non-JSON", "504 non-JSON"))
 
 
 def _record_loop_error(profile, store, message: str) -> None:
