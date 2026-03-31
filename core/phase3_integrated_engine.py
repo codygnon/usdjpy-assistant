@@ -556,6 +556,7 @@ def load_phase3_sizing_config(
         config_path = root / "research_out" / "phase3_integrated_sizing_config.json"
     overrides = _read_json(config_path) if config_path.exists() else {}
     effective = dict(normalized)
+    canonical_spec = None
     try:
         from core.phase3_package_spec import load_phase3_package_spec
 
@@ -566,6 +567,31 @@ def load_phase3_sizing_config(
         pass
     effective = _deep_merge(effective, overrides if isinstance(overrides, dict) else {})
 
+    # Defended preset: lock critical defended overlays after file-based overrides.
+    # This prevents accidental sizing-config edits from mutating frozen package intent.
+    locked_keys: list[str] = []
+    try:
+        if str(preset_id or "").strip().lower() == "phase3_integrated_v7_defended" and canonical_spec is not None:
+            can_v14 = (canonical_spec.runtime_overrides or {}).get("v14", {})
+            can_ldn = (canonical_spec.runtime_overrides or {}).get("london_v2", {})
+            can_v44 = (canonical_spec.runtime_overrides or {}).get("v44_ny", {})
+
+            if isinstance(can_ldn, dict):
+                for key in ("d_suppress_weekdays", "d_tp1_r", "d_be_offset_pips", "d_tp2_r"):
+                    if key in can_ldn:
+                        effective.setdefault("london_v2", {})[key] = can_ldn[key]
+                        locked_keys.append(f"london_v2.{key}")
+            if isinstance(can_v44, dict) and "defensive_veto_cells" in can_v44:
+                effective.setdefault("v44_ny", {})["defensive_veto_cells"] = can_v44["defensive_veto_cells"]
+                locked_keys.append("v44_ny.defensive_veto_cells")
+            if isinstance(can_v14, dict):
+                cell_overrides = can_v14.get("cell_scale_overrides")
+                if isinstance(cell_overrides, dict) and "ambiguous/er_mid/der_pos:sell" in cell_overrides:
+                    effective.setdefault("v14", {}).setdefault("cell_scale_overrides", {})["ambiguous/er_mid/der_pos:sell"] = cell_overrides["ambiguous/er_mid/der_pos:sell"]
+                    locked_keys.append("v14.cell_scale_overrides.ambiguous/er_mid/der_pos:sell")
+    except Exception:
+        pass
+
     hash_input = json.dumps(effective, sort_keys=True, separators=(",", ":"))
     effective_hash = hashlib.sha256(hash_input.encode("utf-8")).hexdigest()[:16]
     effective["_meta"] = {
@@ -573,6 +599,7 @@ def load_phase3_sizing_config(
         "source_paths": {k: str(v) for k, v in src_paths.items()},
         "override_path": str(config_path),
         "loaded_at_utc": datetime.now(timezone.utc).isoformat(),
+        "locked_keys": locked_keys,
     }
     return effective
 
@@ -1903,7 +1930,8 @@ def report_phase3_ny_caps(phase3_state: dict, now_utc: datetime, v44_cfg: Option
     consecutive_losses = int(sdat.get("consecutive_losses", 0))
     open_count = int(phase3_state.get("open_trade_count", 0))
     cfg = v44_cfg or {}
-    max_open = int(cfg.get("max_open_positions", V44_MAX_OPEN))
+    raw_max_open = cfg.get("max_open_positions", V44_MAX_OPEN)
+    max_open = 0 if raw_max_open is None else int(raw_max_open)
     session_stop_losses = int(cfg.get("session_stop_losses", V44_SESSION_STOP_LOSSES))
 
     reports.append({

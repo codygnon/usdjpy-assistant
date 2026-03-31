@@ -10,8 +10,8 @@ def build_phase3_overlay_state(sizing_config: dict[str, Any] | None) -> dict[str
     v44_cfg = cfg.get("v44_ny", {}) if isinstance(cfg.get("v44_ny"), dict) else {}
     v14_cfg = cfg.get("v14", {}) if isinstance(cfg.get("v14"), dict) else {}
     return {
-        "london_setup_d_suppressed_weekdays": tuple(str(day) for day in (ldn_cfg.get("d_suppress_weekdays") or [])),
-        "v44_defensive_veto_cells": tuple(str(cell) for cell in (v44_cfg.get("defensive_veto_cells") or [])),
+        "london_setup_d_suppressed_weekdays": tuple(str(day).strip().lower() for day in (ldn_cfg.get("d_suppress_weekdays") or [])),
+        "v44_defensive_veto_cells": tuple(str(cell).strip().lower() for cell in (v44_cfg.get("defensive_veto_cells") or [])),
         "v14_cell_scale_overrides": dict(v14_cfg.get("cell_scale_overrides") or {}),
     }
 
@@ -34,7 +34,7 @@ def london_setup_d_weekday_block(
     if not blocked_days or not _is_london_setup_d(strategy_tag):
         return False, None
     day_name = now_utc.strftime("%A")
-    if isinstance(blocked_days, (list, tuple, set)) and day_name in blocked_days:
+    if isinstance(blocked_days, (list, tuple, set)) and day_name.lower() in {str(day).strip().lower() for day in blocked_days}:
         return True, f"london_v2_d: L1 weekday suppression ({day_name})"
     return False, None
 
@@ -50,7 +50,7 @@ def london_setup_d_weekday_block_from_state(
     if not blocked_days or not _is_london_setup_d(strategy_tag):
         return False, None
     day_name = now_utc.strftime("%A")
-    if day_name in blocked_days:
+    if day_name.lower() in {str(day).strip().lower() for day in blocked_days}:
         return True, f"london_v2_d: L1 weekday suppression ({day_name})"
     return False, None
 
@@ -64,8 +64,9 @@ def v44_defensive_veto_block(
     veto_cells = cfg.get("defensive_veto_cells")
     if not ownership_cell or not isinstance(veto_cells, (list, tuple, set)):
         return False, None
-    if ownership_cell in veto_cells:
-        return True, f"v44_ny: defensive veto ({ownership_cell})"
+    normalized = str(ownership_cell).strip().lower()
+    if normalized in {str(cell).strip().lower() for cell in veto_cells}:
+        return True, f"v44_ny: defensive veto ({normalized})"
     return False, None
 
 
@@ -76,9 +77,10 @@ def v44_defensive_veto_block_from_state(
 ) -> tuple[bool, str | None]:
     state = overlay_state if isinstance(overlay_state, dict) else {}
     veto_cells = state.get("v44_defensive_veto_cells") or ()
-    if not ownership_cell or ownership_cell not in veto_cells:
+    normalized = str(ownership_cell or "").strip().lower()
+    if not normalized or normalized not in {str(cell).strip().lower() for cell in veto_cells}:
         return False, None
-    return True, f"v44_ny: defensive veto ({ownership_cell})"
+    return True, f"v44_ny: defensive veto ({normalized})"
 
 
 def resolve_v14_cell_scale_override(

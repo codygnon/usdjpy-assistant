@@ -104,11 +104,19 @@ def execute_v44_ny_session(
     if h1_df is None or h1_df.empty or m5_df is None or m5_df.empty or m1_df is None or m1_df.empty:
         return _return_no_trade(reason_text="v44_ny: missing M1/H1/M5")
 
-    v44_max_open = int(v44_config.get("max_open_positions", support.V44_MAX_OPEN))
+    def _cap_or_zero(raw: Any, fallback: int) -> int:
+        if raw is None:
+            return 0
+        try:
+            return int(raw)
+        except Exception:
+            return int(fallback)
+
+    v44_max_open = _cap_or_zero(v44_config.get("max_open_positions", support.V44_MAX_OPEN), support.V44_MAX_OPEN)
     v44_risk_pct = _as_risk_fraction(v44_config.get("risk_per_trade_pct", 0.5), 0.005)
     v44_rp_min_lot = float(v44_config.get("rp_min_lot", 1.0))
     v44_rp_max_lot = float(v44_config.get("rp_max_lot", 20.0))
-    v44_max_entries_day = int(v44_config.get("max_entries_per_day", support.V44_MAX_ENTRIES_DAY))
+    v44_max_entries_day = _cap_or_zero(v44_config.get("max_entries_per_day", support.V44_MAX_ENTRIES_DAY), support.V44_MAX_ENTRIES_DAY)
     v44_allow_internal_overlap = bool(v44_config.get("allow_internal_overlap", True))
     v44_allow_opposite_side_overlap = bool(v44_config.get("allow_opposite_side_overlap", True))
     v44_session_stop_losses = int(v44_config.get("session_stop_losses", support.V44_SESSION_STOP_LOSSES))

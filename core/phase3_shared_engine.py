@@ -266,19 +266,6 @@ def evaluate_phase3_bar(
             ownership_audit=ownership_audit,
             overlay_state=overlay_state,
         )
-    elif normalized_preset_id.startswith("phase3_integrated"):
-        exec_result = {
-            "decision": ExecutionDecision(
-                attempted=False,
-                placed=False,
-                reason="phase3: generic preset disabled during defended additive rebuild",
-                side=None,
-            ),
-            "phase3_state_updates": {},
-            "strategy_tag": None,
-            "placements": [],
-            "phase3_additive_mode": "generic_disabled",
-        }
     else:
         exec_result = execute_phase3_integrated_policy_demo_only(
             adapter=adapter,

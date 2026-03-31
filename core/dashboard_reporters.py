@@ -2602,7 +2602,8 @@ def collect_phase3_context(
             _v44_cfg_live = (load_phase3_sizing_config(preset_id=active_preset_name) or {}).get("v44_ny", {})
         except Exception:
             _v44_cfg_live = {}
-        _trade_cap = int(_v44_cfg_live.get("max_entries_per_day", V44_MAX_ENTRIES_DAY))
+        _raw_trade_cap = _v44_cfg_live.get("max_entries_per_day", V44_MAX_ENTRIES_DAY)
+        _trade_cap = 0 if _raw_trade_cap is None else int(_raw_trade_cap)
         _stop_limit = int(_v44_cfg_live.get("session_stop_losses", V44_SESSION_STOP_LOSSES))
         _trade_cap_label = str(_trade_cap) if _trade_cap > 0 else "unlimited"
         items.append(ContextItem("Trades", f"{trade_count}/{_trade_cap_label}", "v44"))

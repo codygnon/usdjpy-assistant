@@ -150,7 +150,7 @@ def project_runtime_config_from_spec(spec: Phase3PackageSpec) -> dict[str, Any]:
     for key in ("v14", "london_v2", "v44_ny"):
         if isinstance(overrides.get(key), dict):
             projected[key] = _deep_merge(projected.get(key, {}), dict(overrides.get(key) or {}))
-    l1_weekdays = list(overrides.get("l1_weekday_disable") or [])
+    l1_weekdays = [str(day).strip() for day in list(overrides.get("l1_weekday_disable") or []) if str(day).strip()]
     if l1_weekdays:
         projected["london_v2"]["d_suppress_weekdays"] = l1_weekdays
 
@@ -162,20 +162,28 @@ def project_runtime_config_from_spec(spec: Phase3PackageSpec) -> dict[str, Any]:
 
     defensive_veto = dict(overrides.get("defensive_veto") or {})
     if defensive_veto.get("strategy") == "v44_ny" and defensive_veto.get("ownership_cell"):
-        projected["v44_ny"]["defensive_veto_cells"] = [str(defensive_veto["ownership_cell"])]
+        projected["v44_ny"]["defensive_veto_cells"] = [str(defensive_veto["ownership_cell"]).strip().lower()]
 
     if strict_policy:
         projected["v44_ny"]["strict_policy_name"] = str(strict_policy.get("name") or "")
+        if "hedging_enabled" in strict_policy:
+            projected["v44_ny"]["hedging_enabled"] = bool(strict_policy.get("hedging_enabled"))
         if "allow_internal_overlap" in strict_policy:
             projected["v44_ny"]["allow_internal_overlap"] = bool(strict_policy.get("allow_internal_overlap"))
         if "allow_opposite_side_overlap" in strict_policy:
             projected["v44_ny"]["allow_opposite_side_overlap"] = bool(strict_policy.get("allow_opposite_side_overlap"))
         if "max_open_offensive" in strict_policy:
             max_open = strict_policy.get("max_open_offensive")
-            projected["v44_ny"]["max_open_positions"] = 0 if max_open is None else int(max_open)
+            projected["v44_ny"]["max_open_positions"] = None if max_open is None else int(max_open)
         if "max_entries_per_day" in strict_policy:
             max_entries = strict_policy.get("max_entries_per_day")
-            projected["v44_ny"]["max_entries_per_day"] = 0 if max_entries is None else int(max_entries)
+            projected["v44_ny"]["max_entries_per_day"] = None if max_entries is None else int(max_entries)
+        if "margin_model_enabled" in strict_policy:
+            projected["v44_ny"]["margin_model_enabled"] = bool(strict_policy.get("margin_model_enabled"))
+        if "margin_leverage" in strict_policy and strict_policy.get("margin_leverage") is not None:
+            projected["v44_ny"]["margin_leverage"] = float(strict_policy.get("margin_leverage"))
+        if "margin_buffer_pct" in strict_policy and strict_policy.get("margin_buffer_pct") is not None:
+            projected["v44_ny"]["margin_buffer_pct"] = float(strict_policy.get("margin_buffer_pct"))
         if "max_lot_per_trade" in strict_policy and strict_policy.get("max_lot_per_trade") is not None:
             max_lot = float(strict_policy["max_lot_per_trade"])
             projected["v44_ny"]["max_lot"] = max_lot
