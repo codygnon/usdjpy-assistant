@@ -575,6 +575,7 @@ def load_phase3_sizing_config(
             can_v14 = (canonical_spec.runtime_overrides or {}).get("v14", {})
             can_ldn = (canonical_spec.runtime_overrides or {}).get("london_v2", {})
             can_v44 = (canonical_spec.runtime_overrides or {}).get("v44_ny", {})
+            can_strict = canonical_spec.strict_policy if isinstance(canonical_spec.strict_policy, dict) else {}
 
             if isinstance(can_ldn, dict):
                 for key in ("d_suppress_weekdays", "d_tp1_r", "d_be_offset_pips", "d_tp2_r"):
@@ -584,6 +585,12 @@ def load_phase3_sizing_config(
             if isinstance(can_v44, dict) and "defensive_veto_cells" in can_v44:
                 effective.setdefault("v44_ny", {})["defensive_veto_cells"] = can_v44["defensive_veto_cells"]
                 locked_keys.append("v44_ny.defensive_veto_cells")
+            # Honor strict-policy day-cap authority from defended package contract.
+            # When contract sets max_entries_per_day to null, keep it unlimited in live.
+            if "max_entries_per_day" in can_strict:
+                max_entries = can_strict.get("max_entries_per_day")
+                effective.setdefault("v44_ny", {})["max_entries_per_day"] = None if max_entries is None else int(max_entries)
+                locked_keys.append("v44_ny.max_entries_per_day")
             # Lock defended NY session-window authority to normalized source-of-truth values.
             # This prevents profile-local drift in live app configs from changing
             # NY admission timing (which directly impacts baseline row parity).
