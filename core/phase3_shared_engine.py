@@ -12,6 +12,7 @@ from core.phase3_package_spec import (
     load_phase3_package_spec,
     phase3_package_spec_to_dict,
 )
+from core.phase3_session_core import resolve_phase3_bar_time
 
 
 @dataclass(frozen=True)
@@ -277,6 +278,11 @@ def evaluate_phase3_bar(
             meta["locked_keys"] = merged_locked
         effective_cfg["_meta"] = meta
 
+    eval_now_utc = datetime.now(timezone.utc)
+    m1_ref = data_by_tf.get("M1")
+    if m1_ref is not None and not getattr(m1_ref, "empty", True):
+        eval_now_utc = resolve_phase3_bar_time({"M1": m1_ref}, eval_now_utc)
+
     pip_size = float(getattr(profile, "pip_size", 0.01) or 0.01)
     ownership_audit = compute_phase3_ownership_audit_for_data(data_by_tf, pip_size)
     overlay_state = build_phase3_overlay_state(effective_cfg)
@@ -297,6 +303,8 @@ def evaluate_phase3_bar(
             sizing_config=effective_cfg,
             ownership_audit=ownership_audit,
             overlay_state=overlay_state,
+            now_utc=eval_now_utc,
+            preset_id=effective_preset_id,
         )
     else:
         exec_result = execute_phase3_integrated_policy_demo_only(

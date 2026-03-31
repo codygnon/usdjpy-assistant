@@ -26,9 +26,9 @@ from core.phase3_integrated_engine import (
     _parse_hhmm_to_hour,
     _resolve_ny_window_hours,
     classify_session,
-    execute_phase3_integrated_policy_demo_only,
     load_phase3_sizing_config,
 )
+from core.phase3_shared_engine import evaluate_phase3_bar
 from core.presets import PresetId, apply_preset, get_preset_patch
 from core.profile import default_profile_for_name, load_profile_v1
 from scripts import backtest_merged_integrated_tokyo_london_v2_ny as merged_engine
@@ -537,7 +537,8 @@ def main() -> int:
     }
     start_ts = pd.Timestamp(m1_all["time"].min()).tz_convert("UTC")
     end_ts = pd.Timestamp(m1_all["time"].max()).tz_convert("UTC")
-    sizing = load_phase3_sizing_config()
+    phase3_preset_id = getattr(profile, "active_preset_name", None)
+    sizing = load_phase3_sizing_config(preset_id=phase3_preset_id)
     adapter = RecordingMockAdapter(equity=float(args.starting_equity), pip_size=float(profile.pip_size))
     phase3_state: dict[str, Any] = {}
     records: list[dict[str, Any]] = []
@@ -608,7 +609,7 @@ def main() -> int:
             continue
 
         equity_before = adapter.balance
-        result = execute_phase3_integrated_policy_demo_only(
+        result = evaluate_phase3_bar(
             adapter=adapter,
             profile=profile,
             log_dir=Path("runtime") / profile.profile_name,
@@ -621,6 +622,7 @@ def main() -> int:
             store=adapter,
             sizing_config=sizing if sizing else None,
             is_new_m1=True,
+            preset_id=phase3_preset_id,
         )
         updates = result.get("phase3_state_updates") or {}
         if updates:

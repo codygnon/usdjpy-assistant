@@ -18,9 +18,9 @@ if str(ROOT) not in sys.path:
 from adapters.broker import get_adapter
 from core.models import MarketContext
 from core.phase3_integrated_engine import (
-    execute_phase3_integrated_policy_demo_only,
     load_phase3_sizing_config,
 )
+from core.phase3_shared_engine import evaluate_phase3_bar
 from core.profile import load_profile_v1
 
 ENTRY_BAR_MATCH_MIN = 98.5
@@ -631,7 +631,8 @@ def main() -> None:
     if m1.empty:
         raise RuntimeError("No M1 bars in requested range.")
 
-    sizing = load_phase3_sizing_config()
+    phase3_preset_id = getattr(profile, "active_preset_name", None)
+    sizing = load_phase3_sizing_config(preset_id=phase3_preset_id)
     mock_adapter = MockOrderAdapter(equity=args.equity)
     phase3_state: dict[str, Any] = {}
     records: list[dict[str, Any]] = []
@@ -663,7 +664,7 @@ def main() -> None:
             tf_idx[tf] = i
             sliced[tf] = d.iloc[:i]
 
-        result = execute_phase3_integrated_policy_demo_only(
+        result = evaluate_phase3_bar(
             adapter=mock_adapter,
             profile=profile,
             log_dir=Path("runtime") / profile.profile_name,
@@ -676,6 +677,7 @@ def main() -> None:
             store=mock_adapter,  # provides list_open_trades for London open-risk cap
             sizing_config=sizing if sizing else None,
             is_new_m1=True,
+            preset_id=phase3_preset_id,
         )
         updates = result.get("phase3_state_updates") or {}
         if updates:

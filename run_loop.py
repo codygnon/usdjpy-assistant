@@ -1758,7 +1758,11 @@ def _run_trade_management(
                     phase3_trade_key_date,
                     apply_phase3_session_outcome,
                 )
-                phase3_sizing_cfg = load_phase3_sizing_config(preset_id=getattr(profile, "active_preset_name", None)) or {}
+                phase3_exit_preset_id = _resolve_phase3_effective_preset_id(
+                    profile,
+                    preferred_preset=getattr(profile, "active_preset_name", None),
+                )
+                phase3_sizing_cfg = load_phase3_sizing_config(preset_id=phase3_exit_preset_id) or {}
                 p3_exit = manage_phase3_exit(
                     adapter=adapter,
                     profile=profile,
@@ -2534,6 +2538,33 @@ def _event_trigger_label(trigger_type: str | None, decision_reason: str | None) 
     return base
 
 
+def _resolve_phase3_effective_preset_id(
+    profile: Any,
+    policy: Any | None = None,
+    preferred_preset: str | None = None,
+) -> str | None:
+    from core.phase3_package_spec import PHASE3_DEFENDED_PRESET_ID
+
+    defended_id = str(PHASE3_DEFENDED_PRESET_ID).strip().lower()
+    profile_preset = str(getattr(profile, "active_preset_name", "") or "").strip().lower()
+    requested = str(preferred_preset or "").strip().lower()
+    policy_id = str(getattr(policy, "id", "") or "").strip().lower() if policy is not None else ""
+    if any(value == defended_id for value in (profile_preset, requested, policy_id)):
+        return PHASE3_DEFENDED_PRESET_ID
+
+    try:
+        for pol in list(getattr(getattr(profile, "execution", None), "policies", []) or []):
+            if not getattr(pol, "enabled", True):
+                continue
+            if str(getattr(pol, "type", "") or "") != "phase3_integrated":
+                continue
+            if str(getattr(pol, "id", "") or "").strip().lower() == defended_id:
+                return PHASE3_DEFENDED_PRESET_ID
+    except Exception:
+        pass
+    return preferred_preset if preferred_preset is not None else getattr(profile, "active_preset_name", None)
+
+
 def _append_phase3_minute_diagnostics(
     log_dir: Path,
     profile: Any,
@@ -2551,7 +2582,12 @@ def _append_phase3_minute_diagnostics(
     try:
         from core.phase3_integrated_engine import classify_session, load_phase3_sizing_config
         from core.dashboard_builder import build_dashboard_filters
-        cfg = load_phase3_sizing_config(preset_id=getattr(profile, "active_preset_name", None))
+        effective_preset_id = _resolve_phase3_effective_preset_id(
+            profile,
+            policy=policy,
+            preferred_preset=getattr(profile, "active_preset_name", None),
+        )
+        cfg = load_phase3_sizing_config(preset_id=effective_preset_id)
         bar_ts = pd.Timestamp(m1_bar_time)
         if bar_ts.tzinfo is None:
             bar_ts = bar_ts.tz_localize("UTC")
@@ -6322,7 +6358,12 @@ def main() -> None:
 
                     from core.phase3_integrated_engine import load_phase3_sizing_config
                     from core.phase3_shared_engine import evaluate_phase3_bar
-                    phase3_sizing = load_phase3_sizing_config(preset_id=getattr(profile, "active_preset_name", None))
+                    phase3_preset_id = _resolve_phase3_effective_preset_id(
+                        profile,
+                        policy=pol,
+                        preferred_preset=getattr(profile, "active_preset_name", None),
+                    )
+                    phase3_sizing = load_phase3_sizing_config(preset_id=phase3_preset_id)
                     exec_result = evaluate_phase3_bar(
                         adapter=adapter,
                         profile=profile,
@@ -6336,7 +6377,7 @@ def main() -> None:
                         store=store,
                         sizing_config=phase3_sizing if phase3_sizing else None,
                         is_new_m1=(phase3_is_new or args.once),
-                        preset_id=getattr(profile, "active_preset_name", None),
+                        preset_id=phase3_preset_id,
                     )
                     dec = exec_result["decision"]
                     p3_state_updates = exec_result.get("phase3_state_updates", {})
