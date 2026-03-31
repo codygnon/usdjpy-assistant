@@ -273,6 +273,27 @@ def _margin_state(real_adapter, spec, lots: float) -> Phase3MarginState:
     )
 
 
+def _conflict_block_reason(
+    conflict: Phase3ConflictPolicyState,
+    *,
+    accepted_count: int,
+    apply_max_open_cap: bool,
+) -> str | None:
+    if conflict.max_entries_per_day is not None and conflict.max_entries_per_day > 0:
+        current = conflict.entries_today_before + max(0, int(accepted_count))
+        if current >= conflict.max_entries_per_day:
+            return f"max_entries_day_{current}/{conflict.max_entries_per_day}"
+    if apply_max_open_cap and conflict.max_open_offensive is not None and conflict.max_open_offensive > 0:
+        current_open = conflict.open_book_count_before + max(0, int(accepted_count))
+        if current_open >= conflict.max_open_offensive:
+            return f"max_open_{current_open}/{conflict.max_open_offensive}"
+    if not conflict.allow_internal_overlap and conflict.same_side_open_count_before > 0:
+        return "internal_overlap_blocked"
+    if not conflict.allow_opposite_side_overlap and conflict.opposite_side_open_count_before > 0:
+        return "opposite_side_overlap_blocked"
+    return None
+
+
 def _candidate_identity(strategy_tag: str, side: str, now_utc: datetime) -> str:
     return f"{strategy_tag}|{side}|{pd.Timestamp(now_utc).floor('min').isoformat()}"
 
@@ -617,15 +638,24 @@ def execute_phase3_defended_additive_policy(
     simulated_open = list(open_trades)
 
     for candidate in baseline_candidates:
+        conflict = _conflict_state(spec, phase3_state, simulated_open, candidate.side, now_utc)
         margin = _margin_state(adapter, spec, candidate.lots)
-        if margin.blocked:
+        block_reason = _conflict_block_reason(
+            conflict,
+            accepted_count=len(accepted),
+            apply_max_open_cap=False,
+        )
+        if block_reason is None and margin.blocked:
+            block_reason = margin.reason or "margin_blocked"
+        if block_reason:
             rejected.append(
                 {
                     "identity": candidate.identity,
                     "strategy_tag": candidate.strategy_tag,
                     "intent_source": candidate.intent_source,
-                    "reason": margin.reason or "margin_blocked",
-                    "conflict_state": {},
+                    "slice_id": candidate.slice_id,
+                    "reason": block_reason,
+                    "conflict_state": asdict(conflict),
                     "margin_state": asdict(margin),
                 }
             )
@@ -639,17 +669,12 @@ def execute_phase3_defended_additive_policy(
     for candidate in offensive_candidates:
         conflict = _conflict_state(spec, phase3_state, simulated_open, candidate.side, now_utc)
         margin = _margin_state(adapter, spec, candidate.lots)
-        block_reason = None
-        offensive_accepted_count = len([row for row in accepted if row.intent_source == "offensive"])
-        if conflict.max_entries_per_day is not None and conflict.max_entries_per_day > 0 and conflict.entries_today_before + offensive_accepted_count >= conflict.max_entries_per_day:
-            block_reason = f"max_entries_day_{conflict.entries_today_before + offensive_accepted_count}/{conflict.max_entries_per_day}"
-        elif conflict.max_open_offensive is not None and conflict.max_open_offensive > 0 and conflict.open_book_count_before + offensive_accepted_count >= conflict.max_open_offensive:
-            block_reason = f"max_open_{conflict.open_book_count_before + offensive_accepted_count}/{conflict.max_open_offensive}"
-        elif not conflict.allow_internal_overlap and (conflict.same_side_open_count_before + offensive_accepted_count) > 0:
-            block_reason = "internal_overlap_blocked"
-        elif not conflict.allow_opposite_side_overlap and conflict.opposite_side_open_count_before > 0:
-            block_reason = "opposite_side_overlap_blocked"
-        elif margin.blocked:
+        block_reason = _conflict_block_reason(
+            conflict,
+            accepted_count=len(accepted),
+            apply_max_open_cap=True,
+        )
+        if block_reason is None and margin.blocked:
             block_reason = margin.reason or "margin_blocked"
 
         if block_reason:

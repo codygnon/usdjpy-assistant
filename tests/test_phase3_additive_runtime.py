@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 from core.phase3_additive_runtime import (
@@ -43,6 +44,14 @@ class _Adapter:
 class _Store:
     def list_open_trades(self, profile_name: str):
         return []
+
+
+class _StoreWithOpen:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def list_open_trades(self, profile_name: str):
+        return list(self._rows)
 
 
 def test_defended_additive_runtime_blocks_generic_preset():
@@ -172,3 +181,136 @@ def test_split_candidate_intents_distinguishes_baseline_and_offensive() -> None:
     assert baseline_intents[0].strategy_tag == "phase3:v44_ny:normal@breakout/er_mid/der_pos"
     assert len(baseline_candidates) == 1
     assert baseline_candidates[0].intent_source == "baseline"
+
+
+def test_baseline_candidate_respects_conflict_overlap(monkeypatch):
+    import core.phase3_additive_runtime as ar
+    import core.phase3_integrated_engine as engine
+
+    baseline = Phase3AdditiveCandidate(
+        identity="ny-baseline",
+        intent_source="baseline",
+        slice_id="baseline:v44_ny:sell@",
+        strategy_tag="phase3:v44_ny:strong@momentum/er_low/der_pos",
+        strategy_family="v44_ny",
+        side="sell",
+        ownership_cell="momentum/er_low/der_pos",
+        entry_time_utc="2026-03-30T16:08:00+00:00",
+        units=100000,
+        lots=1.0,
+        entry_price=159.44,
+        sl_price=159.53,
+        tp1_price=159.26,
+        reason="baseline",
+    )
+
+    def _fake_eval(**kwargs):
+        return [baseline], []
+
+    monkeypatch.setattr(ar, "_evaluate_family_candidates", _fake_eval)
+    monkeypatch.setattr(
+        ar,
+        "apply_variant_k_baseline_admission",
+        lambda candidates, data_by_tf: SimpleNamespace(accepted=list(candidates), rejected=[], adjustments={}, diagnostics=[]),
+    )
+    monkeypatch.setattr(
+        ar,
+        "load_phase3_package_spec",
+        lambda preset_id: SimpleNamespace(
+            package_id="pkg",
+            strict_policy={"allow_internal_overlap": False, "allow_opposite_side_overlap": True},
+            base_cell_scales={},
+        ),
+    )
+
+    profile = SimpleNamespace(active_preset_name="phase3_integrated_v7_defended", profile_name="demo", name="demo", symbol="USDJPY", pip_size=0.01)
+    policy = SimpleNamespace(id="phase3_integrated_v7_defended")
+    store = _StoreWithOpen([{"entry_type": "phase3:v44_ny:normal@momentum/er_low/der_pos", "side": "sell"}])
+    result = execute_phase3_defended_additive_policy(
+        adapter=_Adapter(),
+        profile=profile,
+        log_dir=None,
+        policy=policy,
+        context={},
+        data_by_tf={},
+        tick=SimpleNamespace(bid=159.44, ask=159.45),
+        mode="ARMED_AUTO_DEMO",
+        phase3_state={},
+        store=store,
+        sizing_config={},
+        ownership_audit={},
+        overlay_state={},
+    )
+    assert result["phase3_additive_truth"]["accepted_count"] == 0
+    assert len(result["phase3_additive_rejected"]) == 1
+    assert result["phase3_additive_rejected"][0]["reason"] == "internal_overlap_blocked"
+
+
+def test_max_entries_day_counts_baseline_before_offensive(monkeypatch):
+    import core.phase3_additive_runtime as ar
+
+    baseline = Phase3AdditiveCandidate(
+        identity="ny-baseline",
+        intent_source="baseline",
+        slice_id="baseline:v44_ny:sell@",
+        strategy_tag="phase3:v44_ny:strong@momentum/er_low/der_pos",
+        strategy_family="v44_ny",
+        side="sell",
+        ownership_cell="momentum/er_low/der_pos",
+        entry_time_utc="2026-03-30T16:08:00+00:00",
+        units=100000,
+        lots=1.0,
+        entry_price=159.44,
+        sl_price=159.53,
+        tp1_price=159.26,
+        reason="baseline",
+    )
+    offensive = replace(
+        baseline,
+        identity="off-1",
+        intent_source="offensive",
+        strategy_tag="phase3:london_v2_d@momentum/er_low/der_pos",
+        strategy_family="london_v2",
+        slice_id="L1_mom_low_pos_buy",
+        side="buy",
+    )
+
+    def _fake_eval(**kwargs):
+        return [baseline, offensive], []
+
+    monkeypatch.setattr(ar, "_evaluate_family_candidates", _fake_eval)
+    monkeypatch.setattr(
+        ar,
+        "apply_variant_k_baseline_admission",
+        lambda candidates, data_by_tf: SimpleNamespace(accepted=list(candidates), rejected=[], adjustments={}, diagnostics=[]),
+    )
+    monkeypatch.setattr(
+        ar,
+        "load_phase3_package_spec",
+        lambda preset_id: SimpleNamespace(
+            package_id="pkg",
+            strict_policy={"max_entries_per_day": 1, "allow_internal_overlap": True, "allow_opposite_side_overlap": True},
+            base_cell_scales={},
+        ),
+    )
+
+    profile = SimpleNamespace(active_preset_name="phase3_integrated_v7_defended", profile_name="demo", name="demo", symbol="USDJPY", pip_size=0.01)
+    policy = SimpleNamespace(id="phase3_integrated_v7_defended")
+    result = execute_phase3_defended_additive_policy(
+        adapter=_Adapter(),
+        profile=profile,
+        log_dir=None,
+        policy=policy,
+        context={},
+        data_by_tf={},
+        tick=SimpleNamespace(bid=159.44, ask=159.45),
+        mode="ARMED_AUTO_DEMO",
+        phase3_state={},
+        store=_Store(),
+        sizing_config={},
+        ownership_audit={},
+        overlay_state={},
+    )
+    assert result["phase3_additive_truth"]["accepted_count"] == 1
+    reasons = [row.get("reason") for row in result["phase3_additive_rejected"]]
+    assert "max_entries_day_1/1" in reasons

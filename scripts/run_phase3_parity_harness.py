@@ -52,12 +52,13 @@ def _precompute_frames(m1: pd.DataFrame) -> dict[str, pd.DataFrame]:
 
 def _data_snapshot(frames: dict[str, pd.DataFrame], idx: int) -> dict[str, pd.DataFrame]:
     bar_time = frames["M1"].iloc[idx]["time"]
-    m1_cut = frames["M1"].iloc[: idx + 1].copy()
+    # Keep slices as lightweight views where possible; full copies dominate runtime.
+    m1_cut = frames["M1"].iloc[: idx + 1]
     return {
         "M1": m1_cut,
-        "M5": frames["M5"][frames["M5"]["time"] <= bar_time].copy(),
-        "M15": frames["M15"][frames["M15"]["time"] <= bar_time].copy(),
-        "H1": frames["H1"][frames["H1"]["time"] <= bar_time].copy(),
+        "M5": frames["M5"][frames["M5"]["time"] <= bar_time],
+        "M15": frames["M15"][frames["M15"]["time"] <= bar_time],
+        "H1": frames["H1"][frames["H1"]["time"] <= bar_time],
     }
 
 
@@ -199,9 +200,11 @@ def run_traces_batch(
     """Load CSV and precompute MTF frames once, then emit multiple trace windows."""
     m1 = _load_m1(csv_path)
     frames = _precompute_frames(m1)
+    print(f"batch: loaded {len(m1)} M1 rows, precomputed MTF, {len(jobs)} trace job(s)", flush=True)
     out: list[dict[str, Any]] = []
-    for job in jobs:
+    for ji, job in enumerate(jobs):
         out_path = Path(job["out"])
+        print(f"batch: job {ji + 1}/{len(jobs)} -> {out_path}", flush=True)
         payload = _run_trace_with_frames(
             m1,
             frames,
@@ -215,6 +218,7 @@ def run_traces_batch(
             max_bars=job.get("max_bars"),
             warmup_bars=int(job.get("warmup_bars") or 0),
         )
+        print(f"batch: wrote {out_path} rows={len(payload['trace'])}", flush=True)
         out.append(payload)
     return out
 
