@@ -128,6 +128,98 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return out
 
 
+def _set_nested_path(payload: dict[str, Any], dotted_key: str, value: Any) -> None:
+    parts = [p for p in str(dotted_key or "").split(".") if p]
+    if not parts:
+        return
+    cursor: dict[str, Any] = payload
+    for part in parts[:-1]:
+        node = cursor.get(part)
+        if not isinstance(node, dict):
+            node = {}
+            cursor[part] = node
+        cursor = node
+    cursor[parts[-1]] = value
+
+
+def _get_nested_path(payload: dict[str, Any], dotted_key: str) -> Any:
+    parts = [p for p in str(dotted_key or "").split(".") if p]
+    cursor: Any = payload
+    for part in parts:
+        if not isinstance(cursor, dict) or part not in cursor:
+            return None
+        cursor = cursor.get(part)
+    return cursor
+
+
+def _defended_locked_updates(
+    *,
+    preset_id: str | None,
+    canonical_spec: Any,
+    normalized_cfg: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    updates: dict[str, Any] = {}
+    locked: list[str] = []
+    if str(preset_id or "").strip().lower() != "phase3_integrated_v7_defended" or canonical_spec is None:
+        return updates, locked
+
+    can_v14 = (canonical_spec.runtime_overrides or {}).get("v14", {})
+    can_ldn = (canonical_spec.runtime_overrides or {}).get("london_v2", {})
+    can_v44 = (canonical_spec.runtime_overrides or {}).get("v44_ny", {})
+    can_strict = canonical_spec.strict_policy if isinstance(canonical_spec.strict_policy, dict) else {}
+
+    if isinstance(can_ldn, dict):
+        for key in ("d_suppress_weekdays", "d_tp1_r", "d_be_offset_pips", "d_tp2_r"):
+            if key in can_ldn:
+                _set_nested_path(updates, f"london_v2.{key}", can_ldn[key])
+                locked.append(f"london_v2.{key}")
+
+    if isinstance(can_v44, dict) and "defensive_veto_cells" in can_v44:
+        _set_nested_path(updates, "v44_ny.defensive_veto_cells", can_v44["defensive_veto_cells"])
+        locked.append("v44_ny.defensive_veto_cells")
+
+    if "max_entries_per_day" in can_strict:
+        max_entries = can_strict.get("max_entries_per_day")
+        _set_nested_path(updates, "v44_ny.max_entries_per_day", None if max_entries is None else int(max_entries))
+        locked.append("v44_ny.max_entries_per_day")
+
+    base_v44 = normalized_cfg.get("v44_ny", {}) if isinstance(normalized_cfg.get("v44_ny"), dict) else {}
+    for key in ("ny_window_mode", "ny_start_hour", "ny_end_hour", "start_delay_minutes"):
+        if key in base_v44:
+            _set_nested_path(updates, f"v44_ny.{key}", base_v44[key])
+            locked.append(f"v44_ny.{key}")
+
+    if isinstance(can_v14, dict):
+        cell_overrides = can_v14.get("cell_scale_overrides")
+        if isinstance(cell_overrides, dict) and "ambiguous/er_mid/der_pos:sell" in cell_overrides:
+            _set_nested_path(
+                updates,
+                "v14.cell_scale_overrides.ambiguous/er_mid/der_pos:sell",
+                cell_overrides["ambiguous/er_mid/der_pos:sell"],
+            )
+            locked.append("v14.cell_scale_overrides.ambiguous/er_mid/der_pos:sell")
+
+    return updates, locked
+
+
+def apply_defended_locked_keys(
+    effective_cfg: dict[str, Any],
+    *,
+    preset_id: str | None,
+    canonical_spec: Any,
+    normalized_cfg: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    updates, locked_keys = _defended_locked_updates(
+        preset_id=preset_id,
+        canonical_spec=canonical_spec,
+        normalized_cfg=normalized_cfg,
+    )
+    if not updates:
+        return effective_cfg, []
+    out = _deep_merge(effective_cfg, updates)
+    return out, locked_keys
+
+
 def _phase3_order_confirmed(adapter, profile, order_result) -> tuple[bool, Optional[int]]:
     """
     Confirm a market order actually opened on the broker before Phase 3 treats it
@@ -567,43 +659,15 @@ def load_phase3_sizing_config(
         pass
     effective = _deep_merge(effective, overrides if isinstance(overrides, dict) else {})
 
-    # Defended preset: lock critical defended overlays after file-based overrides.
-    # This prevents accidental sizing-config edits from mutating frozen package intent.
+    # Defended preset: lock contract-critical keys after all file-based merges.
     locked_keys: list[str] = []
     try:
-        if str(preset_id or "").strip().lower() == "phase3_integrated_v7_defended" and canonical_spec is not None:
-            can_v14 = (canonical_spec.runtime_overrides or {}).get("v14", {})
-            can_ldn = (canonical_spec.runtime_overrides or {}).get("london_v2", {})
-            can_v44 = (canonical_spec.runtime_overrides or {}).get("v44_ny", {})
-            can_strict = canonical_spec.strict_policy if isinstance(canonical_spec.strict_policy, dict) else {}
-
-            if isinstance(can_ldn, dict):
-                for key in ("d_suppress_weekdays", "d_tp1_r", "d_be_offset_pips", "d_tp2_r"):
-                    if key in can_ldn:
-                        effective.setdefault("london_v2", {})[key] = can_ldn[key]
-                        locked_keys.append(f"london_v2.{key}")
-            if isinstance(can_v44, dict) and "defensive_veto_cells" in can_v44:
-                effective.setdefault("v44_ny", {})["defensive_veto_cells"] = can_v44["defensive_veto_cells"]
-                locked_keys.append("v44_ny.defensive_veto_cells")
-            # Honor strict-policy day-cap authority from defended package contract.
-            # When contract sets max_entries_per_day to null, keep it unlimited in live.
-            if "max_entries_per_day" in can_strict:
-                max_entries = can_strict.get("max_entries_per_day")
-                effective.setdefault("v44_ny", {})["max_entries_per_day"] = None if max_entries is None else int(max_entries)
-                locked_keys.append("v44_ny.max_entries_per_day")
-            # Lock defended NY session-window authority to normalized source-of-truth values.
-            # This prevents profile-local drift in live app configs from changing
-            # NY admission timing (which directly impacts baseline row parity).
-            base_v44 = normalized.get("v44_ny", {}) if isinstance(normalized.get("v44_ny"), dict) else {}
-            for key in ("ny_window_mode", "ny_start_hour", "ny_end_hour", "start_delay_minutes"):
-                if key in base_v44:
-                    effective.setdefault("v44_ny", {})[key] = base_v44[key]
-                    locked_keys.append(f"v44_ny.{key}")
-            if isinstance(can_v14, dict):
-                cell_overrides = can_v14.get("cell_scale_overrides")
-                if isinstance(cell_overrides, dict) and "ambiguous/er_mid/der_pos:sell" in cell_overrides:
-                    effective.setdefault("v14", {}).setdefault("cell_scale_overrides", {})["ambiguous/er_mid/der_pos:sell"] = cell_overrides["ambiguous/er_mid/der_pos:sell"]
-                    locked_keys.append("v14.cell_scale_overrides.ambiguous/er_mid/der_pos:sell")
+        effective, locked_keys = apply_defended_locked_keys(
+            effective,
+            preset_id=preset_id,
+            canonical_spec=canonical_spec,
+            normalized_cfg=normalized,
+        )
     except Exception:
         pass
 

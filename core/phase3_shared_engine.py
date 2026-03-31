@@ -227,6 +227,7 @@ def evaluate_phase3_bar(
 ) -> dict[str, Any]:
     from core.phase3_integrated_engine import (
         ExecutionDecision,
+        apply_defended_locked_keys,
         execute_phase3_integrated_policy_demo_only,
         load_phase3_sizing_config,
     )
@@ -242,8 +243,33 @@ def evaluate_phase3_bar(
             effective_cfg = load_phase3_sizing_config()
     # Prefer the canonical spec projection when present so both live and replay
     # resolve the defended package the same way.
+    locked_reference_cfg = dict(effective_cfg)
     if spec.runtime_overrides:
         effective_cfg = _deep_merge(effective_cfg, spec.runtime_overrides)
+    # Re-assert defended locked keys after late merges to prevent post-lock drift.
+    reasserted_locked: list[str] = []
+    try:
+        normalized_preset_id = str(preset_id or "").strip().lower()
+        if normalized_preset_id == PHASE3_DEFENDED_PRESET_ID:
+            normalized_cfg = {"v44_ny": dict((locked_reference_cfg.get("v44_ny") or {}))}
+            effective_cfg, reasserted_locked = apply_defended_locked_keys(
+                effective_cfg,
+                preset_id=preset_id,
+                canonical_spec=spec,
+                normalized_cfg=normalized_cfg,
+            )
+    except Exception:
+        reasserted_locked = []
+    if reasserted_locked:
+        meta = dict(effective_cfg.get("_meta") or {})
+        baseline_locked = list(meta.get("locked_keys") or [])
+        merged_locked = []
+        for key in baseline_locked + list(reasserted_locked):
+            if key not in merged_locked:
+                merged_locked.append(key)
+        if merged_locked:
+            meta["locked_keys"] = merged_locked
+        effective_cfg["_meta"] = meta
 
     pip_size = float(getattr(profile, "pip_size", 0.01) or 0.01)
     ownership_audit = compute_phase3_ownership_audit_for_data(data_by_tf, pip_size)

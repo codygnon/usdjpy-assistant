@@ -10,6 +10,7 @@ import re
 import signal
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -4388,6 +4389,23 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
     }
 
 
+def _build_live_dashboard_state_with_timeout(
+    profile_name: str,
+    profile_path: Optional[str] = None,
+    log_dir: Optional[Path] = None,
+    timeout_seconds: float = 2.5,
+) -> dict[str, Any]:
+    """Bound live dashboard latency; fall back when broker calls stall."""
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        fut = executor.submit(_build_live_dashboard_state, profile_name, profile_path, log_dir)
+        try:
+            return fut.result(timeout=timeout_seconds)
+        except FuturesTimeoutError:
+            return {"error": "live_dashboard_timeout", "timestamp_utc": None}
+        except Exception as e:
+            return {"error": f"live_dashboard_exception:{e}", "timestamp_utc": None}
+
+
 def _strip_trial10_directional_cap_filter(payload: dict[str, Any]) -> dict[str, Any]:
     """Remove the retired Trial 10 directional-cap row from dashboard responses."""
     filters = payload.get("filters")
@@ -4946,7 +4964,7 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
             prefer_live_phase3 = _dashboard_state_is_phase3(file_state)
             _moderately_stale = stale and (stale_age_seconds is not None and stale_age_seconds < 600)
             if prefer_live_phase3 and _moderately_stale:
-                live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
+                live = _build_live_dashboard_state_with_timeout(profile_name, profile_path, log_dir=log_dir)
                 if "error" not in live:
                     result = dict(live)
                     result["loop_running"] = loop_running
@@ -4960,7 +4978,7 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
             return out
 
         # No file state — try live build (first load / no loop has ever run)
-        live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
+        live = _build_live_dashboard_state_with_timeout(profile_name, profile_path, log_dir=log_dir)
         if "error" not in live:
             live["stale"] = True
             live["stale_age_seconds"] = None
@@ -5006,7 +5024,7 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
         return cached[1]
 
     log_dir = _pick_best_dashboard_log_dir(profile_name, profile_path)
-    live = _build_live_dashboard_state(profile_name, profile_path, log_dir=log_dir)
+    live = _build_live_dashboard_state_with_timeout(profile_name, profile_path, log_dir=log_dir)
     if "error" in live:
         return _strip_trial10_directional_cap_filter(live)
 

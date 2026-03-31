@@ -277,3 +277,23 @@ def test_manage_v44_exit_does_not_immediately_close_runner_after_tp1(monkeypatch
         },
     )
     assert result["action"] != "tp2_full"
+
+
+def test_defended_sizing_lock_ignores_runtime_override_for_ny_window_and_day_cap(tmp_path) -> None:
+    override = tmp_path / "phase3_integrated_sizing_config.json"
+    override.write_text(
+        '{"v44_ny":{"ny_window_mode":"auto_dst","ny_start_hour":12.0,"start_delay_minutes":0,"max_entries_per_day":7}}',
+        encoding="utf-8",
+    )
+    cfg = phase3_engine.load_phase3_sizing_config(
+        config_path=override,
+        preset_id="phase3_integrated_v7_defended",
+    )
+    v44 = cfg.get("v44_ny", {})
+    # Contract/source-of-truth wins for defended preset.
+    assert v44.get("ny_window_mode") == "fixed_utc"
+    assert float(v44.get("ny_start_hour")) == 13.0
+    assert int(v44.get("start_delay_minutes")) == 5
+    # Contract strict-policy has null => unlimited.
+    assert v44.get("max_entries_per_day") is None
+    assert "v44_ny.max_entries_per_day" in list((cfg.get("_meta") or {}).get("locked_keys") or [])

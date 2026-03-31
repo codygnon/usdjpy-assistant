@@ -166,6 +166,9 @@ def execute_v44_ny_session(
             "ny_end_hour": float(v44_ny_end_hour),
             "start_delay_minutes": int(v44_start_delay_min),
             "entry_spread_limit_pips": float(v44_max_entry_spread),
+            "effective_ny_start_utc": ny_start_ts.isoformat(),
+            "effective_ny_end_utc": ny_end_ts.isoformat(),
+            "bar_time_utc": _ts_now.isoformat(),
         }
     )
 

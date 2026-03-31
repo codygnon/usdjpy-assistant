@@ -62,8 +62,8 @@ def test_load_phase3_package_spec_projects_defended_runtime_overrides(tmp_path: 
     assert projected["v44_ny"]["strict_policy_name"] == "native_v44_hedging_like"
     assert projected["v44_ny"]["allow_internal_overlap"] is True
     assert projected["v44_ny"]["allow_opposite_side_overlap"] is True
-    assert projected["v44_ny"]["max_open_positions"] == 0
-    assert projected["v44_ny"]["max_entries_per_day"] == 0
+    assert projected["v44_ny"]["max_open_positions"] is None
+    assert projected["v44_ny"]["max_entries_per_day"] is None
     assert projected["v44_ny"]["max_lot"] == 20.0
     assert projected["v44_ny"]["rp_max_lot"] == 20.0
     assert projected["v14"]["cell_scale_overrides"]["ambiguous/er_mid/der_pos:sell"] == 0.25
