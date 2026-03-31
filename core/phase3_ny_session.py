@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -62,11 +63,87 @@ def execute_v44_ny_session(
                 sdat[f"parity_{key}"] = value
         return ctx
 
-    def _return_no_trade(*, reason_text: str, attempted: bool = False, side_value: Optional[str] = None) -> dict:
+    def _derive_gate_label(reason_text: str) -> str:
+        reason_l = str(reason_text or "").lower()
+        if "start delay" in reason_l:
+            return "start_delay"
+        if "spread veto" in reason_l:
+            return "spread_veto"
+        if "missing m1/h1/m5" in reason_l:
+            return "missing_tf_data"
+        if "max open" in reason_l:
+            return "max_open_cap"
+        if "skip day" in reason_l:
+            return "skip_day"
+        if "skip month" in reason_l:
+            return "skip_month"
+        if "daily loss limit" in reason_l:
+            return "daily_loss_limit"
+        if "weekly loss limit" in reason_l:
+            return "weekly_loss_limit"
+        if "h4 adx" in reason_l:
+            return "h4_adx_gate"
+        if "h1 slope weak" in reason_l:
+            return "h1_slope_min_gate"
+        if "h1 slope inconsistent" in reason_l:
+            return "h1_slope_consistency_gate"
+        if "exhaustion gate cooldown" in reason_l:
+            return "exhaustion_cooldown_gate"
+        if "exhaustion gate (" in reason_l:
+            return "exhaustion_range_gate"
+        if "entry cutoff" in reason_l:
+            return "entry_cutoff_gate"
+        if "news window block" in reason_l:
+            return "news_window_block"
+        if "queued confirmation progress" in reason_l:
+            return "queued_confirmation_progress"
+        if "news-trend ema misaligned" in reason_l:
+            return "news_trend_ema_misaligned"
+        if "strength" in reason_l and "blocked by" in reason_l:
+            return "strength_allow_gate"
+        if "queued signal replaced" in reason_l:
+            return "queued_signal_replaced"
+        if "queued signal already pending" in reason_l:
+            return "queued_signal_pending"
+        if "signal queued for" in reason_l:
+            return "queued_signal_generated"
+        if "regime block" in reason_l:
+            return "regime_block_gate"
+        if "defensive veto" in reason_l:
+            return "defensive_veto_gate"
+        if "size=0" in reason_l:
+            return "size_zero_gate"
+        if reason_l.startswith("v44:"):
+            return "evaluate_v44_entry_gate"
+        return "no_trade_other"
+
+    def _return_no_trade(
+        *,
+        reason_text: str,
+        attempted: bool = False,
+        side_value: Optional[str] = None,
+        gate_label: str | None = None,
+    ) -> dict:
+        caller = inspect.currentframe().f_back
+        caller_line = int(caller.f_lineno) if caller is not None else -1
+        caller_name = str(caller.f_code.co_name) if caller is not None else ""
+        resolved_gate = str(gate_label or _derive_gate_label(reason_text))
+        parity_context["first_no_trade_gate"] = resolved_gate
+        parity_context["first_no_trade_reason"] = str(reason_text)
+        parity_context["first_no_trade_line"] = caller_line
+        parity_context["first_no_trade_fn"] = caller_name
         no_trade["decision"] = ExecutionDecision(attempted=attempted, placed=False, reason=reason_text, side=side_value)
         if session_key is not None and isinstance(sdat, dict):
             no_trade["phase3_state_updates"] = {session_key: sdat}
         no_trade["v44_parity_context"] = _sync_parity_context()
+        print(
+            "[phase3][v44_ny][gate] "
+            f"gate={resolved_gate} line={caller_line} attempted={int(attempted)} "
+            f"side={side_value or ''} reason={reason_text} "
+            f"ny_window_mode={parity_context.get('ny_window_mode')} "
+            f"ny_start_hour={parity_context.get('ny_start_hour')} "
+            f"start_delay_minutes={parity_context.get('start_delay_minutes')}"
+        )
         return no_trade
 
     v44_config = (sizing_config or {}).get("v44_ny", {})

@@ -224,3 +224,56 @@ def test_manage_v44_exit_uses_managed_tp1_pips_fallback(monkeypatch) -> None:
     assert result["action"] == "tp1_partial"
     assert adapter.partial_calls, "expected a partial close at the managed TP1 fallback"
     assert store.updates and store.updates[0][1]["tp1_partial_done"] == 1
+
+
+def test_manage_v44_exit_does_not_immediately_close_runner_after_tp1(monkeypatch) -> None:
+    class _Adapter:
+        def __init__(self) -> None:
+            self.full_close_calls = 0
+            self.stop_updates = []
+
+        def update_position_stop_loss(self, position_id, symbol, stop_price):
+            self.stop_updates.append((position_id, symbol, stop_price))
+
+    class _Store:
+        def __init__(self) -> None:
+            self.updates = []
+
+        def update_trade(self, trade_id, updates):
+            self.updates.append((trade_id, dict(updates)))
+
+    monkeypatch.setattr(phase3_engine, "_phase3_position_meta", lambda position, side: (123, 1.0, None))
+    monkeypatch.setattr(
+        phase3_engine,
+        "_close_full",
+        lambda adapter, profile, position_id, current_lots, side: (_ for _ in ()).throw(AssertionError("runner should not close immediately")),
+    )
+
+    adapter = _Adapter()
+    store = _Store()
+    # Entry=150.000, TP1 fallback=5.0p -> 150.050. Runner TP2 configured as +3.0p
+    # should target total 8.0p (150.080), so at 150.051 we should not full-close.
+    result = phase3_engine._manage_v44_exit(
+        adapter=adapter,
+        profile=SimpleNamespace(symbol="USDJPY", pip_size=0.01),
+        store=store,
+        tick=SimpleNamespace(bid=150.051, ask=150.053),
+        trade_row={
+            "trade_id": "t2",
+            "side": "buy",
+            "entry_price": 150.000,
+            "entry_type": "phase3:v44_ny:normal@ambiguous/er_high/der_pos",
+            "target_price": None,
+            "managed_tp1_pips": 5.0,
+            "stop_price": 149.920,
+            "tp1_partial_done": 1,
+            "breakeven_sl_price": 150.005,
+        },
+        position=object(),
+        v44_config={
+            "normal_tp2_pips": 3.0,
+            "normal_trail_buffer": 3.0,
+            "trail_start_after_tp1_mult": 0.5,
+        },
+    )
+    assert result["action"] != "tp2_full"

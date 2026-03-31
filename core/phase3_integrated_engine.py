@@ -584,6 +584,14 @@ def load_phase3_sizing_config(
             if isinstance(can_v44, dict) and "defensive_veto_cells" in can_v44:
                 effective.setdefault("v44_ny", {})["defensive_veto_cells"] = can_v44["defensive_veto_cells"]
                 locked_keys.append("v44_ny.defensive_veto_cells")
+            # Lock defended NY session-window authority to normalized source-of-truth values.
+            # This prevents profile-local drift in live app configs from changing
+            # NY admission timing (which directly impacts baseline row parity).
+            base_v44 = normalized.get("v44_ny", {}) if isinstance(normalized.get("v44_ny"), dict) else {}
+            for key in ("ny_window_mode", "ny_start_hour", "ny_end_hour", "start_delay_minutes"):
+                if key in base_v44:
+                    effective.setdefault("v44_ny", {})[key] = base_v44[key]
+                    locked_keys.append(f"v44_ny.{key}")
             if isinstance(can_v14, dict):
                 cell_overrides = can_v14.get("cell_scale_overrides")
                 if isinstance(cell_overrides, dict) and "ambiguous/er_mid/der_pos:sell" in cell_overrides:
@@ -1384,14 +1392,17 @@ def _manage_v44_exit(
             tp2_pips = normal_tp2_pips
         else:
             tp2_pips = strong_tp2_pips
-        # TP2 fixed target then trail fallback.
-        tp2_price = entry + (tp2_pips * pip if side == "buy" else -tp2_pips * pip)
+        # TP2 runner target is measured beyond TP1 (not from entry) to avoid
+        # immediate runner closes right after TP1 partial on fast ticks.
+        tp1_pips = abs(float(tp1_price) - float(entry)) / pip
+        tp2_total_pips = float(tp1_pips) + float(tp2_pips)
+        tp2_price = entry + (tp2_total_pips * pip if side == "buy" else -tp2_total_pips * pip)
         reached_tp2 = tp_check_price >= tp2_price if side == "buy" else tp_check_price <= tp2_price
         if reached_tp2:
             try:
                 _close_full(adapter, profile, position_id, current_lots, side)
-                close_pips = float(tp2_pips)
-                return {"action": "tp2_full", "reason": f"v44_ny TP2 hit ({tp2_pips:.2f}p)", "closed_pips_est": close_pips}
+                close_pips = float(tp2_total_pips)
+                return {"action": "tp2_full", "reason": f"v44_ny TP2 hit (+{tp2_pips:.2f}p runner, total {tp2_total_pips:.2f}p)", "closed_pips_est": close_pips}
             except Exception as e:
                 return {"action": "error", "reason": f"v44_ny TP2 error: {e}"}
 

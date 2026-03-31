@@ -1772,9 +1772,23 @@ def _run_trade_management(
                 )
                 if p3_exit.get("action") not in ("none", None):
                     print(f"[{profile.profile_name}] Phase3 exit: pos {position_id} -> {p3_exit.get('action')}: {p3_exit.get('reason', '')}")
+                    # Tiny real-time managed-exit audit line for TP1/BE/runner progression.
+                    action = str(p3_exit.get("action") or "")
+                    if action in {"tp1_partial", "tp1_full", "tp2_full", "trail_update"}:
+                        try:
+                            _tp1_done = int(trade_row.get("tp1_partial_done") or 0)
+                        except Exception:
+                            _tp1_done = 0
+                        _be_sl = trade_row.get("breakeven_sl_price")
+                        _entry_tag = str(entry_type or "")
+                        print(
+                            f"[{profile.profile_name}] [managed-exit] action={action} "
+                            f"trade_id={trade_id} pos={position_id} side={side} "
+                            f"entry={_entry_tag} tp1_done={_tp1_done} be_sl={_be_sl} "
+                            f"reason={p3_exit.get('reason', '')}"
+                        )
                     # Keep Phase 3 runtime caps/cooldowns in sync with recent close outcomes.
                     if isinstance(phase3_state, dict):
-                        action = str(p3_exit.get("action") or "")
                         full_close_actions = {"session_end_close", "time_decay_close", "hard_sl", "tp2_full", "tp1_full"}
                         if action in full_close_actions:
                             now_utc = pd.Timestamp.now(tz="UTC")
