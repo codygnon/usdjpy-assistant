@@ -268,12 +268,24 @@ def execute_london_v2_session(
     margin_used = 0.0
     try:
         acct = adapter.get_account_info()
-        _eq = getattr(acct, "equity", None)
-        if _eq is not None:
-            acct_equity = float(_eq)
-        _mu = getattr(acct, "margin_used", None)
-        if _mu is not None:
-            margin_used = float(_mu)
+        if isinstance(acct, dict):
+            _eq = acct.get("equity") or acct.get("balance")
+            if _eq is not None:
+                acct_equity = float(_eq)
+            _mu = acct.get("margin_used") or acct.get("margin") or acct.get("marginUsed")
+            if _mu is not None:
+                margin_used = float(_mu)
+        else:
+            _eq = getattr(acct, "equity", None)
+            if _eq is not None:
+                acct_equity = float(_eq)
+            _mu = (
+                getattr(acct, "margin_used", None)
+                or getattr(acct, "margin", None)
+                or getattr(acct, "marginUsed", None)
+            )
+            if _mu is not None:
+                margin_used = float(_mu)
     except Exception:
         pass
 

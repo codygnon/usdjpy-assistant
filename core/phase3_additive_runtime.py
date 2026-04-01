@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import math
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
@@ -17,6 +18,37 @@ from core.phase3_additive_contract import (
 from core.phase3_package_spec import PHASE3_DEFENDED_PRESET_ID, load_phase3_package_spec
 from core.phase3_session_support import build_phase3_session_support_from_mapping
 from core.phase3_variant_k_baseline import apply_variant_k_baseline_admission
+
+logger = logging.getLogger(__name__)
+
+# OANDA margin closeout triggers when margin_used >= this fraction of equity (NAV).
+# Positions are forcibly liquidated at this level.
+# Default 0.50 = OANDA standard. Override via strict_policy keys on the package spec.
+MARGIN_CLOSEOUT_FRACTION = 0.50
+
+# Safety buffer below closeout to avoid brushing the limit during price movement
+# between placement and next poll. 0.80 => effective max margin =
+# equity * margin_closeout_fraction * margin_safety_buffer
+MARGIN_SAFETY_BUFFER = 0.80
+
+
+def _margin_used_from_account(acct: Any) -> float:
+    """Read margin-in-use from broker account objects or dicts (adapter-specific field names)."""
+    if acct is None:
+        return 0.0
+    if isinstance(acct, dict):
+        v = acct.get("margin_used") or acct.get("margin") or acct.get("marginUsed")
+        try:
+            return float(v or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+    v = getattr(acct, "margin_used", None) or getattr(acct, "margin", None) or getattr(acct, "marginUsed", None)
+    if v is None:
+        return 0.0
+    try:
+        return float(v or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 @dataclass(frozen=True)
@@ -95,6 +127,10 @@ class Phase3MarginState:
     max_lot_per_trade: float | None
     blocked: bool
     reason: str | None = None
+    margin_closeout_fraction: float = MARGIN_CLOSEOUT_FRACTION
+    margin_safety_buffer: float = MARGIN_SAFETY_BUFFER
+    margin_ceiling: float = 0.0
+    margin_utilization_pct: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -212,6 +248,31 @@ def _strict_policy_from_spec(spec) -> dict[str, Any]:
     return dict(spec.strict_policy or {})
 
 
+def _margin_closeout_fraction_from_strict(strict: dict[str, Any]) -> float:
+    v = (
+        strict.get("margin_closeout_fraction")
+        or strict.get("margin_closeout_pct")
+        or strict.get("closeout_fraction")
+        or strict.get("margin_limit_pct")
+    )
+    if v is None:
+        return float(MARGIN_CLOSEOUT_FRACTION)
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return float(MARGIN_CLOSEOUT_FRACTION)
+
+
+def _margin_safety_buffer_from_strict(strict: dict[str, Any]) -> float:
+    v = strict.get("margin_safety_buffer")
+    if v is None:
+        return float(MARGIN_SAFETY_BUFFER)
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return float(MARGIN_SAFETY_BUFFER)
+
+
 def _conflict_state(spec, phase3_state: dict[str, Any], open_trades: list[dict[str, Any]], candidate_side: str, now_utc: datetime) -> Phase3ConflictPolicyState:
     strict = _strict_policy_from_spec(spec)
     allow_internal_overlap = bool(strict.get("allow_internal_overlap", True))
@@ -239,8 +300,14 @@ def _conflict_state(spec, phase3_state: dict[str, Any], open_trades: list[dict[s
     )
 
 
-def _margin_state(real_adapter, spec, lots: float) -> Phase3MarginState:
+def _margin_state(real_adapter, spec, lots: float, *, open_trades_count: int = -1) -> Phase3MarginState:
+    # Adapter field mapping for margin in use:
+    #   OandaAdapter: acct.margin (from OANDA v20 API "marginUsed" → mapped to .margin)
+    #   Some stubs/tests: margin_used on SimpleNamespace
+    #   Verify with: print(vars(acct)) or dir(acct) if field names change
     strict = _strict_policy_from_spec(spec)
+    closeout_frac = _margin_closeout_fraction_from_strict(strict)
+    safety_buf = _margin_safety_buffer_from_strict(strict)
     leverage = float(strict.get("margin_leverage") or 33.3)
     max_lot_per_trade = strict.get("max_lot_per_trade")
     blocked = False
@@ -249,15 +316,48 @@ def _margin_state(real_adapter, spec, lots: float) -> Phase3MarginState:
     margin_used = 0.0
     try:
         acct = real_adapter.get_account_info()
-        equity = float(getattr(acct, "equity", getattr(acct, "balance", equity)) or equity)
-        margin_used = float(getattr(acct, "margin_used", 0.0) or 0.0)
+        if isinstance(acct, dict):
+            equity = float(acct.get("equity") or acct.get("balance") or equity)
+        else:
+            equity = float(getattr(acct, "equity", getattr(acct, "balance", equity)) or equity)
+        margin_used = _margin_used_from_account(acct)
     except Exception:
         pass
+    margin_ceiling = float(equity) * float(closeout_frac)
+    free_margin = float(equity) - float(margin_used)
+    margin_util_pct = (float(margin_used) / float(equity) * 100.0) if equity > 0 else 0.0
+    if (
+        margin_used == 0.0
+        and equity > 100.0
+        and open_trades_count >= 1
+    ):
+        logger.warning(
+            "_margin_state: margin_used resolved to 0.0 with equity=%.2f — "
+            "possible field mismatch with adapter. Margin gate may not be effective.",
+            equity,
+        )
     if max_lot_per_trade is not None and float(lots) > float(max_lot_per_trade):
         blocked = True
         reason = f"lot_cap>{float(max_lot_per_trade):.2f}"
+    # NOTE: This is a simplified margin estimate assuming standard forex lot size
+    # (100,000 units) at account-level leverage. Actual OANDA margin requirements
+    # vary by:
+    #   - Instrument (JPY pairs, metals, exotics have different margin rates)
+    #   - Regulatory jurisdiction (ESMA 30:1 max, ASIC, US CFTC rules)
+    #   - Intraday margin changes (news events, weekend close)
+    # This approximation is acceptable for demo/paper trading on major pairs.
+    # For live trading on non-majors, replace with instrument-specific margin lookup.
     required_margin = float(lots) * 100000.0 / max(1.0, leverage)
-    free_margin = float(equity) - float(margin_used)
+    if equity > 0 and margin_used > 0:
+        utilization = float(margin_used) / float(equity)
+        if utilization > 0.60:
+            logger.warning(
+                "_margin_state: margin utilization at %.1f%% (used=%.2f, equity=%.2f) — "
+                "approaching OANDA 50%% closeout territory if equity drops",
+                utilization * 100,
+                margin_used,
+                equity,
+            )
     if not blocked and required_margin > free_margin:
         blocked = True
         reason = "margin_rejected"
@@ -270,6 +370,10 @@ def _margin_state(real_adapter, spec, lots: float) -> Phase3MarginState:
         max_lot_per_trade=float(max_lot_per_trade) if max_lot_per_trade is not None else None,
         blocked=blocked,
         reason=reason,
+        margin_closeout_fraction=float(closeout_frac),
+        margin_safety_buffer=float(safety_buf),
+        margin_ceiling=float(margin_ceiling),
+        margin_utilization_pct=float(margin_util_pct),
     )
 
 
@@ -648,10 +752,12 @@ def execute_phase3_defended_additive_policy(
     placements: list[dict[str, Any]] = []
     state_updates: dict[str, Any] = {}
     simulated_open = list(open_trades)
+    last_margin: Phase3MarginState | None = None
 
     for candidate in baseline_candidates:
         conflict = _conflict_state(spec, phase3_state, simulated_open, candidate.side, now_utc)
-        margin = _margin_state(adapter, spec, candidate.lots)
+        margin = _margin_state(adapter, spec, candidate.lots, open_trades_count=len(open_trades))
+        last_margin = margin
         block_reason = _conflict_block_reason(
             conflict,
             accepted_count=len(accepted),
@@ -680,7 +786,8 @@ def execute_phase3_defended_additive_policy(
 
     for candidate in offensive_candidates:
         conflict = _conflict_state(spec, phase3_state, simulated_open, candidate.side, now_utc)
-        margin = _margin_state(adapter, spec, candidate.lots)
+        margin = _margin_state(adapter, spec, candidate.lots, open_trades_count=len(open_trades))
+        last_margin = margin
         block_reason = _conflict_block_reason(
             conflict,
             accepted_count=len(accepted),
@@ -747,6 +854,14 @@ def execute_phase3_defended_additive_policy(
         deal_id=getattr(first_decision, "deal_id", None) if first_decision is not None else None,
         fill_price=getattr(first_decision, "fill_price", None) if first_decision is not None else None,
     )
+    margin_diag_truth: dict[str, Any] = {}
+    if last_margin is not None:
+        margin_diag_truth = {
+            "margin_closeout_fraction": last_margin.margin_closeout_fraction,
+            "margin_ceiling": round(last_margin.margin_ceiling, 2),
+            "margin_effective_free": round(last_margin.free_margin, 2),
+            "margin_utilization_pct": round(last_margin.margin_utilization_pct, 1),
+        }
     envelope = Phase3AdditiveDecisionEnvelope(
         generated_at_utc=datetime.now(timezone.utc).isoformat(),
         package_id=spec.package_id,
@@ -772,6 +887,7 @@ def execute_phase3_defended_additive_policy(
         },
         margin_state={
             "placements": len(placements),
+            **margin_diag_truth,
         },
     )
     return {
@@ -800,5 +916,6 @@ def execute_phase3_defended_additive_policy(
             "accepted_offensive_count": len([c for c in accepted if c.intent_source == "offensive"]),
             "accepted_count": len(accepted),
             "rejected_count": len(rejected),
+            **margin_diag_truth,
         },
     }

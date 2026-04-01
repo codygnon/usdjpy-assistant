@@ -4,6 +4,7 @@ import argparse
 import collections
 import datetime
 import json
+import logging
 import os
 import re
 import sys
@@ -68,6 +69,8 @@ from core.dashboard_reporters import (
 )
 from core.conviction_sizing import compute_conviction, conviction_snapshot as _conviction_snapshot_fn
 from storage.sqlite_store import SqliteStore
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_update_trail_sl(
@@ -2589,6 +2592,7 @@ def _append_phase3_minute_diagnostics(
     m1_bar_time: str,
     is_new: bool,
     mode: str,
+    eval_wall_seconds: float | None = None,
 ) -> None:
     """Log one line per closed M1 bar: session/strategy, is_new, placed, filter blocks, and decision reason."""
     try:
@@ -2732,6 +2736,16 @@ def _append_phase3_minute_diagnostics(
                     f"\tlondon_asian_pips={float(ar.get('pips', 0.0)):.1f}"
                     f"\tlondon_asian_ok={int(bool(ar.get('is_valid', False)))}"
                 )
+        p3od = exec_result.get("phase3_ownership_minute_diag") if isinstance(exec_result, dict) else None
+        cell_changed = 0
+        er_raw_s = ""
+        der_raw_s = ""
+        if isinstance(p3od, dict):
+            cell_changed = int(bool(p3od.get("cell_changed")))
+            if p3od.get("er_raw") is not None:
+                er_raw_s = str(p3od.get("er_raw"))
+            if p3od.get("delta_er_raw") is not None:
+                der_raw_s = str(p3od.get("delta_er_raw"))
         audit = exec_result.get("phase3_ownership_audit") if isinstance(exec_result, dict) else None
         audit_cell = ""
         audit_regime = ""
@@ -2800,18 +2814,25 @@ def _append_phase3_minute_diagnostics(
                 "candidate_count",
                 "accepted_count",
                 "rejected_count",
+                "margin_closeout_fraction",
+                "margin_ceiling",
+                "margin_effective_free",
+                "margin_utilization_pct",
             ):
                 if additive_truth.get(key) not in (None, ""):
                     extras.append(f"additive_{key}={additive_truth.get(key)}")
             additive_extra = "\t" + "\t".join(extras) if extras else ""
 
         ts = pd.Timestamp.now(tz="UTC").isoformat()
+        _ews = "" if eval_wall_seconds is None else str(eval_wall_seconds)
         line = (
             f"{ts}\tbar={m1_bar_time}\tis_new={int(is_new)}\tplaced={int(placed)}\t"
             f"session={session or 'none'}\tstrategy={strategy_tag or ''}\t"
             f"blocking={blocking_count}\t"
             f"filters=[{'; '.join(blocking_details)}]\treason={reason!r}"
             f"\townership_cell={audit_cell}\tregime={audit_regime}\tdefensive_flags={audit_flags}"
+            f"\tcell_changed={cell_changed}\ter_raw={er_raw_s}\tdelta_er_raw={der_raw_s}"
+            f"\teval_wall_seconds={_ews}"
             f"{session_extra}{parity_extra}{exit_extra}{additive_extra}\n"
         )
         diag_path = log_dir / "phase3_minute_diagnostics.log"
@@ -6368,6 +6389,7 @@ def main() -> None:
                     if not getattr(pol, "enabled", True) or pol_type != "phase3_integrated":
                         continue
 
+                    eval_start = time.monotonic()
                     from core.phase3_integrated_engine import load_phase3_sizing_config
                     from core.phase3_shared_engine import evaluate_phase3_bar
                     phase3_preset_id = _resolve_phase3_effective_preset_id(
@@ -6518,6 +6540,12 @@ def main() -> None:
                         positions_snapshot=dashboard_positions_snapshot,
                         daily_summary_snapshot=dashboard_daily_snapshot,
                     )
+                    eval_elapsed = time.monotonic() - eval_start
+                    if eval_elapsed > 30.0:
+                        logger.warning(
+                            "Phase 3 evaluation took %.1fs — approaching M1 cadence limit",
+                            eval_elapsed,
+                        )
                     # Per-minute diagnostics: bar time, is_new, placed, blocking filter count/reasons, decision reason
                     if phase3_is_new or args.once:
                         _append_phase3_minute_diagnostics(
@@ -6532,6 +6560,7 @@ def main() -> None:
                             m1_bar_time=phase3_closed_m1_time or m1_last_time,
                             is_new=phase3_is_new,
                             mode=mode,
+                            eval_wall_seconds=round(eval_elapsed, 2),
                         )
 
                 # Bar-close parity for Phase 3: mark the current M1 bar as seen after evaluation

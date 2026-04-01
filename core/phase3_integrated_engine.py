@@ -9,6 +9,7 @@ Single policy routes by UTC session:
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import re
@@ -21,6 +22,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 import pandas as pd
 from core.fib_pivots import compute_daily_fib_pivots
 from core.phase3_overlay_resolver import (
@@ -234,7 +237,23 @@ def apply_defended_locked_keys(
     )
     if not updates:
         return effective_cfg, []
+    overridden: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+    for key_path in locked_keys:
+        if key_path in seen_paths:
+            continue
+        seen_paths.add(key_path)
+        current_val = _get_nested_path(effective_cfg, key_path)
+        locked_val = _get_nested_path(updates, key_path)
+        if current_val != locked_val:
+            overridden.append({"key": key_path, "was": current_val, "forced_to": locked_val})
     out = _deep_merge(effective_cfg, updates)
+    if overridden:
+        logger.warning(
+            "Defended locked keys overrode %d value(s) from integrated config: %s",
+            len(overridden),
+            overridden,
+        )
     return out, locked_keys
 
 

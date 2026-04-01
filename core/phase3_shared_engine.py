@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -13,6 +14,8 @@ from core.phase3_package_spec import (
     phase3_package_spec_to_dict,
 )
 from core.phase3_session_core import resolve_phase3_bar_time
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -289,6 +292,18 @@ def evaluate_phase3_bar(
 
     pip_size = float(getattr(profile, "pip_size", 0.01) or 0.01)
     ownership_audit = compute_phase3_ownership_audit_for_data(data_by_tf, pip_size)
+    prev_cell = phase3_state.get("last_ownership_cell", None)
+    current_cell = ownership_audit.get("ownership_cell", None)
+    if prev_cell is not None and current_cell != prev_cell:
+        er_val = ownership_audit.get("er", None)
+        der_val = ownership_audit.get("delta_er", None)
+        logger.info(
+            "Ownership cell transition: %s → %s (ER=%.4f, ΔER=%.4f)",
+            prev_cell,
+            current_cell,
+            er_val if er_val is not None else 0.0,
+            der_val if der_val is not None else 0.0,
+        )
     overlay_state = build_phase3_overlay_state(effective_cfg)
 
     normalized_preset_id = str(effective_preset_id or "").strip().lower()
@@ -329,6 +344,14 @@ def evaluate_phase3_bar(
         )
     exec_result["phase3_ownership_audit"] = ownership_audit
     exec_result["phase3_overlay_state"] = overlay_state
+    _su = dict(exec_result.get("phase3_state_updates") or {})
+    _su["last_ownership_cell"] = current_cell
+    exec_result["phase3_state_updates"] = _su
+    exec_result["phase3_ownership_minute_diag"] = {
+        "cell_changed": prev_cell is not None and current_cell != prev_cell,
+        "er_raw": ownership_audit.get("er"),
+        "delta_er_raw": ownership_audit.get("delta_er"),
+    }
     exec_result["decision_envelope"] = asdict(
         normalize_phase3_decision_envelope(
             exec_result=exec_result,
