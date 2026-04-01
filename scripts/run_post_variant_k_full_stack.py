@@ -4,11 +4,11 @@ Run post–Variant K research artifacts in dependency order.
 
 Covers: regime validation, ownership diagnostic, chart authorization loop,
 Phase A chart-first routing, offensive shadow ledger, Agent 3 program,
-full latent regime router (500k/1000k), Phase 3 live-parallel replay (500k/1000k).
+full latent regime router (500k/1000k).
 
 Usage:
   python3 scripts/run_post_variant_k_full_stack.py
-  python3 scripts/run_post_variant_k_full_stack.py --skip-live-parallel --skip-chart-auth
+  python3 scripts/run_post_variant_k_full_stack.py --skip-chart-auth
 """
 from __future__ import annotations
 
@@ -38,7 +38,6 @@ def _run(label: str, cmd: list[str]) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--skip-live-parallel", action="store_true")
     ap.add_argument("--skip-chart-auth", action="store_true")
     ap.add_argument("--skip-regime-validation", action="store_true")
     ap.add_argument("--skip-latent-router", action="store_true")
@@ -129,30 +128,6 @@ def main() -> int:
                 ds1m,
                 "--output-prefix",
                 prefix1m,
-            ],
-        )
-
-    if not args.skip_live_parallel:
-        run(
-            "backtest_phase3_live_parallel_500k",
-            [
-                py,
-                str(ROOT / "scripts" / "backtest_phase3_live_parallel.py"),
-                "--input-csv",
-                ds500,
-                "--output",
-                str(OUT / f"post_variant_k_stack_live_parallel_500k_{stamp}.json"),
-            ],
-        )
-        run(
-            "backtest_phase3_live_parallel_1000k",
-            [
-                py,
-                str(ROOT / "scripts" / "backtest_phase3_live_parallel.py"),
-                "--input-csv",
-                ds1m,
-                "--output",
-                str(OUT / f"post_variant_k_stack_live_parallel_1000k_{stamp}.json"),
             ],
         )
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -137,14 +138,15 @@ def execute_v44_ny_session(
         if session_key is not None and isinstance(sdat, dict):
             no_trade["phase3_state_updates"] = {session_key: sdat}
         no_trade["v44_parity_context"] = _sync_parity_context()
-        print(
-            "[phase3][v44_ny][gate] "
-            f"gate={resolved_gate} line={caller_line} attempted={int(attempted)} "
-            f"side={side_value or ''} reason={reason_text} "
-            f"ny_window_mode={parity_context.get('ny_window_mode')} "
-            f"ny_start_hour={parity_context.get('ny_start_hour')} "
-            f"start_delay_minutes={parity_context.get('start_delay_minutes')}"
-        )
+        if os.environ.get("PHASE3_V44_GATE_TRACE", "").strip().lower() in ("1", "true", "yes"):
+            print(
+                "[phase3][v44_ny][gate] "
+                f"gate={resolved_gate} line={caller_line} attempted={int(attempted)} "
+                f"side={side_value or ''} reason={reason_text} "
+                f"ny_window_mode={parity_context.get('ny_window_mode')} "
+                f"ny_start_hour={parity_context.get('ny_start_hour')} "
+                f"start_delay_minutes={parity_context.get('start_delay_minutes')}"
+            )
         return no_trade
 
     v44_config = (sizing_config or {}).get("v44_ny", {})

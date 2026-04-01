@@ -2327,27 +2327,19 @@ def get_stats_by_preset(profile_name: str, profile_path: Optional[str] = None) -
     return payload
 
 
-@app.get("/api/data/{profile_name}/technical-analysis")
-def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, Any]:
-    """Get real-time technical analysis for USDJPY across all timeframes (H4, M15, M1).
-    
-    Returns per-timeframe: regime, RSI value/zone, MACD line/signal/histogram, 
-    ATR value/state, price info, and a plain-English summary.
-    """
+def _compute_technical_analysis_payload(path: Path) -> dict[str, Any]:
+    """Broker-heavy TA build; run under a wall-clock timeout in the request handler."""
     from core.indicators import ema
     from core.ta_analysis import compute_ta_for_tf
     from core.timeframes import Timeframe
     from core.book_cache import get_book_cache
     from core.scalp_score import ScalpScore
 
-    path = _resolve_profile_path(profile_path)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Profile not found")
+    profile = load_profile_v1(path)
+    from adapters.broker import get_adapter
 
+    adapter = get_adapter(profile)
     try:
-        profile = load_profile_v1(path)
-        from adapters.broker import get_adapter
-        adapter = get_adapter(profile)
         try:
             adapter.initialize()
         except RuntimeError as init_err:
@@ -2355,155 +2347,31 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
             if "MetaTrader5 is not installed" in msg or "MT5" in msg:
                 raise HTTPException(
                     status_code=503,
-                    detail="Broker data unavailable: MT5 is not installed on this server. Set Broker to OANDA in Profile Editor and add your API key to view technical analysis here."
+                    detail="Broker data unavailable: MT5 is not installed on this server. Set Broker to OANDA in Profile Editor and add your API key to view technical analysis here.",
                 ) from init_err
             raise
+        adapter.ensure_symbol(profile.symbol)
+        timeframes: list[Timeframe] = ["H4", "H1", "M30", "M15", "M5", "M3", "M1"]
+        result: dict[str, Any] = {"timeframes": {}}
+
+        book_cache = get_book_cache()
         try:
-            adapter.ensure_symbol(profile.symbol)
-            # Timeframe is a Literal type, not an Enum - use string values directly
-            timeframes: list[Timeframe] = ["H4", "H1", "M30", "M15", "M5", "M3", "M1"]
-            result: dict[str, Any] = {"timeframes": {}}
+            book_cache.poll_books(adapter, profile.symbol)
+        except Exception:
+            pass
 
-            # Poll order/position books for scalp score (deduplicates via cache)
-            book_cache = get_book_cache()
+        scalp_tick = None
+        try:
+            scalp_tick = adapter.get_tick(profile.symbol)
+        except Exception:
+            pass
+
+        for tf in timeframes:
             try:
-                book_cache.poll_books(adapter, profile.symbol)
-            except Exception:
-                pass  # Books are optional; score degrades gracefully
-
-            # Get tick once for scalp score + spread info
-            scalp_tick = None
-            try:
-                scalp_tick = adapter.get_tick(profile.symbol)
-            except Exception:
-                pass
-            
-            for tf in timeframes:
-                try:
-                    # Fetch OHLC data from broker (cached)
-                    df = _get_bars_cached(adapter, profile.symbol, tf, count=700)
-                    if df is None or df.empty:
-                        result["timeframes"][tf] = {
-                            "error": f"No data available for {tf}",
-                            "regime": "unknown",
-                            "rsi": {"value": None, "zone": "unknown", "period": 14},
-                            "macd": {"line": None, "signal": None, "histogram": None, "direction": "neutral"},
-                            "atr": {"value": None, "value_pips": None, "state": "unknown"},
-                            "price": {"current": None, "recent_high": None, "recent_low": None},
-                            "bollinger": {"upper": None, "middle": None, "lower": None},
-                            "vwap": None,
-                            "summary": f"{tf}: No data available.",
-                            "ohlc": [],
-                            "all_emas": {},
-                            "bollinger_series": {"upper": [], "middle": [], "lower": []},
-                        }
-                        continue
-                    # Compute TA for this timeframe
-                    ta = compute_ta_for_tf(profile, tf, df)
-                    # Format MACD direction
-                    macd_direction = "neutral"
-                    if ta.macd_hist is not None:
-                        if ta.macd_hist > 0:
-                            macd_direction = "positive"
-                        elif ta.macd_hist < 0:
-                            macd_direction = "negative"
-                    # Build OHLC array for chart (last 500 bars) - vectorized
-                    df_tail = df.tail(500)
-                    timestamps = df_tail["time"].apply(lambda t: int(t.timestamp())).values
-                    ohlc_data = [
-                        {"time": int(ts), "open": round(float(o), 3), "high": round(float(h), 3), "low": round(float(l), 3), "close": round(float(c), 3)}
-                        for ts, o, h, l, c in zip(timestamps, df_tail["open"].values, df_tail["high"].values, df_tail["low"].values, df_tail["close"].values)
-                    ]
-                    # Build all 10 EMA series for chart overlay - vectorized
-                    close = df["close"]
-                    tail_idx = df_tail.index
-                    all_emas_arrs: dict[str, list[dict[str, Any]]] = {}
-                    for p in [5, 7, 9, 11, 13, 15, 17, 21, 34, 50, 200]:
-                        s = ema(close, p)
-                        s_tail = s.reindex(tail_idx).dropna()
-                        ts_arr = df_tail.loc[s_tail.index, "time"].apply(lambda t: int(t.timestamp()))
-                        all_emas_arrs[f"ema{p}"] = [{"time": int(t), "value": round(float(v), 3)} for t, v in zip(ts_arr.values, s_tail.values)]
-                    # Build Bollinger Bands series for chart overlay - vectorized
-                    from core.indicators import bollinger_bands
-                    bb_upper, bb_middle, bb_lower = bollinger_bands(close, 20, 2.0)
-                    bb_u_tail = bb_upper.reindex(tail_idx).dropna()
-                    bb_m_tail = bb_middle.reindex(tail_idx).dropna()
-                    bb_l_tail = bb_lower.reindex(tail_idx).dropna()
-                    common_bb_idx = bb_u_tail.index
-                    bb_ts = df_tail.loc[common_bb_idx, "time"].apply(lambda t: int(t.timestamp())).values
-                    bb_series: dict[str, list[dict[str, Any]]] = {
-                        "upper": [{"time": int(t), "value": round(float(v), 3)} for t, v in zip(bb_ts, bb_u_tail.values)],
-                        "middle": [{"time": int(t), "value": round(float(v), 3)} for t, v in zip(bb_ts, bb_m_tail.values)],
-                        "lower": [{"time": int(t), "value": round(float(v), 3)} for t, v in zip(bb_ts, bb_l_tail.values)],
-                    }
-                    # Compute scalp score for M1/M3/M5
-                    scalp_score_data = None
-                    if tf in ("M1", "M3", "M5") and scalp_tick and len(df) >= 20:
-                        try:
-                            from datetime import datetime, timezone as tz
-                            ob_snaps = [s.data for s in book_cache.get_order_books(profile.symbol)]
-                            pb_snaps = [s.data for s in book_cache.get_position_books(profile.symbol)]
-                            ss = ScalpScore.calculate(
-                                df=df,
-                                tick_bid=scalp_tick.bid,
-                                tick_ask=scalp_tick.ask,
-                                order_book_snapshots=ob_snaps,
-                                position_book_snapshots=pb_snaps,
-                                pip_size=profile.pip_size,
-                                timeframe=tf,
-                                timestamp_iso=datetime.now(tz.utc).isoformat(),
-                            )
-                            scalp_score_data = {
-                                "finalScore": ss.final_score,
-                                "direction": ss.direction,
-                                "confidence": ss.confidence,
-                                "killSwitch": ss.kill_switch,
-                                "killReason": ss.kill_reason,
-                                "layers": ss.layers,
-                                "timestamp": ss.timestamp,
-                            }
-                        except Exception:
-                            pass
-
+                df = _get_bars_cached(adapter, profile.symbol, tf, count=700)
+                if df is None or df.empty:
                     result["timeframes"][tf] = {
-                        "scalp_score": scalp_score_data,
-                        "regime": ta.regime,
-                        "rsi": {
-                            "value": round(ta.rsi_value, 2) if ta.rsi_value is not None else None,
-                            "zone": ta.rsi_zone,
-                            "period": 14,
-                        },
-                        "macd": {
-                            "line": round(ta.macd_value, 5) if ta.macd_value is not None else None,
-                            "signal": round(ta.macd_signal, 5) if ta.macd_signal is not None else None,
-                            "histogram": round(ta.macd_hist, 5) if ta.macd_hist is not None else None,
-                            "direction": macd_direction,
-                        },
-                        "atr": {
-                            "value": round(ta.atr_value, 5) if ta.atr_value is not None else None,
-                            "value_pips": round(ta.atr_value / profile.pip_size, 1) if ta.atr_value is not None else None,
-                            "state": ta.atr_state,
-                        },
-                        "price": {
-                            "current": round(ta.price, 3) if ta.price is not None else None,
-                            "recent_high": round(ta.recent_high, 3) if ta.recent_high is not None else None,
-                            "recent_low": round(ta.recent_low, 3) if ta.recent_low is not None else None,
-                        },
-                        "bollinger": {
-                            "upper": round(ta.bollinger_upper, 5) if ta.bollinger_upper is not None else None,
-                            "middle": round(ta.bollinger_middle, 5) if ta.bollinger_middle is not None else None,
-                            "lower": round(ta.bollinger_lower, 5) if ta.bollinger_lower is not None else None,
-                        },
-                        "vwap": round(ta.vwap_value, 5) if ta.vwap_value is not None else None,
-                        "summary": ta.summary,
-                        "ohlc": ohlc_data,
-                        "all_emas": all_emas_arrs,
-                        "bollinger_series": bb_series,
-                    }
-                except Exception as tf_error:
-                    # Handle errors for individual timeframes gracefully
-                    result["timeframes"][tf] = {
-                        "error": str(tf_error),
+                        "error": f"No data available for {tf}",
                         "regime": "unknown",
                         "rsi": {"value": None, "zone": "unknown", "period": 14},
                         "macd": {"line": None, "signal": None, "histogram": None, "direction": "neutral"},
@@ -2511,27 +2379,173 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
                         "price": {"current": None, "recent_high": None, "recent_low": None},
                         "bollinger": {"upper": None, "middle": None, "lower": None},
                         "vwap": None,
-                        "summary": f"{tf}: Error fetching data.",
+                        "summary": f"{tf}: No data available.",
                         "ohlc": [],
                         "all_emas": {},
                         "bollinger_series": {"upper": [], "middle": [], "lower": []},
                     }
+                    continue
+                ta = compute_ta_for_tf(profile, tf, df)
+                macd_direction = "neutral"
+                if ta.macd_hist is not None:
+                    if ta.macd_hist > 0:
+                        macd_direction = "positive"
+                    elif ta.macd_hist < 0:
+                        macd_direction = "negative"
+                df_tail = df.tail(500)
+                timestamps = df_tail["time"].apply(lambda t: int(t.timestamp())).values
+                ohlc_data = [
+                    {"time": int(ts), "open": round(float(o), 3), "high": round(float(h), 3), "low": round(float(l), 3), "close": round(float(c), 3)}
+                    for ts, o, h, l, c in zip(timestamps, df_tail["open"].values, df_tail["high"].values, df_tail["low"].values, df_tail["close"].values)
+                ]
+                close = df["close"]
+                tail_idx = df_tail.index
+                all_emas_arrs: dict[str, list[dict[str, Any]]] = {}
+                for p in [5, 7, 9, 11, 13, 15, 17, 21, 34, 50, 200]:
+                    s = ema(close, p)
+                    s_tail = s.reindex(tail_idx).dropna()
+                    ts_arr = df_tail.loc[s_tail.index, "time"].apply(lambda t: int(t.timestamp()))
+                    all_emas_arrs[f"ema{p}"] = [{"time": int(t), "value": round(float(v), 3)} for t, v in zip(ts_arr.values, s_tail.values)]
+                from core.indicators import bollinger_bands
 
-            # Reuse tick from scalp score (no second API call)
-            tick = scalp_tick
-            if tick:
-                spread_pips = (tick.ask - tick.bid) / profile.pip_size
-                result["current_tick"] = {
-                    "bid": round(tick.bid, 3),
-                    "ask": round(tick.ask, 3),
-                    "spread_pips": round(spread_pips, 1),
+                bb_upper, bb_middle, bb_lower = bollinger_bands(close, 20, 2.0)
+                bb_u_tail = bb_upper.reindex(tail_idx).dropna()
+                bb_m_tail = bb_middle.reindex(tail_idx).dropna()
+                bb_l_tail = bb_lower.reindex(tail_idx).dropna()
+                common_bb_idx = bb_u_tail.index
+                bb_ts = df_tail.loc[common_bb_idx, "time"].apply(lambda t: int(t.timestamp())).values
+                bb_series: dict[str, list[dict[str, Any]]] = {
+                    "upper": [{"time": int(t), "value": round(float(v), 3)} for t, v in zip(bb_ts, bb_u_tail.values)],
+                    "middle": [{"time": int(t), "value": round(float(v), 3)} for t, v in zip(bb_ts, bb_m_tail.values)],
+                    "lower": [{"time": int(t), "value": round(float(v), 3)} for t, v in zip(bb_ts, bb_l_tail.values)],
                 }
-            
-            return result
-        finally:
+                scalp_score_data = None
+                if tf in ("M1", "M3", "M5") and scalp_tick and len(df) >= 20:
+                    try:
+                        from datetime import datetime, timezone as tz
+
+                        ob_snaps = [s.data for s in book_cache.get_order_books(profile.symbol)]
+                        pb_snaps = [s.data for s in book_cache.get_position_books(profile.symbol)]
+                        ss = ScalpScore.calculate(
+                            df=df,
+                            tick_bid=scalp_tick.bid,
+                            tick_ask=scalp_tick.ask,
+                            order_book_snapshots=ob_snaps,
+                            position_book_snapshots=pb_snaps,
+                            pip_size=profile.pip_size,
+                            timeframe=tf,
+                            timestamp_iso=datetime.now(tz.utc).isoformat(),
+                        )
+                        scalp_score_data = {
+                            "finalScore": ss.final_score,
+                            "direction": ss.direction,
+                            "confidence": ss.confidence,
+                            "killSwitch": ss.kill_switch,
+                            "killReason": ss.kill_reason,
+                            "layers": ss.layers,
+                            "timestamp": ss.timestamp,
+                        }
+                    except Exception:
+                        pass
+
+                result["timeframes"][tf] = {
+                    "scalp_score": scalp_score_data,
+                    "regime": ta.regime,
+                    "rsi": {
+                        "value": round(ta.rsi_value, 2) if ta.rsi_value is not None else None,
+                        "zone": ta.rsi_zone,
+                        "period": 14,
+                    },
+                    "macd": {
+                        "line": round(ta.macd_value, 5) if ta.macd_value is not None else None,
+                        "signal": round(ta.macd_signal, 5) if ta.macd_signal is not None else None,
+                        "histogram": round(ta.macd_hist, 5) if ta.macd_hist is not None else None,
+                        "direction": macd_direction,
+                    },
+                    "atr": {
+                        "value": round(ta.atr_value, 5) if ta.atr_value is not None else None,
+                        "value_pips": round(ta.atr_value / profile.pip_size, 1) if ta.atr_value is not None else None,
+                        "state": ta.atr_state,
+                    },
+                    "price": {
+                        "current": round(ta.price, 3) if ta.price is not None else None,
+                        "recent_high": round(ta.recent_high, 3) if ta.recent_high is not None else None,
+                        "recent_low": round(ta.recent_low, 3) if ta.recent_low is not None else None,
+                    },
+                    "bollinger": {
+                        "upper": round(ta.bollinger_upper, 5) if ta.bollinger_upper is not None else None,
+                        "middle": round(ta.bollinger_middle, 5) if ta.bollinger_middle is not None else None,
+                        "lower": round(ta.bollinger_lower, 5) if ta.bollinger_lower is not None else None,
+                    },
+                    "vwap": round(ta.vwap_value, 5) if ta.vwap_value is not None else None,
+                    "summary": ta.summary,
+                    "ohlc": ohlc_data,
+                    "all_emas": all_emas_arrs,
+                    "bollinger_series": bb_series,
+                }
+            except Exception as tf_error:
+                result["timeframes"][tf] = {
+                    "error": str(tf_error),
+                    "regime": "unknown",
+                    "rsi": {"value": None, "zone": "unknown", "period": 14},
+                    "macd": {"line": None, "signal": None, "histogram": None, "direction": "neutral"},
+                    "atr": {"value": None, "value_pips": None, "state": "unknown"},
+                    "price": {"current": None, "recent_high": None, "recent_low": None},
+                    "bollinger": {"upper": None, "middle": None, "lower": None},
+                    "vwap": None,
+                    "summary": f"{tf}: Error fetching data.",
+                    "ohlc": [],
+                    "all_emas": {},
+                    "bollinger_series": {"upper": [], "middle": [], "lower": []},
+                }
+
+        tick = scalp_tick
+        if tick:
+            spread_pips = (tick.ask - tick.bid) / profile.pip_size
+            result["current_tick"] = {
+                "bid": round(tick.bid, 3),
+                "ask": round(tick.ask, 3),
+                "spread_pips": round(spread_pips, 1),
+            }
+
+        return result
+    finally:
+        try:
             adapter.shutdown()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"TA error: {str(e)}")
+        except Exception:
+            pass
+
+
+@app.get("/api/data/{profile_name}/technical-analysis")
+def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, Any]:
+    """Get real-time technical analysis for USDJPY across all timeframes (H4, M15, M1).
+
+    Returns per-timeframe: regime, RSI value/zone, MACD line/signal/histogram,
+    ATR value/state, price info, and a plain-English summary.
+    """
+    path = _resolve_profile_path(profile_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    try:
+        ta_timeout = float(os.environ.get("API_TA_TIMEOUT_SEC", "12"))
+    except ValueError:
+        ta_timeout = 12.0
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        fut = executor.submit(_compute_technical_analysis_payload, path)
+        try:
+            return fut.result(timeout=ta_timeout)
+        except FuturesTimeoutError:
+            return {
+                "timeframes": {},
+                "error": "compute_timeout",
+                "detail": "Technical analysis exceeded the server time limit (slow broker or network). Retry in a moment.",
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"TA error: {str(e)}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -2772,6 +2786,35 @@ def get_advanced_analytics(
 # ---------------------------------------------------------------------------
 
 
+def _open_trades_sync_and_broker_live(loaded_profile: ProfileV1, store: SqliteStore) -> dict[int, dict[str, Any]]:
+    """DB sync + live unrealized/financing from broker; may block on OANDA."""
+    _sync_open_trades_with_broker(loaded_profile, store)
+    broker_live: dict[int, dict[str, Any]] = {}
+    from adapters.broker import get_adapter
+
+    adapter = get_adapter(loaded_profile)
+    try:
+        adapter.initialize()
+        live_positions = adapter.get_open_positions(loaded_profile.symbol)
+        for pos in live_positions:
+            if isinstance(pos, dict):
+                pos_id = pos.get("id")
+                if pos_id is not None:
+                    try:
+                        broker_live[int(pos_id)] = {
+                            "unrealized_pl": float(pos.get("unrealizedPL") or 0),
+                            "financing": float(pos.get("financing") or 0),
+                        }
+                    except (TypeError, ValueError):
+                        pass
+    finally:
+        try:
+            adapter.shutdown()
+        except Exception:
+            pass
+    return broker_live
+
+
 @app.get("/api/data/{profile_name}/open-trades")
 def get_open_trades(profile_name: str, profile_path: Optional[str] = None, sync: bool = True) -> list[dict[str, Any]]:
     """Get open trades (trades without exit_price).
@@ -2788,33 +2831,24 @@ def get_open_trades(profile_name: str, profile_path: Optional[str] = None, sync:
         loaded_profile = None
         try:
             loaded_profile = load_profile_v1(profile_path)
-            _sync_open_trades_with_broker(loaded_profile, store)
         except Exception as e:
-            print(f"[api] sync error in open-trades: {e}")
+            print(f"[api] load profile error in open-trades: {e}")
 
         if loaded_profile is not None:
             try:
-                from adapters.broker import get_adapter
-                adapter = get_adapter(loaded_profile)
-                adapter.initialize()
-                live_positions = adapter.get_open_positions(loaded_profile.symbol)
-                for pos in live_positions:
-                    if isinstance(pos, dict):
-                        pos_id = pos.get("id")
-                        if pos_id is not None:
-                            try:
-                                broker_live[int(pos_id)] = {
-                                    "unrealized_pl": float(pos.get("unrealizedPL") or 0),
-                                    "financing": float(pos.get("financing") or 0),
-                                }
-                            except (TypeError, ValueError):
-                                pass
                 try:
-                    adapter.shutdown()
-                except Exception:
-                    pass
+                    sync_timeout = float(os.environ.get("API_OPEN_TRADES_SYNC_TIMEOUT_SEC", "8"))
+                except ValueError:
+                    sync_timeout = 8.0
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    fut = executor.submit(_open_trades_sync_and_broker_live, loaded_profile, store)
+                    try:
+                        broker_live = fut.result(timeout=sync_timeout)
+                    except FuturesTimeoutError:
+                        print(f"[api] open-trades broker sync timed out after {sync_timeout}s")
+                        broker_live = {}
             except Exception as e:
-                print(f"[api] live data fetch error in open-trades: {e}")
+                print(f"[api] sync error in open-trades: {e}")
 
     rows = store.list_open_trades(profile_name)
     result = []
@@ -4442,9 +4476,14 @@ def _build_live_dashboard_state_with_timeout(
     profile_name: str,
     profile_path: Optional[str] = None,
     log_dir: Optional[Path] = None,
-    timeout_seconds: float = 2.5,
+    timeout_seconds: Optional[float] = None,
 ) -> dict[str, Any]:
     """Bound live dashboard latency; fall back when broker calls stall."""
+    if timeout_seconds is None:
+        try:
+            timeout_seconds = float(os.environ.get("LIVE_DASHBOARD_TIMEOUT_SEC", "2.5"))
+        except ValueError:
+            timeout_seconds = 2.5
     with ThreadPoolExecutor(max_workers=1) as executor:
         fut = executor.submit(_build_live_dashboard_state, profile_name, profile_path, log_dir)
         try:
@@ -5018,9 +5057,11 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
                     result = dict(live)
                     result["loop_running"] = loop_running
                     result["stale"] = False
-                result["stale_age_seconds"] = 0.0
-                result["data_source"] = "live_phase3" if prefer_live_phase3 else "live_fallback"
-                result["loop_log"] = file_state.get("loop_log", result.get("loop_log", []))
+                    result["stale_age_seconds"] = 0.0
+                    result["data_source"] = "live_phase3" if prefer_live_phase3 else "live_fallback"
+                    result["loop_log"] = file_state.get("loop_log", result.get("loop_log", []))
+                else:
+                    result["loop_log"] = file_state.get("loop_log", result.get("loop_log", []))
             result["positions"] = _enrich_phase3_rows(list(result.get("positions") or []))
             out = _strip_trial10_directional_cap_filter(result)
             _lean_dashboard_cache[lk] = (_time.monotonic(), dict(out))
