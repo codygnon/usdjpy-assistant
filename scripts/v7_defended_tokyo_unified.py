@@ -235,6 +235,9 @@ class TokyoState:
     session_state: dict = field(default_factory=dict)
     diag: Counter = field(default_factory=Counter)
     engine: Optional[Any] = field(default=None, repr=False)
+    # Inclusive last row index with TF close time <= current M1 ts (monotone; avoids O(len(tf)) scan per bar).
+    m5_asof_idx: int = -1
+    m15_asof_idx: int = -1
 
 
 @dataclass
@@ -1356,15 +1359,19 @@ class TokyoUnifiedEngine:
         i = bar_idx
         spread_pips_now = _get_tokyo_spread(ts, self.cfg)
 
-        m5_slice = m5_full[m5_full["time"] <= ts]
-        m15_slice = m15_full[m15_full["time"] <= ts]
-        if not m5_slice.empty:
-            assert pd.Timestamp(m5_slice["time"].iloc[-1]) <= ts, (
-                f"Tokyo lookahead: M5 has {m5_slice['time'].iloc[-1]} but current bar is {ts}"
+        m5_t = m5_full["time"]
+        m15_t = m15_full["time"]
+        while state.m5_asof_idx + 1 < len(m5_full) and pd.Timestamp(m5_t.iloc[state.m5_asof_idx + 1]) <= ts:
+            state.m5_asof_idx += 1
+        while state.m15_asof_idx + 1 < len(m15_full) and pd.Timestamp(m15_t.iloc[state.m15_asof_idx + 1]) <= ts:
+            state.m15_asof_idx += 1
+        if state.m5_asof_idx >= 0:
+            assert pd.Timestamp(m5_t.iloc[state.m5_asof_idx]) <= ts, (
+                f"Tokyo lookahead: M5 has {m5_t.iloc[state.m5_asof_idx]} but current bar is {ts}"
             )
-        if not m15_slice.empty:
-            assert pd.Timestamp(m15_slice["time"].iloc[-1]) <= ts, (
-                f"Tokyo lookahead: M15 has {m15_slice['time'].iloc[-1]} but current bar is {ts}"
+        if state.m15_asof_idx >= 0:
+            assert pd.Timestamp(m15_t.iloc[state.m15_asof_idx]) <= ts, (
+                f"Tokyo lookahead: M15 has {m15_t.iloc[state.m15_asof_idx]} but current bar is {ts}"
             )
 
         mid_open = float(row["open"])
