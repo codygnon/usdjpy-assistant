@@ -103,6 +103,7 @@ def test_dashboard_builder_uses_live_position_snapshot_without_refetch() -> None
 
 def test_get_trades_for_date_uses_exit_date_semantics(tmp_path: Path) -> None:
     store = SqliteStore(tmp_path / "test.sqlite")
+    store.init_db()
 
     store.insert_trade(
         {

@@ -2191,6 +2191,18 @@ def _collect_phase3_additive_context(
             items.append(ContextItem("M1 Arrival Lag", f"{float(_arrival_lag):.1f}s", "runtime"))
         except Exception:
             pass
+    _retry_count = phase3_state.get("last_m1_retry_count")
+    if _retry_count is not None:
+        try:
+            items.append(ContextItem("M1 Retry Count", str(int(_retry_count)), "runtime"))
+        except Exception:
+            pass
+
+    _strategy_tag = str((eval_result or {}).get("strategy_tag") or "") if isinstance(eval_result, dict) else ""
+    if not _strategy_tag:
+        _strategy_tag = str(fallback_eval.get("strategy_tag") or "")
+    if _strategy_tag:
+        items.append(ContextItem("Strategy Tag", _strategy_tag, "decision"))
 
     items.append(ContextItem("Additive Mode", str(fallback_eval.get("additive_mode") or truth.get("mode") or "defended_additive_runtime_v1"), "additive"))
     items.append(ContextItem("Open Book", str(truth.get("open_book_count_before", 0)), "additive"))
@@ -2226,12 +2238,30 @@ def _collect_phase3_additive_context(
     items.append(ContextItem("Placed This Bar", "yes" if bool(fallback_eval.get("placed")) else "no", "decision"))
 
     ownership_cell = ""
-    if isinstance(eval_result, dict):
-        ownership_cell = str((eval_result.get("phase3_ownership_audit") or {}).get("ownership_cell") or "")
+    _audit_regime = ""
+    _def_flags: list[str] = []
+    _audit = eval_result.get("phase3_ownership_audit") if isinstance(eval_result, dict) else None
+    if isinstance(_audit, dict):
+        ownership_cell = str(_audit.get("ownership_cell") or "")
+        _audit_regime = str(_audit.get("regime_label") or "")
+        if _audit.get("defensive_global_standdown"):
+            _def_flags.append("standdown")
+        if _audit.get("defensive_london_cluster_block"):
+            _def_flags.append("ldn_cluster")
+        if _audit.get("defensive_v44_regime_block"):
+            _def_flags.append("v44_regime")
     if not ownership_cell:
         ownership_cell = str(fallback_eval.get("ownership_cell") or "")
+    if not _audit_regime:
+        _audit_regime = str(fallback_eval.get("regime_label") or "")
+    if not _def_flags:
+        _def_flags = [str(flag).strip() for flag in list(fallback_eval.get("defensive_flags") or []) if str(flag).strip()]
     if ownership_cell:
         items.append(ContextItem("Ownership Cell", ownership_cell, "decision"))
+    if _audit_regime:
+        items.append(ContextItem("Regime Label", _audit_regime, "decision"))
+    if _def_flags:
+        items.append(ContextItem("Defensive Flags", ", ".join(_def_flags), "decision"))
 
     if rejected:
         first_reject = dict(rejected[0] or {})
