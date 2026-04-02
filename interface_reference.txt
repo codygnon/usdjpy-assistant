@@ -1,0 +1,1870 @@
+Strategy / Model Interface Reference
+===================================
+
+Source: /Users/codygnon/Documents/usdjpy_assistant/core/regime_backtest_engine/strategy.py
+Source: /Users/codygnon/Documents/usdjpy_assistant/core/regime_backtest_engine/models.py
+
+
+StrategyFamily protocol
+-----------------------
+
+```python
+class StrategyFamily(Protocol):
+    family_name: str
+
+    def evaluate(
+        self,
+        current_bar: BarView,
+        history: HistoricalDataView,
+        portfolio: PortfolioSnapshot,
+    ) -> Signal | None:
+        ...
+
+    def get_exit_conditions(
+        self,
+        position: PositionSnapshot,
+        current_bar: BarView,
+        history: HistoricalDataView,
+    ) -> ExitAction | None:
+        ...
+```
+
+
+Benchmark Runner Script
+-----------------------
+
+Selected: /Users/codygnon/Documents/usdjpy_assistant/scripts/run_strategy_benchmark.py
+
+```python
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import math
+import re
+import shutil
+import sys
+import traceback
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.regime_backtest_engine import (
+    AdmissionConfig,
+    BacktestEngine,
+    FixedSpreadConfig,
+    InstrumentSpec,
+    RunConfig,
+    SlippageConfig,
+    SpreadConfig,
+    V14TokyoStrategy,
+    V14TokyoStrategyConfig,
+    V2LondonStrategy,
+    V2LondonStrategyConfig,
+    V44NYStrategy,
+    V44StrategyConfig,
+    prepare_v14_augmented_data,
+)
+
+
+StrategyKind = Literal["v14", "v2", "v44"]
+
+
+class BenchmarkStrategySpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    label: str = Field(min_length=1)
+    kind: StrategyKind
+    config_path: Path
+    family_name: str | None = None
+
+    @model_validator(mode="after")
+    def validate_label(self) -> "BenchmarkStrategySpec":
+        if not self.label.strip():
+            raise ValueError("strategy label must not be blank")
+        return self
+
+
+@dataclass(frozen=True)
+class BenchmarkRun:
+    spec: BenchmarkStrategySpec
+    config: RunConfig
+    strategy: Any
+    run_dir: Path
+    prepared_data_path: Path
+
+
+@dataclass(frozen=True)
+class BenchmarkOutcome:
+    label: str
+    kind: str
+    family_name: str
+    config_path: str
+    status: str
+    output_dir: str
+    prepared_data_path: str
+    trade_log_path: str | None = None
+    bar_log_path: str | None = None
+    config_snapshot_path: str | None = None
+    manifest_path: str | None = None
+    arbitration_log_path: str | None = None
+    hypothesis: str | None = None
+    mode: str | None = None
+    processed_bar_count: int | None = None
+    processed_start_time: str | None = None
+    processed_end_time: str | None = None
+    synthetic_bid_ask: bool | None = None
+    initial_balance: float | None = None
+    ending_balance: float | None = None
+    ending_equity: float | None = None
+    net_pnl_usd: float | None = None
+    return_pct: float | None = None
+    profit_factor: float | None = None
+    trade_count: int | None = None
+    win_rate: float | None = None
+    max_drawdown_usd: float | None = None
+    max_drawdown_pct: float | None = None
+    pnl_to_max_drawdown: float | None = None
+    max_concurrent_positions: int | None = None
+    arbitration_event_count: int | None = None
+    error: str | None = None
+
+
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", value.strip()).strip("_").lower()
+    return slug or "strategy"
+
+
+def _parse_cli_strategy(value: str) -> BenchmarkStrategySpec:
+    parts: dict[str, str] = {}
+    for raw_part in value.split(","):
+        part = raw_part.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            raise ValueError(
+                "strategy specs must use comma-separated key=value pairs, for example: "
+                "kind=v44,label=v44_base,config=/abs/path/config.json"
+            )
+        key, raw_val = part.split("=", 1)
+        parts[key.strip()] = raw_val.strip()
+    if "config" in parts and "config_path" not in parts:
+        parts["config_path"] = parts.pop("config")
+    return BenchmarkStrategySpec.model_validate(parts)
+
+
+def _load_specs_from_file(path: Path) -> list[BenchmarkStrategySpec]:
+    payload = json.loads(path.read_text())
+    strategies = payload["strategies"] if isinstance(payload, dict) else payload
+    specs: list[BenchmarkStrategySpec] = []
+    for item in strategies:
+        normalized = dict(item)
+        if "config" in normalized and "config_path" not in normalized:
+            normalized["config_path"] = normalized.pop("config")
+        if "config_path" in normalized:
+            cfg_path = Path(normalized["config_path"])
+            if not cfg_path.is_absolute():
+                normalized["config_path"] = str((path.parent / cfg_path).resolve())
+        specs.append(BenchmarkStrategySpec.model_validate(normalized))
+    return specs
+
+
+def _dedupe_and_validate_specs(specs: list[BenchmarkStrategySpec]) -> list[BenchmarkStrategySpec]:
+    if not specs:
+        raise ValueError("provide at least one strategy via --strategy or --spec-file")
+    seen_labels: set[str] = set()
+    seen_slugs: set[str] = set()
+    for spec in specs:
+        if spec.label in seen_labels:
+            raise ValueError(f"duplicate strategy label: {spec.label}")
+        seen_labels.add(spec.label)
+        slug = _slugify(spec.label)
+        if slug in seen_slugs:
+            raise ValueError(
+                f"strategy labels must remain unique after slugification; "
+                f"label {spec.label!r} collides with another label"
+            )
+        seen_slugs.add(slug)
+    return specs
+
+
+def _common_spread(args: argparse.Namespace) -> SpreadConfig:
+    if args.spread_mode == "from_data":
+        return SpreadConfig(spread_source="from_data")
+    return SpreadConfig(
+        spread_source="fixed",
+        fixed=FixedSpreadConfig(spread_pips=float(args.fixed_spread_pips)),
+    )
+
+
+def _common_slippage(args: argparse.Namespace) -> SlippageConfig:
+    return SlippageConfig(fixed_slippage_pips=float(args.slippage_pips))
+
+
+def _common_instrument(args: argparse.Namespace) -> InstrumentSpec:
+    return InstrumentSpec(symbol=args.symbol, margin_rate=(1.0 / float(args.margin_leverage)))
+
+
+def _build_v14_run(spec: BenchmarkStrategySpec, data_path: Path, run_dir: Path, args: argparse.Namespace) -> BenchmarkRun:
+    strategy_cfg = V14TokyoStrategyConfig.from_json(spec.config_path, family_name=spec.family_name or "v14")
+    cfg = strategy_cfg.config
+    max_open = int(cfg["position_sizing"]["max_concurrent_positions"])
+    max_units = int(cfg["position_sizing"]["max_units"])
+    prepared_path = run_dir / "market_data_augmented.csv"
+    prepare_v14_augmented_data(data_path, spec.config_path, prepared_path)
+    run_config = RunConfig(
+        hypothesis=args.hypothesis,
+        data_path=prepared_path,
+        output_dir=run_dir,
+        mode="standalone",
+        active_families=(strategy_cfg.family_name,),
+        instrument=_common_instrument(args),
+        spread=_common_spread(args),
+        slippage=_common_slippage(args),
+        admission=AdmissionConfig(
+            allow_opposing_exposure=False,
+            max_total_open_positions=max(1, max_open),
+            max_open_positions_per_family={strategy_cfg.family_name: max(1, max_open)},
+            max_total_units=max(1, max_units),
+            max_units_per_family={strategy_cfg.family_name: max(1, max_units)},
+            family_priority=(strategy_cfg.family_name,),
+        ),
+        initial_balance=float(args.initial_balance),
+        start_index=args.start_index,
+        end_index=args.end_index,
+        bar_log_format=args.bar_log_format,
+    )
+    return BenchmarkRun(
+        spec=spec,
+        config=run_config,
+        strategy=V14TokyoStrategy(strategy_cfg),
+        run_dir=run_dir,
+        prepared_data_path=prepared_path,
+    )
+
+
+def _build_v2_run(spec: BenchmarkStrategySpec, data_path: Path, run_dir: Path, args: argparse.Namespace) -> BenchmarkRun:
+    strategy_cfg = V2LondonStrategyConfig.from_json(spec.config_path, family_name=spec.family_name or "london_v2")
+    cfg = strategy_cfg.config
+    max_open = int(cfg["account"]["max_open_positions"])
+    run_config = RunConfig(
+        hypothesis=args.hypothesis,
+        data_path=data_path,
+        output_dir=run_dir,
+        mode="standalone",
+        active_families=(strategy_cfg.family_name,),
+        instrument=_common_instrument(args),
+        spread=_common_spread(args),
+        slippage=_common_slippage(args),
+        admission=AdmissionConfig(
+            allow_opposing_exposure=False,
+            max_total_open_positions=max(1, max_open),
+            max_open_positions_per_family={strategy_cfg.family_name: max(1, max_open)},
+            max_total_units=2_000_000,
+            max_units_per_family={strategy_cfg.family_name: 2_000_000},
+            family_priority=(strategy_cfg.family_name,),
+        ),
+        initial_balance=float(args.initial_balance),
+        start_index=args.start_index,
+        end_index=args.end_index,
+        bar_log_format=args.bar_log_format,
+    )
+    return BenchmarkRun(
+        spec=spec,
+        config=run_config,
+        strategy=V2LondonStrategy(strategy_cfg),
+        run_dir=run_dir,
+        prepared_data_path=data_path,
+    )
+
+
+def _build_v44_run(spec: BenchmarkStrategySpec, data_path: Path, run_dir: Path, args: argparse.Namespace) -> BenchmarkRun:
+    strategy_cfg = V44StrategyConfig.from_v44_json(spec.config_path, family_name=spec.family_name or "v44_ny")
+    max_positions = max(1, int(strategy_cfg.max_open_positions))
+    max_units = int(max(1, strategy_cfg.rp_max_lot * 100_000))
+    run_config = RunConfig(
+        hypothesis=args.hypothesis,
+        data_path=data_path,
+        output_dir=run_dir,
+        mode="standalone",
+        active_families=(strategy_cfg.family_name,),
+        instrument=_common_instrument(args),
+        spread=_common_spread(args),
+        slippage=_common_slippage(args),
+        admission=AdmissionConfig(
+            allow_opposing_exposure=False,
+            max_total_open_positions=max_positions,
+            max_open_positions_per_family={strategy_cfg.family_name: max_positions},
+            max_total_units=max_units,
+            max_units_per_family={strategy_cfg.family_name: max_units},
+            family_priority=(strategy_cfg.family_name,),
+        ),
+        initial_balance=float(args.initial_balance),
+        start_index=args.start_index,
+        end_index=args.end_index,
+        bar_log_format=args.bar_log_format,
+    )
+    return BenchmarkRun(
+        spec=spec,
+        config=run_config,
+        strategy=V44NYStrategy(strategy_cfg),
+        run_dir=run_dir,
+        prepared_data_path=data_path,
+    )
+
+
+def _build_run(spec: BenchmarkStrategySpec, data_path: Path, output_dir: Path, args: argparse.Namespace) -> BenchmarkRun:
+    run_dir = output_dir / "runs" / _slugify(spec.label)
+    if run_dir.exists():
+        shutil.rmtree(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    if spec.kind == "v14":
+        return _build_v14_run(spec, data_path, run_dir, args)
+    if spec.kind == "v2":
+        return _build_v2_run(spec, data_path, run_dir, args)
+    if spec.kind == "v44":
+        return _build_v44_run(spec, data_path, run_dir, args)
+    raise ValueError(f"unsupported strategy kind: {spec.kind}")
+
+
+def _safe_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(numeric) or math.isinf(numeric):
+        return None
+    return numeric
+
+
+def _outcome_from_result(run: BenchmarkRun, result: Any) -> BenchmarkOutcome:
+    summary = result.summary
+    initial_balance = _safe_float(summary.get("initial_balance"))
+    net_pnl = _safe_float(summary.get("net_pnl_usd"))
+    max_dd = _safe_float(summary.get("max_drawdown_usd"))
+    return_pct = ((net_pnl / initial_balance) * 100.0) if initial_balance and net_pnl is not None else None
+    pnl_to_dd = (net_pnl / max_dd) if net_pnl is not None and max_dd not in (None, 0.0) else None
+    return BenchmarkOutcome(
+        label=run.spec.label,
+        kind=run.spec.kind,
+        family_name=run.config.active_families[0],
+        config_path=str(run.spec.config_path),
+        status="ok",
+        output_dir=str(run.run_dir),
+        prepared_data_path=str(run.prepared_data_path),
+        trade_log_path=str(result.trade_log_path),
+        bar_log_path=str(result.bar_log_path),
+        config_snapshot_path=str(result.config_snapshot_path),
+        manifest_path=str(result.manifest_path) if result.manifest_path is not None else None,
+        arbitration_log_path=str(result.arbitration_log_path) if result.arbitration_log_path is not None else None,
+        hypothesis=str(summary.get("hypothesis")),
+        mode=str(summary.get("mode")),
+        processed_bar_count=int(summary["processed_bar_count"]),
+        processed_start_time=str(summary.get("processed_start_time")),
+        processed_end_time=str(summary.get("processed_end_time")),
+        synthetic_bid_ask=bool(summary.get("synthetic_bid_ask")),
+        initial_balance=initial_balance,
+        ending_balance=_safe_float(summary.get("ending_balance")),
+        ending_equity=_safe_float(summary.get("ending_equity")),
+        net_pnl_usd=net_pnl,
+        return_pct=return_pct,
+        profit_factor=_safe_float(summary.get("profit_factor")),
+        trade_count=int(summary["trade_count"]) if summary.get("trade_count") is not None else None,
+        win_rate=_safe_float(summary.get("win_rate")),
+        max_drawdown_usd=max_dd,
+        max_drawdown_pct=_safe_float(summary.get("max_drawdown_pct")),
+        pnl_to_max_drawdown=pnl_to_dd,
+        max_concurrent_positions=int(summary["max_concurrent_positions"]) if summary.get("max_concurrent_positions") is not None else None,
+        arbitration_event_count=int(summary["arbitration_event_count"]) if summary.get("arbitration_event_count") is not None else None,
+    )
+
+
+def _failure_outcome(run: BenchmarkRun, exc: Exception) -> BenchmarkOutcome:
+    return BenchmarkOutcome(
+        label=run.spec.label,
+        kind=run.spec.kind,
+        family_name=run.config.active_families[0],
+        config_path=str(run.spec.config_path),
+        status="error",
+        output_dir=str(run.run_dir),
+        prepared_data_path=str(run.prepared_data_path),
+        error=str(exc),
+    )
+
+
+def _rank_sort_value(outcome: BenchmarkOutcome, rank_by: str) -> tuple[int, float]:
+    raw = getattr(outcome, rank_by)
+    if raw is None:
+        return (1, 0.0)
+    value = float(raw)
+    if rank_by in {"max_drawdown_usd", "max_drawdown_pct"}:
+        return (0, value)
+    return (0, -value)
+
+
+def _sorted_successes(outcomes: list[BenchmarkOutcome], rank_by: str) -> list[BenchmarkOutcome]:
+    successes = [outcome for outcome in outcomes if outcome.status == "ok"]
+    return sorted(successes, key=lambda outcome: _rank_sort_value(outcome, rank_by))
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    path.write_text(json.dumps(payload, indent=2))
+
+
+def _write_csv(path: Path, rows: list[BenchmarkOutcome]) -> None:
+    if not rows:
+        path.write_text("")
+        return
+    fieldnames = list(asdict(rows[0]).keys())
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(asdict(row))
+
+
+def _persist_run_outcome(run_dir: Path, outcome: BenchmarkOutcome, error_traceback: str | None = None) -> None:
+    _write_json(run_dir / "benchmark_outcome.json", asdict(outcome))
+    if error_traceback is not None:
+        (run_dir / "error.txt").write_text(error_traceback)
+
+
+def _print_summary(outcomes: list[BenchmarkOutcome], rank_by: str) -> None:
+    ranked = _sorted_successes(outcomes, rank_by)
+    if not ranked:
+        print("No successful benchmark runs.")
+        return
+    print(f"Leaderboard (ranked by {rank_by})")
+    for index, outcome in enumerate(ranked, start=1):
+        print(
+            f"{index}. {outcome.label} [{outcome.kind}] "
+            f"net_pnl_usd={outcome.net_pnl_usd} "
+            f"profit_factor={outcome.profit_factor} "
+            f"win_rate={outcome.win_rate} "
+            f"max_drawdown_usd={outcome.max_drawdown_usd} "
+            f"trade_count={outcome.trade_count}"
+        )
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run multiple clean-room strategies independently under one shared benchmark harness "
+            "for apples-to-apples comparison."
+        )
+    )
+    parser.add_argument("--data", required=True, help="Shared input data file used for every strategy.")
+    parser.add_argument("--output-dir", required=True, help="Benchmark output root.")
+    parser.add_argument("--strategy", action="append", default=[], help="Strategy spec like kind=v44,label=v44_base,config=/abs/path/config.json")
+    parser.add_argument("--spec-file", action="append", default=[], help="JSON file containing a strategies array.")
+    parser.add_argument("--hypothesis", default="strategy_benchmark")
+    parser.add_argument("--symbol", default="USDJPY")
+    parser.add_argument("--initial-balance", type=float, default=100000.0)
+    parser.add_argument("--spread-mode", choices=("fixed", "from_data"), default="fixed")
+    parser.add_argument("--fixed-spread-pips", type=float, default=2.0)
+    parser.add_argument("--slippage-pips", type=float, default=0.1)
+    parser.add_argument("--margin-leverage", type=float, default=33.3)
+    parser.add_argument("--start-index", type=int, default=None)
+    parser.add_argument("--end-index", type=int, default=None)
+    parser.add_argument("--bar-log-format", choices=("csv", "parquet"), default="csv")
+    parser.add_argument(
+        "--rank-by",
+        choices=(
+            "net_pnl_usd",
+            "profit_factor",
+            "win_rate",
+            "ending_equity",
+            "trade_count",
+            "return_pct",
+            "pnl_to_max_drawdown",
+            "max_drawdown_usd",
+            "max_drawdown_pct",
+        ),
+        default="net_pnl_usd",
+    )
+    parser.add_argument("--continue-on-error", action="store_true")
+    return parser
+
+
+def _collect_specs(args: argparse.Namespace) -> list[BenchmarkStrategySpec]:
+    specs: list[BenchmarkStrategySpec] = []
+    for raw in args.strategy:
+        specs.append(_parse_cli_strategy(raw))
+    for raw_path in args.spec_file:
+        specs.extend(_load_specs_from_file(Path(raw_path).resolve()))
+    return _dedupe_and_validate_specs(specs)
+
+
+def main() -> None:
+    args = build_arg_parser().parse_args()
+    data_path = Path(args.data).resolve()
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    specs = _collect_specs(args)
+    runs = [_build_run(spec, data_path, output_dir, args) for spec in specs]
+
+    request_snapshot = {
+        "data_path": str(data_path),
+        "output_dir": str(output_dir),
+        "hypothesis": args.hypothesis,
+        "symbol": args.symbol,
+        "initial_balance": float(args.initial_balance),
+        "spread_mode": args.spread_mode,
+        "fixed_spread_pips": float(args.fixed_spread_pips),
+        "slippage_pips": float(args.slippage_pips),
+        "margin_leverage": float(args.margin_leverage),
+        "start_index": args.start_index,
+        "end_index": args.end_index,
+        "bar_log_format": args.bar_log_format,
+        "rank_by": args.rank_by,
+        "strategies": [spec.model_dump(mode="json") for spec in specs],
+    }
+    _write_json(output_dir / "benchmark_request.json", request_snapshot)
+
+    outcomes: list[BenchmarkOutcome] = []
+    for run in runs:
+        try:
+            result = BacktestEngine({run.config.active_families[0]: run.strategy}).run(run.config)
+            outcome = _outcome_from_result(run, result)
+            _persist_run_outcome(run.run_dir, outcome)
+            outcomes.append(outcome)
+        except Exception as exc:
+            error_traceback = traceback.format_exc()
+            outcome = _failure_outcome(run, exc)
+            _persist_run_outcome(run.run_dir, outcome, error_traceback=error_traceback)
+            outcomes.append(outcome)
+            if not args.continue_on_error:
+                _write_json(output_dir / "benchmark_results.json", [asdict(outcome) for outcome in outcomes])
+                _write_csv(output_dir / "benchmark_results.csv", outcomes)
+                raise
+
+    _write_json(output_dir / "benchmark_results.json", [asdict(outcome) for outcome in outcomes])
+    _write_csv(output_dir / "benchmark_results.csv", outcomes)
+    _write_json(output_dir / "leaderboard.json", [asdict(outcome) for outcome in _sorted_successes(outcomes, args.rank_by)])
+    _write_csv(output_dir / "leaderboard.csv", _sorted_successes(outcomes, args.rank_by))
+    _print_summary(outcomes, args.rank_by)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+
+Signal
+------
+
+```python
+@dataclass(frozen=True)
+class Signal:
+    family: str
+    direction: Literal["long", "short"]
+    stop_loss: float
+    take_profit: Optional[float]
+    size: int
+    metadata: dict[str, Any] = field(default_factory=dict)
+```
+
+
+ExitAction
+----------
+
+```python
+@dataclass(frozen=True)
+class ExitAction:
+    reason: str
+    exit_type: Literal["none", "full", "partial"] = "none"
+    close_fraction: float = 1.0
+    price: Optional[float] = None
+    new_stop_loss: Optional[float] = None
+    new_take_profit: Optional[float] = None
+    stop_loss: Optional[float] = None
+    take_profit: Optional[float] = None
+    close_full: bool = False
+```
+
+
+Bar data model (1M bar structure)
+---------------------------------
+
+```python
+@dataclass(frozen=True)
+class BarRecord:
+    bar_index: int
+    timestamp: Any
+    bid_open: float
+    bid_high: float
+    bid_low: float
+    bid_close: float
+    ask_open: float
+    ask_high: float
+    ask_low: float
+    ask_close: float
+    mid_open: float
+    mid_high: float
+    mid_low: float
+    mid_close: float
+    spread_pips: float
+```
+
+
+Strategy-facing bar wrapper
+---------------------------
+
+```python
+@dataclass(frozen=True)
+class BarView:
+    _store: MarketDataStore
+    bar_index: int
+
+    def __getattr__(self, item: str) -> Any:
+        if item.startswith("_"):
+            raise AttributeError(item)
+        return self._store.value(item, self.bar_index)
+
+    def to_record(self) -> BarRecord:
+        return BarRecord(
+            bar_index=int(self.bar_index),
+            timestamp=self.timestamp,
+            bid_open=float(self.bid_open),
+            bid_high=float(self.bid_high),
+            bid_low=float(self.bid_low),
+            bid_close=float(self.bid_close),
+            ask_open=float(self.ask_open),
+            ask_high=float(self.ask_high),
+            ask_low=float(self.ask_low),
+            ask_close=float(self.ask_close),
+            mid_open=float(self.mid_open),
+            mid_high=float(self.mid_high),
+            mid_low=float(self.mid_low),
+            mid_close=float(self.mid_close),
+            spread_pips=float(self.spread_pips),
+        )
+```
+
+
+Instrument config
+-----------------
+
+```python
+class InstrumentSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    symbol: str
+    base_currency: str = "USD"
+    quote_currency: str = "JPY"
+    account_currency: str = "USD"
+    pip_size: float = 0.01
+    contract_size: int = 1
+    margin_rate: float = Field(default=0.03, gt=0.0)
+```
+
+
+Portfolio/account state passed to strategies
+--------------------------------------------
+
+```python
+class PositionSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    trade_id: int
+    family: str
+    direction: Literal["long", "short"]
+    entry_price: float
+    entry_bar: int
+    size: int
+    margin_held: float
+    stop_loss: float
+    take_profit: Optional[float]
+    unrealized_pnl: float
+```
+
+```python
+class PortfolioSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    balance: float
+    equity: float
+    unrealized_pnl: float
+    margin_used: float
+    available_margin: float
+    open_positions: tuple[PositionSnapshot, ...] = ()
+    closed_trade_count: int = 0
+```
+
+
+Mutable engine-side portfolio state
+-----------------------------------
+
+```python
+@dataclass
+class PortfolioState:
+    balance: float
+    equity: float
+    unrealized_pnl: float
+    margin_used: float
+    available_margin: float
+    open_positions: list[Position] = field(default_factory=list)
+    closed_trades: list[ClosedTrade] = field(default_factory=list)
+    pending_signals: list[Signal] = field(default_factory=list)
+    trade_id_seq: int = 0
+```
+
+
+Best Existing Runner Script
+---------------------------
+
+Selected: /Users/codygnon/Documents/usdjpy_assistant/scripts/run_regime_backtest_integrated_schedule_replay.py
+
+```python
+from __future__ import annotations
+
+import argparse
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo
+
+from core.regime_backtest_engine import (
+    AdmissionConfig,
+    BacktestEngine,
+    FixedSpreadConfig,
+    InstrumentSpec,
+    RunConfig,
+    SlippageConfig,
+    SpreadConfig,
+    StrategyFamily,
+    V14TokyoStrategy,
+    V14TokyoStrategyConfig,
+    V2LondonStrategy,
+    V2LondonStrategyConfig,
+    V44NYStrategy,
+    V44StrategyConfig,
+)
+from core.regime_backtest_engine.models import ExitAction, PortfolioSnapshot, PositionSnapshot, Signal
+from core.regime_backtest_engine.strategy import BarView, HistoricalDataView
+
+NY_TZ = ZoneInfo('America/New_York')
+
+
+@dataclass(frozen=True)
+class TimeWindow:
+    start_minute: int
+    end_minute: int
+
+    def contains(self, minute_of_day: int) -> bool:
+        return self.start_minute <= minute_of_day <= self.end_minute
+
+
+SCHEDULES: dict[str, dict[int, dict[str, tuple[TimeWindow, ...]]]] = {
+    'v7': {
+        0: {'v44_ny': (TimeWindow(7 * 60 + 55, 11 * 60 + 5),)},
+        1: {
+            'london_v2': (TimeWindow(2 * 60 + 55, 7 * 60 + 5),),
+            'v44_ny': (TimeWindow(7 * 60 + 55, 11 * 60 + 5),),
+            'v14': (TimeWindow(11 * 60 + 55, 18 * 60 + 5),),
+        },
+        2: {
+            'london_v2': (TimeWindow(2 * 60 + 55, 7 * 60 + 5),),
+            'v44_ny': (TimeWindow(7 * 60 + 55, 11 * 60 + 5),),
+            'v14': (TimeWindow(11 * 60 + 55, 18 * 60 + 5),),
+        },
+        3: {'v44_ny': (TimeWindow(7 * 60 + 55, 11 * 60 + 5),)},
+        4: {
+            'v44_ny': (TimeWindow(7 * 60 + 55, 11 * 60 + 5),),
+            'v14': (TimeWindow(11 * 60 + 55, 18 * 60 + 5),),
+        },
+    },
+    'legacy_phase3': {
+        0: {'v44_ny': (TimeWindow(8 * 60 + 55, 12 * 60 + 5),)},
+        1: {
+            'london_v2': (TimeWindow(3 * 60 + 55, 6 * 60 + 5),),
+            'v44_ny': (TimeWindow(8 * 60 + 55, 12 * 60 + 5),),
+            'v14': (TimeWindow(11 * 60 + 55, 18 * 60 + 5),),
+        },
+        2: {
+            'london_v2': (TimeWindow(3 * 60 + 55, 6 * 60 + 5),),
+            'v44_ny': (TimeWindow(8 * 60 + 55, 12 * 60 + 5),),
+            'v14': (TimeWindow(11 * 60 + 55, 18 * 60 + 5),),
+        },
+        3: {'v44_ny': (TimeWindow(8 * 60 + 55, 12 * 60 + 5),)},
+        4: {
+            'v44_ny': (TimeWindow(8 * 60 + 55, 18 * 60 + 5),),
+            'v14': (TimeWindow(8 * 60 + 55, 18 * 60 + 5),),
+        },
+    },
+}
+
+
+class ScheduledStrategy(StrategyFamily):
+    def __init__(self, family_name: str, inner: StrategyFamily, schedule_name: str) -> None:
+        self.family_name = family_name
+        self.inner = inner
+        self.schedule_name = schedule_name
+
+    def _allowed(self, timestamp: Any) -> bool:
+        ts = timestamp if getattr(timestamp, 'tzinfo', None) is not None else None
+        if ts is None:
+            from pandas import Timestamp
+            ts = Timestamp(timestamp, tz='UTC')
+        local_ts = ts.tz_convert(NY_TZ)
+        weekday = int(local_ts.weekday())
+        minute_of_day = int(local_ts.hour) * 60 + int(local_ts.minute)
+        day_windows = SCHEDULES[self.schedule_name].get(weekday, {})
+        windows = day_windows.get(self.family_name, ())
+        return any(window.contains(minute_of_day) for window in windows)
+
+    def evaluate(self, current_bar: BarView, history: HistoricalDataView, portfolio: PortfolioSnapshot) -> Signal | None:
+        if not self._allowed(current_bar.timestamp):
+            return None
+        return self.inner.evaluate(current_bar, history, portfolio)
+
+    def get_exit_conditions(self, position: PositionSnapshot, current_bar: BarView, history: HistoricalDataView) -> ExitAction | None:
+        return self.inner.get_exit_conditions(position, current_bar, history)
+
+    def fit(self, history: HistoricalDataView) -> None:
+        hook = getattr(self.inner, 'fit', None)
+        if callable(hook):
+            hook(history)
+
+    def on_position_opened(self, position: PositionSnapshot, signal: Signal, current_bar: BarView) -> None:
+        hook = getattr(self.inner, 'on_position_opened', None)
+        if callable(hook):
+            hook(position, signal, current_bar)
+
+    def on_position_closed(self, trade) -> None:
+        hook = getattr(self.inner, 'on_position_closed', None)
+        if callable(hook):
+            hook(trade)
+
+
+def build_engine(schedule_name: str) -> tuple[BacktestEngine, tuple[str, ...], int, int]:
+    v14_cfg = V14TokyoStrategyConfig.from_json('/Users/codygnon/Documents/usdjpy_assistant/research_out/tokyo_optimized_v14_config.json')
+    v2_cfg = V2LondonStrategyConfig.from_json('/Users/codygnon/Documents/usdjpy_assistant/research_out/v2_exp4_winner_baseline_config.json')
+    v44_cfg = V44StrategyConfig.from_v44_json('/Users/codygnon/Documents/usdjpy_assistant/research_out/session_momentum_v44_base_config.json')
+
+    v14 = ScheduledStrategy(v14_cfg.family_name, V14TokyoStrategy(v14_cfg), schedule_name)
+    v2 = ScheduledStrategy(v2_cfg.family_name, V2LondonStrategy(v2_cfg), schedule_name)
+    v44 = ScheduledStrategy(v44_cfg.family_name, V44NYStrategy(v44_cfg), schedule_name)
+
+    max_total_open_positions = int(v14_cfg.config['position_sizing']['max_concurrent_positions']) + int(v2_cfg.config['account']['max_open_positions']) + int(v44_cfg.max_open_positions)
+    max_total_units = int(v14_cfg.config['position_sizing']['max_units']) + 2_000_000 + int(v44_cfg.rp_max_lot * 100_000)
+    engine = BacktestEngine({
+        v2_cfg.family_name: v2,
+        v44_cfg.family_name: v44,
+        v14_cfg.family_name: v14,
+    })
+    return engine, (v2_cfg.family_name, v44_cfg.family_name, v14_cfg.family_name), max_total_open_positions, max_total_units
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description='Run integrated clean-room replay under a top-level Phase 3 schedule gate.')
+    parser.add_argument('--schedule', choices=tuple(SCHEDULES.keys()), required=True)
+    parser.add_argument('--data', default='/Users/codygnon/Documents/usdjpy_assistant/research_out/regime_backtest_v14_standalone_500k/market_data_augmented.csv')
+    parser.add_argument('--output-dir', required=True)
+    parser.add_argument('--initial-balance', type=float, default=100000.0)
+    parser.add_argument('--fixed-spread-pips', type=float, default=2.0)
+    parser.add_argument('--slippage-pips', type=float, default=0.1)
+    parser.add_argument('--margin-leverage', type=float, default=33.3)
+    parser.add_argument('--bar-log-format', choices=('csv', 'parquet'), default='csv')
+    args = parser.parse_args()
+
+    engine, families, max_total_open_positions, max_total_units = build_engine(args.schedule)
+    config = RunConfig(
+        hypothesis=f'integrated_schedule_replay_{args.schedule}',
+        data_path=Path(args.data),
+        output_dir=Path(args.output_dir),
+        mode='integrated',
+        active_families=families,
+        instrument=InstrumentSpec(symbol='USDJPY', margin_rate=(1.0 / float(args.margin_leverage))),
+        spread=SpreadConfig(spread_source='fixed', fixed=FixedSpreadConfig(spread_pips=float(args.fixed_spread_pips))),
+        slippage=SlippageConfig(fixed_slippage_pips=float(args.slippage_pips)),
+        admission=AdmissionConfig(
+            allow_opposing_exposure=False,
+            max_total_open_positions=max_total_open_positions,
+            max_open_positions_per_family={'london_v2': 5, 'v44_ny': 3, 'v14': 1},
+            max_total_units=max_total_units,
+            max_units_per_family={'london_v2': 2_000_000, 'v44_ny': int(20 * 100_000), 'v14': 500_000},
+            family_priority=families,
+        ),
+        initial_balance=float(args.initial_balance),
+        bar_log_format=args.bar_log_format,
+    )
+    result = engine.run(config)
+    print(json.dumps(result.summary, indent=2))
+    print(result.trade_log_path)
+    print(result.bar_log_path)
+    print(result.config_snapshot_path)
+
+
+if __name__ == '__main__':
+    main()
+
+```
+
+Best Existing Adapter
+---------------------
+
+Selected: /Users/codygnon/Documents/usdjpy_assistant/adapters/oanda_adapter.py
+
+```python
+"""OANDA v20 REST API adapter. Same logical interface as mt5_adapter for run_loop and execution_engine."""
+from __future__ import annotations
+
+import re
+import time
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Literal
+from types import SimpleNamespace
+
+import pandas as pd
+import requests
+
+from core.timeframes import Timeframe
+
+_OANDA_MAX_CANDLE_COUNT = 5000
+
+# Re-export types compatible with mt5_adapter
+@dataclass(frozen=True)
+class Tick:
+    time: int
+    bid: float
+    ask: float
+
+@dataclass(frozen=True)
+class OrderResult:
+    retcode: int
+    comment: str
+    request_id: int | None
+    order: int | None
+    deal: int | None
+    fill_price: float | None = None
+
+
+@dataclass(frozen=True)
+class PositionCloseInfo:
+    """Close info for a position; same shape as mt5_adapter.PositionCloseInfo for sync_closed_trades."""
+    ticket: int
+    exit_price: float
+    exit_time_utc: str
+    profit: float
+    volume: float
+
+
+_BASE_URLS = {
+    "practice": "https://api-fxpractice.oanda.com",
+    "live": "https://api-fxtrade.oanda.com",
+}
+
+
+def _rfc3339_utc(ts: datetime) -> str:
+    """Format UTC datetime for OANDA query params with second precision."""
+    return ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _to_float(value, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        if isinstance(value, str) and value.strip() == "":
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+
+def _to_int(value, default: int = 0) -> int:
+    try:
+        if value is None:
+            return default
+        if isinstance(value, str) and value.strip() == "":
+            return default
+        return int(float(value))
+    except Exception:
+        return default
+
+
+def _realized_pl_for_closed_trade(fill_tx: dict, closed_trade: dict) -> float:
+    """Per-trade realized P/L from a close entry.
+
+    Never blindly apply transaction-level PL to each closed trade in multi-close fills.
+    """
+    if closed_trade is None:
+        closed_trade = {}
+    raw = closed_trade.get("realizedPL")
+    if raw is not None and str(raw).strip() != "":
+        return _to_float(raw, 0.0)
+
+    # Conservative fallback: only when transaction clearly closes exactly one trade.
+    # This avoids duplicating aggregate transaction PL across multiple closed trades.
+    trades_closed = fill_tx.get("tradesClosed") or []
+    trade_closed = fill_tx.get("tradeClosed") or {}
+    closes_one_trade = (bool(trade_closed) and not trades_closed) or (len(trades_closed) == 1 and not trade_closed)
+    if closes_one_trade:
+        return _to_float(fill_tx.get("pl"), 0.0)
+    return 0.0
+
+
+def _is_oanda_invalid_time_range_error(err: Exception) -> bool:
+    msg = str(err).lower()
+    return "416" in msg and "time range specified is invalid" in msg
+
+
+def _symbol_to_instrument(symbol: str) -> str:
+    """USDJPY or USDJPY.PRO -> USD_JPY."""
+    raw = (symbol or "").upper().strip()
+    # Strip common broker suffixes, e.g. "USDJPY.PRO" -> "USDJPY"
+    for sep in (".", " "):
+        if sep in raw:
+            raw = raw.split(sep)[0]
+    base = re.sub(r"[^A-Za-z]", "", raw)
+    # For forex pairs we only want the first 6 chars (e.g., USDJPY from USDJPYPRO)
+    if len(base) > 6:
+        base = base[:6]
+    if len(base) == 6:
+        return f"{base[:3]}_{base[3:]}"
+    return base
+
+
+def _timeframe_to_granularity(tf: Timeframe) -> str:
+    m = {"M1": "M1", "M3": "M3", "M5": "M5", "M15": "M15", "M30": "M30", "H1": "H1", "H4": "H4", "D": "D", "W": "W", "MN": "M"}
+    if tf in m:
+        return m[tf]
+    raise ValueError(f"Unsupported timeframe: {tf}")
+
+
+def _lots_to_units(volume_lots: float) -> int:
+    """Standard forex: 1 lot = 100,000 units."""
+    return int(round(volume_lots * 100_000))
+
+
+def _instrument_to_symbol(instrument: str) -> str:
+    """USD_JPY or USD/JPY -> USDJPY (OANDA may use either format)."""
+    s = (instrument or "").replace("_", "").replace("/", "").upper()
+    return s
+
+
+def _order_price_precision(instrument: str) -> int:
+    """Return decimal places allowed for order prices (SL/TP/limit) for this instrument.
+    OANDA rejects orders with excess precision; JPY pairs use 3, most others 5."""
+    u = (instrument or "").upper().replace("/", "_")
+    if "JPY" in u:
+        return 3
+    return 5
+
+
+@dataclass(frozen=True)
+class OandaClosedPositionInfo:
+    """Closed position from OANDA history; same shape as mt5_adapter.ClosedPositionInfo for import."""
+    position_id: int
+    symbol: str
+    side: str
+    entry_price: float
+    exit_price: float
+    entry_time_utc: str
+    exit_time_utc: str
+    volume: float
+    profit: float
+    commission: float
+    swap: float
+    pips: float | None
+
+
+class OandaAdapter:
+    """Adapter for OANDA v3 REST API. Use get_oanda_adapter(profile) to build from profile."""
+
+    def __init__(self, token: str, account_id: str | None, environment: Literal["practice", "live"]) -> None:
+        self.token = token.strip()
+        self._account_id = account_id
+        self._base = _BASE_URLS.get(environment, _BASE_URLS["practice"])
+        self._session = requests.Session()
+        self._session.headers["Authorization"] = f"Bearer {self.token}"
+        self._session.headers["Content-Type"] = "application/json"
+        # Lightweight client-side throttling + caching to reduce API load under high trade volume.
+        self._last_req_time: float = 0.0
+        self._positions_cache: list[dict] | None = None
+        self._positions_cache_ts: float = 0.0
+        self._order_to_position: dict[int, int] = {}
+
+    def _get_account_id(self) -> str:
+        if self._account_id:
+            return self._account_id
+        r = self._session.get(f"{self._base}/v3/accounts")
+        r.raise_for_status()
+        data = r.json()
+        accounts = data.get("accounts", [])
+        if not accounts:
+            raise RuntimeError("OANDA: no accounts found for token")
+        self._account_id = accounts[0]["id"]
+        return self._account_id
+
+    def _req(self, method: str, path: str, **kwargs) -> dict:
+        url = f"{self._base}{path}"
+        # Keep requests fast-failing so the run loop never stalls for minutes.
+        # Let the outer run_loop control overall retry cadence.
+        if "timeout" not in kwargs:
+            kwargs["timeout"] = 8  # was 30s; tighter to avoid long hangs
+        last_err = None
+        max_attempts = 2  # was 4; 1 initial + 1 retry
+        for attempt in range(max_attempts):
+            try:
+                # Simple per-process rate limiter: ensure a small gap between OANDA requests
+                now = time.time()
+                min_gap = 0.10  # seconds; keeps bursts smoother without imposing a 250ms floor on every loop
+                if self._last_req_time:
+                    gap = now - self._last_req_time
+                    if gap < min_gap:
+                        time.sleep(min_gap - gap)
+                self._last_req_time = time.time()
+                resp = self._session.request(method, url, **kwargs)
+            except requests.RequestException as e:
+                last_err = e
+                if attempt < max_attempts - 1:
+                    # Short, capped backoff so we recover quickly but don't hammer OANDA.
+                    delay = 2
+                    time.sleep(delay)
+                    continue
+                raise RuntimeError(
+                    f"OANDA API {method} {path}: connection error after {max_attempts} attempts: {e}"
+                ) from e
+
+            if resp.status_code in (502, 503, 504, 429):
+                # Transient upstream / rate-limit; brief retry, then surface to caller.
+                last_err = RuntimeError(f"OANDA API {method} {path}: {resp.status_code}")
+                if attempt < max_attempts - 1:
+                    time.sleep(2)
+                    continue
+                try:
+                    err = resp.json()
+                    msg = err.get("errorMessage", resp.text)
+                except Exception:
+                    msg = resp.text
+                if msg and ("<" in msg and ">" in msg):
+                    msg = f"{resp.status_code} non-JSON response (e.g. Bad Gateway)"
+                elif msg and len(msg) > 300:
+                    msg = msg[:300] + "..."
+                raise RuntimeError(f"OANDA API {method} {path}: {resp.status_code} {msg}")
+
+            if resp.status_code >= 400:
+                try:
+                    err = resp.json()
+                    msg = err.get("errorMessage", resp.text)
+                    # Extract specific rejection reason from OANDA transaction details
+                    rej_txn = err.get("orderRejectTransaction") or err.get("marketOrderRejectTransaction")
+                    if rej_txn:
+                        reason = rej_txn.get("rejectReason", "")
+                        if reason:
+                            msg = f"{msg} (rejectReason: {reason})"
+                except Exception:
+                    msg = resp.text
+                if msg and ("<" in msg and ">" in msg):
+                    msg = f"{resp.status_code} non-JSON response (e.g. Bad Gateway)"
+                elif msg and len(msg) > 300:
+                    msg = msg[:300] + "..."
+                raise RuntimeError(f"OANDA API {method} {path}: {resp.status_code} {msg}")
+
+            if resp.status_code == 204 or not resp.content:
+                return {}
+            return resp.json()
+
+        raise RuntimeError(f"OANDA API {method} {path}: unexpected retry exhaustion") from last_err
+
+    def initialize(self) -> None:
+        self._get_account_id()
+
+    def shutdown(self) -> None:
+        self._session.close()
+
+    def ensure_symbol(self, symbol: str) -> None:
+        pass  # OANDA does not require symbol selection
+
+    def get_account_info(self) -> dict:
+        aid = self._get_account_id()
+        data = self._req("GET", f"/v3/accounts/{aid}/summary")
+        acc = data.get("account", {})
+        return type("AccountInfo", (), {
+            "balance": float(acc.get("balance", 0)),
+            "equity": float(acc.get("NAV", acc.get("balance", 0))),
+            "margin": float(acc.get("marginUsed", 0)),
+            "margin_free": float(acc.get("marginAvailable", 0)),
+        })()
+
+    def get_tick(self, symbol: str) -> Tick:
+        aid = self._get_account_id()
+        inst = _symbol_to_instrument(symbol)
+        data = self._req("GET", f"/v3/accounts/{aid}/pricing?instruments={inst}")
+        prices = data.get("prices", [])
+        if not prices:
+            raise RuntimeError(f"OANDA: no price for {symbol} ({inst})")
+        p = prices[0]
+        # Use normal tradeable bid/ask (bids[]/asks[]) - matches actual position opening prices
+        bid = float(p.get("bids", [{}])[0].get("price", 0))
+        ask = float(p.get("asks", [{}])[0].get("price", 0))
+        ts = p.get("time", "")
+        from datetime import datetime, timezone
+        try:
+            # RFC3339
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            time_int = int(dt.timestamp())
+        except Exception:
+            time_int = 0
+        return Tick(time=time_int, bid=bid, ask=ask)
+
+    def get_bars(self, symbol: str, tf: Timeframe, count: int, *, include_incomplete: bool = False) -> pd.DataFrame:
+        inst = _symbol_to_instrument(symbol)
+        gran = _timeframe_to_granularity(tf)
+        count = max(1, min(int(count), _OANDA_MAX_CANDLE_COUNT))
+        data = self._req("GET", f"/v3/instruments/{inst}/candles?granularity={gran}&count={count}&price=M")
+        candles = data.get("candles", [])
+        if not candles:
+            raise RuntimeError(f"OANDA: no candles for {symbol} {tf}")
+        rows = []
+        for c in candles:
+            if not include_incomplete and c.get("complete") is False:
+                continue
+            mid = c.get("mid", {})
+            t = c.get("time", "")
+            dt = pd.to_datetime(t, utc=True, errors="coerce")
+            if pd.isna(dt):
+                continue
+            rows.append({
+                "time": dt,
+                "open": float(mid.get("o", 0)),
+                "high": float(mid.get("h", 0)),
+                "low": float(mid.get("l", 0)),
+                "close": float(mid.get("c", 0)),
+                "tick_volume": int(c.get("volume", 0)),
+            })
+        df = pd.DataFrame(rows)
+        if not df.empty and "time" in df.columns:
+            df = df.sort_values("time").reset_index(drop=True)
+        return df
+
+    def get_bars_from_time(self, symbol: str, tf: Timeframe, from_time_utc: str, count: int = 30) -> pd.DataFrame:
+        """Fetch up to `count` M1 candles starting at `from_time_utc` (ISO 8601 string)."""
+        import urllib.parse
+        inst = _symbol_to_instrument(symbol)
+        gran = _timeframe_to_granularity(tf)
+        count = max(1, min(int(count), _OANDA_MAX_CANDLE_COUNT))
+        from_enc = urllib.parse.quote(from_time_utc, safe="")
+        url = f"/v3/instruments/{inst}/candles?granularity={gran}&from={from_enc}&count={count}&price=M"
+        data = self._req("GET", url)
+        candles = data.get("candles", [])
+        rows = []
+        for c in candles:
+            if c.get("complete") is False:
+                continue
+            mid = c.get("mid", {})
+            t = c.get("time", "")
+            try:
+                dt = pd.Timestamp(t).tz_convert("UTC")
+            except Exception:
+                dt = pd.Timestamp.now(tz="UTC")
+            rows.append({
+                "time": dt,
+                "open": float(mid.get("o", 0)),
+                "high": float(mid.get("h", 0)),
+                "low": float(mid.get("l", 0)),
+                "close": float(mid.get("c", 0)),
+                "tick_volume": int(c.get("volume", 0)),
+            })
+        df = pd.DataFrame(rows)
+        return df
+
+    def is_demo_account(self) -> bool:
+        return self._base == _BASE_URLS["practice"]
+
+    def get_open_positions(self, symbol: str | None = None):
+        """Return all open trades for the account (optionally filtered by symbol).
+        OANDA paginates openTrades (default 50, max 500 per page). We fetch all pages
+        so zone-entry cap and dashboard stay correct with hundreds of open positions.
+        """
+        now = time.time()
+        base_trades: list = []
+        # Small TTL so multiple callers in the same loop share one openTrades fetch.
+        if self._positions_cache is not None and (now - self._positions_cache_ts) < 2.0:
+            base_trades = list(self._positions_cache)
+        else:
+            aid = self._get_account_id()
+            path = f"/v3/accounts/{aid}/openTrades"
+            page_size = 500  # OANDA max per request
+            all_trades: list = []
+            params = {"count": page_size}
+            while True:
+                data = self._req("GET", path, params=params)
+                trades = data.get("trades", [])
+                all_trades.extend(trades)
+                if len(trades) < page_size:
+                    break
+                # Next page: trades with ID < oldest ID in this batch (OANDA returns newest first)
+                last_id = trades[-1].get("id")
+                if last_id is None:
+                    break
+                params = {"count": page_size, "beforeID": last_id}
+            self._positions_cache = list(all_trades)
+            self._positions_cache_ts = time.time()
+            base_trades = all_trades
+
+        all_trades = base_trades
+        if symbol:
+            inst = _symbol_to_instrument(symbol)
+            want_base = _instrument_to_symbol(inst).split(".")[0]
+            all_trades = [
+                t for t in all_trades
+                if _instrument_to_symbol(str(t.get("instrument") or "")).split(".")[0] == want_base
+            ]
+        return all_trades
+
+    def order_send_market(
+        self,
+        *,
+        symbol: str,
+        side: Literal["buy", "sell"],
+        volume_lots: float,
+        sl: float | None,
+        tp: float | None,
+        deviation_points: int = 20,
+        magic: int = 20260128,
+        comment: str = "",
+    ) -> OrderResult:
+        aid = self._get_account_id()
+        inst = _symbol_to_instrument(symbol)
+        units = _lots_to_units(volume_lots)
+        if side == "sell":
+            units = -units
+        prec = _order_price_precision(inst)
+        order: dict = {
+            "type": "MARKET",
+            "instrument": inst,
+            "units": str(units),
+            "timeInForce": "FOK",
+            "positionFill": "DEFAULT",
+        }
+        if sl is not None:
+            order["stopLossOnFill"] = {"price": f"{round(sl, prec):.{prec}f}", "timeInForce": "GTC"}
+        if tp is not None:
+            order["takeProfitOnFill"] = {"price": f"{round(tp, prec):.{prec}f}", "timeInForce": "GTC"}
+        if comment:
+            order["tradeClientExtensions"] = {"comment": comment[:128]}
+        body = {"order": order}
+        data = self._req("POST", f"/v3/accounts/{aid}/orders", json=body)
+        fill = data.get("orderFillTransaction")
+        create = data.get("orderCreateTransaction")
+        if fill:
+            trade_opened = fill.get("tradeOpened")
+            trade_id = (
+                (trade_opened.get("tradeID") or trade_opened.get("trade_id"))
+                if isinstance(trade_opened, dict)
+                else None
+            )
+            if trade_id is not None:
+                try:
+                    trade_id = int(trade_id)
+                except (TypeError, ValueError):
+                    trade_id = None
+            else:
+                trade_id = None
+            fp = None
+            try:
+                fp = float(fill["price"]) if fill.get("price") else None
+            except (TypeError, ValueError):
+                pass
+            return OrderResult(
+                retcode=0,
+                comment=fill.get("reason", "FILLED"),
+                request_id=None,
+                order=int(create["id"]) if create else None,
+                deal=trade_id,
+                fill_price=fp,
+            )
+        if data.get("orderRejectTransaction"):
+            rej = data["orderRejectTransaction"]
+            return OrderResult(
+                retcode=-1,
+                comment=rej.get("rejectReason", rej.get("reason", "REJECTED")),
+                request_id=None,
+                order=None,
+                deal=None,
+            )
+        return OrderResult(retcode=0, comment="PENDING", request_id=None, order=int(create["id"]) if create else None, deal=None)
+
+    def order_send_pending_limit(
+        self,
+        *,
+        symbol: str,
+        side: Literal["buy", "sell"],
+        price: float,
+        volume_lots: float,
+        sl: float | None = None,
+        tp: float | None = None,
+        magic: int = 20260128,
+        comment: str = "",
+    ) -> OrderResult:
+        aid = self._get_account_id()
+        inst = _symbol_to_instrument(symbol)
+        units = _lots_to_units(volume_lots)
+        if side == "sell":
+            units = -units
+        prec = _order_price_precision(inst)
+        order: dict = {
+            "type": "LIMIT",
+            "instrument": inst,
+            "units": str(units),
+            "price": f"{round(price, prec):.{prec}f}",
+            "timeInForce": "GTC",
+            "positionFill": "DEFAULT",
+        }
+        if sl is not None:
+            order["stopLossOnFill"] = {"price": f"{round(sl, prec):.{prec}f}", "timeInForce": "GTC"}
+        if tp is not None:
+            order["takeProfitOnFill"] = {"price": f"{round(tp, prec):.{prec}f}", "timeInForce": "GTC"}
+        data = self._req("POST", f"/v3/accounts/{aid}/orders", json={"order": order})
+        create = data.get("orderCreateTransaction")
+        if data.get("orderRejectTransaction"):
+            rej = data["orderRejectTransaction"]
+            return OrderResult(retcode=-1, comment=rej.get("rejectReason", "REJECTED"), request_id=None, order=None, deal=None)
+        return OrderResult(
+            retcode=0,
+            comment="PENDING",
+            request_id=None,
+            order=int(create["id"]) if create else None,
+            deal=None,
+        )
+
+    def update_position_stop_loss(self, trade_id: int, symbol: str, stop_loss_price: float) -> None:
+        """Set or replace the stop loss order for an open trade (e.g. for breakeven)."""
+        aid = self._get_account_id()
+        inst = _symbol_to_instrument(symbol)
+        prec = _order_price_precision(inst)
+        price_str = f"{round(stop_loss_price, prec):.{prec}f}"
+        body = {"stopLoss": {"timeInForce": "GTC", "price": price_str}}
+        self._req("PUT", f"/v3/accounts/{aid}/trades/{trade_id}/orders", json=body)
+
+    def close_position(
+        self,
+        *,
+        ticket: int,
+        symbol: str,
+        volume: float,
+        position_type: int,
+        deviation_points: int = 20,
+        magic: int = 20260128,
+        comment: str = "",
+    ) -> OrderResult:
+        aid = self._get_account_id()
+        # OANDA: ticket is trade_id; close by units. Min 1000 units (0.01 lots) for forex.
+        # Close endpoint always takes positive units — direction is implicit from the trade.
+        raw_units = int(round(volume * 100_000))
+        units = str(max(1000, abs(raw_units))) if raw_units != 0 else "1000"
+        data = self._req("PUT", f"/v3/accounts/{aid}/trades/{ticket}/close", json={"units": units})
+        # Detect silent rejections: OANDA may return 200 with a reject/cancel transaction
+        rej = data.get("orderRejectTransaction") or data.get("marketOrderRejectTransaction") or data.get("orderCancelTransaction")
+        if rej and not data.get("orderFillTransaction"):
+            reason = rej.get("rejectReason") or rej.get("reason") or "REJECTED"
+            raise RuntimeError(f"OANDA close trade {ticket} rejected: {reason}")
+        close = data.get("orderFillTransaction") or data.get("orderCreateTransaction")
+        if close:
+            return OrderResult(retcode=0, comment=close.get("reason", "CLOSED"), request_id=None, order=int(close.get("id", 0)) or None, deal=int(close.get("id", 0)) or None)
+        return OrderResult(retcode=0, comment="closed", request_id=None, order=None, deal=None)
+
+    def get_position_by_ticket(self, ticket: int):
+        # Reuse open positions cache to avoid an extra openTrades fetch where possible.
+        trades = self.get_open_positions(None)
+        for t in trades:
+            if str(t.get("id")) == str(ticket):
+                return t
+        return None
+
+    def get_position_id_from_deal(self, deal_id: int) -> int | None:
+        # For OANDA we use deal_id as trade_id in OrderResult, so it is the position id
+        return deal_id
+
+    def get_position_id_from_order(self, order_id: int) -> int | None:
+        # Cache mapping from order_id -> trade_id to avoid repeatedly hitting the transactions endpoint.
+        try:
+            cached = self._order_to_position.get(int(order_id))
+        except (TypeError, ValueError):
+            cached = None
+        if cached is not None:
+            return cached
+
+        aid = self._get_account_id()
+        data = self._req("GET", f"/v3/accounts/{aid}/transactions?orderID={order_id}")
+        for t in data.get("transactions", []):
+            if t.get("type") == "ORDER_FILL" and str(t.get("orderID")) == str(order_id):
+                opened = t.get("tradeOpened", {})
+                tid = opened.get("tradeID")
+                if tid:
+                    try:
+                        tid_int = int(tid)
+                        self._order_to_position[int(order_id)] = tid_int
+                        return tid_int
+                    except (TypeError, ValueError):
+                        return None
+        return None
+
+    def get_deals_by_position(self, ticket: int) -> list:
+        return []  # OANDA transaction history differs; stub for compatibility
+
+    def get_deal_profit(self, deal_id: int) -> float | None:
+        return None
+
+    def get_position_close_info(self, ticket: int) -> PositionCloseInfo | None:
+        """Fetch close details for a closed trade using the single-trade endpoint (O(1) API call).
+        Returns None if trade is still open or not found.
+        """
+        aid = self._get_account_id()
+        try:
+            data = self._req("GET", f"/v3/accounts/{aid}/trades/{ticket}")
+        except Exception:
+            return None
+
+        trade = data.get("trade")
+        if not trade:
+            return None
+
+        state = str(trade.get("state") or "").upper()
+        if state not in ("CLOSED", "CLOSE_WHEN_TRADEABLE"):
+            return None  # still open
+
+        close_price = _to_float(trade.get("averageClosePrice"), 0.0)
+        close_time = str(trade.get("closeTime") or "")
+        realized_pl = _to_float(trade.get("realizedPL"), 0.0)
+        initial_units = abs(_to_int(trade.get("initialUnits"), 0))
+        volume = initial_units / 100_000.0
+
+        if close_price == 0.0 or not close_time:
+            return None
+
+        return PositionCloseInfo(
+            ticket=ticket,
+            exit_price=close_price,
+            exit_time_utc=close_time,
+            profit=realized_pl,
+            volume=volume,
+        )
+
+    def place_order(
+        self,
+        *,
+        symbol: str,
+        side: Literal["buy", "sell"],
+        lots: float,
+        stop_price: float | None,
+        target_price: float | None,
+        comment: str = "",
+    ):
+        """Unified order placement API used by Phase 3 (OANDA backend)."""
+        res = self.order_send_market(
+            symbol=symbol,
+            side=side,
+            volume_lots=lots,
+            sl=stop_price,
+            tp=target_price,
+            comment=comment,
+        )
+        return SimpleNamespace(
+            order_retcode=getattr(res, "retcode", None),
+            order_id=getattr(res, "order", None),
+            deal_id=getattr(res, "deal", None),
+            fill_price=getattr(res, "fill_price", None),
+        )
+
+    def get_closed_positions_from_history(self, days_back: int = 30, symbol: str | None = None, pip_size: float | None = None) -> list:
+        """Fetch closed positions from OANDA transaction history (activity).
+        Pairs ORDER_FILL open/close by tradeID and returns list compatible with import_mt5_history.
+        """
+        aid = self._get_account_id()
+        to_ts = datetime.now(timezone.utc)
+        from_ts = to_ts - timedelta(days=days_back)
+        from_param = _rfc3339_utc(from_ts)
+        to_param = _rfc3339_utc(to_ts)
+        opens: dict[str, dict] = {}   # tradeID -> { instrument, price, time, units }
+        closes: dict[str, dict] = {}  # tradeID -> { price, time, pl, units_closed }
+
+        def process_transactions(transactions: list) -> None:
+            for t in transactions or []:
+                if t.get("type") != "ORDER_FILL":
+                    continue
+                # Open: tradeOpened
+                opened = t.get("tradeOpened") or {}
+                tid = opened.get("tradeID")
+                if tid:
+                    tid_str = str(tid)
+                    units = int(float(t.get("units") or 0))
+                    opens[tid_str] = {
+                        "instrument": t.get("instrument") or "",
+                        "price": float(t.get("price") or 0),
+                        "time": str(t.get("time") or ""),
+                        "units": units,
+                    }
+                # Close: tradeClosed or tradesClosed
+                # Track price*units sum for weighted-average exit price across partial closes.
+                closed = t.get("tradeClosed") or {}
+                if closed.get("tradeID"):
+                    tid_str = str(closed.get("tradeID"))
+                    pl = _realized_pl_for_closed_trade(t, closed)
+                    units = abs(_to_int(closed.get("units"), 0))
+                    fill_price = _to_float(t.get("price"), 0.0)
+                    existing = closes.get(tid_str)
+                    if existing is None:
+                        closes[tid_str] = {
+                            "price": fill_price,
+                            "price_units_sum": fill_price * units,
+                            "time": str(t.get("time") or ""),
+                            "pl": float(pl),
+                            "units_closed": units,
+                        }
+                    else:
+                        existing["pl"] = float(_to_float(existing.get("pl"), 0.0) + pl)
+                        existing["units_closed"] = int(_to_int(existing.get("units_closed"), 0) + units)
+                        existing["price_units_sum"] = float(_to_float(existing.get("price_units_sum"), 0.0) + fill_price * units)
+                        tx_time = str(t.get("time") or "")
+                        if tx_time >= str(existing.get("time") or ""):
+                            existing["time"] = tx_time
+                        # Recompute weighted-average exit price
+                        total_units = existing["units_closed"]
+                        if total_units > 0:
+                            existing["price"] = existing["price_units_sum"] / total_units
+                for tc in t.get("tradesClosed") or []:
+                    tid_str = str(tc.get("tradeID") or "")
+                    if not tid_str:
+                        continue
+                    pl = _realized_pl_for_closed_trade(t, tc)
+                    units = abs(_to_int(tc.get("units"), 0))
+                    fill_price = _to_float(t.get("price"), 0.0)
+                    existing = closes.get(tid_str)
+                    if existing is None:
+                        closes[tid_str] = {
+                            "price": fill_price,
+                            "price_units_sum": fill_price * units,
+                            "time": str(t.get("time") or ""),
+                            "pl": float(pl),
+                            "units_closed": units,
+                        }
+                    else:
+                        existing["pl"] = float(_to_float(existing.get("pl"), 0.0) + pl)
+                        existing["units_closed"] = int(_to_int(existing.get("units_closed"), 0) + units)
+                        existing["price_units_sum"] = float(_to_float(existing.get("price_units_sum"), 0.0) + fill_price * units)
+                        tx_time = str(t.get("time") or "")
+                        if tx_time >= str(existing.get("time") or ""):
+                            existing["time"] = tx_time
+                        # Recompute weighted-average exit price
+                        total_units = existing["units_closed"]
+                        if total_units > 0:
+                            existing["price"] = existing["price_units_sum"] / total_units
+
+        def process_response_pages(data: dict) -> None:
+            # Process initial response transactions if present (some APIs return first page in body)
+            process_transactions(data.get("transactions") or [])
+            pages = data.get("pages") or []
+            for page_path in pages:
+                if not page_path:
+                    continue
+                try:
+                    req_path = page_path
+                    if page_path.startswith(self._base):
+                        req_path = page_path[len(self._base):]
+                    elif not page_path.startswith("/"):
+                        req_path = "/" + page_path
+                    page_data = self._req("GET", req_path)
+                    process_transactions(page_data.get("transactions") or [])
+                except Exception as e:
+                    print(f"[oanda] get_closed_positions_from_history: page fetch failed: {e}")
+                    continue
+
+        full_range_ok = False
+        try:
+            data = self._req(
+                "GET",
+                f"/v3/accounts/{aid}/transactions",
+                params={"from": from_param, "to": to_param, "pageSize": 500},
+            )
+            process_response_pages(data)
+            full_range_ok = True
+        except Exception as e:
+            if _is_oanda_invalid_time_range_error(e):
+                print("[oanda] get_closed_positions_from_history: full-range time range invalid; treating as empty window")
+                return []
+            print(f"[oanda] get_closed_positions_from_history: full-range fetch failed ({e}); retrying in smaller windows")
+
+        # Fallback for transient 50x/API gateway issues: fetch in small windows.
+        # This greatly reduces payload size and improves reliability on OANDA history endpoint.
+        if not full_range_ok:
+            window_days = 3 if days_back > 7 else 1
+            cur_from = from_ts
+            chunk_failures = 0
+            chunk_successes = 0
+            while cur_from < to_ts:
+                cur_to = min(cur_from + timedelta(days=window_days), to_ts)
+                chunk_from = _rfc3339_utc(cur_from)
+                chunk_to = _rfc3339_utc(cur_to)
+                try:
+                    chunk_data = self._req(
+                        "GET",
+                        f"/v3/accounts/{aid}/transactions",
+                        params={"from": chunk_from, "to": chunk_to, "pageSize": 200},
+                    )
+                    process_response_pages(chunk_data)
+                    chunk_successes += 1
+                except Exception as e:
+                    if _is_oanda_invalid_time_range_error(e):
+                        # OANDA occasionally rejects certain time windows; skip and continue.
+                        cur_from = cur_to
+                        continue
+                    chunk_failures += 1
+                    print(f"[oanda] get_closed_positions_from_history: chunk fetch failed ({chunk_from} -> {chunk_to}): {e}")
+                cur_from = cur_to
+
+            if chunk_successes == 0:
+                print("[oanda] get_closed_positions_from_history: no chunk succeeded; returning empty history")
+                return []
+            if chunk_failures > 0:
+                print(f"[oanda] get_closed_positions_from_history: completed with partial data ({chunk_failures} failed chunks)")
+
+        if not opens and not closes:
+            print(f"[oanda] get_closed_positions_from_history: no transactions in range {from_param} to {to_param}")
+
+        results: list[OandaClosedPositionInfo] = []
+        # Compare base symbol so "USDJPY.PRO" profile matches OANDA instrument "USD_JPY" -> USDJPY
+        want_symbol = (_instrument_to_symbol(symbol) if symbol else "").upper()
+        want_base = (want_symbol.split(".")[0] if want_symbol else "")
+        for tid_str, close_info in closes.items():
+            open_info = opens.get(tid_str)
+            if not open_info:
+                continue
+            inst = open_info.get("instrument") or ""
+            sym = _instrument_to_symbol(inst)
+            sym_base = (sym.split(".")[0] if sym else "")
+            if want_base and sym_base != want_base:
+                continue
+            entry_price = open_info["price"]
+            exit_price = close_info["price"]
+            entry_time_utc = open_info["time"]
+            exit_time_utc = close_info["time"]
+            open_units = abs(_to_int(open_info.get("units"), 0))
+            closed_units = max(0, _to_int(close_info.get("units_closed"), 0))
+            # Skip partial-only closes; this endpoint should return fully closed trades.
+            if open_units > 0 and 0 < closed_units < open_units:
+                continue
+            units = open_units if open_units > 0 else closed_units
+            volume = units / 100_000.0
+            profit = float(_to_float(close_info.get("pl"), 0.0))
+            side = "buy" if open_info["units"] and int(open_info["units"]) > 0 else "sell"
+            pips_val = None
+            if pip_size and pip_size > 0:
+                if side == "buy":
+                    pips_val = (exit_price - entry_price) / pip_size
+                else:
+                    pips_val = (entry_price - exit_price) / pip_size
+            results.append(OandaClosedPositionInfo(
+                position_id=int(tid_str),
+                symbol=sym,
+                side=side,
+                entry_price=entry_price,
+                exit_price=exit_price,
+                entry_time_utc=entry_time_utc,
+                exit_time_utc=exit_time_utc,
+                volume=volume,
+                profit=profit,
+                commission=0.0,
+                swap=0.0,
+                pips=pips_val,
+            ))
+        # Sort by exit time descending (most recent first)
+        results.sort(key=lambda p: p.exit_time_utc or "", reverse=True)
+        if len(results) == 0 and (opens or closes):
+            print(f"[oanda] get_closed_positions_from_history: {len(opens)} opens, {len(closes)} closes -> 0 matched (check symbol filter or open/close pairing)")
+        return results
+
+    def get_closed_trades_today(self, symbol: str | None = None) -> list[dict]:
+        """Fetch today's closed trades directly from OANDA /v3/accounts/{id}/trades?state=CLOSED.
+
+        Returns list of dicts with: trade_id, side, entry_price, exit_price, pips,
+        profit (realizedPL from OANDA), volume, close_time.
+        """
+        aid = self._get_account_id()
+        inst = _symbol_to_instrument(symbol) if symbol else None
+        params: dict = {"state": "CLOSED", "count": 500}
+        if inst:
+            params["instrument"] = inst
+
+        try:
+            data = self._req("GET", f"/v3/accounts/{aid}/trades", params=params)
+        except Exception as e:
+            print(f"[oanda] get_closed_trades_today error: {e}")
+            return []
+
+        trades = data.get("trades", [])
+        today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        results: list[dict] = []
+        for t in trades:
+            close_time = str(t.get("closeTime") or "")
+            # Filter to today only
+            if not close_time.startswith(today_utc):
+                continue
+            initial_units = _to_int(t.get("initialUnits"), 0)
+            side = "buy" if initial_units > 0 else "sell"
+            entry_price = _to_float(t.get("price"), 0.0)
+            exit_price = _to_float(t.get("averageClosePrice"), 0.0)
+            realized_pl = _to_float(t.get("realizedPL"), 0.0)
+            volume = abs(initial_units) / 100_000.0
+            results.append({
+                "trade_id": str(t.get("id", "")),
+                "side": side,
+                "entry_price": entry_price,
+                "exit_price": exit_price,
+                "profit": realized_pl,
+                "volume": volume,
+                "close_time": close_time,
+            })
+        return results
+
+    def get_order_book(self, instrument: str) -> dict:
+        """GET /v3/instruments/{inst}/orderBook — returns price bucket array."""
+        inst = _symbol_to_instrument(instrument)
+        return self._req("GET", f"/v3/instruments/{inst}/orderBook")
+
+    def get_position_book(self, instrument: str) -> dict:
+        """GET /v3/instruments/{inst}/positionBook — returns price bucket array."""
+        inst = _symbol_to_instrument(instrument)
+        return self._req("GET", f"/v3/instruments/{inst}/positionBook")
+
+    def get_mt5_report_stats(self, symbol: str | None = None, pip_size: float | None = None, days_back: int = 90):
+        return None
+
+    def get_mt5_full_report(self, symbol: str | None = None, pip_size: float | None = None, days_back: int = 90) -> dict | None:
+        return None
+
+
+def _close_info_from_fill(ticket: int, fill: dict, closed: dict) -> PositionCloseInfo:
+    """Build PositionCloseInfo from OANDA ORDER_FILL and tradeClosed/tradesClosed entry."""
+    price = _to_float(fill.get("price"), 0.0)
+    time_str = str(fill.get("time") or "")
+    pl = _realized_pl_for_closed_trade(fill, closed)
+    units = abs(_to_int(closed.get("units"), 0))
+    volume = units / 100_000.0
+    return PositionCloseInfo(
+        ticket=ticket,
+        exit_price=price,
+        exit_time_utc=time_str,
+        profit=pl,
+        volume=volume,
+    )
+
+
+def get_oanda_adapter(token: str, account_id: str | None, environment: Literal["practice", "live"]) -> OandaAdapter:
+    return OandaAdapter(token=token, account_id=account_id, environment=environment)
+
+```
