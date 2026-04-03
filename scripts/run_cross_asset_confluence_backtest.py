@@ -4,18 +4,19 @@ import json
 import sys
 from pathlib import Path
 
-import pandas as pd
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from core.regime_backtest_engine.cross_asset_confluence import (
+    CrossAssetConfluenceConfig,
+    CrossAssetConfluenceStrategy,
+)
 from core.regime_backtest_engine.engine import BacktestEngine
-from core.regime_backtest_engine.macro_reversion import MacroReversionConfig, MacroReversionStrategy
-from core.regime_backtest_engine.models import AdmissionConfig, InstrumentSpec, RunConfig, SlippageConfig, SpreadConfig
+from core.regime_backtest_engine.models import AdmissionConfig, FixedSpreadConfig, InstrumentSpec, RunConfig, SlippageConfig, SpreadConfig
 
 DATA_PATH = ROOT / "research_out" / "USDJPY_M1_OANDA_1000k.csv"
-OUTPUT_DIR = ROOT / "research_out" / "macro_reversion_zero"
+OUTPUT_DIR = ROOT / "research_out" / "cross_asset_confluence_real"
 
 
 def _benchmark_evaluation(summary: dict) -> dict[str, object]:
@@ -32,7 +33,6 @@ def _benchmark_evaluation(summary: dict) -> dict[str, object]:
                 "max_drawdown_pct": summary.get("max_drawdown_pct"),
             },
         }
-
     checks = {
         "trade_count_gte_100": trade_count >= 100,
         "win_rate_gte_55": float(summary.get("win_rate") or 0.0) >= 55.0,
@@ -46,42 +46,34 @@ def _benchmark_evaluation(summary: dict) -> dict[str, object]:
     }
 
 
-def _write_zero_spread_copy(source_path: Path, output_path: Path) -> Path:
-    df = pd.read_csv(source_path)
-    if "timestamp" not in df.columns and "time" in df.columns:
-        df = df.rename(columns={"time": "timestamp"})
-    for side in ("bid", "ask"):
-        for field in ("open", "high", "low", "close"):
-            df[f"{side}_{field}"] = df[field]
-    keep = [
-        "timestamp",
-        "bid_open",
-        "bid_high",
-        "bid_low",
-        "bid_close",
-        "ask_open",
-        "ask_high",
-        "ask_low",
-        "ask_close",
-    ]
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    df[keep].to_csv(output_path, index=False)
-    return output_path
-
-
 def main() -> None:
+    cross_dir = ROOT / "research_out" / "cross_assets"
+    missing = [
+        cross_dir / "BCO_USD_H1_OANDA.csv",
+        cross_dir / "EUR_USD_H1_OANDA.csv",
+        cross_dir / "XAU_USD_D_OANDA.csv",
+        cross_dir / "XAG_USD_D_OANDA.csv",
+    ]
+    for p in missing:
+        if not p.is_file():
+            print(f"ERROR: Missing cross-asset file: {p}", file=sys.stderr)
+            print("Run: python3 scripts/download_cross_assets.py", file=sys.stderr)
+            sys.exit(1)
+    if not DATA_PATH.is_file():
+        print(f"ERROR: Missing USDJPY data: {DATA_PATH}", file=sys.stderr)
+        sys.exit(1)
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    zero_data_path = _write_zero_spread_copy(DATA_PATH, OUTPUT_DIR / "zero_spread_input.csv")
-    strategy = MacroReversionStrategy(MacroReversionConfig())
+    strategy = CrossAssetConfluenceStrategy(CrossAssetConfluenceConfig())
     config = RunConfig(
-        hypothesis="macro_reversion_zero",
-        data_path=zero_data_path,
+        hypothesis="cross_asset_confluence_real",
+        data_path=DATA_PATH,
         output_dir=OUTPUT_DIR,
         mode="standalone",
         active_families=(strategy.family_name,),
         instrument=InstrumentSpec(symbol="USDJPY", margin_rate=(1.0 / 33.3)),
-        spread=SpreadConfig(spread_source="from_data"),
-        slippage=SlippageConfig(fixed_slippage_pips=0.0),
+        spread=SpreadConfig(spread_source="fixed", fixed=FixedSpreadConfig(spread_pips=2.0)),
+        slippage=SlippageConfig(fixed_slippage_pips=0.1),
         admission=AdmissionConfig(
             allow_opposing_exposure=False,
             max_total_open_positions=1,

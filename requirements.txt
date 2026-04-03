@@ -1,6 +1,7 @@
 pandas
 numpy
 pydantic
+certifi
 requests
 streamlit
 fastapi

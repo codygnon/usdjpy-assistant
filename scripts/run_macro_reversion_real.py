@@ -12,7 +12,7 @@ from core.regime_backtest_engine.engine import BacktestEngine
 from core.regime_backtest_engine.macro_reversion import MacroReversionConfig, MacroReversionStrategy
 from core.regime_backtest_engine.models import AdmissionConfig, FixedSpreadConfig, InstrumentSpec, RunConfig, SlippageConfig, SpreadConfig
 
-DATA_PATH = ROOT / "research_out" / "USDJPY_M1_OANDA_500k.csv"
+DATA_PATH = ROOT / "research_out" / "USDJPY_M1_OANDA_1000k.csv"
 OUTPUT_DIR = ROOT / "research_out" / "macro_reversion_real"
 
 
