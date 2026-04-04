@@ -25,10 +25,14 @@ from .v14_tokyo import V14TokyoStrategy, V14TokyoStrategyConfig, prepare_v14_aug
 from .v2_london import V2LondonStrategy, V2LondonStrategyConfig
 from .v44 import V44NYStrategy, V44StrategyConfig
 from .cross_asset_confluence import (
-    CrossAssetBundle,
+    CrossAssetConfluence,
     CrossAssetConfluenceConfig,
     CrossAssetConfluenceStrategy,
-    load_cross_asset_bundle,
+)
+from .phase3_v7_pfdd_defended_engine import (
+    PHASE3_V7_PFDD_FAMILY,
+    Phase3V7PfddDefendedBacktestEngine,
+    V7PfddDefendedStrategy,
 )
 
 __all__ = [
@@ -36,9 +40,12 @@ __all__ = [
     "BacktestEngine",
     "BacktestResult",
     "CheatingStrategy",
-    "CrossAssetBundle",
+    "CrossAssetConfluence",
     "CrossAssetConfluenceConfig",
     "CrossAssetConfluenceStrategy",
+    "PHASE3_V7_PFDD_FAMILY",
+    "Phase3V7PfddDefendedBacktestEngine",
+    "V7PfddDefendedStrategy",
     "DeterministicSpreadModelConfig",
     "DummyStrategy",
     "ExitAction",
@@ -64,7 +71,6 @@ __all__ = [
     "WalkForwardRunner",
     "WalkForwardWindow",
     "build_walk_forward_windows",
-    "load_cross_asset_bundle",
     "freeze_manifest",
     "evaluate_summary_against_manifest",
     "prepare_v14_augmented_data",

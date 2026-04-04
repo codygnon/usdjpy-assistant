@@ -174,10 +174,44 @@ class StrategyValidationError(ValueError):
     pass
 
 
+def _type_defines_evaluate_signals(strategy: object) -> bool:
+    return any("evaluate_signals" in cls.__dict__ for cls in type(strategy).__mro__)
+
+
 @dataclass(frozen=True)
 class StrategyAdapter:
     family_name: str
     strategy: StrategyFamily
+
+    def evaluate_signals(
+        self,
+        current_bar: BarView,
+        history: HistoricalDataView,
+        portfolio: PortfolioSnapshot,
+    ) -> list[Signal]:
+        """Gather zero or more signals for this bar.
+
+        Strategies may implement ``evaluate_signals`` for multi-intent bars. If absent,
+        falls back to legacy ``evaluate`` (at most one signal).
+        """
+        if _type_defines_evaluate_signals(self.strategy):
+            raw = self.strategy.evaluate_signals(current_bar, history, portfolio)  # type: ignore[attr-defined]
+            if raw is None:
+                return []
+            if not isinstance(raw, list):
+                raise StrategyValidationError(
+                    f"{self.family_name}: evaluate_signals must return a list[Signal], got {type(raw).__name__}"
+                )
+            out: list[Signal] = []
+            for s in raw:
+                self._validate_signal(s)
+                out.append(s)
+            return out
+        sig = self.strategy.evaluate(current_bar, history, portfolio)
+        if sig is None:
+            return []
+        self._validate_signal(sig)
+        return [sig]
 
     def evaluate(
         self,

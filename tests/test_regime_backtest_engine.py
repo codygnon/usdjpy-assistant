@@ -76,6 +76,30 @@ class PartialProfitStrategy:
         return None
 
 
+class TwinLongSameBarStrategy:
+    """Emits two independent long signals on the same bar (multi-signal path)."""
+
+    family_name = "twin"
+
+    def evaluate_signals(
+        self, current_bar: BarView, history: HistoricalDataView, portfolio: PortfolioSnapshot
+    ) -> list[Signal]:
+        if current_bar.bar_index != 2:
+            return []
+        sl = float(current_bar.bid_close) - 0.5
+        tp = float(current_bar.ask_close) + 0.5
+        return [
+            Signal(family=self.family_name, direction="long", stop_loss=sl, take_profit=tp, size=5000),
+            Signal(family=self.family_name, direction="long", stop_loss=sl, take_profit=tp, size=5000),
+        ]
+
+    def evaluate(self, current_bar: BarView, history: HistoricalDataView, portfolio: PortfolioSnapshot) -> Signal | None:
+        return None
+
+    def get_exit_conditions(self, position, current_bar: BarView, history: HistoricalDataView) -> ExitAction | None:
+        return None
+
+
 class WrongFamilyStrategy:
     family_name = "expected"
 
@@ -216,6 +240,37 @@ def _write_partial_exit_csv(path: Path) -> Path:
     ]
     pd.DataFrame(rows).to_csv(path, index=False)
     return path
+
+
+def test_evaluate_signals_two_opens_same_bar(tmp_path: Path) -> None:
+    data_path = _write_mid_csv(tmp_path / "twin_bars.csv", bars=30)
+    engine = BacktestEngine({"twin": TwinLongSameBarStrategy()})
+    cfg = RunConfig(
+        data_path=data_path,
+        output_dir=tmp_path / "out_twin",
+        mode="standalone",
+        active_families=("twin",),
+        instrument=InstrumentSpec(symbol="USDJPY"),
+        spread=SpreadConfig(spread_source="fixed", fixed=FixedSpreadConfig(spread_pips=1.2)),
+        slippage=SlippageConfig(fixed_slippage_pips=0.1),
+        admission=AdmissionConfig(
+            allow_opposing_exposure=False,
+            max_total_open_positions=4,
+            max_open_positions_per_family={"twin": 2},
+            max_total_units=50_000,
+            max_units_per_family={"twin": 20_000},
+            family_priority=("twin",),
+        ),
+        bar_log_format="csv",
+    )
+    result = engine.run(cfg)
+    assert result.arbitration_log_path is not None
+    arb = pd.read_csv(result.arbitration_log_path)
+    multi = arb[arb["bar_index"] == 2]
+    assert not multi.empty
+    assert any("all_accepted" in str(x) for x in multi["outcome"].tolist())
+    bars = pd.read_csv(result.bar_log_path)
+    assert bars["open_positions_twin"].max() >= 2
 
 
 def test_standalone_matches_integrated_single_family(tmp_path: Path) -> None:

@@ -85,9 +85,7 @@ class BacktestEngine:
             signals: list[Signal] = []
             for family in config.active_families:
                 strat = self.strategies[family]
-                signal = strat.evaluate(current_bar, history, snapshot)
-                if signal is not None:
-                    signals.append(signal)
+                signals.extend(strat.evaluate_signals(current_bar, history, snapshot))
 
             decision = admission.decide(
                 bar_index=idx,

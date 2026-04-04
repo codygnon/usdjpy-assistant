@@ -1,0 +1,32 @@
+oanda:
+  account_id: demo-account
+  api_token: demo-token
+  environment: practice
+risk:
+  max_risk_per_trade: 0.01
+  max_total_exposure: 0.05
+  max_position_size_lots: 20
+  default_stop_atr_multiple: 2.0
+  catastrophic_stop_pips: 200.0
+  tp1_ratio: 1.0
+  tp1_close_fraction: 0.5
+  tp2_ratio: 2.0
+  tp2_close_fraction: 0.25
+trailing:
+  enabled: true
+  method: swing
+  lookback_bars: 5
+  atr_buffer: 0.5
+  timeframe: H4
+  only_tighten: true
+sessions:
+  tokyo_start: 0
+  tokyo_end: 9
+  london_start: 7
+  london_end: 16
+  ny_start: 12
+  ny_end: 21
+  warn_before_close_minutes: 15
+instrument: USD_JPY
+poll_interval_seconds: 10
+journal_db_path: research_out/trade_journal.db
