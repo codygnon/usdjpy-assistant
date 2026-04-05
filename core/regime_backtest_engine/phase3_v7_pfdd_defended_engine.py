@@ -153,7 +153,8 @@ class Phase3V7PfddDefendedBacktestEngine(BacktestEngine):
     def __init__(self) -> None:
         super().__init__({PHASE3_V7_PFDD_FAMILY: V7PfddDefendedStrategy()})
 
-    def run(self, config: Any) -> BacktestResult:
+    def run(self, config: Any, *, runner_quiet: bool = False) -> BacktestResult:
+        """runner_quiet: if True, suppress Phase3 runner stdout (use in fast/pytest runs)."""
         if config.mode != "standalone":
             raise ValueError("Phase3V7PfddDefendedBacktestEngine requires mode='standalone'")
         if config.active_families != (PHASE3_V7_PFDD_FAMILY,):
@@ -178,7 +179,7 @@ class Phase3V7PfddDefendedBacktestEngine(BacktestEngine):
             Phase3V7PfddParams(
                 data_path=str(config.data_path),
                 spread_mode=spread_mode,
-                quiet=True,
+                quiet=runner_quiet,
                 max_bars=max_bars,
             )
         )

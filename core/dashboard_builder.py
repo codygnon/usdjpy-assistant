@@ -284,8 +284,8 @@ def _phase3_defended_filter_reports(active_preset_name: str | None, cfg: dict[st
         display_name="Frozen Package",
         enabled=True,
         is_clear=True,
-        current_value="Phase 3 Frozen V7 Defended",
-        explanation="Promoted defended package is active for this profile.",
+        current_value="V7.1 Defended + H1",
+        explanation="Promoted defended package with the live H1 V44 ATR gate is active for this profile.",
     ))
     reports.append(FilterReport(
         filter_id="phase3_frozen_l1_weekdays",

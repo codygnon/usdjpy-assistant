@@ -105,6 +105,29 @@ def assert_no_lookahead(data_slice: pd.DataFrame, current_time: pd.Timestamp, ct
     assert last_t <= pd.Timestamp(current_time), f"Lookahead [{ctx}]: last={last_t} current={current_time}"
 
 
+def _m5_times_sorted_ns(m5: pd.DataFrame) -> np.ndarray:
+    """Monotonic M5 bar close times as datetime64[ns] for binary search (no copies in hot loop)."""
+    t = pd.to_datetime(m5["time"], utc=True)
+    return t.values.astype("datetime64[ns]")
+
+
+def assert_m5_no_lookahead_fast(m5_times_ns: np.ndarray, current_time: pd.Timestamp, ctx: str) -> None:
+    """Same semantics as completed_tf_slice(m5,ts)+assert_no_lookahead — O(log n), no DataFrame alloc."""
+    if m5_times_ns.size == 0:
+        return
+    cur = pd.Timestamp(current_time)
+    if cur.tzinfo is None:
+        cur = cur.tz_localize("UTC")
+    else:
+        cur = cur.tz_convert("UTC")
+    ts64 = np.datetime64(cur.asm8.astype("datetime64[ns]"))
+    pos = int(np.searchsorted(m5_times_ns, ts64, side="right"))
+    if pos == 0:
+        return
+    last = m5_times_ns[pos - 1]
+    assert last <= ts64, f"Lookahead [{ctx}]: last={last} current={ts64}"
+
+
 def load_v44_oracle(dataset_path: str) -> dict[int, dict[str, Any]]:
     """Map entry_time (pd.Timestamp.value) -> trade row from phase1 V44 report (shadow list)."""
     dk = "500k" if "500k" in Path(dataset_path).name else "1000k"
@@ -493,6 +516,8 @@ def execute_phase3_v7_pfdd_defended(params: Phase3V7PfddParams) -> dict[str, Any
         m1_raw = m1_raw.iloc[:10_000].copy()
     if params.max_bars is not None:
         m1_raw = m1_raw.iloc[: int(params.max_bars)].copy()
+    if not params.quiet:
+        print(f"  M1 rows={len(m1_raw)} (after load/trim) in {time.time() - t0:.1f}s", flush=True)
 
     tokyo_cfg = init_tokyo_config(TOKYO_CFG)
     with LONDON_CFG_PATH.open() as f:
@@ -500,9 +525,12 @@ def execute_phase3_v7_pfdd_defended(params: Phase3V7PfddParams) -> dict[str, Any
     with V44_CFG_PATH.open() as f:
         v44_cfg = json.load(f)
 
+    t_stage = time.time()
     m5 = tokyo_bt.resample_ohlc_continuous(m1_raw, "5min")
     m15 = tokyo_bt.resample_ohlc_continuous(m1_raw, "15min")
     df, m5, m15 = compute_tokyo_indicators(m1_raw, m5, m15, tokyo_cfg)
+    if not params.quiet:
+        print(f"  Resample M5/M15 + compute_tokyo_indicators: {time.time() - t_stage:.1f}s (df rows={len(df)})", flush=True)
     df["time_utc"] = df["time"].dt.tz_convert("UTC")
     df["time_jst"] = df["time"].dt.tz_convert(tokyo_bt.TOKYO_TZ)
     df["session_day_jst"] = df["time_jst"].dt.date.astype(str)
@@ -578,7 +606,35 @@ def execute_phase3_v7_pfdd_defended(params: Phase3V7PfddParams) -> dict[str, Any
     v44_risk_pct = float(v44_cfg.get("v5_risk_per_trade_pct", 0.5)) / 100.0
 
     # Pre-build variant F context once (full M1 — causal lookups use entry time only)
+    t_stage = time.time()
     vk_ctx = build_variant_k_baseline_context({"M1": m1_raw, "M5": m5})
+    if not params.quiet:
+        print(f"  build_variant_k_baseline_context: {time.time() - t_stage:.1f}s", flush=True)
+
+    m5_times_ns = _m5_times_sorted_ns(m5)
+
+    time_ns_all = pd.to_datetime(df["time"], utc=True).values.astype("datetime64[ns]")
+    high_all = np.asarray(df["high"], dtype=np.float64)
+    low_all = np.asarray(df["low"], dtype=np.float64)
+    day_ns_bounds: dict[str, np.datetime64] = {}
+
+    def _set_day_bounds(i0: int) -> None:
+        day_start = pd.Timestamp(df.iloc[i0]["time"]).normalize()
+        london_h = london_bt.uk_london_open_utc(day_start)
+        london_open = day_start + pd.Timedelta(hours=london_h)
+        lor_end = london_open + pd.Timedelta(minutes=15)
+
+        def _utc_ns(ts: pd.Timestamp) -> np.datetime64:
+            p = pd.Timestamp(ts)
+            if p.tzinfo is None:
+                p = p.tz_localize("UTC")
+            else:
+                p = p.tz_convert("UTC")
+            return np.datetime64(p.asm8.astype("datetime64[ns]"))
+
+        day_ns_bounds["asian_lo"] = _utc_ns(day_start)
+        day_ns_bounds["asian_hi"] = _utc_ns(london_open)
+        day_ns_bounds["lor_hi"] = _utc_ns(lor_end)
 
     def variant_f_allows_v44(entry_ts: pd.Timestamp) -> bool:
         tr = TradeRow(
@@ -659,23 +715,27 @@ def execute_phase3_v7_pfdd_defended(params: Phase3V7PfddParams) -> dict[str, Any
         return equity - margin_used()
 
     def causal_asian_lor(i0: int, i: int, t: pd.Timestamp) -> tuple[float, float, float, bool, float, float, float, bool]:
-        day_start = pd.Timestamp(df.iloc[i0]["time"]).normalize()
-        london_h = london_bt.uk_london_open_utc(day_start)
-        london_open = day_start + pd.Timedelta(hours=london_h)
-        lor_end = london_open + pd.Timedelta(minutes=15)
-        chunk = df.iloc[i0 : i + 1]
-        asian = chunk[(chunk["time"] >= day_start) & (chunk["time"] < london_open)]
-        if asian.empty:
+        """Same ranges as the prior df.iloc slice + boolean masks; uses numpy on pre-extracted columns."""
+        asian_lo = day_ns_bounds["asian_lo"]
+        asian_hi = day_ns_bounds["asian_hi"]
+        lor_lo = asian_hi
+        lor_hi = day_ns_bounds["lor_hi"]
+        ts_ns = time_ns_all[i]
+        tseg = time_ns_all[i0 : i + 1]
+        hseg = high_all[i0 : i + 1]
+        lseg = low_all[i0 : i + 1]
+        ma = (tseg >= asian_lo) & (tseg < asian_hi)
+        if not ma.any():
             return (0.0, 0.0, 0.0, False, 0.0, 0.0, 0.0, False)
-        ah = float(asian["high"].max())
-        al = float(asian["low"].min())
+        ah = float(np.max(hseg[ma]))
+        al = float(np.min(lseg[ma]))
         ar = (ah - al) / PIP_SIZE
         av = asian_min <= ar <= asian_max
-        lor = chunk[(chunk["time"] >= london_open) & (chunk["time"] < lor_end) & (chunk["time"] <= t)]
-        if lor.empty:
+        ml = (tseg >= lor_lo) & (tseg < lor_hi) & (tseg <= ts_ns)
+        if not ml.any():
             return (ah, al, ar, av, 0.0, 0.0, 0.0, False)
-        lh = float(lor["high"].max())
-        ll = float(lor["low"].min())
+        lh = float(np.max(hseg[ml]))
+        ll = float(np.min(lseg[ml]))
         lr = (lh - ll) / PIP_SIZE
         lv = lor_min <= lr <= lor_max
         return (ah, al, ar, av, lh, ll, lr, lv)
@@ -704,6 +764,14 @@ def execute_phase3_v7_pfdd_defended(params: Phase3V7PfddParams) -> dict[str, Any
     london_closed_count = 0
     max_open_peak = 0
 
+    loop_t0 = time.time()
+    if not params.quiet:
+        print(
+            f"  Starting main M1 loop: bars {warmup}..{n - 1} ({n - warmup} iterations) — "
+            f"progress every 10k bars + ETA",
+            flush=True,
+        )
+
     for i in range(warmup, n):
         row = df.iloc[i]
         ts = pd.Timestamp(row["time"])
@@ -712,6 +780,7 @@ def execute_phase3_v7_pfdd_defended(params: Phase3V7PfddParams) -> dict[str, Any
             cur_day = dnorm
             day_start_idx = i
             ld = init_london_day_state(dnorm, london_cfg)
+            _set_day_bounds(day_start_idx)
 
         cell_s, reg, er_v, der_v = lookup_cell(ts)
 
@@ -767,8 +836,7 @@ def execute_phase3_v7_pfdd_defended(params: Phase3V7PfddParams) -> dict[str, Any
         bid_l, ask_l = tokyo_bt.get_bid_ask(float(row["low"]), spread_pips_tokyo)
         bid_o, ask_o = tokyo_bt.get_bid_ask(float(row["open"]), spread_pips_tokyo)
 
-        m5s = completed_tf_slice(m5, ts)
-        assert_no_lookahead(m5s, ts, "m5")
+        assert_m5_no_lookahead_fast(m5_times_ns, ts, "m5")
 
         # --- exits: V44 oracle + L1 (Tokyo still TODO) ---
         still: list[dict[str, Any]] = []
@@ -1030,9 +1098,21 @@ def execute_phase3_v7_pfdd_defended(params: Phase3V7PfddParams) -> dict[str, Any
         if i % 1000 == 0:
             assert abs(equity - (100_000.0 + realized_cum)) < 0.05, "equity accounting drift"
 
-        if not params.quiet and i % 100_000 == 0 and i > warmup:
-            elapsed = time.time() - t0
-            print(f"bar {i}/{n} elapsed={elapsed:.1f}s equity={equity:.2f}", flush=True)
+        if not params.quiet:
+            if i == warmup:
+                print(f"  Phase3: first main-loop bar i={i} (warmup done)", flush=True)
+            elif (i - warmup) % 10_000 == 0:
+                elapsed = time.time() - loop_t0
+                done = i - warmup
+                total = n - warmup
+                rate = done / max(elapsed, 1e-9)
+                rem_s = (total - done) / max(rate, 1e-9)
+                pct = 100.0 * done / max(total, 1)
+                print(
+                    f"  Phase3 progress: bar {i}/{n - 1} ({pct:.1f}%) "
+                    f"loop_elapsed={elapsed:.0f}s ETA~{rem_s / 60:.1f}min equity={equity:.2f}",
+                    flush=True,
+                )
 
         open_ct = (
             len(open_positions)

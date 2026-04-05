@@ -69,7 +69,7 @@ def test_phase3_engine_matches_runner_summary(tmp_path: Path) -> None:
         bar_log_format="csv",
     )
     eng = Phase3V7PfddDefendedBacktestEngine()
-    result = eng.run(cfg)
+    result = eng.run(cfg, runner_quiet=True)
     inner = result.summary["phase3_defended_runner_summary"]
     assert float(inner["net_pnl_usd"]) == pytest.approx(float(raw["summary"]["net_pnl_usd"]), rel=0, abs=1e-6)
     assert int(inner["closed_trades_total"]) == int(raw["summary"]["closed_trades_total"])

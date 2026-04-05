@@ -243,6 +243,20 @@ def test_apply_phase3_session_outcome_marks_ny_session_stopped_after_loss_limit(
 
 
 def test_manage_v44_exit_uses_managed_tp1_pips_fallback(monkeypatch) -> None:
+    # _manage_v44_exit gates on real wall clock for NY session end; pin UTC "now" inside the session.
+    fixed_now = datetime(2025, 4, 4, 14, 0, tzinfo=timezone.utc)
+
+    class _DatetimeModule:
+        timezone = timezone
+
+        @staticmethod
+        def now(tz=None):
+            if tz is timezone.utc:
+                return fixed_now
+            return datetime.now(tz)
+
+    monkeypatch.setattr(phase3_engine, "datetime", _DatetimeModule)
+
     class _Adapter:
         def __init__(self) -> None:
             self.partial_calls = []

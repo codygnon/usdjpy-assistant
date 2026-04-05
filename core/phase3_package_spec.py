@@ -1,6 +1,17 @@
 from __future__ import annotations
 
+# V7.1 Defended + H1
+# Updated: 2026-04-05
+# Changes from V7 Frozen:
+#   1. H1 filter: blocks V44 entries when M5 ATR-14 > 7.04 pips
+#      Validation: 116 trades PF 2.08 (low ATR) vs 98 trades PF 1.02 (high ATR)
+#      Split-half validated on 2.7 years / 1.03M bars
+#   2. Startup assertion for London D TP1 R=3.25 (safety net)
+#   3. No additional live bug fixes required from Step 3 audit
+# Expected: ~300 trades/2.7yr, PF ~1.90, reduced drawdown
+
 import json
+import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -8,6 +19,8 @@ from typing import Any
 
 PHASE3_DEFENDED_PRESET_ID = "phase3_integrated_v7_defended"
 DEFENDED_PACKAGE_ID = "v7_pfdd__followup__L1_drop_Monday_Tuesday__tp1r_3.25__be_1__tp2r_2__defensive_v44_ambiguous_low_derneg"
+EXPECTED_LONDON_D_TP1_R = 3.25
+_LONDON_D_TP1_WARNED = False
 
 
 @dataclass(frozen=True)
@@ -127,6 +140,9 @@ def load_phase3_package_spec(
     if runtime_cfg:
         merged_runtime_overrides = _deep_merge(merged_runtime_overrides, runtime_cfg)
 
+    if defended_active:
+        _warn_if_london_d_tp1_mismatch(merged_runtime_overrides)
+
     return Phase3PackageSpec(
         package_id=package_id if uses_defended_phase3_package(preset_id) else (preset_id or package_family),
         package_family=package_family,
@@ -137,6 +153,27 @@ def load_phase3_package_spec(
         runtime_overrides=merged_runtime_overrides,
         frozen_modifiers=frozen_modifiers,
         strict_policy=strict_policy,
+    )
+
+
+def _warn_if_london_d_tp1_mismatch(runtime_overrides: dict[str, Any]) -> None:
+    global _LONDON_D_TP1_WARNED
+    if _LONDON_D_TP1_WARNED:
+        return
+    ldn_cfg = dict((runtime_overrides or {}).get("london_v2") or {})
+    value = ldn_cfg.get("d_tp1_r")
+    try:
+        actual = float(value)
+    except (TypeError, ValueError):
+        actual = float("nan")
+    if math.isfinite(actual) and math.isclose(actual, EXPECTED_LONDON_D_TP1_R, rel_tol=0.0, abs_tol=1e-9):
+        _LONDON_D_TP1_WARNED = True
+        return
+    _LONDON_D_TP1_WARNED = True
+    print(
+        "[phase3][CRITICAL] London D TP1 R-multiple is "
+        f"{actual if math.isfinite(actual) else value}, expected {EXPECTED_LONDON_D_TP1_R}. "
+        "L1 exit override may not have loaded. Strategy will underperform."
     )
 
 

@@ -2128,7 +2128,7 @@ def _phase3_defended_context_items(active_preset_name: str | None, cfg: dict[str
     veto_cells = v44_cfg.get("defensive_veto_cells") or []
     cell_scale_overrides = v14_cfg.get("cell_scale_overrides") or {}
     t3_scale = cell_scale_overrides.get("ambiguous/er_mid/der_pos:sell")
-    items = [ContextItem("Frozen Package", "Phase 3 Frozen V7 Defended", "frozen")]
+    items = [ContextItem("Frozen Package", "V7.1 Defended + H1", "frozen")]
     if blocked_days:
         items.append(ContextItem("L1 Weekdays", ", ".join(str(d) for d in blocked_days) + " blocked", "frozen"))
     items.append(ContextItem(

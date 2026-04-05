@@ -2321,8 +2321,8 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
     },
 
     PresetId.PHASE3_INTEGRATED_V7_DEFENDED: {
-        "name": "Phase 3 Frozen V7 Defended",
-        "description": "Promoted frozen Phase 3 package: defended v7_pfdd with L1 Monday/Tuesday suppression, L1 exit override (3.25R / BE 1.0 / TP2 2.0), V44 defensive veto in ambiguous/er_low/der_neg, and T3 0.25x scaling.",
+        "name": "V7.1 Defended + H1",
+        "description": "Promoted defended Phase 3 package: defended v7_pfdd with L1 Monday/Tuesday suppression, L1 exit override (3.25R / BE 1.0 / TP2 2.0), V44 defensive veto in ambiguous/er_low/der_neg, T3 0.25x scaling, and the live H1 V44 ATR gate (>7.04 pips blocked).",
         "pros": [
             "Promoted frozen package backed by the runtime sizing config and parity contract",
             "Selectable for any profile without changing broker credentials or deployment-specific settings",

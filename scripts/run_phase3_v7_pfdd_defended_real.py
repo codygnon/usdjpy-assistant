@@ -72,7 +72,7 @@ def main() -> None:
         bar_log_format="csv",
     )
 
-    log("Starting backtest...")
+    log("Starting backtest (first output may take several minutes: Tokyo indicators + variant-K context on full M1)...")
     engine = Phase3V7PfddDefendedBacktestEngine()
     t0 = time.perf_counter()
     result = engine.run(cfg)

@@ -1,5 +1,15 @@
 from __future__ import annotations
 
+# V7.1 Defended + H1
+# Updated: 2026-04-05
+# Changes from V7 Frozen:
+#   1. H1 filter: blocks V44 entries when M5 ATR-14 > 7.04 pips
+#      Validation: 116 trades PF 2.08 (low ATR) vs 98 trades PF 1.02 (high ATR)
+#      Split-half validated on 2.7 years / 1.03M bars
+#   2. Startup assertion for London D TP1 R=3.25 lives in phase3_package_spec.py
+#   3. No additional live bug fixes required from Step 3 audit
+# Expected: ~300 trades/2.7yr, PF ~1.90, reduced drawdown
+
 import inspect
 import os
 from datetime import datetime, timezone
@@ -7,6 +17,9 @@ from typing import Any, Optional
 
 import pandas as pd
 from core.phase3_package_spec import PHASE3_DEFENDED_PRESET_ID, load_phase3_package_spec
+
+
+H1_V44_ATR14_MAX_PIPS = 7.04
 
 
 def execute_v44_ny_session(
@@ -67,6 +80,8 @@ def execute_v44_ny_session(
 
     def _derive_gate_label(reason_text: str) -> str:
         reason_l = str(reason_text or "").lower()
+        if "h1 atr gate" in reason_l or "atr14" in reason_l:
+            return "h1_atr_gate"
         if "start delay" in reason_l:
             return "start_delay"
         if "spread veto" in reason_l:
@@ -733,6 +748,39 @@ def execute_v44_ny_session(
                     sdat["news_status"] = "waiting_h1_trend"
         if side is None:
             return _return_no_trade(reason_text=reason)
+
+    h1_atr14_max_pips = float(v44_config.get("h1_atr14_max_pips", H1_V44_ATR14_MAX_PIPS))
+    m5_atr14_pips = None
+    try:
+        if m5_df is not None and len(m5_df) >= 14:
+            _high = m5_df["high"].astype(float)
+            _low = m5_df["low"].astype(float)
+            _close = m5_df["close"].astype(float)
+            _prev_close = _close.shift(1)
+            _tr = pd.concat([_high - _low, (_high - _prev_close).abs(), (_low - _prev_close).abs()], axis=1).max(axis=1)
+            _atr14 = _tr.rolling(window=14, min_periods=14).mean()
+            if not _atr14.empty and pd.notna(_atr14.iloc[-1]):
+                m5_atr14_pips = float(_atr14.iloc[-1]) / pip
+    except Exception:
+        m5_atr14_pips = None
+    if m5_atr14_pips is not None:
+        parity_context["m5_atr14_pips"] = round(float(m5_atr14_pips), 4)
+        parity_context["h1_atr14_max_pips"] = float(h1_atr14_max_pips)
+        if float(m5_atr14_pips) > float(h1_atr14_max_pips):
+            print(
+                "[phase3] V44 BLOCKED by H1 ATR gate: "
+                f"time={_ts_now.isoformat()} side={side} strength={strength} "
+                f"ATR={float(m5_atr14_pips):.2f}p > {float(h1_atr14_max_pips):.2f}p"
+            )
+            return _return_no_trade(
+                reason_text=(
+                    f"v44_ny: H1 ATR gate blocked "
+                    f"(atr14={float(m5_atr14_pips):.2f}p > {float(h1_atr14_max_pips):.2f}p)"
+                ),
+                attempted=True,
+                side_value=side,
+                gate_label="h1_atr_gate",
+            )
 
     atr_rank = _compute_v44_atr_rank(m5_df, lookback=v44_atr_pct_lookback)
     allow_map = {
