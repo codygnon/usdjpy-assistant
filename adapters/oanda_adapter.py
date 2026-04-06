@@ -436,7 +436,9 @@ class OandaAdapter:
         if tp is not None:
             order["takeProfitOnFill"] = {"price": f"{round(tp, prec):.{prec}f}", "timeInForce": "GTC"}
         if comment:
-            order["tradeClientExtensions"] = {"comment": comment[:128]}
+            trimmed = comment[:128]
+            order["clientExtensions"] = {"comment": trimmed}
+            order["tradeClientExtensions"] = {"comment": trimmed}
         body = {"order": order}
         data = self._req("POST", f"/v3/accounts/{aid}/orders", json=body)
         fill = data.get("orderFillTransaction")
@@ -488,6 +490,8 @@ class OandaAdapter:
         volume_lots: float,
         sl: float | None = None,
         tp: float | None = None,
+        time_in_force: str = "GTC",
+        gtd_time_utc: str | None = None,
         magic: int = 20260128,
         comment: str = "",
     ) -> OrderResult:
@@ -502,13 +506,19 @@ class OandaAdapter:
             "instrument": inst,
             "units": str(units),
             "price": f"{round(price, prec):.{prec}f}",
-            "timeInForce": "GTC",
+            "timeInForce": str(time_in_force or "GTC").upper(),
             "positionFill": "DEFAULT",
         }
+        if order["timeInForce"] == "GTD" and gtd_time_utc:
+            order["gtdTime"] = str(gtd_time_utc)
         if sl is not None:
             order["stopLossOnFill"] = {"price": f"{round(sl, prec):.{prec}f}", "timeInForce": "GTC"}
         if tp is not None:
             order["takeProfitOnFill"] = {"price": f"{round(tp, prec):.{prec}f}", "timeInForce": "GTC"}
+        if comment:
+            trimmed = comment[:128]
+            order["clientExtensions"] = {"comment": trimmed}
+            order["tradeClientExtensions"] = {"comment": trimmed}
         data = self._req("POST", f"/v3/accounts/{aid}/orders", json={"order": order})
         create = data.get("orderCreateTransaction")
         if data.get("orderRejectTransaction"):
@@ -521,6 +531,24 @@ class OandaAdapter:
             order=int(create["id"]) if create else None,
             deal=None,
         )
+
+    def list_pending_orders(self, symbol: str | None = None) -> list[dict]:
+        aid = self._get_account_id()
+        data = self._req("GET", f"/v3/accounts/{aid}/pendingOrders")
+        orders = list(data.get("orders") or [])
+        if symbol:
+            inst = _symbol_to_instrument(symbol)
+            want = _instrument_to_symbol(inst).split(".")[0]
+            orders = [
+                order
+                for order in orders
+                if _instrument_to_symbol(str(order.get("instrument") or "")).split(".")[0] == want
+            ]
+        return orders
+
+    def cancel_order(self, order_id: int | str) -> dict:
+        aid = self._get_account_id()
+        return self._req("PUT", f"/v3/accounts/{aid}/orders/{order_id}/cancel")
 
     def update_position_stop_loss(self, trade_id: int, symbol: str, stop_loss_price: float) -> None:
         """Set or replace the stop loss order for an open trade (e.g. for breakeven)."""

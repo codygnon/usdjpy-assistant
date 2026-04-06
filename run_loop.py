@@ -6474,7 +6474,7 @@ def main() -> None:
                                 tp1_price = _p3_placement.get("tp1_price")
                                 risk_usd_planned = _p3_placement.get("risk_usd_planned")
                                 _p3_units = _p3_placement.get("units")
-                                _p3_size_lots = (float(_p3_units) / 100_000.0) if _p3_units is not None and int(_p3_units) > 0 else None
+                                _p3_size_lots = (abs(float(_p3_units)) / 100_000.0) if _p3_units is not None and int(_p3_units) != 0 else None
                                 _phase3_open_snapshot = _phase3_trade_open_context_snapshot(
                                     strategy_tag=_p3_tag,
                                     entry_price=entry_price,

@@ -3,12 +3,17 @@ from __future__ import annotations
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pandas as pd
+
 from core.phase3_additive_runtime import (
     Phase3AdditiveCandidate,
+    _execute_v4_runtime,
     _margin_state,
     _split_candidate_intents,
     execute_phase3_defended_additive_policy,
 )
+from core.phase3_package_spec import project_runtime_config_from_spec
+from core.phase3_spike_fade_v4 import V4Event
 
 
 class _Adapter:
@@ -45,6 +50,9 @@ class _Store:
     def list_open_trades(self, profile_name: str):
         return []
 
+    def insert_execution(self, row):
+        return None
+
 
 class _StoreWithOpen:
     def __init__(self, rows):
@@ -52,6 +60,32 @@ class _StoreWithOpen:
 
     def list_open_trades(self, profile_name: str):
         return list(self._rows)
+
+
+class _V4Adapter:
+    def __init__(self):
+        self.pending_kwargs = None
+        self.open_positions_rows = []
+        self.pending_rows = []
+
+    def get_account_info(self):
+        return SimpleNamespace(balance=100000.0, equity=100000.0, margin_used=0.0)
+
+    def get_open_positions(self, symbol=None):
+        return list(self.open_positions_rows)
+
+    def list_pending_orders(self, symbol=None):
+        return list(self.pending_rows)
+
+    def order_send_pending_limit(self, **kwargs):
+        self.pending_kwargs = dict(kwargs)
+        return SimpleNamespace(retcode=0, comment="PENDING", order=777, deal=None)
+
+    def close_position(self, **kwargs):
+        return SimpleNamespace(retcode=0)
+
+    def update_position_stop_loss(self, trade_id, symbol, stop_loss_price):
+        return None
 
 
 def test_defended_additive_runtime_activates_for_any_preset_when_contract_exists():
@@ -82,6 +116,110 @@ def test_margin_state_honors_max_lot_cap():
     state = _margin_state(_Adapter(), spec, 2.0)
     assert state.blocked is True
     assert state.reason == "lot_cap>1.00"
+
+
+def test_project_runtime_config_includes_spike_fade_v4_defaults() -> None:
+    spec = SimpleNamespace(runtime_overrides={}, strict_policy={}, base_cell_scales={})
+    cfg = project_runtime_config_from_spec(spec)
+    v4 = dict(cfg.get("spike_fade_v4") or {})
+    assert v4["confirmation_window_minutes"] == 10
+    assert v4["shared_margin_cap_pct"] == 75.0
+    assert v4["max_active_or_pending"] == 1
+    assert v4["cluster_block_minutes"] == 120
+
+
+def test_v4_runtime_places_broker_gtd_limit(monkeypatch) -> None:
+    import core.phase3_additive_runtime as ar
+
+    event = V4Event(
+        armed_time="2026-04-06T14:00:00+00:00",
+        expiry_time="2026-04-06T14:10:00+00:00",
+        side="sell",
+        trigger_level=150.123,
+        stop_price=150.456,
+        tp_price=149.923,
+        confirmation_level=150.123,
+        confirmation_time="2026-04-06T14:00:00+00:00",
+        spike_time="2026-04-06T13:55:00+00:00",
+        spike_direction="bullish",
+        spike_high=150.50,
+        spike_low=149.90,
+        spike_range_pips=60.0,
+        prior_12_high=150.123,
+        prior_12_low=149.88,
+        stretch_atr_ratio_m5=1.6,
+        dist_from_m15_ema50_pips=25.0,
+        session_name="ny",
+        cluster_block_until="2026-04-06T16:00:00+00:00",
+    )
+
+    monkeypatch.setattr(ar, "detect_latest_v4_event", lambda **kwargs: (event, {"lifecycle_state": "FADE_CONFIRMED"}))
+
+    adapter = _V4Adapter()
+    profile = SimpleNamespace(active_preset_name="phase3_integrated_v7_defended", profile_name="demo", name="demo", symbol="USDJPY", pip_size=0.01)
+    spec = SimpleNamespace(strict_policy={})
+    result = _execute_v4_runtime(
+        adapter=adapter,
+        profile=profile,
+        spec=spec,
+        data_by_tf={"M1": []},
+        tick=SimpleNamespace(bid=150.12, ask=150.13),
+        phase3_state={},
+        store=_Store(),
+        sizing_config={"spike_fade_v4": {"enabled": True, "lots": 20.0}},
+        now_utc=pd.Timestamp("2026-04-06T14:00:00Z").to_pydatetime(),
+        mode="ARMED_AUTO_DEMO",
+    )
+    runtime = result["state_updates"]["v4_runtime"]
+    assert runtime["lifecycle_state"] == "ORDER_ARMED"
+    assert runtime["pending_order_id"] == "777"
+    assert adapter.pending_kwargs is not None
+    assert adapter.pending_kwargs["time_in_force"] == "GTD"
+    assert adapter.pending_kwargs["gtd_time_utc"].startswith("2026-04-06T14:10:00")
+    assert adapter.pending_kwargs["sl"] == 150.456
+
+
+def test_v4_runtime_reports_first_broker_fill_as_phase3_placement() -> None:
+    adapter = _V4Adapter()
+    adapter.open_positions_rows = [
+        {
+            "id": "9001",
+            "instrument": "USD_JPY",
+            "currentUnits": "-2000000",
+            "price": "150.111",
+            "openTime": "2026-04-06T14:02:00Z",
+            "tradeClientExtensions": {"comment": "phase3_integrated:phase3_integrated_v7_defended:spike_fade_v4"},
+        }
+    ]
+    profile = SimpleNamespace(active_preset_name="phase3_integrated_v7_defended", profile_name="demo", name="demo", symbol="USDJPY", pip_size=0.01)
+    spec = SimpleNamespace(strict_policy={})
+    state = {
+        "v4_runtime": {
+            "pending_order_id": "777",
+            "stop_price": 150.456,
+            "tp_price": 149.923,
+            "lifecycle_state": "ORDER_ARMED",
+        }
+    }
+    result = _execute_v4_runtime(
+        adapter=adapter,
+        profile=profile,
+        spec=spec,
+        data_by_tf={"M1": []},
+        tick=SimpleNamespace(bid=150.10, ask=150.11),
+        phase3_state=state,
+        store=_Store(),
+        sizing_config={"spike_fade_v4": {"enabled": True, "lots": 20.0}},
+        now_utc=pd.Timestamp("2026-04-06T14:03:00Z").to_pydatetime(),
+        mode="ARMED_AUTO_DEMO",
+    )
+    runtime = result["state_updates"]["v4_runtime"]
+    assert runtime["lifecycle_state"] == "POSITION_OPEN"
+    assert runtime["active_trade_id"] == "9001"
+    assert result["placements"]
+    dec = result["placements"][0]["decision"]
+    assert dec.placed is True
+    assert dec.reason == "broker_filled"
 
 
 def test_defended_additive_runtime_places_accepted_candidate(monkeypatch):

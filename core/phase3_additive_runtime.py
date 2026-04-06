@@ -16,6 +16,7 @@ from core.phase3_additive_contract import (
     defended_slice_source,
 )
 from core.phase3_package_spec import PHASE3_DEFENDED_PRESET_ID, load_phase3_package_spec
+from core.phase3_spike_fade_v4 import default_v4_runtime_config, detect_latest_v4_event
 from core.phase3_session_support import build_phase3_session_support_from_mapping
 from core.phase3_variant_k_baseline import apply_variant_k_baseline_admission
 
@@ -216,6 +217,8 @@ def _parse_strategy_family(strategy_tag: str | None) -> str:
         return "london_v2"
     if tag.startswith("phase3:v44_ny"):
         return "v44_ny"
+    if tag.startswith("phase3:spike_fade_v4"):
+        return "spike_fade_v4"
     return "unknown"
 
 
@@ -586,6 +589,427 @@ def _merge_state_updates(base: dict[str, Any], updates: dict[str, Any]) -> dict[
     return out
 
 
+def _store_execution(store, *, profile_name: str, symbol: str, signal_id: str, mode: str, attempted: bool, placed: bool, reason: str, order_id: int | None = None, deal_id: int | None = None) -> None:
+    if store is None:
+        return
+    try:
+        store.insert_execution(
+            {
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile_name,
+                "symbol": symbol,
+                "signal_id": signal_id,
+                "rule_id": "phase3:spike_fade_v4",
+                "mode": mode,
+                "attempted": 1 if attempted else 0,
+                "placed": 1 if placed else 0,
+                "reason": str(reason),
+                "mt5_retcode": None,
+                "mt5_order_id": order_id,
+                "mt5_deal_id": deal_id,
+            }
+        )
+    except Exception:
+        return
+
+
+def _v4_runtime_cfg(sizing_config: dict[str, Any] | None) -> dict[str, Any]:
+    cfg = dict(default_v4_runtime_config())
+    patch = dict((sizing_config or {}).get("spike_fade_v4") or {})
+    cfg.update(patch)
+    return cfg
+
+
+def _trade_comment_value(row: dict[str, Any]) -> str:
+    for key in ("tradeClientExtensions", "clientExtensions"):
+        ext = row.get(key)
+        if isinstance(ext, dict):
+            comment = str(ext.get("comment") or "").strip()
+            if comment:
+                return comment
+    return ""
+
+
+def _v4_comment(profile) -> str:
+    return f"phase3_integrated:{getattr(profile, 'active_preset_name', '')}:spike_fade_v4"
+
+
+def _broker_open_positions(adapter, profile) -> list[dict[str, Any]]:
+    try:
+        return list(adapter.get_open_positions(profile.symbol) or [])
+    except Exception:
+        return []
+
+
+def _broker_pending_orders(adapter, profile) -> list[dict[str, Any]]:
+    try:
+        if hasattr(adapter, "list_pending_orders"):
+            return list(adapter.list_pending_orders(profile.symbol) or [])
+    except Exception:
+        return []
+    return []
+
+
+def _find_v4_live_trade(open_positions: list[dict[str, Any]], comment_value: str) -> dict[str, Any] | None:
+    for row in open_positions:
+        if _trade_comment_value(row) == comment_value:
+            return dict(row)
+    return None
+
+
+def _find_v4_pending_order(pending_orders: list[dict[str, Any]], comment_value: str, order_id: Any | None = None) -> dict[str, Any] | None:
+    if order_id is not None:
+        for row in pending_orders:
+            if str(row.get("id")) == str(order_id):
+                return dict(row)
+    for row in pending_orders:
+        if _trade_comment_value(row) == comment_value:
+            return dict(row)
+    return None
+
+
+def _v4_units_and_lots(live_row: dict[str, Any]) -> tuple[int, float]:
+    units = int(float(live_row.get("currentUnits") or live_row.get("initialUnits") or 0.0))
+    return units, abs(float(units)) / 100000.0
+
+
+def _v4_side_from_units(units: int) -> str:
+    return "buy" if int(units) > 0 else "sell"
+
+
+def _v4_margin_gate(adapter, spec, lots: float, cap_pct: float) -> tuple[bool, dict[str, float]]:
+    margin = _margin_state(adapter, spec, lots)
+    required_after = float(margin.margin_used) + float(margin.required_margin)
+    equity = float(margin.equity)
+    projected_pct = (required_after / equity * 100.0) if equity > 0 else 0.0
+    return projected_pct <= float(cap_pct), {
+        "equity": equity,
+        "margin_used": float(margin.margin_used),
+        "required_margin": float(margin.required_margin),
+        "projected_margin_pct": projected_pct,
+        "free_margin": float(margin.free_margin),
+    }
+
+
+def _execute_v4_runtime(
+    *,
+    adapter,
+    profile,
+    spec,
+    data_by_tf: dict[str, Any],
+    tick,
+    phase3_state: dict[str, Any],
+    store,
+    sizing_config: dict[str, Any],
+    now_utc: datetime,
+    mode: str,
+) -> dict[str, Any]:
+    from core.phase3_integrated_engine import ExecutionDecision
+
+    cfg = _v4_runtime_cfg(sizing_config)
+    runtime = dict(phase3_state.get("v4_runtime") or {})
+    runtime.setdefault("lifecycle_state", "IDLE_WARMUP")
+    runtime.setdefault("diagnostics", [])
+    diagnostics: list[dict[str, Any]] = list(runtime.get("diagnostics") or [])
+    placements: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    comment_value = _v4_comment(profile)
+    profile_name = getattr(profile, "profile_name", "") or getattr(profile, "name", "") or str(profile)
+
+    if not bool(cfg.get("enabled")):
+        runtime["lifecycle_state"] = "DISABLED"
+        runtime["diagnostics"] = diagnostics[-25:]
+        return {"state_updates": {"v4_runtime": runtime}, "placements": placements, "rejected": rejected, "attempted": False}
+
+    open_positions = _broker_open_positions(adapter, profile)
+    pending_orders = _broker_pending_orders(adapter, profile)
+    live_trade = _find_v4_live_trade(open_positions, comment_value)
+    live_pending = _find_v4_pending_order(pending_orders, comment_value, runtime.get("pending_order_id"))
+
+    if runtime.get("pending_order_id") and live_pending is None and live_trade is None:
+        runtime["last_event"] = "broker_expired_gtd"
+        runtime["last_expired_at"] = pd.Timestamp(now_utc).isoformat()
+        runtime["lifecycle_state"] = "COOLDOWN_CLUSTER_BLOCK"
+        runtime["pending_order_id"] = None
+        if not runtime.get("cluster_block_until"):
+            runtime["cluster_block_until"] = (
+                pd.Timestamp(now_utc) + pd.Timedelta(minutes=int(cfg.get("cluster_block_minutes", 120)))
+            ).isoformat()
+        _store_execution(
+            store,
+            profile_name=profile_name,
+            symbol=profile.symbol,
+            signal_id=f"phase3:v4:expired:{pd.Timestamp(now_utc).isoformat()}",
+            mode=mode,
+            attempted=True,
+            placed=False,
+            reason="broker_expired_gtd",
+            order_id=int(runtime.get("pending_order_id")) if str(runtime.get("pending_order_id") or "").isdigit() else None,
+        )
+
+    if live_trade is not None:
+        units, lots = _v4_units_and_lots(live_trade)
+        fill_time = pd.Timestamp(str(live_trade.get("openTime") or runtime.get("active_fill_time") or now_utc))
+        if fill_time.tzinfo is None:
+            fill_time = fill_time.tz_localize("UTC")
+        else:
+            fill_time = fill_time.tz_convert("UTC")
+        runtime["active_trade_id"] = str(live_trade.get("id"))
+        runtime["active_fill_time"] = fill_time.isoformat()
+        runtime["active_entry_price"] = float(live_trade.get("price") or runtime.get("active_entry_price") or 0.0)
+        runtime["active_side"] = _v4_side_from_units(units)
+        runtime["active_lots"] = lots
+        runtime["pending_order_id"] = None
+        trade_id_text = str(live_trade.get("id") or "")
+        first_fill_seen = str(runtime.get("reported_trade_id") or "") != trade_id_text
+        if first_fill_seen:
+            runtime["reported_trade_id"] = trade_id_text
+            runtime["last_event"] = "broker_filled"
+            placements.append(
+                {
+                    "strategy_tag": "phase3:spike_fade_v4",
+                    "entry_price": float(runtime["active_entry_price"]),
+                    "sl_price": float(runtime.get("stop_price")) if runtime.get("stop_price") is not None else None,
+                    "tp1_price": float(runtime.get("tp_price")) if runtime.get("tp_price") is not None else None,
+                    "units": abs(int(units)),
+                    "decision": ExecutionDecision(
+                        attempted=True,
+                        placed=True,
+                        reason="broker_filled",
+                        side=str(runtime["active_side"]),
+                        order_retcode=0,
+                        order_id=int(live_trade.get("id")) if trade_id_text.isdigit() else None,
+                        deal_id=int(live_trade.get("id")) if trade_id_text.isdigit() else None,
+                        fill_price=float(runtime["active_entry_price"]),
+                    ),
+                }
+            )
+            _store_execution(
+                store,
+                profile_name=profile_name,
+                symbol=profile.symbol,
+                signal_id=f"phase3:v4:filled:{fill_time.isoformat()}",
+                mode=mode,
+                attempted=True,
+                placed=True,
+                reason="broker_filled",
+                deal_id=int(live_trade.get("id")) if trade_id_text.isdigit() else None,
+            )
+        runtime["lifecycle_state"] = "POSITION_OPEN"
+
+        side = str(runtime.get("active_side") or "buy")
+        entry_price = float(runtime.get("active_entry_price") or 0.0)
+        if side == "buy":
+            check_price = float(tick.bid)
+            favorable_price = float(tick.bid)
+            current_pips = (check_price - entry_price) / 0.01
+        else:
+            check_price = float(tick.ask)
+            favorable_price = float(tick.ask)
+            current_pips = (entry_price - check_price) / 0.01
+        tp_price = runtime.get("tp_price")
+        exit_reason = None
+        if tp_price is not None:
+            if side == "buy" and check_price >= float(tp_price):
+                exit_reason = "software_take_profit"
+            elif side == "sell" and check_price <= float(tp_price):
+                exit_reason = "software_take_profit"
+        now_ts = pd.Timestamp(now_utc)
+        if now_ts.tzinfo is None:
+            now_ts = now_ts.tz_localize("UTC")
+        else:
+            now_ts = now_ts.tz_convert("UTC")
+        held_minutes = (now_ts - fill_time).total_seconds() / 60.0
+        if exit_reason is None and held_minutes >= float(cfg.get("prove_it_fast_minutes", 15)):
+            if current_pips < float(cfg.get("prove_it_fast_threshold_pips", -5.0)):
+                exit_reason = "software_prove_it_fast"
+        if exit_reason is None and bool(cfg.get("trailing_enabled", True)):
+            trail_stop = runtime.get("active_trail_stop")
+            trigger_pips = float(cfg.get("trail_trigger_pips", 10.0))
+            trail_distance_pips = float(cfg.get("trail_distance_pips", 5.0))
+            if current_pips >= trigger_pips:
+                if side == "buy":
+                    new_stop = favorable_price - trail_distance_pips * 0.01
+                    if trail_stop is None or float(new_stop) > float(trail_stop):
+                        try:
+                            adapter.update_position_stop_loss(int(live_trade.get("id")), profile.symbol, round(float(new_stop), 3))
+                            runtime["active_trail_stop"] = float(new_stop)
+                            runtime["last_event"] = "software_trailing_update"
+                        except Exception:
+                            pass
+                else:
+                    new_stop = favorable_price + trail_distance_pips * 0.01
+                    if trail_stop is None or float(new_stop) < float(trail_stop):
+                        try:
+                            adapter.update_position_stop_loss(int(live_trade.get("id")), profile.symbol, round(float(new_stop), 3))
+                            runtime["active_trail_stop"] = float(new_stop)
+                            runtime["last_event"] = "software_trailing_update"
+                        except Exception:
+                            pass
+        if exit_reason is not None:
+            try:
+                position_type = 0 if side == "buy" else 1
+                adapter.close_position(
+                    ticket=int(live_trade.get("id")),
+                    symbol=profile.symbol,
+                    volume=float(lots),
+                    position_type=position_type,
+                )
+                runtime["last_event"] = exit_reason
+                runtime["cluster_block_until"] = (
+                    pd.Timestamp(now_utc) + pd.Timedelta(minutes=int(cfg.get("cluster_block_minutes", 120)))
+                ).isoformat()
+                runtime["lifecycle_state"] = "COOLDOWN_CLUSTER_BLOCK"
+                _store_execution(
+                    store,
+                    profile_name=profile_name,
+                    symbol=profile.symbol,
+                    signal_id=f"phase3:v4:exit:{pd.Timestamp(now_utc).isoformat()}",
+                    mode=mode,
+                    attempted=True,
+                    placed=False,
+                    reason=exit_reason,
+                    deal_id=int(live_trade.get("id")) if str(live_trade.get("id") or "").isdigit() else None,
+                )
+            except Exception as exc:
+                diagnostics.append({"event": "v4_exit_error", "reason": str(exc), "time": pd.Timestamp(now_utc).isoformat()})
+        runtime["diagnostics"] = diagnostics[-25:]
+        return {"state_updates": {"v4_runtime": runtime}, "placements": placements, "rejected": rejected, "attempted": True}
+
+    if runtime.get("active_trade_id") and live_trade is None:
+        runtime["active_trade_id"] = None
+        runtime["active_fill_time"] = None
+        runtime["active_entry_price"] = None
+        runtime["active_side"] = None
+        runtime["active_trail_stop"] = None
+        runtime["reported_trade_id"] = None
+        runtime["last_event"] = "broker_trade_closed"
+        if runtime.get("lifecycle_state") != "COOLDOWN_CLUSTER_BLOCK":
+            runtime["cluster_block_until"] = (
+                pd.Timestamp(now_utc) + pd.Timedelta(minutes=int(cfg.get("cluster_block_minutes", 120)))
+            ).isoformat()
+            runtime["lifecycle_state"] = "COOLDOWN_CLUSTER_BLOCK"
+
+    if live_pending is not None:
+        runtime["pending_order_id"] = str(live_pending.get("id"))
+        runtime["lifecycle_state"] = "ORDER_ARMED"
+        runtime["diagnostics"] = diagnostics[-25:]
+        return {"state_updates": {"v4_runtime": runtime}, "placements": placements, "rejected": rejected, "attempted": True}
+
+    if runtime.get("pending_order_id"):
+        runtime["pending_order_id"] = None
+
+    detected_event, detected_state = detect_latest_v4_event(
+        data_by_tf=data_by_tf,
+        phase3_state={"v4_runtime": runtime},
+        runtime_cfg=cfg,
+        now_utc=now_utc,
+    )
+    runtime.update(detected_state)
+    if detected_event is None:
+        runtime["diagnostics"] = diagnostics[-25:]
+        return {"state_updates": {"v4_runtime": runtime}, "placements": placements, "rejected": rejected, "attempted": False}
+
+    if runtime.get("active_trade_id") or runtime.get("pending_order_id"):
+        runtime["last_reject_reason"] = "v4_active_or_pending"
+        rejected.append({"strategy_tag": "phase3:spike_fade_v4", "reason": "v4_active_or_pending"})
+        runtime["diagnostics"] = diagnostics[-25:]
+        return {"state_updates": {"v4_runtime": runtime}, "placements": placements, "rejected": rejected, "attempted": True}
+
+    cap_ok, margin_diag = _v4_margin_gate(adapter, spec, float(cfg.get("lots", 20.0)), float(cfg.get("shared_margin_cap_pct", 75.0)))
+    runtime["last_margin_diag"] = margin_diag
+    if not cap_ok:
+        runtime["last_reject_reason"] = "v4_shared_margin_cap"
+        runtime["last_event"] = "rejected_margin"
+        rejected.append({"strategy_tag": "phase3:spike_fade_v4", "reason": "v4_shared_margin_cap", "margin_state": margin_diag})
+        _store_execution(
+            store,
+            profile_name=profile_name,
+            symbol=profile.symbol,
+            signal_id=f"phase3:v4:reject:{pd.Timestamp(now_utc).isoformat()}",
+            mode=mode,
+            attempted=True,
+            placed=False,
+            reason="v4_shared_margin_cap",
+        )
+        runtime["diagnostics"] = diagnostics[-25:]
+        return {"state_updates": {"v4_runtime": runtime}, "placements": placements, "rejected": rejected, "attempted": True}
+
+    if not hasattr(adapter, "order_send_pending_limit"):
+        runtime["last_reject_reason"] = "broker_missing_pending_limit_support"
+        rejected.append({"strategy_tag": "phase3:spike_fade_v4", "reason": "broker_missing_pending_limit_support"})
+        runtime["diagnostics"] = diagnostics[-25:]
+        return {"state_updates": {"v4_runtime": runtime}, "placements": placements, "rejected": rejected, "attempted": True}
+
+    try:
+        expiry_ts = pd.Timestamp(detected_event.expiry_time)
+        if expiry_ts.tzinfo is None:
+            expiry_ts = expiry_ts.tz_localize("UTC")
+        else:
+            expiry_ts = expiry_ts.tz_convert("UTC")
+        result = adapter.order_send_pending_limit(
+            symbol=profile.symbol,
+            side=str(detected_event.side),
+            price=float(detected_event.trigger_level),
+            volume_lots=float(cfg.get("lots", 20.0)),
+            sl=float(detected_event.stop_price),
+            tp=None,
+            time_in_force="GTD",
+            gtd_time_utc=expiry_ts.isoformat().replace("+00:00", "Z"),
+            comment=comment_value,
+        )
+        if getattr(result, "retcode", None) in (0, 10008, 10009) and getattr(result, "order", None) is not None:
+            runtime["pending_order_id"] = str(result.order)
+            runtime["pending_armed_at"] = detected_event.armed_time
+            runtime["pending_expiry_time"] = detected_event.expiry_time
+            runtime["active_side"] = str(detected_event.side)
+            runtime["stop_price"] = float(detected_event.stop_price)
+            runtime["tp_price"] = float(detected_event.tp_price) if detected_event.tp_price is not None else None
+            runtime["confirmation_level"] = float(detected_event.confirmation_level)
+            runtime["last_event"] = "broker_pending"
+            runtime["lifecycle_state"] = "ORDER_ARMED"
+            runtime["cluster_block_until"] = detected_event.cluster_block_until
+            runtime["last_detected_event"] = detected_event.__dict__
+            placements.append(
+                {
+                    "strategy_tag": "phase3:spike_fade_v4",
+                    "entry_price": float(detected_event.trigger_level),
+                    "sl_price": float(detected_event.stop_price),
+                    "tp1_price": float(detected_event.tp_price) if detected_event.tp_price is not None else None,
+                    "decision": SimpleNamespace(
+                        attempted=True,
+                        placed=False,
+                        reason="broker_pending",
+                        side=str(detected_event.side),
+                        order_id=getattr(result, "order", None),
+                        deal_id=getattr(result, "deal", None),
+                        fill_price=None,
+                        order_retcode=getattr(result, "retcode", None),
+                    ),
+                }
+            )
+            _store_execution(
+                store,
+                profile_name=profile_name,
+                symbol=profile.symbol,
+                signal_id=f"phase3:v4:arm:{detected_event.armed_time}",
+                mode=mode,
+                attempted=True,
+                placed=True,
+                reason="broker_pending",
+                order_id=int(result.order) if str(result.order).isdigit() else None,
+            )
+        else:
+            runtime["last_reject_reason"] = f"order_rejected:{getattr(result, 'comment', 'unknown')}"
+            rejected.append({"strategy_tag": "phase3:spike_fade_v4", "reason": runtime["last_reject_reason"]})
+    except Exception as exc:
+        runtime["last_reject_reason"] = f"pending_order_error:{exc}"
+        rejected.append({"strategy_tag": "phase3:spike_fade_v4", "reason": runtime["last_reject_reason"]})
+
+    runtime["diagnostics"] = diagnostics[-25:]
+    return {"state_updates": {"v4_runtime": runtime}, "placements": placements, "rejected": rejected, "attempted": True}
+
+
 def _apply_candidate_adjustments(
     candidates: list[Phase3AdditiveCandidate],
     adjustments: dict[str, dict[str, Any]],
@@ -711,6 +1135,18 @@ def execute_phase3_defended_additive_policy(
     spec = load_phase3_package_spec(preset_id=preset_id)
     profile_name = getattr(profile, "profile_name", "") or getattr(profile, "name", "") or str(profile)
     open_trades = _open_phase3_trades(store, profile_name)
+    v4_result = _execute_v4_runtime(
+        adapter=adapter,
+        profile=profile,
+        spec=spec,
+        data_by_tf=data_by_tf,
+        tick=tick,
+        phase3_state=phase3_state,
+        store=store,
+        sizing_config=sizing_config or {},
+        now_utc=now_utc,
+        mode=mode,
+    )
     captured_candidates, diagnostics = _evaluate_family_candidates(
         adapter=adapter,
         profile=profile,
@@ -748,9 +1184,9 @@ def execute_phase3_defended_additive_policy(
     ]
 
     accepted: list[Phase3AdditiveCandidate] = []
-    rejected: list[dict[str, Any]] = list(baseline_outcome.rejected)
-    placements: list[dict[str, Any]] = []
-    state_updates: dict[str, Any] = {}
+    rejected: list[dict[str, Any]] = list(baseline_outcome.rejected) + list(v4_result.get("rejected") or [])
+    placements: list[dict[str, Any]] = list(v4_result.get("placements") or [])
+    state_updates: dict[str, Any] = dict(v4_result.get("state_updates") or {})
     simulated_open = list(open_trades)
     last_margin: Phase3MarginState | None = None
 
@@ -831,18 +1267,26 @@ def execute_phase3_defended_additive_policy(
             "last_open_book_count": len(open_trades),
             "last_candidate_diagnostics": diagnostics[-12:],
             "last_variant_k_diagnostics": list(baseline_outcome.diagnostics[-12:]),
+            "last_v4_lifecycle_state": dict((state_updates.get("v4_runtime") or {})).get("lifecycle_state"),
+            "last_v4_event": dict((state_updates.get("v4_runtime") or {})).get("last_event"),
+            "last_v4_reject_reason": dict((state_updates.get("v4_runtime") or {})).get("last_reject_reason"),
+            "last_v4_margin_diag": dict((state_updates.get("v4_runtime") or {})).get("last_margin_diag"),
         }
     )
     state_updates["additive_runtime"] = additive_state
 
     first = placements[0] if placements else {}
     first_decision = first.get("decision")
-    attempted = bool(captured_candidates)
+    attempted = bool(captured_candidates) or bool(v4_result.get("attempted"))
     placed = any(bool(getattr(p.get("decision"), "placed", False)) for p in placements)
     summary_reason = (
         f"phase3_additive: baseline={len(baseline_candidates)} offensive={len(offensive_candidates)} accepted={len(accepted)} rejected={len(rejected)}"
         if captured_candidates else
-        "phase3_additive: no defended candidates"
+        (
+            f"phase3_additive: v4_runtime={dict((state_updates.get('v4_runtime') or {})).get('lifecycle_state')}"
+            if v4_result.get("attempted")
+            else "phase3_additive: no defended candidates"
+        )
     )
     summary_decision = ExecutionDecision(
         attempted=attempted,
@@ -916,6 +1360,8 @@ def execute_phase3_defended_additive_policy(
             "accepted_offensive_count": len([c for c in accepted if c.intent_source == "offensive"]),
             "accepted_count": len(accepted),
             "rejected_count": len(rejected),
+            "v4_runtime_state": dict((state_updates.get("v4_runtime") or {})).get("lifecycle_state"),
+            "v4_runtime_event": dict((state_updates.get("v4_runtime") or {})).get("last_event"),
             **margin_diag_truth,
         },
     }

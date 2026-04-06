@@ -4,7 +4,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Optional
 
-from .oanda_client import AccountSummary, CandleBar, OpenTrade, PriceSnapshot
+from .oanda_client import AccountSummary, CandleBar, OpenTrade, PendingOrder, PriceSnapshot
 
 
 class MockOandaClient:
@@ -21,6 +21,7 @@ class MockOandaClient:
         self._candles: dict[tuple[str, str], list[CandleBar]] = {}
         self._trade_modifications: list[dict] = []
         self._orders_placed: list[dict] = []
+        self._pending_orders: list[PendingOrder] = []
 
     def set_account(self, balance: float = 100000.0, unrealized_pnl: float = 0.0, margin_used: float = 0.0):
         self._balance = float(balance)
@@ -89,6 +90,11 @@ class MockOandaClient:
             return list(self._open_trades)
         return [trade for trade in self._open_trades if trade.instrument == instrument]
 
+    def get_pending_orders(self, instrument: Optional[str] = None) -> list[PendingOrder]:
+        if instrument is None:
+            return list(self._pending_orders)
+        return [order for order in self._pending_orders if order.instrument == instrument]
+
     def get_price(self, instrument: str) -> PriceSnapshot:
         if instrument not in self._prices:
             self.set_price(instrument, 150.0, 150.02)
@@ -134,6 +140,10 @@ class MockOandaClient:
             return {"tradeReduced": {"tradeID": trade_id, "units": str(abs(int(units)))}, "remainingUnits": str(remaining_units)}
         return {"tradeID": trade_id, "status": "not_found"}
 
+    def cancel_order(self, order_id: str) -> dict:
+        self._pending_orders = [order for order in self._pending_orders if order.order_id != str(order_id)]
+        return {"orderCancelTransaction": {"orderID": str(order_id)}}
+
     def place_market_order(self, instrument, units, stop_loss=None, take_profit=None) -> dict:
         trade_id = str(len(self._orders_placed) + 1)
         snapshot = self.get_price(instrument)
@@ -158,6 +168,34 @@ class MockOandaClient:
             take_profit=take_profit,
         )
         return {"orderFillTransaction": {"tradeOpened": {"tradeID": trade_id}}}
+
+    def place_limit_order(
+        self,
+        instrument,
+        units,
+        price,
+        *,
+        stop_loss=None,
+        take_profit=None,
+        gtd_time=None,
+        comment=None,
+    ) -> dict:
+        order_id = str(len(self._orders_placed) + len(self._pending_orders) + 1)
+        self._pending_orders.append(
+            PendingOrder(
+                order_id=order_id,
+                instrument=instrument,
+                units=int(units),
+                price=float(price),
+                create_time=datetime.now(timezone.utc),
+                time_in_force="GTD" if gtd_time is not None else "GTC",
+                gtd_time=gtd_time,
+                stop_loss_on_fill=float(stop_loss) if stop_loss is not None else None,
+                take_profit_on_fill=float(take_profit) if take_profit is not None else None,
+                comment=str(comment) if comment is not None else None,
+            )
+        )
+        return {"orderCreateTransaction": {"id": order_id}}
 
     def test_connection(self) -> bool:
         return True

@@ -2209,6 +2209,23 @@ def _collect_phase3_additive_context(
     items.append(ContextItem("Candidates", str(truth.get("candidate_count", len(candidates))), "additive"))
     items.append(ContextItem("Accepted", str(truth.get("accepted_count", len(accepted))), "additive"))
     items.append(ContextItem("Rejected", str(truth.get("rejected_count", len(rejected))), "additive"))
+    v4_runtime = dict((phase3_state or {}).get("v4_runtime") or {})
+    if v4_runtime:
+        items.append(ContextItem("V4 State", str(v4_runtime.get("lifecycle_state") or "idle"), "v4"))
+        items.append(ContextItem("V4 Event", str(v4_runtime.get("last_event") or "waiting"), "v4"))
+        if v4_runtime.get("pending_order_id"):
+            items.append(ContextItem("V4 Pending", str(v4_runtime.get("pending_order_id")), "v4"))
+        if v4_runtime.get("active_trade_id"):
+            items.append(ContextItem("V4 Trade", str(v4_runtime.get("active_trade_id")), "v4"))
+        if v4_runtime.get("last_reject_reason"):
+            items.append(ContextItem("V4 Block", str(v4_runtime.get("last_reject_reason")), "v4"))
+        margin_diag = dict(v4_runtime.get("last_margin_diag") or {})
+        projected_pct = margin_diag.get("projected_margin_pct")
+        if projected_pct is not None:
+            try:
+                items.append(ContextItem("V4 Margin%", f"{float(projected_pct):.1f}%", "v4"))
+            except Exception:
+                pass
 
     items.append(ContextItem("Baseline Intents", str(truth.get("baseline_candidate_count", len(baseline_intents))), "baseline"))
     items.append(ContextItem("Baseline Accepted", str(truth.get("accepted_baseline_count", sum(1 for row in accepted if str(row.get('intent_source')) == 'baseline'))), "baseline"))

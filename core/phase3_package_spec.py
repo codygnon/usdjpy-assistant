@@ -196,8 +196,30 @@ def project_runtime_config_from_spec(spec: Phase3PackageSpec) -> dict[str, Any]:
         },
         "london_v2": {},
         "v44_ny": {},
+        "spike_fade_v4": {},
     }
-    for key in ("v14", "london_v2", "v44_ny"):
+    projected["spike_fade_v4"] = {
+        "enabled": False,
+        "lots": 20.0,
+        "confirmation_window_minutes": 10,
+        "entry_spread_pips": 1.6,
+        "stop_buffer_pips": 2.0,
+        "stop_clamp_min_pips": 15.0,
+        "stop_clamp_max_pips": 35.0,
+        "tp_fraction": 0.5,
+        "trailing_enabled": True,
+        "trail_trigger_pips": 10.0,
+        "trail_distance_pips": 5.0,
+        "prove_it_fast_minutes": 15,
+        "prove_it_fast_threshold_pips": -5.0,
+        "shared_margin_cap_pct": 75.0,
+        "max_active_or_pending": 1,
+        "cluster_block_minutes": 120,
+        "family_c_min_stretch_atr_ratio": 1.25,
+        "family_c_min_dist_from_m15_ema50_pips": 20.0,
+        "comment_tag": "spike_fade_v4",
+    }
+    for key in ("v14", "london_v2", "v44_ny", "spike_fade_v4"):
         if isinstance(overrides.get(key), dict):
             projected[key] = _deep_merge(projected.get(key, {}), dict(overrides.get(key) or {}))
     l1_weekdays = [str(day).strip() for day in list(overrides.get("l1_weekday_disable") or []) if str(day).strip()]

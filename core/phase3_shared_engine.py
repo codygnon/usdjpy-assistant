@@ -111,6 +111,8 @@ def _parse_strategy(strategy_tag: str | None) -> tuple[str | None, str | None]:
         family = "london_v2_arb"
     elif base.startswith("phase3:v44_ny"):
         family = "v44_ny"
+    elif base.startswith("phase3:spike_fade_v4"):
+        family = "spike_fade_v4"
     return family, cell
 
 
@@ -134,6 +136,8 @@ def _exit_policy_for_strategy(strategy_tag: str | None, sizing_cfg: dict[str, An
         )
     if family == "v44_ny":
         return Phase3ExitPolicy(label="V44 session exit")
+    if family == "spike_fade_v4":
+        return Phase3ExitPolicy(label="Spike Fade V4 managed exit")
     if family == "v14":
         return Phase3ExitPolicy(label="V14 mean-reversion exit")
     return None
@@ -171,6 +175,8 @@ def normalize_phase3_decision_envelope(
     elif strategy_family and strategy_family.startswith("london_v2"):
         session = "london"
     elif strategy_family == "v44_ny":
+        session = "ny"
+    elif strategy_family == "spike_fade_v4":
         session = "ny"
     if not ownership_cell and ownership_audit:
         ownership_cell = ownership_audit.get("ownership_cell")

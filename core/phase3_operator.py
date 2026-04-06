@@ -52,6 +52,10 @@ def parse_phase3_strategy_tag(strategy_tag: str | None) -> dict[str, Any]:
             result["strategy_variant"] = parts[1]
             if parts[1] in {"weak", "normal", "strong", "news"}:
                 result["strength"] = parts[1]
+    elif head == "spike_fade_v4":
+        result["session"] = "ny"
+        result["strategy_family"] = "spike_fade_v4"
+        result["strategy_variant"] = "family_c_model4"
     else:
         result["strategy_family"] = head
 

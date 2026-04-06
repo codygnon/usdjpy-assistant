@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import requests
@@ -40,6 +40,20 @@ class OpenTrade:
     stop_loss: Optional[float]
     take_profit: Optional[float]
     trailing_stop_distance: Optional[float]
+
+
+@dataclass(frozen=True)
+class PendingOrder:
+    order_id: str
+    instrument: str
+    units: int
+    price: float
+    create_time: datetime
+    time_in_force: str
+    gtd_time: Optional[datetime]
+    stop_loss_on_fill: Optional[float]
+    take_profit_on_fill: Optional[float]
+    comment: Optional[str]
 
 
 @dataclass(frozen=True)
@@ -101,6 +115,13 @@ class OandaClient:
 
     def _trade_orders_put(self, endpoint: str, data: dict) -> dict:
         return self._put(endpoint, data)
+
+    def _delete(self, endpoint: str) -> dict:
+        url = f"{self._base_url}{endpoint}"
+        response = requests.delete(url, headers=self._headers, timeout=10)
+        if response.status_code not in (200, 201):
+            raise OandaAPIError(response.status_code, response.text, endpoint)
+        return response.json() if response.content else {}
 
     def get_account_summary(self) -> AccountSummary:
         data = self._get(f"/v3/accounts/{self._account_id}/summary")
@@ -166,6 +187,45 @@ class OandaClient:
             )
         return trades
 
+    def get_pending_orders(self, instrument: Optional[str] = None) -> list[PendingOrder]:
+        data = self._get(f"/v3/accounts/{self._account_id}/pendingOrders")
+        orders: list[PendingOrder] = []
+        for order in data.get("orders", []):
+            if order.get("type") != "LIMIT":
+                continue
+            if instrument is not None and order.get("instrument") != instrument:
+                continue
+            units = int(order.get("units") or 0)
+            stop_loss = None
+            if order.get("stopLossOnFill"):
+                stop_loss = float(order["stopLossOnFill"]["price"])
+            take_profit = None
+            if order.get("takeProfitOnFill"):
+                take_profit = float(order["takeProfitOnFill"]["price"])
+            comment = None
+            client_ext = order.get("clientExtensions") or {}
+            if isinstance(client_ext, dict):
+                comment = client_ext.get("comment")
+            gtd_time = order.get("gtdTime")
+            orders.append(
+                PendingOrder(
+                    order_id=str(order["id"]),
+                    instrument=order["instrument"],
+                    units=units,
+                    price=float(order["price"]),
+                    create_time=datetime.fromisoformat(order["createTime"].replace("Z", "+00:00")),
+                    time_in_force=str(order.get("timeInForce") or ""),
+                    gtd_time=datetime.fromisoformat(gtd_time.replace("Z", "+00:00")) if gtd_time else None,
+                    stop_loss_on_fill=stop_loss,
+                    take_profit_on_fill=take_profit,
+                    comment=str(comment) if comment is not None else None,
+                )
+            )
+        return orders
+
+    def cancel_order(self, order_id: str) -> dict:
+        return self._delete(f"/v3/accounts/{self._account_id}/orders/{order_id}/cancel")
+
     def set_stop_loss(self, trade_id: str, price: float) -> dict:
         return self._trade_orders_put(
             f"/v3/accounts/{self._account_id}/trades/{trade_id}/orders",
@@ -230,6 +290,37 @@ class OandaClient:
             order["stopLossOnFill"] = {"price": f"{stop_loss:.3f}", "timeInForce": "GTC"}
         if take_profit is not None:
             order["takeProfitOnFill"] = {"price": f"{take_profit:.3f}", "timeInForce": "GTC"}
+        return self._post(f"/v3/accounts/{self._account_id}/orders", {"order": order})
+
+    def place_limit_order(
+        self,
+        instrument: str,
+        units: int,
+        price: float,
+        *,
+        stop_loss: Optional[float] = None,
+        take_profit: Optional[float] = None,
+        gtd_time: Optional[datetime] = None,
+        comment: Optional[str] = None,
+    ) -> dict:
+        order: dict[str, object] = {
+            "type": "LIMIT",
+            "instrument": instrument,
+            "units": str(units),
+            "price": f"{price:.3f}",
+            "timeInForce": "GTD" if gtd_time is not None else "GTC",
+            "positionFill": "DEFAULT",
+        }
+        if gtd_time is not None:
+            order["gtdTime"] = gtd_time.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        if stop_loss is not None:
+            order["stopLossOnFill"] = {"price": f"{stop_loss:.3f}", "timeInForce": "GTC"}
+        if take_profit is not None:
+            order["takeProfitOnFill"] = {"price": f"{take_profit:.3f}", "timeInForce": "GTC"}
+        if comment:
+            trimmed = str(comment)[:128]
+            order["clientExtensions"] = {"comment": trimmed}
+            order["tradeClientExtensions"] = {"comment": trimmed}
         return self._post(f"/v3/accounts/{self._account_id}/orders", {"order": order})
 
     def test_connection(self) -> bool:
