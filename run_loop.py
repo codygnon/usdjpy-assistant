@@ -6492,7 +6492,7 @@ def main() -> None:
                                         _entry_session = "tokyo"
                                     elif "london" in _p3_tag:
                                         _entry_session = "london"
-                                    elif "v44_ny" in _p3_tag:
+                                    elif "v44_ny" in _p3_tag or "spike_fade_v4" in _p3_tag:
                                         _entry_session = "ny"
                                 _insert_trade_for_policy(
                                     profile=profile,

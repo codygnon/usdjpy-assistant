@@ -703,6 +703,7 @@ def _execute_v4_runtime(
     sizing_config: dict[str, Any],
     now_utc: datetime,
     mode: str,
+    is_new_m1: bool,
 ) -> dict[str, Any]:
     from core.phase3_integrated_engine import ExecutionDecision
 
@@ -727,14 +728,11 @@ def _execute_v4_runtime(
     live_pending = _find_v4_pending_order(pending_orders, comment_value, runtime.get("pending_order_id"))
 
     if runtime.get("pending_order_id") and live_pending is None and live_trade is None:
+        expired_order_id = runtime.get("pending_order_id")
         runtime["last_event"] = "broker_expired_gtd"
         runtime["last_expired_at"] = pd.Timestamp(now_utc).isoformat()
-        runtime["lifecycle_state"] = "COOLDOWN_CLUSTER_BLOCK"
+        runtime["lifecycle_state"] = "READY"
         runtime["pending_order_id"] = None
-        if not runtime.get("cluster_block_until"):
-            runtime["cluster_block_until"] = (
-                pd.Timestamp(now_utc) + pd.Timedelta(minutes=int(cfg.get("cluster_block_minutes", 120)))
-            ).isoformat()
         _store_execution(
             store,
             profile_name=profile_name,
@@ -744,7 +742,7 @@ def _execute_v4_runtime(
             attempted=True,
             placed=False,
             reason="broker_expired_gtd",
-            order_id=int(runtime.get("pending_order_id")) if str(runtime.get("pending_order_id") or "").isdigit() else None,
+            order_id=int(expired_order_id) if str(expired_order_id or "").isdigit() else None,
         )
 
     if live_trade is not None:
@@ -765,6 +763,9 @@ def _execute_v4_runtime(
         if first_fill_seen:
             runtime["reported_trade_id"] = trade_id_text
             runtime["last_event"] = "broker_filled"
+            runtime["cluster_block_until"] = (
+                fill_time + pd.Timedelta(minutes=int(cfg.get("cluster_block_minutes", 120)))
+            ).isoformat()
             placements.append(
                 {
                     "strategy_tag": "phase3:spike_fade_v4",
@@ -796,6 +797,10 @@ def _execute_v4_runtime(
                 deal_id=int(live_trade.get("id")) if trade_id_text.isdigit() else None,
             )
         runtime["lifecycle_state"] = "POSITION_OPEN"
+
+        if not bool(is_new_m1):
+            runtime["diagnostics"] = diagnostics[-25:]
+            return {"state_updates": {"v4_runtime": runtime}, "placements": placements, "rejected": rejected, "attempted": True}
 
         side = str(runtime.get("active_side") or "buy")
         entry_price = float(runtime.get("active_entry_price") or 0.0)
@@ -856,10 +861,12 @@ def _execute_v4_runtime(
                     position_type=position_type,
                 )
                 runtime["last_event"] = exit_reason
-                runtime["cluster_block_until"] = (
-                    pd.Timestamp(now_utc) + pd.Timedelta(minutes=int(cfg.get("cluster_block_minutes", 120)))
-                ).isoformat()
-                runtime["lifecycle_state"] = "COOLDOWN_CLUSTER_BLOCK"
+                cooldown_until = runtime.get("cluster_block_until")
+                runtime["lifecycle_state"] = (
+                    "COOLDOWN_CLUSTER_BLOCK"
+                    if cooldown_until and pd.Timestamp(cooldown_until) > pd.Timestamp(now_utc)
+                    else "READY"
+                )
                 _store_execution(
                     store,
                     profile_name=profile_name,
@@ -884,11 +891,12 @@ def _execute_v4_runtime(
         runtime["active_trail_stop"] = None
         runtime["reported_trade_id"] = None
         runtime["last_event"] = "broker_trade_closed"
-        if runtime.get("lifecycle_state") != "COOLDOWN_CLUSTER_BLOCK":
-            runtime["cluster_block_until"] = (
-                pd.Timestamp(now_utc) + pd.Timedelta(minutes=int(cfg.get("cluster_block_minutes", 120)))
-            ).isoformat()
-            runtime["lifecycle_state"] = "COOLDOWN_CLUSTER_BLOCK"
+        cooldown_until = runtime.get("cluster_block_until")
+        runtime["lifecycle_state"] = (
+            "COOLDOWN_CLUSTER_BLOCK"
+            if cooldown_until and pd.Timestamp(cooldown_until) > pd.Timestamp(now_utc)
+            else "READY"
+        )
 
     if live_pending is not None:
         runtime["pending_order_id"] = str(live_pending.get("id"))
@@ -898,6 +906,10 @@ def _execute_v4_runtime(
 
     if runtime.get("pending_order_id"):
         runtime["pending_order_id"] = None
+
+    if not bool(is_new_m1):
+        runtime["diagnostics"] = diagnostics[-25:]
+        return {"state_updates": {"v4_runtime": runtime}, "placements": placements, "rejected": rejected, "attempted": False}
 
     detected_event, detected_state = detect_latest_v4_event(
         data_by_tf=data_by_tf,
@@ -968,7 +980,6 @@ def _execute_v4_runtime(
             runtime["confirmation_level"] = float(detected_event.confirmation_level)
             runtime["last_event"] = "broker_pending"
             runtime["lifecycle_state"] = "ORDER_ARMED"
-            runtime["cluster_block_until"] = detected_event.cluster_block_until
             runtime["last_detected_event"] = detected_event.__dict__
             placements.append(
                 {
@@ -1107,6 +1118,7 @@ def execute_phase3_defended_additive_policy(
     overlay_state: dict[str, Any] | None = None,
     now_utc: datetime | None = None,
     preset_id: str | None = None,
+    is_new_m1: bool = True,
 ) -> dict[str, Any]:
     from core.phase3_integrated_engine import ExecutionDecision
 
@@ -1146,6 +1158,7 @@ def execute_phase3_defended_additive_policy(
         sizing_config=sizing_config or {},
         now_utc=now_utc,
         mode=mode,
+        is_new_m1=is_new_m1,
     )
     captured_candidates, diagnostics = _evaluate_family_candidates(
         adapter=adapter,

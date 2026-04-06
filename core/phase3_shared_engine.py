@@ -330,6 +330,7 @@ def evaluate_phase3_bar(
             overlay_state=overlay_state,
             now_utc=eval_now_utc,
             preset_id=effective_preset_id,
+            is_new_m1=is_new_m1,
         )
     else:
         exec_result = execute_phase3_integrated_policy_demo_only(

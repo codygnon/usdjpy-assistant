@@ -18,7 +18,9 @@ Notes
 from __future__ import annotations
 
 import argparse
+import contextlib
 import copy
+import io
 import json
 import math
 import sys
@@ -1455,19 +1457,20 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
                 except Exception:
                     ownership_audit = None
                 tick = SimpleNamespace(bid=float(bid_c_london_bar), ask=float(ask_c_london_bar), time=ts.to_pydatetime())
-                v44_res = execute_v44_ny_entry(
-                    adapter=local_adapter,
-                    profile=phase3_profile,
-                    policy=phase3_policy,
-                    data_by_tf=data_by_tf,
-                    tick=tick,
-                    phase3_state=trial_state,
-                    sizing_config={"v44_ny": v44_cfg},
-                    now_utc=ts.to_pydatetime(),
-                    store=local_phase3_store,
-                    ownership_audit=ownership_audit,
-                    overlay_state=overlay_state,
-                )
+                with contextlib.redirect_stdout(io.StringIO()):
+                    v44_res = execute_v44_ny_entry(
+                        adapter=local_adapter,
+                        profile=phase3_profile,
+                        policy=phase3_policy,
+                        data_by_tf=data_by_tf,
+                        tick=tick,
+                        phase3_state=trial_state,
+                        sizing_config={"v44_ny": v44_cfg},
+                        now_utc=ts.to_pydatetime(),
+                        store=local_phase3_store,
+                        ownership_audit=ownership_audit,
+                        overlay_state=overlay_state,
+                    )
                 decision = v44_res.get("decision")
                 attempted = bool(getattr(decision, "attempted", False))
                 placed = bool(getattr(decision, "placed", False))

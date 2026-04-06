@@ -169,6 +169,7 @@ def test_v4_runtime_places_broker_gtd_limit(monkeypatch) -> None:
         sizing_config={"spike_fade_v4": {"enabled": True, "lots": 20.0}},
         now_utc=pd.Timestamp("2026-04-06T14:00:00Z").to_pydatetime(),
         mode="ARMED_AUTO_DEMO",
+        is_new_m1=True,
     )
     runtime = result["state_updates"]["v4_runtime"]
     assert runtime["lifecycle_state"] == "ORDER_ARMED"
@@ -212,6 +213,7 @@ def test_v4_runtime_reports_first_broker_fill_as_phase3_placement() -> None:
         sizing_config={"spike_fade_v4": {"enabled": True, "lots": 20.0}},
         now_utc=pd.Timestamp("2026-04-06T14:03:00Z").to_pydatetime(),
         mode="ARMED_AUTO_DEMO",
+        is_new_m1=True,
     )
     runtime = result["state_updates"]["v4_runtime"]
     assert runtime["lifecycle_state"] == "POSITION_OPEN"
