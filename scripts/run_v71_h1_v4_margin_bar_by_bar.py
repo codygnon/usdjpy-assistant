@@ -13,13 +13,19 @@ Notes
   default 33.0).
 - Entry admission uses a realized-balance-based hard margin cap to avoid
   pyramiding off floating MTM.
+
+Performance (full ~1M M1 bars can take tens of minutes; NY-session V44 work dominates)
+- Use `--max-bars N` for fidelity smoke tests.
+- Use `--equity-every-n 20` (or higher) to skip most equity CSV rows; last bar is always kept.
+  Coarser equity logs slightly underestimate intra-bar max drawdown in the CSV only.
+- Asian/LOR range for London is updated in O(1) per bar (no per-day rescan).
+- Margin/NAV uses one Tokyo+London spread computation per `margin_metrics_full` call.
 """
 
 from __future__ import annotations
 
 import argparse
 import contextlib
-import copy
 import io
 import json
 import math
@@ -111,6 +117,8 @@ class CombinedParams:
     spread_mode: str = "realistic"
     max_bars: Optional[int] = None
     quiet: bool = False
+    # Log equity curve every N M1 bars (1 = every bar). Larger = faster, smaller CSV.
+    equity_every_n: int = 1
 
 
 @dataclass
@@ -270,6 +278,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--spread-mode", choices=["pipeline", "realistic"], default="realistic")
     p.add_argument("--max-bars", type=int, default=None)
     p.add_argument("--quiet", action="store_true")
+    p.add_argument(
+        "--equity-every-n",
+        type=int,
+        default=1,
+        help="Append equity row every N bars (default 1). Use 10–60 for faster runs / smaller CSV.",
+    )
     return p.parse_args()
 
 
@@ -852,11 +866,19 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
     if not params.quiet:
         print(f"  M1 rows={len(m1_raw)}", flush=True)
 
+    prep_t0 = time.time()
+
+    def prep_stage(label: str) -> None:
+        if not params.quiet:
+            elapsed = time.time() - prep_t0
+            print(f"  prep: {label} ({elapsed:,.1f}s)", flush=True)
+
     tokyo_cfg = init_tokyo_config(TOKYO_CFG)
     with LONDON_CFG_PATH.open() as f:
         london_cfg = json.load(f)
     with V44_CFG_PATH.open() as f:
         v44_cfg = json.load(f)
+    prep_stage("configs loaded")
 
     # Force a unified leverage assumption across the account.
     tokyo_cfg["position_sizing"]["max_concurrent_positions"] = int(tokyo_cfg["position_sizing"].get("max_concurrent_positions", 3))
@@ -869,7 +891,9 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
     m15 = tokyo_bt.resample_ohlc_continuous(m1_raw, "15min")
     h1 = tokyo_bt.resample_ohlc_continuous(m1_raw, "1h")
     h4 = tokyo_bt.resample_ohlc_continuous(m1_raw, "4h")
+    prep_stage("resampled M5/M15/H1/H4")
     df, m5, m15 = compute_tokyo_indicators(m1_raw, m5, m15, tokyo_cfg)
+    prep_stage("tokyo indicators computed")
     m5 = m5.copy()
     h1 = h1.copy()
     h4 = h4.copy()
@@ -910,8 +934,10 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
     day_rng["prior_day_range_pips"] = day_rng["range_pips"].shift(1)
     df["prior_day_range_pips"] = df["time_utc"].dt.date.map(dict(zip(day_rng["utc_date"], day_rng["prior_day_range_pips"])))
     df["news_blocked"] = False
+    prep_stage("session/day features built")
 
     bar_frame = auth_loop._load_bar_frame(dataset_path)
+    prep_stage("ownership bar frame loaded")
     if "ownership_cell" not in bar_frame.columns:
         bar_frame = bar_frame.copy()
         bar_frame["ownership_cell"] = [
@@ -950,6 +976,7 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
     overlay_state = build_phase3_overlay_state({"v44_ny": v44_cfg})
 
     vk_ctx = build_variant_k_baseline_context({"M1": m1_raw, "M5": m5})
+    prep_stage("variant-k baseline context built")
     m5_times_ns = _m5_times_sorted_ns(m5)
     m1_times_ns = pd.to_datetime(df["time"], utc=True).values.astype("datetime64[ns]")
     m5_times_all_ns = pd.to_datetime(m5["time"], utc=True).values.astype("datetime64[ns]")
@@ -1017,18 +1044,40 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
         start = max(0, idx - int(tail))
         return frame.iloc[start:idx].copy()
 
+    v44_tf_cache_key: Optional[tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp, pd.Timestamp]] = None
+    v44_tf_cache_static: Optional[dict[str, pd.DataFrame]] = None
+    v44_ownership_cache_key: Optional[tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp]] = None
+    v44_ownership_cache_value: Optional[dict[str, Any]] = None
+
+    def _clone_phase3_state_for_v44(base_state: dict[str, Any]) -> dict[str, Any]:
+        trial = dict(base_state)
+        hist = base_state.get("ny_session_efficiency_history")
+        if isinstance(hist, list):
+            trial["ny_session_efficiency_history"] = list(hist)
+        return trial
+
     def _v44_data_by_tf(ts_now: pd.Timestamp) -> dict[str, pd.DataFrame]:
         m1_cut = ts_now
         m5_cut = ts_now.floor("5min")
         m15_cut = ts_now.floor("15min")
         h1_cut = ts_now.floor("1h")
         h4_cut = ts_now.floor("4h")
+        nonlocal v44_tf_cache_key, v44_tf_cache_static
+        tf_key = (m5_cut, m15_cut, h1_cut, h4_cut)
+        if v44_tf_cache_key != tf_key or v44_tf_cache_static is None:
+            v44_tf_cache_static = {
+                "M5": _slice_tf(m5, m5_times_all_ns, m5_cut, 500),
+                "M15": _slice_tf(m15, m15_times_all_ns, m15_cut, 250),
+                "H1": _slice_tf(h1, h1_times_all_ns, h1_cut, 220),
+                "H4": _slice_tf(h4, h4_times_all_ns, h4_cut, 120),
+            }
+            v44_tf_cache_key = tf_key
         return {
             "M1": _slice_tf(df, m1_times_ns, m1_cut, 720),
-            "M5": _slice_tf(m5, m5_times_all_ns, m5_cut, 500),
-            "M15": _slice_tf(m15, m15_times_all_ns, m15_cut, 250),
-            "H1": _slice_tf(h1, h1_times_all_ns, h1_cut, 220),
-            "H4": _slice_tf(h4, h4_times_all_ns, h4_cut, 120),
+            "M5": v44_tf_cache_static["M5"],
+            "M15": v44_tf_cache_static["M15"],
+            "H1": v44_tf_cache_static["H1"],
+            "H4": v44_tf_cache_static["H4"],
         }
 
     asian_min = float(london_cfg["levels"]["asian_range_min_pips"])
@@ -1065,32 +1114,16 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
     cur_day: Optional[pd.Timestamp] = None
     day_start_idx = 0
 
-    def causal_asian_lor(i0: int, i: int, t: pd.Timestamp) -> tuple[float, float, float, bool, float, float, float, bool]:
-        asian_lo = day_ns_bounds["asian_lo"]
-        asian_hi = day_ns_bounds["asian_hi"]
-        lor_lo = asian_hi
-        lor_hi = day_ns_bounds["lor_hi"]
-        ts_ns = time_ns_all[i]
-        tseg = time_ns_all[i0 : i + 1]
-        hseg = high_all[i0 : i + 1]
-        lseg = low_all[i0 : i + 1]
-        ma = (tseg >= asian_lo) & (tseg < asian_hi)
-        if not ma.any():
-            return (0.0, 0.0, 0.0, False, 0.0, 0.0, 0.0, False)
-        ah = float(np.max(hseg[ma]))
-        al = float(np.min(lseg[ma]))
-        ar = (ah - al) / PIP_SIZE
-        av = asian_min <= ar <= asian_max
-        ml = (tseg >= lor_lo) & (tseg < lor_hi) & (tseg <= ts_ns)
-        if not ml.any():
-            return (ah, al, ar, av, 0.0, 0.0, 0.0, False)
-        lh = float(np.max(hseg[ml]))
-        ll = float(np.min(lseg[ml]))
-        lr = (lh - ll) / PIP_SIZE
-        lv = lor_min <= lr <= lor_max
-        return (ah, al, ar, av, lh, ll, lr, lv)
+    # Running Asian / LOR range for current UTC day (O(1) per bar; old code rescanned i0..i each bar).
+    asian_h_acc = float("-inf")
+    asian_l_acc = float("inf")
+    asian_seg_any = False
+    lor_h_acc = float("-inf")
+    lor_l_acc = float("inf")
+    lor_seg_any = False
 
-    def margin_metrics(row: pd.Series, i: int) -> tuple[float, float, float, float, float, float, float]:
+    def margin_metrics_full(row: pd.Series, i: int) -> tuple[float, float, float, float, float, float, float, float, float]:
+        """Single Tokyo+London spread pass (margin_metrics_full used to compute London twice)."""
         sp_tokyo = tokyo_bt.compute_spread_pips(
             i,
             pd.Timestamp(row["time"]),
@@ -1102,7 +1135,6 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
         bid_c_tokyo, ask_c_tokyo = tokyo_bt.get_bid_ask(float(row["close"]), sp_tokyo)
         sp_london = london_bt.compute_spread_pips(i, pd.Timestamp(row["time"]), london_cfg)
         bid_c_london, ask_c_london = london_bt.to_bid_ask(float(row["close"]), sp_london)
-        bid_c_v4, ask_c_v4 = bid_c_london, ask_c_london
         nav, unreal = nav_current(
             balance=balance,
             ld=ld,
@@ -1113,8 +1145,8 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
             ask_c_tokyo=ask_c_tokyo,
             bid_c_london=bid_c_london,
             ask_c_london=ask_c_london,
-            bid_c_v4=bid_c_v4,
-            ask_c_v4=ask_c_v4,
+            bid_c_v4=bid_c_london,
+            ask_c_v4=ask_c_london,
         )
         used = margin_used_total(
             ld=ld,
@@ -1125,12 +1157,6 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
         )
         level = margin_level_pct(nav, used)
         avail = nav - used
-        return nav, unreal, used, avail, level, bid_c_tokyo, ask_c_tokyo
-
-    def margin_metrics_full(row: pd.Series, i: int) -> tuple[float, float, float, float, float, float, float, float, float]:
-        nav, unreal, used, avail, level, bid_c_tokyo, ask_c_tokyo = margin_metrics(row, i)
-        sp_london = london_bt.compute_spread_pips(i, pd.Timestamp(row["time"]), london_cfg)
-        bid_c_london, ask_c_london = london_bt.to_bid_ask(float(row["close"]), sp_london)
         return nav, unreal, used, avail, level, bid_c_tokyo, ask_c_tokyo, bid_c_london, ask_c_london
 
     warmup = 200
@@ -1138,6 +1164,8 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
     max_open_peak = 0
 
     loop_t0 = time.time()
+    last_heartbeat = loop_t0
+    prep_stage(f"entering main loop at warmup={warmup:,} of n={n:,}")
     for i in range(warmup, n):
         row = df.iloc[i]
         ts = pd.Timestamp(row["time"])
@@ -1147,6 +1175,40 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
             day_start_idx = i
             ld = init_london_day_state(dnorm, london_cfg)
             _set_day_bounds(day_start_idx)
+            asian_h_acc = float("-inf")
+            asian_l_acc = float("inf")
+            asian_seg_any = False
+            lor_h_acc = float("-inf")
+            lor_l_acc = float("inf")
+            lor_seg_any = False
+
+        ts_ns_i = time_ns_all[i]
+        al_lo = day_ns_bounds["asian_lo"]
+        al_hi = day_ns_bounds["asian_hi"]
+        lr_lo = al_hi
+        lr_hi = day_ns_bounds["lor_hi"]
+        hi_i = float(high_all[i])
+        lo_i = float(low_all[i])
+        if al_lo <= ts_ns_i < al_hi:
+            asian_h_acc = max(asian_h_acc, hi_i)
+            asian_l_acc = min(asian_l_acc, lo_i)
+            asian_seg_any = True
+        if lr_lo <= ts_ns_i < lr_hi:
+            lor_h_acc = max(lor_h_acc, hi_i)
+            lor_l_acc = min(lor_l_acc, lo_i)
+            lor_seg_any = True
+        if not asian_seg_any:
+            ah, al, ar, av = 0.0, 0.0, 0.0, False
+        else:
+            ah, al = float(asian_h_acc), float(asian_l_acc)
+            ar = (ah - al) / PIP_SIZE
+            av = asian_min <= ar <= asian_max
+        if not lor_seg_any:
+            lh, ll, lr, lv = 0.0, 0.0, 0.0, False
+        else:
+            lh, ll = float(lor_h_acc), float(lor_l_acc)
+            lr = (lh - ll) / PIP_SIZE
+            lv = lor_min <= lr <= lor_max
 
         maybe_finalize_v4_bars(
             i=i,
@@ -1310,7 +1372,6 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
         )
 
         if ld is not None:
-            ah, al, ar, av, lh, ll, lr, lv = causal_asian_lor(day_start_idx, i, ts)
             i_day = i - day_start_idx
             nxt_ts = pd.Timestamp(df.iloc[i + 1]["time"]) if i + 1 < n else None
 
@@ -1438,7 +1499,7 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
             if not ok:
                 blocked[reason] += 1
             else:
-                trial_state = copy.deepcopy(phase3_state)
+                trial_state = _clone_phase3_state_for_v44(phase3_state)
                 total_open_count = (
                     len(open_positions)
                     + (len(ld.open_positions) if ld is not None else 0)
@@ -1451,11 +1512,18 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
                 local_adapter.equity = float(pre_nav)
                 local_adapter.margin_used = float(pre_used)
                 data_by_tf = _v44_data_by_tf(ts)
+                ownership_key = (ts.floor("5min"), ts.floor("15min"), ts.floor("1h"))
                 ownership_audit = None
-                try:
-                    ownership_audit = compute_phase3_ownership_audit_for_data(data_by_tf, PIP_SIZE)
-                except Exception:
-                    ownership_audit = None
+                if v44_ownership_cache_key == ownership_key and isinstance(v44_ownership_cache_value, dict):
+                    ownership_audit = v44_ownership_cache_value
+                else:
+                    try:
+                        ownership_audit = compute_phase3_ownership_audit_for_data(data_by_tf, PIP_SIZE)
+                    except Exception:
+                        ownership_audit = None
+                    if isinstance(ownership_audit, dict):
+                        v44_ownership_cache_key = ownership_key
+                        v44_ownership_cache_value = ownership_audit
                 tick = SimpleNamespace(bid=float(bid_c_london_bar), ask=float(ask_c_london_bar), time=ts.to_pydatetime())
                 with contextlib.redirect_stdout(io.StringIO()):
                     v44_res = execute_v44_ny_entry(
@@ -1788,23 +1856,36 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
             + (1 if v4_state.position is not None else 0)
         )
         max_open_peak = max(max_open_peak, open_ct)
-        equity_rows.append(
-            {
-                "bar_index": i,
-                "timestamp": str(ts),
-                "balance": float(balance),
-                "nav": float(nav2),
-                "unrealized_pnl": float(unreal2),
-                "margin_used": float(used2),
-                "margin_available": float(avail2),
-                "margin_level_pct": float(level2),
-                "open_position_count": int(open_ct),
-                "drawdown_from_peak_nav": float(peak_nav - nav2),
-                "drawdown_pct_nav": float((peak_nav - nav2) / peak_nav * 100.0) if peak_nav > 0 else 0.0,
-                "v4_pending_order": int(v4_state.pending_order is not None),
-                "v4_open_position": int(v4_state.position is not None),
-            }
-        )
+        een = max(1, int(params.equity_every_n))
+        if (i - warmup) % een == 0 or i == n - 1:
+            equity_rows.append(
+                {
+                    "bar_index": i,
+                    "timestamp": str(ts),
+                    "balance": float(balance),
+                    "nav": float(nav2),
+                    "unrealized_pnl": float(unreal2),
+                    "margin_used": float(used2),
+                    "margin_available": float(avail2),
+                    "margin_level_pct": float(level2),
+                    "open_position_count": int(open_ct),
+                    "drawdown_from_peak_nav": float(peak_nav - nav2),
+                    "drawdown_pct_nav": float((peak_nav - nav2) / peak_nav * 100.0) if peak_nav > 0 else 0.0,
+                    "v4_pending_order": int(v4_state.pending_order is not None),
+                    "v4_open_position": int(v4_state.position is not None),
+                }
+            )
+
+        now_t = time.time()
+        if not params.quiet and now_t - last_heartbeat >= 30.0:
+            last_heartbeat = now_t
+            elapsed = now_t - loop_t0
+            print(
+                f"heartbeat {i:,}/{n:,} | balance={balance:,.2f} nav={nav2:,.2f} "
+                f"margin_used={used2:,.2f} margin_level={level2:,.2f}% "
+                f"v4_fills={v4_state.fills} elapsed={elapsed:,.1f}s",
+                flush=True,
+            )
 
         if not params.quiet and i % 200000 == 0:
             elapsed = time.time() - loop_t0
@@ -1936,6 +2017,7 @@ def main() -> None:
             spread_mode=str(args.spread_mode),
             max_bars=args.max_bars,
             quiet=bool(args.quiet),
+            equity_every_n=int(args.equity_every_n),
         )
     )
     result["combined_trades"].to_csv(COMBINED_TRADES_OUT, index=False)
@@ -1954,6 +2036,7 @@ def main() -> None:
                 spread_mode=str(args.spread_mode),
                 max_bars=args.max_bars,
                 quiet=bool(args.quiet),
+                equity_every_n=int(args.equity_every_n),
             ),
         ),
         encoding="utf-8",

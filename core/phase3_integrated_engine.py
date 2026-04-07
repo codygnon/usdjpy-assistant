@@ -682,7 +682,9 @@ def load_phase3_sizing_config(
     }
 
     if config_path is None:
-        config_path = root / "research_out" / "phase3_integrated_sizing_config.json"
+        tracked_config_path = root / "core" / "config" / "phase3_integrated_sizing_config.json"
+        legacy_config_path = root / "research_out" / "phase3_integrated_sizing_config.json"
+        config_path = tracked_config_path if tracked_config_path.exists() else legacy_config_path
     overrides = _read_json(config_path) if config_path.exists() else {}
     effective = dict(normalized)
     canonical_spec = None

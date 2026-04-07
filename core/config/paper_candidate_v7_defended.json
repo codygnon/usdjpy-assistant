@@ -1,0 +1,73 @@
+{
+  "title": "Paper candidate v7 defended",
+  "candidate_name": "v7_pfdd__followup__L1_drop_Monday_Tuesday__tp1r_3.25__be_1__tp2r_2__defensive_v44_ambiguous_low_derneg",
+  "status": "paper_candidate_frozen_for_runtime_implementation",
+  "source_artifacts": {
+    "freeze_memo": "/Users/codygnon/Documents/usdjpy_assistant/research_out/package_freeze_closeout_memo.json",
+    "defensive_overlay_eval": "/Users/codygnon/Documents/usdjpy_assistant/research_out/defensive_on_current_freeze_leader.json"
+  },
+  "package_family": "v7_pfdd",
+  "base_cell_scales": {
+    "C1_sell_base": 1.0,
+    "C2_sell": 1.0,
+    "C3_buy": 1.0,
+    "C4_sell_base": 1.0,
+    "C5_pbt_sell": 1.0,
+    "C6_pbt_sell": 1.0,
+    "O0_buy_strong": 1.0,
+    "O1_buy_strong": 1.0,
+    "O2_buy_strong": 1.0,
+    "ADJ_meanrev_low_neg_buy": 1.0,
+    "ADJ_ambig_mid_neg_sell": 1.0,
+    "ADJ_mom_high_neg_sell": 1.0,
+    "N1_brkout_low_neg_sell_strong": 1.0,
+    "N2_brkout_low_pos_buy_strong": 1.0,
+    "L2_brkout_mid_neg_buy": 1.0,
+    "T1_ambig_high_pos_buy": 1.0,
+    "T2_brkout_mid_pos_buy": 1.0,
+    "N3_brkout_low_neg_buy_news": 1.0,
+    "N4_pbt_low_neg_buy_news": 1.0,
+    "L1_mom_low_pos_buy": 1.0,
+    "T3_ambig_mid_pos_sell": 0.25
+  },
+  "overrides": {
+    "l1_weekday_disable": [
+      "Monday",
+      "Tuesday"
+    ],
+    "l1_exit_override": {
+      "tp1_r_multiple": 3.25,
+      "be_offset_pips": 1.0,
+      "tp2_r_multiple": 2.0
+    },
+    "defensive_veto": {
+      "strategy": "v44_ny",
+      "ownership_cell": "ambiguous/er_low/der_neg",
+      "mode": "block"
+    }
+  },
+  "strict_policy": {
+    "name": "native_v44_hedging_like",
+    "hedging_enabled": true,
+    "allow_internal_overlap": true,
+    "allow_opposite_side_overlap": true,
+    "max_open_offensive": null,
+    "max_entries_per_day": null,
+    "margin_model_enabled": true,
+    "margin_leverage": 33.3,
+    "margin_buffer_pct": 0.0,
+    "max_lot_per_trade": 20.0
+  },
+  "validated_results": {
+    "combined_delta_usd": 222651.96,
+    "combined_delta_pf": 1.9724,
+    "combined_delta_dd": 2360.95
+  },
+  "paper_mode_intent": {
+    "live_mode_unchanged": true,
+    "paper_mode_only": true,
+    "requires_slice_attribution_logging": true,
+    "requires_defensive_veto_logging": true,
+    "requires_l1_override_logging": true
+  }
+}

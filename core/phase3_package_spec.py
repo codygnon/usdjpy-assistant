@@ -57,10 +57,13 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def default_phase3_artifact_paths() -> dict[str, Path]:
     root = _root()
+    tracked = root / "core" / "config"
     research = root / "research_out"
     return {
-        "paper_candidate": research / "paper_candidate_v7_defended.json",
-        "runtime_config": research / "phase3_integrated_sizing_config.json",
+        "paper_candidate": tracked / "paper_candidate_v7_defended.json",
+        "runtime_config": tracked / "phase3_integrated_sizing_config.json",
+        "paper_candidate_legacy": research / "paper_candidate_v7_defended.json",
+        "runtime_config_legacy": research / "phase3_integrated_sizing_config.json",
     }
 
 
@@ -88,8 +91,14 @@ def load_phase3_package_spec(
     runtime_config_path: Path | None = None,
 ) -> Phase3PackageSpec:
     paths = default_phase3_artifact_paths()
-    paper_candidate_path = paper_candidate_path or paths["paper_candidate"]
-    runtime_config_path = runtime_config_path or paths["runtime_config"]
+    if paper_candidate_path is None:
+        candidate_primary = paths["paper_candidate"]
+        candidate_legacy = paths["paper_candidate_legacy"]
+        paper_candidate_path = candidate_primary if candidate_primary.exists() else candidate_legacy
+    if runtime_config_path is None:
+        runtime_primary = paths["runtime_config"]
+        runtime_legacy = paths["runtime_config_legacy"]
+        runtime_config_path = runtime_primary if runtime_primary.exists() else runtime_legacy
 
     candidate = _read_json(paper_candidate_path)
     runtime_cfg = _read_json(runtime_config_path)
