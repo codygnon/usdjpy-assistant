@@ -1927,7 +1927,7 @@ def get_quick_stats(profile_name: str, profile_path: Optional[str] = None, sync:
     """Get quick stats (win rate, avg pips, total profit).
     
     Prefers broker (MT5/OANDA) deal history as source of truth when available.
-    Falls back to local database when broker is not running or OANDA (no report stats).
+    Falls back to local database when broker report data is unavailable.
     """
     from adapters.broker import get_adapter
 
@@ -1964,8 +1964,9 @@ def get_quick_stats(profile_name: str, profile_path: Optional[str] = None, sync:
             mt5_stats = None
         if mt5_stats is not None:
             curr, rate = _get_display_currency(profile)
+            source = "oanda" if getattr(profile, "broker_type", None) == "oanda" else "mt5"
             return {
-                "source": "mt5",
+                "source": source,
                 "display_currency": curr,
                 "closed_trades": mt5_stats.closed_trades,
                 "win_rate": mt5_stats.win_rate,
@@ -2234,7 +2235,7 @@ def get_stats_by_preset(profile_name: str, profile_path: Optional[str] = None) -
             return float(row["pips"]) < 0
         return False
 
-    source = "mt5" if mt5_financials else "database"
+    source = ("oanda" if getattr(profile, "broker_type", None) == "oanda" else "mt5") if mt5_financials else "database"
     curr, rate = _get_display_currency(profile) if profile else ("USD", 1.0)
     presets_data: dict[str, Any] = {}
 

@@ -31,7 +31,7 @@ export interface QuickStats {
   total_commission?: number | null;
   total_swap?: number | null;
   display_currency?: string;
-  source?: 'mt5' | 'database';
+  source?: 'mt5' | 'oanda' | 'database';
   wins?: number;
   losses?: number;
   trades_with_profit?: number;
@@ -528,7 +528,7 @@ export interface PresetStats {
 
 export interface StatsByPreset {
   presets: Record<string, PresetStats>;
-  source?: 'mt5' | 'database';
+  source?: 'mt5' | 'oanda' | 'database';
   display_currency?: string;
 }
 
@@ -541,7 +541,7 @@ export async function getStatsByPreset(profileName: string, profilePath?: string
 
 // MT5 Full Report (same as View -> Reports)
 export interface Mt5Report {
-  source: 'mt5';
+  source: 'mt5' | 'oanda';
   display_currency?: string;
   summary: { balance: number; equity: number; margin: number; free_margin: number };
   closed_pl: {
@@ -578,7 +578,7 @@ export async function getMt5Report(profileName: string, profilePath?: string): P
   const res = await fetch(url);
   if (!res.ok) return null;
   const data = await res.json();
-  return data?.source === 'mt5' ? (data as Mt5Report) : null;
+  return data?.source === 'mt5' || data?.source === 'oanda' ? (data as Mt5Report) : null;
 }
 
 // Trade management

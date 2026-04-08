@@ -10673,7 +10673,7 @@ function LogsPage({ profile }: { profile: Profile }) {
   const [autoRefreshHistory, setAutoRefreshHistory] = useState(false);
 
   const fetchData = useCallback(() => {
-    api.getQuickStats(profile.name, profile.path).then(setStats).catch(console.error);
+    api.getQuickStats(profile.name, profile.path, true).then(setStats).catch(console.error);
     api.getRejectionBreakdown(profile.name).then(setBreakdown).catch(console.error);
     api.getTrades(profile.name, 250, profile.path).then((data) => {
       setTrades(data.trades);
@@ -10793,6 +10793,8 @@ function LogsPage({ profile }: { profile: Profile }) {
   }, [showAnalytics, profile.name, profile.path]);
 
   const totalBreakdown = Object.values(breakdown).reduce((a, b) => a + b, 0);
+  const quickStatsFromBroker = !!stats && (((stats as api.QuickStats).source === 'mt5') || ((stats as api.QuickStats).source === 'oanda'));
+  const presetStatsFromBroker = !!presetStats && ((presetStats.source === 'mt5') || (presetStats.source === 'oanda'));
 
   // Check if a trade is open (no exit_price)
   const isOpenTrade = (trade: Record<string, unknown>) => {
@@ -10896,7 +10898,7 @@ function LogsPage({ profile }: { profile: Profile }) {
       <div className="card mb-4">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
           <h3 className="card-title" style={{ margin: 0 }}>Quick Stats</h3>
-          {stats && (stats as api.QuickStats).source === 'mt5' && (
+          {quickStatsFromBroker && (
             <span style={{
               fontSize: '0.7rem',
               background: 'var(--success)',
@@ -10909,9 +10911,9 @@ function LogsPage({ profile }: { profile: Profile }) {
             </span>
           )}
         </div>
-        <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: 4, marginBottom: 16 }}>
-          {stats && (stats as api.QuickStats).source === 'mt5'
-            ? 'Stats from broker deal history (same as View → Reports in MT5)'
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: 4, marginBottom: 16 }}>
+          {quickStatsFromBroker
+            ? 'Stats from broker deal history'
             : 'Stats from local records. Use a broker connection (MT5 or OANDA) to see live report data.'}
         </p>
         <div className="grid-3">
@@ -11086,7 +11088,7 @@ function LogsPage({ profile }: { profile: Profile }) {
         <div className="card mb-4">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <h3 className="card-title" style={{ margin: 0 }}>Performance by Preset</h3>
-            {presetStats.source === 'mt5' && (
+            {presetStatsFromBroker && (
               <span style={{ fontSize: '0.65rem', background: 'var(--success)', color: 'white', padding: '3px 6px', borderRadius: 4, fontWeight: 600 }}>
                 FROM BROKER
               </span>

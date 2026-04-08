@@ -950,10 +950,139 @@ class OandaAdapter:
         return self._req("GET", f"/v3/instruments/{inst}/positionBook")
 
     def get_mt5_report_stats(self, symbol: str | None = None, pip_size: float | None = None, days_back: int = 90):
-        return None
+        from adapters.mt5_adapter import Mt5ReportStats
+
+        closed = self.get_closed_positions_from_history(
+            days_back=days_back,
+            symbol=symbol,
+            pip_size=pip_size,
+        )
+
+        if not closed:
+            return Mt5ReportStats(
+                closed_trades=0,
+                wins=0,
+                losses=0,
+                win_rate=0.0,
+                total_profit=0.0,
+                total_commission=0.0,
+                total_swap=0.0,
+                gross_profit=0.0,
+                gross_loss=0.0,
+                profit_factor=1.0,
+                largest_profit_trade=0.0,
+                largest_loss_trade=0.0,
+                expected_payoff=0.0,
+                avg_pips=None,
+                total_pips=0.0,
+            )
+
+        total_profit = sum(p.profit for p in closed)
+        total_commission = sum(p.commission for p in closed)
+        total_swap = sum(p.swap for p in closed)
+        wins = sum(1 for p in closed if p.profit > 0)
+        losses = sum(1 for p in closed if p.profit < 0)
+        total = len(closed)
+        win_rate = wins / total if total > 0 else 0.0
+
+        gross_profit = sum(p.profit for p in closed if p.profit > 0)
+        gross_loss = sum(p.profit for p in closed if p.profit < 0)
+        profit_factor = gross_profit / abs(gross_loss) if gross_loss != 0 else (1.0 if gross_profit > 0 else 1.0)
+        largest_profit = max((p.profit for p in closed if p.profit > 0), default=0.0)
+        largest_loss = min((p.profit for p in closed if p.profit < 0), default=0.0)
+        expected_payoff = total_profit / total if total > 0 else 0.0
+
+        pips_list = [p.pips for p in closed if p.pips is not None]
+        total_pips_val = sum(pips_list)
+        avg_pips = total_pips_val / len(pips_list) if pips_list else None
+
+        return Mt5ReportStats(
+            closed_trades=total,
+            wins=wins,
+            losses=losses,
+            win_rate=round(win_rate, 3),
+            total_profit=round(total_profit, 2),
+            total_commission=round(total_commission, 2),
+            total_swap=round(total_swap, 2),
+            gross_profit=round(gross_profit, 2),
+            gross_loss=round(gross_loss, 2),
+            profit_factor=round(profit_factor, 3),
+            largest_profit_trade=round(largest_profit, 2),
+            largest_loss_trade=round(largest_loss, 2),
+            expected_payoff=round(expected_payoff, 2),
+            avg_pips=round(avg_pips, 3) if avg_pips is not None else None,
+            total_pips=round(total_pips_val, 2),
+        )
 
     def get_mt5_full_report(self, symbol: str | None = None, pip_size: float | None = None, days_back: int = 90) -> dict | None:
-        return None
+        acct = self.get_account_info()
+        closed = self.get_closed_positions_from_history(
+            days_back=days_back,
+            symbol=symbol,
+            pip_size=pip_size,
+        )
+
+        summary = {
+            "balance": round(float(getattr(acct, "balance", 0.0) or 0.0), 2),
+            "equity": round(float(getattr(acct, "equity", getattr(acct, "balance", 0.0)) or 0.0), 2),
+            "margin": round(float(getattr(acct, "margin", 0.0) or 0.0), 2),
+            "free_margin": round(float(getattr(acct, "margin_free", 0.0) or 0.0), 2),
+        }
+
+        total_profit = sum(p.profit for p in closed)
+        total_commission = sum(p.commission for p in closed)
+        total_swap = sum(p.swap for p in closed)
+        wins = sum(1 for p in closed if p.profit > 0)
+        losses = sum(1 for p in closed if p.profit < 0)
+        total = len(closed)
+        win_rate = round(wins / total, 3) if total > 0 else 0.0
+        gross_profit = sum(p.profit for p in closed if p.profit > 0)
+        gross_loss = sum(p.profit for p in closed if p.profit < 0)
+        profit_factor = round(gross_profit / abs(gross_loss), 3) if gross_loss != 0 else 1.0
+        largest_profit = max((p.profit for p in closed if p.profit > 0), default=0.0)
+        largest_loss = min((p.profit for p in closed if p.profit < 0), default=0.0)
+        expected_payoff = round(total_profit / total, 2) if total > 0 else 0.0
+        pips_list = [p.pips for p in closed if p.pips is not None]
+        total_pips_val = sum(pips_list)
+        avg_pips = round(total_pips_val / len(pips_list), 3) if pips_list else None
+
+        closed_pl = {
+            "closed_trades": total,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": win_rate,
+            "total_profit": round(total_profit, 2),
+            "total_commission": round(total_commission, 2),
+            "total_swap": round(total_swap, 2),
+            "gross_profit": round(gross_profit, 2),
+            "gross_loss": round(gross_loss, 2),
+            "profit_factor": profit_factor,
+            "largest_profit_trade": round(largest_profit, 2),
+            "largest_loss_trade": round(largest_loss, 2),
+            "expected_payoff": expected_payoff,
+            "avg_pips": avg_pips,
+            "total_pips": round(total_pips_val, 2),
+        }
+
+        long_trades = [p for p in closed if p.side == "buy"]
+        short_trades = [p for p in closed if p.side == "sell"]
+        long_wins = sum(1 for p in long_trades if p.profit > 0)
+        short_wins = sum(1 for p in short_trades if p.profit > 0)
+        long_short = {
+            "long_trades": len(long_trades),
+            "long_wins": long_wins,
+            "long_win_pct": round(long_wins / len(long_trades), 3) if long_trades else 0,
+            "short_trades": len(short_trades),
+            "short_wins": short_wins,
+            "short_win_pct": round(short_wins / len(short_trades), 3) if short_trades else 0,
+        }
+
+        return {
+            "source": "oanda",
+            "summary": summary,
+            "closed_pl": closed_pl,
+            "long_short": long_short,
+        }
 
 
 def _close_info_from_fill(ticket: int, fill: dict, closed: dict) -> PositionCloseInfo:
