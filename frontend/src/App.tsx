@@ -10671,9 +10671,10 @@ function LogsPage({ profile }: { profile: Profile }) {
   const [visibleTradeCount, setVisibleTradeCount] = useState(50);
   const [openTradesMap, setOpenTradesMap] = useState<Record<string, api.OpenTrade>>({});
   const [autoRefreshHistory, setAutoRefreshHistory] = useState(false);
+  const profileBrokerType = String(((profile as unknown as Record<string, unknown>)?.broker_type) || '').toLowerCase();
 
   const fetchData = useCallback(() => {
-    api.getQuickStats(profile.name, profile.path, true).then(setStats).catch(console.error);
+    api.getQuickStats(profile.name, profile.path, profileBrokerType !== 'oanda').then(setStats).catch(console.error);
     api.getRejectionBreakdown(profile.name).then(setBreakdown).catch(console.error);
     api.getTrades(profile.name, 250, profile.path).then((data) => {
       setTrades(data.trades);
@@ -10687,7 +10688,7 @@ function LogsPage({ profile }: { profile: Profile }) {
       for (const t of openTrades) map[String(t.trade_id)] = t;
       setOpenTradesMap(map);
     }).catch(console.error);
-  }, [profile.name, profile.path]);
+  }, [profile.name, profile.path, profileBrokerType]);
 
   useEffect(() => {
     if (!isPageVisible || !historyLoaded || !autoRefreshHistory) return;

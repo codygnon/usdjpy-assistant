@@ -2089,6 +2089,61 @@ def get_mt5_report(profile_name: str, profile_path: Optional[str] = None) -> dic
         payload = {"source": None}
         _cache_set("mt5_report", cache_key, payload)
         return payload
+    if getattr(profile, "broker_type", None) == "oanda":
+        try:
+            from adapters.broker import get_adapter
+            adapter = get_adapter(profile)
+            adapter.initialize()
+            try:
+                acct = adapter.get_account_info()
+            finally:
+                adapter.shutdown()
+        except Exception:
+            payload = {"source": None}
+            _cache_set("mt5_report", cache_key, payload)
+            return payload
+        result = {
+            "source": "oanda",
+            "summary": {
+                "balance": round(float(getattr(acct, "balance", 0.0) or 0.0), 2),
+                "equity": round(float(getattr(acct, "equity", getattr(acct, "balance", 0.0)) or 0.0), 2),
+                "margin": round(float(getattr(acct, "margin", 0.0) or 0.0), 2),
+                "free_margin": round(float(getattr(acct, "margin_free", 0.0) or 0.0), 2),
+            },
+            "closed_pl": {
+                "closed_trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "win_rate": 0.0,
+                "total_profit": 0.0,
+                "total_commission": 0.0,
+                "total_swap": 0.0,
+                "gross_profit": 0.0,
+                "gross_loss": 0.0,
+                "profit_factor": 1.0,
+                "largest_profit_trade": 0.0,
+                "largest_loss_trade": 0.0,
+                "expected_payoff": 0.0,
+                "avg_pips": None,
+                "total_pips": 0.0,
+            },
+            "long_short": {
+                "long_trades": 0,
+                "long_wins": 0,
+                "long_win_pct": 0.0,
+                "short_trades": 0,
+                "short_wins": 0,
+                "short_win_pct": 0.0,
+            },
+        }
+        curr, rate = _get_display_currency(profile)
+        result["display_currency"] = curr
+        s = result["summary"]
+        for k in ("balance", "equity", "margin", "free_margin"):
+            if k in s and s[k] is not None:
+                s[k] = round(float(s[k]) * rate, 2)
+        _cache_set("mt5_report", cache_key, result)
+        return result
     try:
         from adapters.broker import get_adapter
         adapter = get_adapter(profile)
