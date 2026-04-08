@@ -5,6 +5,7 @@ This script intentionally avoids replaying recorded trades. It runs the actual
 defended Phase3/V7 bar-by-bar loop, applies the H1-only V44 filter used by the
 promoted package, and embeds the exact validated Spike Fade V4 state machine
 inside the same M1 iteration with a shared account and shared margin model.
+Use ``--no-spike-v4`` to turn off only the Spike Fade V4 overlay (Phase3 V44 NY stays on).
 
 Notes
 - V7 sizing logic is preserved from the defended runner.
@@ -18,15 +19,21 @@ Performance (full ~1M M1 bars can take tens of minutes; NY-session V44 work domi
 - Use `--max-bars N` for fidelity smoke tests.
 - Use `--equity-every-n 20` (or higher) to skip most equity CSV rows; last bar is always kept.
   Coarser equity logs slightly underestimate intra-bar max drawdown in the CSV only.
+- `--fast` floors `--equity-every-n` to at least 100 (still logs the last bar); combine with `--max-bars` for quick smoke runs.
+- Ownership cell/regime/ER is vectorized once (`searchsorted` over all M1 times) instead of per bar.
+- Phase3 NY session: `load_phase3_package_spec` is cached (no per-bar JSON reads). Hot-path `inspect` only when `PHASE3_V44_GATE_TRACE=1`.
+  Set `PHASE3_VERBOSE_STDOUT=1` to restore per-block H1/M5 ATR and defensive-veto prints (default off for speed).
 - Asian/LOR range for London is updated in O(1) per bar (no per-day rescan).
 - Margin/NAV uses one Tokyo+London spread computation per `margin_metrics_full` call.
+- Variant F (`_filter_v44_trade` / ER-decay) uses binary search + bounded M5 tail + precomputed EMA
+  (`scripts/backtest_v44_conservative_router.py`) so NY-window checks are not O(len(M5)) per M1 bar.
+- V44 `data_by_tf` slices avoid an extra `.copy()` before `_drop_incomplete_tf` (one copy per bar instead of two).
+  Reuses one `TradeRow` for Variant F probes; dropped per-bar `redirect_stdout` around `execute_v44_ny_entry`.
 """
 
 from __future__ import annotations
 
 import argparse
-import contextlib
-import io
 import json
 import math
 import sys
@@ -85,6 +92,7 @@ from scripts.v7_defended_tokyo_unified import (
     init_tokyo_config,
 )
 import scripts.v7_defended_tokyo_unified as tokyo_unified
+from core.phase3_spike_fade_v4 import _event_from_spike_fade
 
 
 OUT_DIR = ROOT / "research_out/trade_analysis/spike_fade_v4/backtest/combined_v71_h1_v4_margin_bar_by_bar"
@@ -113,18 +121,29 @@ class CombinedParams:
     starting_equity: float = 100_000.0
     leverage: float = 33.0
     v4_lots: float = 20.0
+    # Spike V4 entry spread offset in pips (default 1.6; set 0.0 to model limit-like entry offset).
+    spike_entry_spread_pips: float = V4_ENTRY_SPREAD_PIPS
     entry_margin_cap_pct: float = 100.0
     spread_mode: str = "realistic"
     max_bars: Optional[int] = None
     quiet: bool = False
     # Log equity curve every N M1 bars (1 = every bar). Larger = faster, smaller CSV.
     equity_every_n: int = 1
+    # When True, effective equity_every_n is max(requested, 100) for faster runs / smaller CSV.
+    fast: bool = False
+    # Phase3 V44 NY live entry engine.
+    v44_ny_enabled: bool = True
+    # Spike Fade V4 (M5 broad-candidate / family-C state machine), not Phase3 V44 NY.
+    spike_fade_v4_enabled: bool = True
+    # If set, outputs go under .../combined_v71_h1_v4_margin_bar_by_bar/<subdir>/
+    output_subdir: Optional[str] = None
 
 
 @dataclass
 class V4PendingOrder:
     armed_time: pd.Timestamp
     expiry_time: pd.Timestamp
+    # Live parity: broker limit side ("buy"/"sell"), not "long"/"short".
     side: str
     trigger_level: float
     spike_time: pd.Timestamp
@@ -135,6 +154,8 @@ class V4PendingOrder:
     prior_12_high: float
     prior_12_low: float
     raw_stop_distance_pips: float
+    stop_price: float
+    tp_price: float
     session_name: str
     units: int
     margin_required_usd: float
@@ -270,10 +291,27 @@ class MarginCallEvent:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Combined V7.1 + H1 + V4 bar-by-bar margin engine")
-    p.add_argument("--data-path", default=str(ROOT / "research_out/USDJPY_M1_OANDA_extended.csv"))
+    p.add_argument(
+        "--data-path",
+        default=str(ROOT / "research_out/USDJPY_M1_OANDA_extended.csv"),
+        metavar="CSV",
+        help="M1 OANDA CSV (default: research_out/USDJPY_M1_OANDA_extended.csv under repo root). "
+        "Use a real path; do not paste placeholder paths like .../file.csv from docs.",
+    )
     p.add_argument("--starting-equity", type=float, default=100000.0)
     p.add_argument("--leverage", type=float, default=33.0)
     p.add_argument("--v4-lots", type=float, default=20.0)
+    p.add_argument(
+        "--spike-entry-spread-pips",
+        type=float,
+        default=V4_ENTRY_SPREAD_PIPS,
+        help="Spike V4 entry spread offset in pips (default 1.6). Use 0.0 for limit-like entry offset.",
+    )
+    p.add_argument(
+        "--spike-limit-entry",
+        action="store_true",
+        help="Shortcut for --spike-entry-spread-pips 0.0 (entry only; exits still use bid/ask spread).",
+    )
     p.add_argument("--entry-margin-cap-pct", type=float, default=100.0)
     p.add_argument("--spread-mode", choices=["pipeline", "realistic"], default="realistic")
     p.add_argument("--max-bars", type=int, default=None)
@@ -283,6 +321,27 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=1,
         help="Append equity row every N bars (default 1). Use 10–60 for faster runs / smaller CSV.",
+    )
+    p.add_argument(
+        "--fast",
+        action="store_true",
+        help="Faster preset: equity row at least every 100 bars (last bar always kept). Use with --max-bars for smoke tests.",
+    )
+    p.add_argument(
+        "--no-spike-v4",
+        action="store_true",
+        help="Disable Spike Fade V4 (embedded M5 spike state machine). Phase3 V44 NY + Tokyo + London still run.",
+    )
+    p.add_argument(
+        "--no-v44-ny",
+        action="store_true",
+        help="Disable live Phase3 V44 NY entries. Tokyo + London and optional Spike Fade V4 still run.",
+    )
+    p.add_argument(
+        "--output-subdir",
+        default=None,
+        metavar="NAME",
+        help="Write CSVs under combined_v71_h1_v4_margin_bar_by_bar/<NAME>/ (avoid overwriting full combined run).",
     )
     return p.parse_args()
 
@@ -318,8 +377,8 @@ def session_name_for_time(ts: pd.Timestamp) -> str:
     return "off"
 
 
-def v4_entry_fill(raw_level: float, direction: str) -> float:
-    spread_px = V4_ENTRY_SPREAD_PIPS * PIP_SIZE
+def v4_entry_fill(raw_level: float, direction: str, entry_spread_pips: float) -> float:
+    spread_px = float(entry_spread_pips) * PIP_SIZE
     return raw_level + spread_px if direction == "long" else raw_level - spread_px
 
 
@@ -552,6 +611,7 @@ def maybe_finalize_v4_bars(
     v4: V4State,
     leverage: float,
     v4_units: int,
+    spike_entry_spread_pips: float,
 ) -> None:
     next_15 = bucket_end(ts, 15)
     if v4.current_15_end is None:
@@ -613,32 +673,81 @@ def maybe_finalize_v4_bars(
         v4.broad_candidates += 1
 
     if v4.pending_spike is not None:
-        event = family_c_event(v4.pending_spike, bar)
-        if event is not None:
+        # Live parity: compute V4Event from core semantics so stop/tp match runtime,
+        # while the pending limit rests at trigger_level.
+        spike = v4.pending_spike
+        spike_s = pd.Series(
+            {
+                "time": spike.end_time,
+                "open": spike.open,
+                "high": spike.high,
+                "low": spike.low,
+                "close": spike.close,
+                "atr14_pips": spike.atr14_pips,
+                "ema20": spike.ema20,
+                "m15_ema50": spike.m15_ema50,
+                "prior_12_high": spike.prior_12_high,
+                "prior_12_low": spike.prior_12_low,
+                "range_pips": spike.range_pips,
+                "broad_candidate": bool(spike.broad_candidate),
+                "spike_direction": spike.spike_direction,
+            }
+        )
+        fade_s = pd.Series(
+            {
+                "time": bar.end_time,
+                "open": bar.open,
+                "high": bar.high,
+                "low": bar.low,
+                "close": bar.close,
+                "atr14_pips": bar.atr14_pips,
+                "ema20": bar.ema20,
+                "m15_ema50": bar.m15_ema50,
+                "prior_12_high": bar.prior_12_high,
+                "prior_12_low": bar.prior_12_low,
+                "range_pips": bar.range_pips,
+                "broad_candidate": bool(bar.broad_candidate),
+                "spike_direction": bar.spike_direction,
+            }
+        )
+        cfg_live = {
+            "stop_buffer_pips": V4_STOP_BUFFER_PIPS,
+            "stop_clamp_min_pips": V4_STOP_CLAMP_MIN_PIPS,
+            "stop_clamp_max_pips": V4_STOP_CLAMP_MAX_PIPS,
+            "tp_fraction": V4_TP_FRACTION,
+            "entry_spread_pips": float(spike_entry_spread_pips),
+            "family_c_min_stretch_atr_ratio": 1.25,
+            "family_c_min_dist_from_m15_ema50_pips": 20.0,
+            "confirmation_window_minutes": V4_ENTRY_WINDOW_MINUTES,
+            "cluster_block_minutes": 120,
+        }
+        ev = _event_from_spike_fade(spike_s, fade_s, cfg_live)
+        if ev is not None:
             v4.family_c_events += 1
-            assumed_fill = v4_entry_fill(float(event["trigger_level"]), str(event["fade_direction"]))
-            stop_distance, raw_stop = v4_stop_distances(
-                float(event["spike_low"]),
-                float(event["spike_high"]),
-                assumed_fill,
-                str(event["fade_direction"]),
-            )
+            # Live parity: stop/TP already computed by core event logic (using entry_spread_pips internally).
+            raw_stop = abs(float(ev.trigger_level) - float(ev.stop_price)) / PIP_SIZE
+            if raw_stop > V4_STOP_CLAMP_MAX_PIPS:
+                stop_distance = None
+            else:
+                stop_distance = max(V4_STOP_CLAMP_MIN_PIPS, float(raw_stop))
             if stop_distance is not None:
                 if v4.position is None and v4.pending_order is None:
                     v4.pending_order = V4PendingOrder(
                         armed_time=bar.end_time,
                         expiry_time=bar.end_time + pd.Timedelta(minutes=V4_ENTRY_WINDOW_MINUTES),
-                        side=str(event["fade_direction"]),
-                        trigger_level=float(event["trigger_level"]),
-                        spike_time=pd.Timestamp(event["spike_time"]),
-                        spike_direction=str(event["spike_direction"]),
-                        spike_high=float(event["spike_high"]),
-                        spike_low=float(event["spike_low"]),
-                        spike_range_pips=float(event["spike_range_pips"]),
-                        prior_12_high=float(event["prior_12_high"]),
-                        prior_12_low=float(event["prior_12_low"]),
+                        side=str(ev.side),
+                        trigger_level=float(ev.trigger_level),
+                        spike_time=pd.Timestamp(ev.spike_time),
+                        spike_direction=str(ev.spike_direction),
+                        spike_high=float(ev.spike_high),
+                        spike_low=float(ev.spike_low),
+                        spike_range_pips=float(ev.spike_range_pips),
+                        prior_12_high=float(ev.prior_12_high),
+                        prior_12_low=float(ev.prior_12_low),
                         raw_stop_distance_pips=float(raw_stop),
-                        session_name=str(event["session_name"]),
+                        stop_price=float(ev.stop_price),
+                        tp_price=float(ev.tp_price) if ev.tp_price is not None else float(ev.trigger_level),
+                        session_name=str(ev.session_name),
                         units=v4_units,
                         margin_required_usd=margin_required(v4_units, leverage),
                     )
@@ -850,17 +959,41 @@ def collect_margin_call_candidates(
 def execute_combined(params: CombinedParams) -> dict[str, Any]:
     dataset_path = str(params.data_path)
     spread_pipeline = params.spread_mode == "pipeline"
-    v4_units = v4_units_for_lots(params.v4_lots)
+    v4_units = 0 if not params.spike_fade_v4_enabled else v4_units_for_lots(params.v4_lots)
+    equity_every_n_eff = max(1, int(params.equity_every_n))
+    if params.fast:
+        equity_every_n_eff = max(equity_every_n_eff, 100)
 
     t0 = time.time()
     if not params.quiet:
+        load_bits: list[str] = []
+        if params.fast:
+            load_bits.append("FAST")
+        if params.fast or equity_every_n_eff != int(params.equity_every_n):
+            load_bits.append(f"equity_log_every={equity_every_n_eff}")
+        tail = (" | " + " | ".join(load_bits)) if load_bits else ""
         print(
             f"Loading {dataset_path} | start={params.starting_equity:.0f} | leverage={params.leverage:.1f} | "
-            f"V4={params.v4_lots:.2f} lots | spread={params.spread_mode}",
+            f"V4={params.v4_lots:.2f} lots | spread={params.spread_mode}{tail}",
             flush=True,
         )
+        if params.fast:
+            print(
+                "  FAST: combine with --max-bars for short wall-clock smoke tests; equity CSV is sampled (last bar kept).",
+                flush=True,
+            )
 
-    m1_raw = tokyo_bt.load_m1(dataset_path)
+    try:
+        m1_raw = tokyo_bt.load_m1(dataset_path)
+    except FileNotFoundError as e:
+        default_csv = ROOT / "research_out/USDJPY_M1_OANDA_extended.csv"
+        hint = (
+            f"\n  Tried: {dataset_path!r}\n"
+            f"  If you copied an example that used .../USDJPY_M1_OANDA_extended.csv, "
+            f"replace ... with your project path or omit --data-path to use the default:\n"
+            f"  {default_csv}\n"
+        )
+        raise FileNotFoundError(str(e) + hint) from e
     if params.max_bars is not None:
         m1_raw = m1_raw.iloc[: int(params.max_bars)].copy()
     if not params.quiet:
@@ -955,13 +1088,6 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
     bf_er = bar_frame["sf_er"].astype(float).tolist()
     bf_der = bar_frame["delta_er"].astype(float).tolist()
 
-    def lookup_cell(ts: pd.Timestamp) -> tuple[str, str, float, float]:
-        key = np.datetime64(pd.Timestamp(ts).asm8.astype("datetime64[ns]"))
-        idx = int(np.searchsorted(bf_times, key, side="right") - 1)
-        if idx < 0:
-            return "ambiguous/er_mid/der_pos", "ambiguous", 0.5, 0.0
-        return bf_cells[idx], bf_reg[idx], bf_er[idx], bf_der[idx]
-
     v44_risk_pct = float(v44_cfg.get("v5_risk_per_trade_pct", 0.5)) / 100.0
     phase3_state: dict[str, Any] = {}
     local_adapter = LocalPhase3Adapter()
@@ -985,6 +1111,30 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
     h4_times_all_ns = pd.to_datetime(h4["time"], utc=True).values.astype("datetime64[ns]")
 
     time_ns_all = pd.to_datetime(df["time"], utc=True).values.astype("datetime64[ns]")
+    n_df = len(df)
+    bf_idx_all = np.searchsorted(bf_times, time_ns_all, side="right") - 1
+    ambig_cell = "ambiguous/er_mid/der_pos"
+    bf_cells_arr = np.asarray(bf_cells, dtype=object)
+    bf_reg_arr = np.asarray(bf_reg, dtype=object)
+    bf_er_arr = np.asarray(bf_er, dtype=np.float64)
+    bf_der_arr = np.asarray(bf_der, dtype=np.float64)
+    vi_own = bf_idx_all >= 0
+    cell_all = np.full(n_df, ambig_cell, dtype=object)
+    reg_all = np.full(n_df, "ambiguous", dtype=object)
+    er_all = np.full(n_df, 0.5, dtype=np.float64)
+    der_all = np.full(n_df, 0.0, dtype=np.float64)
+    cell_all[vi_own] = bf_cells_arr[bf_idx_all[vi_own]]
+    reg_all[vi_own] = bf_reg_arr[bf_idx_all[vi_own]]
+    er_all[vi_own] = bf_er_arr[bf_idx_all[vi_own]]
+    der_all[vi_own] = bf_der_arr[bf_idx_all[vi_own]]
+    bar_ts_index = pd.DatetimeIndex(df["time"])
+    hour_bar = df["time"].dt.hour.to_numpy(dtype=np.int32, copy=False)
+    wdname_bar = df["time"].dt.day_name().astype(str).to_numpy(dtype=object, copy=False)
+    next_bar_ts = np.empty(n_df, dtype=object)
+    for _k in range(n_df - 1):
+        next_bar_ts[_k] = bar_ts_index[_k + 1]
+    next_bar_ts[n_df - 1] = None
+    prep_stage("ownership columns vectorized (cell/regime/ER per M1 bar)")
     high_all = np.asarray(df["high"], dtype=np.float64)
     low_all = np.asarray(df["low"], dtype=np.float64)
     day_ns_bounds: dict[str, np.datetime64] = {}
@@ -1007,22 +1157,26 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
         day_ns_bounds["asian_hi"] = _utc_ns(london_open)
         day_ns_bounds["lor_hi"] = _utc_ns(lor_end)
 
+    _v44_f_probe = base_runner.TradeRow(
+        strategy="v44_ny",
+        entry_time=pd.Timestamp("1970-01-01", tz="UTC"),
+        exit_time=pd.Timestamp("1970-01-01", tz="UTC"),
+        entry_session="v44_ny",
+        side="buy",
+        pips=0.0,
+        usd=0.0,
+        exit_reason="x",
+        standalone_entry_equity=params.starting_equity,
+        raw={},
+        size_scale=1.0,
+    )
+
     def variant_f_allows_v44(entry_ts: pd.Timestamp) -> bool:
-        tr = base_runner.TradeRow(
-            strategy="v44_ny",
-            entry_time=_ts(entry_ts),
-            exit_time=_ts(entry_ts),
-            entry_session="v44_ny",
-            side="buy",
-            pips=0.0,
-            usd=0.0,
-            exit_reason="x",
-            standalone_entry_equity=params.starting_equity,
-            raw={},
-            size_scale=1.0,
-        )
+        t = _ts(entry_ts)
+        _v44_f_probe.entry_time = t
+        _v44_f_probe.exit_time = t
         r = v44_router._filter_v44_trade(
-            tr,
+            _v44_f_probe,
             vk_ctx.classified_basic,
             vk_ctx.m5_basic,
             block_breakout=True,
@@ -1037,12 +1191,13 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
         return not r.blocked
 
     def _slice_tf(frame: pd.DataFrame, times_ns: np.ndarray, cutoff_ts: pd.Timestamp, tail: int) -> pd.DataFrame:
+        """Causal TF window (no .copy): V44 path will copy once inside _drop_incomplete_tf."""
         cutoff_ns = np.datetime64(pd.Timestamp(cutoff_ts).asm8.astype("datetime64[ns]"))
         idx = int(np.searchsorted(times_ns, cutoff_ns, side="right"))
         if idx <= 0:
-            return frame.iloc[:0].copy()
+            return frame.iloc[:0]
         start = max(0, idx - int(tail))
-        return frame.iloc[start:idx].copy()
+        return frame.iloc[start:idx]
 
     v44_tf_cache_key: Optional[tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp, pd.Timestamp]] = None
     v44_tf_cache_static: Optional[dict[str, pd.DataFrame]] = None
@@ -1168,7 +1323,7 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
     prep_stage(f"entering main loop at warmup={warmup:,} of n={n:,}")
     for i in range(warmup, n):
         row = df.iloc[i]
-        ts = pd.Timestamp(row["time"])
+        ts = bar_ts_index[i]
         dnorm = ts.normalize()
         if cur_day is None or dnorm != cur_day:
             cur_day = dnorm
@@ -1210,19 +1365,24 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
             lr = (lh - ll) / PIP_SIZE
             lv = lor_min <= lr <= lor_max
 
-        maybe_finalize_v4_bars(
-            i=i,
-            ts=ts,
-            open_px=float(row["open"]),
-            high_px=float(row["high"]),
-            low_px=float(row["low"]),
-            close_px=float(row["close"]),
-            v4=v4_state,
-            leverage=params.leverage,
-            v4_units=v4_units,
-        )
+        if params.spike_fade_v4_enabled:
+            maybe_finalize_v4_bars(
+                i=i,
+                ts=ts,
+                open_px=float(row["open"]),
+                high_px=float(row["high"]),
+                low_px=float(row["low"]),
+                close_px=float(row["close"]),
+                v4=v4_state,
+                leverage=params.leverage,
+                v4_units=v4_units,
+                spike_entry_spread_pips=params.spike_entry_spread_pips,
+            )
 
-        cell_s, reg, er_v, der_v = lookup_cell(ts)
+        cell_s = str(cell_all[i])
+        reg = str(reg_all[i])
+        er_v = float(er_all[i])
+        der_v = float(der_all[i])
 
         def tokyo_exec_gate(_pe: dict[str, Any]) -> tuple[bool, str]:
             ok, reason = admission_checks(
@@ -1232,14 +1392,14 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
                 regime=reg,
                 delta_er=der_v,
                 setup_d=False,
-                weekday_name=str(ts.day_name()),
+                weekday_name=str(wdname_bar[i]),
             )
             if not ok:
                 blocked[f"tokyo_{reason}"] += 1
             return ok, reason
 
         tokyo_margin_other = london_margin_used(ld) + l1_v44_margin_used(open_positions, params.leverage)
-        if v4_state.position is not None:
+        if params.spike_fade_v4_enabled and v4_state.position is not None:
             tokyo_margin_other += float(v4_state.position.margin_required_usd)
 
         tokyo_res = advance_tokyo_bar(
@@ -1373,11 +1533,13 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
 
         if ld is not None:
             i_day = i - day_start_idx
-            nxt_ts = pd.Timestamp(df.iloc[i + 1]["time"]) if i + 1 < n else None
+            nxt_ts = next_bar_ts[i]
 
             def london_exec_gate(pe: dict[str, Any], t: pd.Timestamp) -> tuple[bool, str]:
                 setup = str(pe["setup_type"])
-                cell_s2, reg2, _er2, der_v2 = lookup_cell(t)
+                cell_s2 = str(cell_all[i])
+                reg2 = str(reg_all[i])
+                der_v2 = float(der_all[i])
                 ok, reason = admission_checks(
                     strategy="london_v2",
                     entry_ts=t,
@@ -1385,7 +1547,7 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
                     regime=reg2,
                     delta_er=der_v2,
                     setup_d=(setup == "D"),
-                    weekday_name=str(t.day_name()),
+                    weekday_name=str(wdname_bar[i]),
                 )
                 if not ok:
                     blocked[f"london_{reason}"] += 1
@@ -1449,7 +1611,10 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
                 if req_m > hard_avail_l1:
                     blocked["margin_l1"] += 1
                     continue
-                cell_s2, reg2, er_v2, der_v2 = lookup_cell(ts)
+                cell_s2 = str(cell_all[i])
+                reg2 = str(reg_all[i])
+                er_v2 = float(er_all[i])
+                der_v2 = float(der_all[i])
                 units = int(pay["units"])
                 tp1_units_closed = max(0, min(units, int(math.floor(units * l1_tp1_close_fraction))))
                 open_positions.append(
@@ -1484,7 +1649,9 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
 
         session_key_ny = f"session_ny_{ts.date()}"
         ny_sdat = phase3_state.get(session_key_ny, {})
-        should_eval_v44 = 11 <= int(ts.hour) <= 21 or bool((ny_sdat or {}).get("queued_pending"))
+        should_eval_v44 = params.v44_ny_enabled and (
+            11 <= int(hour_bar[i]) <= 21 or bool((ny_sdat or {}).get("queued_pending"))
+        )
         if should_eval_v44:
             ok, reason = admission_checks(
                 strategy="v44_ny",
@@ -1493,7 +1660,7 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
                 regime=reg,
                 delta_er=der_v,
                 setup_d=False,
-                weekday_name=str(ts.day_name()),
+                weekday_name=str(wdname_bar[i]),
                 variant_f_allows=lambda: variant_f_allows_v44(ts),
             )
             if not ok:
@@ -1525,20 +1692,19 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
                         v44_ownership_cache_key = ownership_key
                         v44_ownership_cache_value = ownership_audit
                 tick = SimpleNamespace(bid=float(bid_c_london_bar), ask=float(ask_c_london_bar), time=ts.to_pydatetime())
-                with contextlib.redirect_stdout(io.StringIO()):
-                    v44_res = execute_v44_ny_entry(
-                        adapter=local_adapter,
-                        profile=phase3_profile,
-                        policy=phase3_policy,
-                        data_by_tf=data_by_tf,
-                        tick=tick,
-                        phase3_state=trial_state,
-                        sizing_config={"v44_ny": v44_cfg},
-                        now_utc=ts.to_pydatetime(),
-                        store=local_phase3_store,
-                        ownership_audit=ownership_audit,
-                        overlay_state=overlay_state,
-                    )
+                v44_res = execute_v44_ny_entry(
+                    adapter=local_adapter,
+                    profile=phase3_profile,
+                    policy=phase3_policy,
+                    data_by_tf=data_by_tf,
+                    tick=tick,
+                    phase3_state=trial_state,
+                    sizing_config={"v44_ny": v44_cfg},
+                    now_utc=ts.to_pydatetime(),
+                    store=local_phase3_store,
+                    ownership_audit=ownership_audit,
+                    overlay_state=overlay_state,
+                )
                 decision = v44_res.get("decision")
                 attempted = bool(getattr(decision, "attempted", False))
                 placed = bool(getattr(decision, "placed", False))
@@ -1594,12 +1760,17 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
                 else:
                     phase3_state = trial_state
 
-        if v4_state.pending_order is not None and v4_state.position is None:
+        if params.spike_fade_v4_enabled and v4_state.pending_order is not None and v4_state.position is None:
             if ts > v4_state.pending_order.expiry_time:
                 v4_state.expired += 1
                 v4_state.pending_order = None
             else:
-                touched = float(row["low"]) <= v4_state.pending_order.trigger_level if v4_state.pending_order.side == "short" else float(row["high"]) >= v4_state.pending_order.trigger_level
+                # Live parity: standard limit touch rule at trigger_level.
+                # buy: low <= trigger ; sell: high >= trigger
+                if str(v4_state.pending_order.side) == "buy":
+                    touched = float(row["low"]) <= v4_state.pending_order.trigger_level
+                else:
+                    touched = float(row["high"]) >= v4_state.pending_order.trigger_level
                 if touched:
                     hard_avail_v4 = hard_margin_available_from_balance(
                         balance=balance,
@@ -1614,65 +1785,60 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
                         v4_state.blocked_margin += 1
                         v4_state.pending_order = None
                     else:
-                        entry_price = v4_entry_fill(v4_state.pending_order.trigger_level, v4_state.pending_order.side)
-                        stop_distance, raw_stop = v4_stop_distances(
-                            v4_state.pending_order.spike_low,
-                            v4_state.pending_order.spike_high,
-                            entry_price,
-                            v4_state.pending_order.side,
-                        )
-                        if stop_distance is None:
-                            v4_state.pending_order = None
+                        # Live parity: fill at limit price == trigger_level, but keep
+                        # SL/TP computed at arm time by core V4Event logic.
+                        entry_price = float(v4_state.pending_order.trigger_level)
+                        stop_price = float(v4_state.pending_order.stop_price)
+                        tp_price = float(v4_state.pending_order.tp_price)
+                        stop_distance = abs(entry_price - stop_price) / PIP_SIZE
+                        raw_stop = float(stop_distance)
+                        if str(v4_state.pending_order.side) == "buy":
+                            high_water = entry_price
+                            low_water = None
+                            direction = "long"
                         else:
-                            tp_distance_pips = v4_state.pending_order.spike_range_pips * V4_TP_FRACTION
-                            if v4_state.pending_order.side == "long":
-                                stop_price = entry_price - stop_distance * PIP_SIZE
-                                tp_price = entry_price + tp_distance_pips * PIP_SIZE
-                                high_water = entry_price
-                                low_water = None
-                            else:
-                                stop_price = entry_price + stop_distance * PIP_SIZE
-                                tp_price = entry_price - tp_distance_pips * PIP_SIZE
-                                high_water = None
-                                low_water = entry_price
-                            v4_state.position = V4Position(
-                                entry_time=ts,
-                                direction=v4_state.pending_order.side,
-                                entry_price=entry_price,
-                                confirmation_time=ts,
-                                confirmation_level=v4_state.pending_order.trigger_level,
-                                spike_time=v4_state.pending_order.spike_time,
-                                spike_direction=v4_state.pending_order.spike_direction,
-                                session_name=v4_state.pending_order.session_name,
-                                units=v4_state.pending_order.units,
-                                stop_distance_pips=stop_distance,
-                                raw_stop_distance_pips=raw_stop,
-                                tp_distance_pips=tp_distance_pips,
-                                stop_price=stop_price,
-                                tp_price=tp_price,
-                                margin_required_usd=v4_state.pending_order.margin_required_usd,
-                                high_water=high_water,
-                                low_water=low_water,
-                            )
-                            v4_state.fills += 1
-                            v4_state.pending_order = None
-                            v4_trade = maybe_close_v4_position_on_bar(
-                                v4_state.position,
-                                ts,
-                                float(row["open"]),
-                                bid_h_london_bar if v4_state.position.direction == "long" else ask_h_london_bar,
-                                bid_l_london_bar if v4_state.position.direction == "long" else ask_l_london_bar,
-                                bid_c_london_bar,
-                                ask_c_london_bar,
-                            )
-                            if v4_trade is not None:
-                                v4_state.trades.append(v4_trade)
-                                combined_trades.append(v4_trade)
-                                balance += float(v4_trade["pnl_usd"])
-                                v4_state.position = None
-                            v4_processed_this_bar = True
+                            high_water = None
+                            low_water = entry_price
+                            direction = "short"
+                        tp_distance_pips = abs(tp_price - entry_price) / PIP_SIZE
+                        v4_state.position = V4Position(
+                            entry_time=ts,
+                            direction=direction,
+                            entry_price=entry_price,
+                            confirmation_time=ts,
+                            confirmation_level=v4_state.pending_order.trigger_level,
+                            spike_time=v4_state.pending_order.spike_time,
+                            spike_direction=v4_state.pending_order.spike_direction,
+                            session_name=v4_state.pending_order.session_name,
+                            units=v4_state.pending_order.units,
+                            stop_distance_pips=stop_distance,
+                            raw_stop_distance_pips=raw_stop,
+                            tp_distance_pips=tp_distance_pips,
+                            stop_price=stop_price,
+                            tp_price=tp_price,
+                            margin_required_usd=v4_state.pending_order.margin_required_usd,
+                            high_water=high_water,
+                            low_water=low_water,
+                        )
+                        v4_state.fills += 1
+                        v4_state.pending_order = None
+                        v4_trade = maybe_close_v4_position_on_bar(
+                            v4_state.position,
+                            ts,
+                            float(row["open"]),
+                            bid_h_london_bar if v4_state.position.direction == "long" else ask_h_london_bar,
+                            bid_l_london_bar if v4_state.position.direction == "long" else ask_l_london_bar,
+                            bid_c_london_bar,
+                            ask_c_london_bar,
+                        )
+                        if v4_trade is not None:
+                            v4_state.trades.append(v4_trade)
+                            combined_trades.append(v4_trade)
+                            balance += float(v4_trade["pnl_usd"])
+                            v4_state.position = None
+                        v4_processed_this_bar = True
 
-        if v4_state.position is not None and not v4_processed_this_bar:
+        if params.spike_fade_v4_enabled and v4_state.position is not None and not v4_processed_this_bar:
             v4_trade = maybe_close_v4_position_on_bar(
                 v4_state.position,
                 ts,
@@ -1856,8 +2022,7 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
             + (1 if v4_state.position is not None else 0)
         )
         max_open_peak = max(max_open_peak, open_ct)
-        een = max(1, int(params.equity_every_n))
-        if (i - warmup) % een == 0 or i == n - 1:
+        if (i - warmup) % equity_every_n_eff == 0 or i == n - 1:
             equity_rows.append(
                 {
                     "bar_index": i,
@@ -1880,8 +2045,10 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
         if not params.quiet and now_t - last_heartbeat >= 30.0:
             last_heartbeat = now_t
             elapsed = now_t - loop_t0
+            bars_done = max(1, i - warmup + 1)
+            bps = bars_done / max(elapsed, 1e-9)
             print(
-                f"heartbeat {i:,}/{n:,} | balance={balance:,.2f} nav={nav2:,.2f} "
+                f"heartbeat {i:,}/{n:,} | ~{bps:,.0f} bars/s | balance={balance:,.2f} nav={nav2:,.2f} "
                 f"margin_used={used2:,.2f} margin_level={level2:,.2f}% "
                 f"v4_fills={v4_state.fills} elapsed={elapsed:,.1f}s",
                 flush=True,
@@ -1906,6 +2073,13 @@ def execute_combined(params: CombinedParams) -> dict[str, Any]:
         "equity": equity_df,
         "summary_meta": {
             "starting_equity": params.starting_equity,
+            "equity_every_n_requested": int(params.equity_every_n),
+            "equity_every_n_effective": int(equity_every_n_eff),
+            "fast": bool(params.fast),
+            "spike_entry_spread_pips": float(params.spike_entry_spread_pips),
+            "v44_ny_enabled": bool(params.v44_ny_enabled),
+            "spike_fade_v4_enabled": bool(params.spike_fade_v4_enabled),
+            "output_subdir": params.output_subdir,
             "entry_margin_cap_pct": params.entry_margin_cap_pct,
             "ending_balance": float(balance),
             "ending_nav": float(equity_df["nav"].iloc[-1]) if not equity_df.empty else float(balance),
@@ -1944,12 +2118,20 @@ def build_summary_text(result: dict[str, Any], params: CombinedParams) -> str:
     lines.append(f"Data: {params.data_path}")
     lines.append(f"Starting equity: ${params.starting_equity:,.2f}")
     lines.append(f"Leverage: {params.leverage:.1f}:1")
-    lines.append(f"V4 lots: {params.v4_lots:.2f}")
+    lines.append(
+        f"Spike Fade V4 lots: {params.v4_lots:.2f} ({'enabled' if params.spike_fade_v4_enabled else 'disabled'}) "
+        f"| entry_spread_offset={params.spike_entry_spread_pips:.2f}p"
+    )
     lines.append(
         f"Entry admission: hard open-notional cap from realized balance "
         f"({params.entry_margin_cap_pct:.0f}% cap)"
     )
-    lines.append("Execution: native bar-by-bar V44 entries/exits + adverse same-bar V4 handling")
+    lines.append(
+        "Execution: Tokyo + London "
+        + ("+ live Phase3 V44 (H1 gate) " if params.v44_ny_enabled else "")
+        + ("+ Spike Fade V4 " if params.spike_fade_v4_enabled else "")
+        + "bar-by-bar"
+    )
     lines.append("")
     lines.append("Top line:")
     lines.append(f"  Combined trades: {len(trades)}")
@@ -1967,10 +2149,12 @@ def build_summary_text(result: dict[str, Any], params: CombinedParams) -> str:
         for strat, g in trades.groupby("strategy"):
             p = g["pnl_usd"].dropna()
             lines.append(f"  - {strat}: {len(g)} trades | PF {calc_pf(p):.2f} | ${p.sum():,.2f}")
-    lines.append("")
-    lines.append("H1 filter stats:")
-    for k, v in meta["h1_filter_stats"].items():
-        lines.append(f"  - {k}: {v}")
+    h1_stats = meta.get("h1_filter_stats")
+    if h1_stats:
+        lines.append("")
+        lines.append("H1 filter stats:")
+        for k, v in h1_stats.items():
+            lines.append(f"  - {k}: {v}")
     lines.append("")
     lines.append("V4 funnel:")
     for k, v in meta["v4_state"].items():
@@ -2006,46 +2190,44 @@ def build_summary_text(result: dict[str, Any], params: CombinedParams) -> str:
 
 def main() -> None:
     args = parse_args()
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    result = execute_combined(
-        CombinedParams(
-            data_path=str(args.data_path),
-            starting_equity=float(args.starting_equity),
-            leverage=float(args.leverage),
-            v4_lots=float(args.v4_lots),
-            entry_margin_cap_pct=float(args.entry_margin_cap_pct),
-            spread_mode=str(args.spread_mode),
-            max_bars=args.max_bars,
-            quiet=bool(args.quiet),
-            equity_every_n=int(args.equity_every_n),
-        )
+    spike_entry_spread_pips = 0.0 if bool(args.spike_limit_entry) else float(args.spike_entry_spread_pips)
+    out_dir = OUT_DIR / args.output_subdir if args.output_subdir else OUT_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    combined_trades_out = out_dir / "combined_trade_log.csv"
+    v4_trades_out = out_dir / "v4_trade_log.csv"
+    equity_out = out_dir / "equity_log.csv"
+    summary_json_out = out_dir / "summary.json"
+    summary_txt_out = out_dir / "summary.txt"
+    params = CombinedParams(
+        data_path=str(args.data_path),
+        starting_equity=float(args.starting_equity),
+        leverage=float(args.leverage),
+        v4_lots=float(args.v4_lots),
+        spike_entry_spread_pips=float(spike_entry_spread_pips),
+        entry_margin_cap_pct=float(args.entry_margin_cap_pct),
+        spread_mode=str(args.spread_mode),
+        max_bars=args.max_bars,
+        quiet=bool(args.quiet),
+        equity_every_n=int(args.equity_every_n),
+        fast=bool(args.fast),
+        v44_ny_enabled=not bool(args.no_v44_ny),
+        spike_fade_v4_enabled=not bool(args.no_spike_v4),
+        output_subdir=str(args.output_subdir) if args.output_subdir else None,
     )
-    result["combined_trades"].to_csv(COMBINED_TRADES_OUT, index=False)
-    result["v4_trades"].to_csv(V4_TRADES_OUT, index=False)
-    result["equity"].to_csv(EQUITY_OUT, index=False)
-    SUMMARY_JSON_OUT.write_text(json.dumps(result["summary_meta"], indent=2, default=str), encoding="utf-8")
-    SUMMARY_TXT_OUT.write_text(
-        build_summary_text(
-            result,
-            CombinedParams(
-                data_path=str(args.data_path),
-                starting_equity=float(args.starting_equity),
-                leverage=float(args.leverage),
-                v4_lots=float(args.v4_lots),
-                entry_margin_cap_pct=float(args.entry_margin_cap_pct),
-                spread_mode=str(args.spread_mode),
-                max_bars=args.max_bars,
-                quiet=bool(args.quiet),
-                equity_every_n=int(args.equity_every_n),
-            ),
-        ),
+    result = execute_combined(params)
+    result["combined_trades"].to_csv(combined_trades_out, index=False)
+    result["v4_trades"].to_csv(v4_trades_out, index=False)
+    result["equity"].to_csv(equity_out, index=False)
+    summary_json_out.write_text(json.dumps(result["summary_meta"], indent=2, default=str), encoding="utf-8")
+    summary_txt_out.write_text(
+        build_summary_text(result, params),
         encoding="utf-8",
     )
-    print(f"Wrote {COMBINED_TRADES_OUT}")
-    print(f"Wrote {V4_TRADES_OUT}")
-    print(f"Wrote {EQUITY_OUT}")
-    print(f"Wrote {SUMMARY_JSON_OUT}")
-    print(f"Wrote {SUMMARY_TXT_OUT}")
+    print(f"Wrote {combined_trades_out}")
+    print(f"Wrote {v4_trades_out}")
+    print(f"Wrote {equity_out}")
+    print(f"Wrote {summary_json_out}")
+    print(f"Wrote {summary_txt_out}")
 
 
 if __name__ == "__main__":

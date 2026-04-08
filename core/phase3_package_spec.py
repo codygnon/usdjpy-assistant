@@ -13,11 +13,13 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import asdict, dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 
 PHASE3_DEFENDED_PRESET_ID = "phase3_integrated_v7_defended"
+PHASE3_NO_V44_PRESET_ID = "tokyo_london_spike_v4_no_v44"
 DEFENDED_PACKAGE_ID = "v7_pfdd__followup__L1_drop_Monday_Tuesday__tp1r_3.25__be_1__tp2r_2__defensive_v44_ambiguous_low_derneg"
 EXPECTED_LONDON_D_TP1_R = 3.25
 _LONDON_D_TP1_WARNED = False
@@ -79,27 +81,25 @@ def _defended_contract_exists() -> bool:
 
 
 def uses_defended_phase3_package(preset_id: str | None) -> bool:
-    if str(preset_id or "").strip().lower() == PHASE3_DEFENDED_PRESET_ID:
+    preset_lower = str(preset_id or "").strip().lower()
+    if preset_lower in (PHASE3_DEFENDED_PRESET_ID, PHASE3_NO_V44_PRESET_ID):
         return True
     return _defended_contract_exists()
 
 
-def load_phase3_package_spec(
-    *,
-    preset_id: str | None = None,
-    paper_candidate_path: Path | None = None,
-    runtime_config_path: Path | None = None,
-) -> Phase3PackageSpec:
-    paths = default_phase3_artifact_paths()
-    if paper_candidate_path is None:
-        candidate_primary = paths["paper_candidate"]
-        candidate_legacy = paths["paper_candidate_legacy"]
-        paper_candidate_path = candidate_primary if candidate_primary.exists() else candidate_legacy
-    if runtime_config_path is None:
-        runtime_primary = paths["runtime_config"]
-        runtime_legacy = paths["runtime_config_legacy"]
-        runtime_config_path = runtime_primary if runtime_primary.exists() else runtime_legacy
+def _is_v44_disabled_preset(preset_id: str | None) -> bool:
+    return str(preset_id or "").strip().lower() == PHASE3_NO_V44_PRESET_ID
 
+
+@lru_cache(maxsize=16)
+def _load_phase3_package_spec_cached(
+    preset_id_key: str,
+    paper_candidate_str: str,
+    runtime_config_str: str,
+) -> Phase3PackageSpec:
+    preset_id = preset_id_key if preset_id_key else None
+    paper_candidate_path = Path(paper_candidate_str)
+    runtime_config_path = Path(runtime_config_str)
     candidate = _read_json(paper_candidate_path)
     runtime_cfg = _read_json(runtime_config_path)
     package_id = str(candidate.get("candidate_name") or DEFENDED_PACKAGE_ID)
@@ -162,6 +162,28 @@ def load_phase3_package_spec(
         runtime_overrides=merged_runtime_overrides,
         frozen_modifiers=frozen_modifiers,
         strict_policy=strict_policy,
+    )
+
+
+def load_phase3_package_spec(
+    *,
+    preset_id: str | None = None,
+    paper_candidate_path: Path | None = None,
+    runtime_config_path: Path | None = None,
+) -> Phase3PackageSpec:
+    paths = default_phase3_artifact_paths()
+    if paper_candidate_path is None:
+        candidate_primary = paths["paper_candidate"]
+        candidate_legacy = paths["paper_candidate_legacy"]
+        paper_candidate_path = candidate_primary if candidate_primary.exists() else candidate_legacy
+    if runtime_config_path is None:
+        runtime_primary = paths["runtime_config"]
+        runtime_legacy = paths["runtime_config_legacy"]
+        runtime_config_path = runtime_primary if runtime_primary.exists() else runtime_legacy
+    return _load_phase3_package_spec_cached(
+        str(preset_id or ""),
+        str(paper_candidate_path),
+        str(runtime_config_path),
     )
 
 
@@ -273,6 +295,10 @@ def project_runtime_config_from_spec(spec: Phase3PackageSpec) -> dict[str, Any]:
     t3_scale = spec.base_cell_scales.get("T3_ambig_mid_pos_sell")
     if t3_scale is not None:
         projected["v14"]["cell_scale_overrides"]["ambiguous/er_mid/der_pos:sell"] = float(t3_scale)
+
+    # Hard-disable V44 NY for the no-V44 paper-forward preset
+    if _is_v44_disabled_preset(spec.preset_id):
+        projected["v44_ny"]["disabled"] = True
 
     return projected
 

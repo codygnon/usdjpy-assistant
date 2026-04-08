@@ -47,6 +47,7 @@ class PresetId(str, Enum):
     UNCLE_PARSH_H1_BREAKOUT = "uncle_parsh_h1_breakout"
     PHASE3_INTEGRATED_USD_JPY = "phase3_integrated_usd_jpy"
     PHASE3_INTEGRATED_V7_DEFENDED = "phase3_integrated_v7_defended"
+    TOKYO_LONDON_SPIKE_V4_NO_V44 = "tokyo_london_spike_v4_no_v44"
 
 
 FROZEN_PHASE3_DEFENDED_PRESET_ID = PresetId.PHASE3_INTEGRATED_V7_DEFENDED.value
@@ -2361,6 +2362,56 @@ PRESETS: dict[PresetId, dict[str, Any]] = {
                 {
                     "type": "phase3_integrated",
                     "id": "phase3_integrated_v7_defended",
+                    "enabled": True,
+                },
+            ],
+        },
+    },
+
+    # -----------------------------------------------------------------------
+    # PAPER-FORWARD: Tokyo V14 + London V2 + Spike V4 — V44 NY hard-disabled
+    # -----------------------------------------------------------------------
+    PresetId.TOKYO_LONDON_SPIKE_V4_NO_V44: {
+        "name": "Paper-Forward: Tokyo+London+Spike (no V44 NY)",
+        "description": "Paper-forward preset running Tokyo V14, London V2, and Spike Fade V4 only. V44 NY is hard-disabled via v44_ny.disabled=true.",
+        "pros": [
+            "Exact defended Phase 3 config for V14, London V2, and Spike Fade V4",
+            "V44 NY cannot fire — explicit hard gate, not indirect",
+            "Rollback to phase3_integrated_v7_defended restores full stack",
+        ],
+        "cons": [
+            "No NY session entries — intentional for paper-forward validation",
+        ],
+        "risk": {
+            "max_lots": 5.0,
+            "require_stop": True,
+            "min_stop_pips": 12,
+            "max_spread_pips": 5,
+            "max_trades_per_day": 20,
+            "max_open_trades": 6,
+            "cooldown_minutes_after_loss": 0,
+        },
+        "strategy": {
+            "filters": {
+                "alignment": {"enabled": False},
+                "ema_stack_filter": {"enabled": False},
+                "atr_filter": {"enabled": False},
+                "session_filter": {"enabled": False},
+            },
+            "setups": {},
+        },
+        "trade_management": {
+            "target": {"mode": "fixed_pips", "pips_default": 8.0},
+            "stop_loss": None,
+            "breakeven": {"enabled": False},
+        },
+        "execution": {
+            "loop_poll_seconds": 5.0,
+            "loop_poll_seconds_fast": 2.0,
+            "policies": [
+                {
+                    "type": "phase3_integrated",
+                    "id": "tokyo_london_spike_v4_no_v44",
                     "enabled": True,
                 },
             ],

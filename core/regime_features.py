@@ -219,6 +219,37 @@ def compute_trend_decay_rate(
     return float(np.clip(decay, 0.0, 1.0))
 
 
+def compute_trend_decay_rate_from_ema(
+    m5_df: pd.DataFrame,
+    ema_series: pd.Series,
+    *,
+    slope_bars: int = 4,
+    lookback: int = 12,
+) -> float:
+    """Same as ``compute_trend_decay_rate`` but uses a precomputed EMA (full-series warm).
+
+    Lets callers pass only a short OHLC tail while keeping EMA values identical to a
+    full-history ``ewm`` on M5 closes.
+    """
+    needed = lookback + slope_bars + 5
+    if len(m5_df) < needed or len(ema_series) != len(m5_df):
+        return 0.0
+
+    ema = ema_series.astype(float)
+    slopes = (ema.diff(slope_bars) / PIP_SIZE / max(1, slope_bars)).values
+    recent_slopes = slopes[-lookback:]
+    recent_abs = np.abs(recent_slopes)
+
+    peak = np.nanmax(recent_abs)
+    current = recent_abs[-1] if not np.isnan(recent_abs[-1]) else 0.0
+
+    if peak < 0.05:
+        return 0.0
+
+    decay = 1.0 - (current / peak)
+    return float(np.clip(decay, 0.0, 1.0))
+
+
 # ── Dynamic Feature 5: Delta Efficiency Ratio ───────────────────────
 
 def compute_delta_efficiency_ratio(

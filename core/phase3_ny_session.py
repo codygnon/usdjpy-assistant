@@ -15,11 +15,17 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+import numpy as np
 import pandas as pd
 from core.phase3_package_spec import PHASE3_DEFENDED_PRESET_ID, load_phase3_package_spec
 
 
 H1_V44_ATR14_MAX_PIPS = 7.04
+
+
+def _phase3_stdout_verbose() -> bool:
+    """Opt-in noisy stdout from NY session (H1/M5 ATR blocks, defensive veto). Default: off for backtest speed."""
+    return os.environ.get("PHASE3_VERBOSE_STDOUT", "").strip().lower() in ("1", "true", "yes")
 
 
 def execute_v44_ny_session(
@@ -141,9 +147,14 @@ def execute_v44_ny_session(
         side_value: Optional[str] = None,
         gate_label: str | None = None,
     ) -> dict:
-        caller = inspect.currentframe().f_back
-        caller_line = int(caller.f_lineno) if caller is not None else -1
-        caller_name = str(caller.f_code.co_name) if caller is not None else ""
+        trace_gates = os.environ.get("PHASE3_V44_GATE_TRACE", "").strip().lower() in ("1", "true", "yes")
+        if trace_gates:
+            caller = inspect.currentframe().f_back
+            caller_line = int(caller.f_lineno) if caller is not None else -1
+            caller_name = str(caller.f_code.co_name) if caller is not None else ""
+        else:
+            caller_line = -1
+            caller_name = ""
         resolved_gate = str(gate_label or _derive_gate_label(reason_text))
         parity_context["first_no_trade_gate"] = resolved_gate
         parity_context["first_no_trade_reason"] = str(reason_text)
@@ -153,7 +164,7 @@ def execute_v44_ny_session(
         if session_key is not None and isinstance(sdat, dict):
             no_trade["phase3_state_updates"] = {session_key: sdat}
         no_trade["v44_parity_context"] = _sync_parity_context()
-        if os.environ.get("PHASE3_V44_GATE_TRACE", "").strip().lower() in ("1", "true", "yes"):
+        if trace_gates:
             print(
                 "[phase3][v44_ny][gate] "
                 f"gate={resolved_gate} line={caller_line} attempted={int(attempted)} "
@@ -165,6 +176,15 @@ def execute_v44_ny_session(
         return no_trade
 
     v44_config = (sizing_config or {}).get("v44_ny", {})
+
+    # ── Hard V44 disable gate ──────────────────────────────────────────
+    # When the preset sets v44_ny.disabled=true, V44 NY must never fire.
+    if bool(v44_config.get("disabled", False)):
+        return _return_no_trade(
+            reason_text="v44_ny: hard-disabled by preset config (v44_ny.disabled=true)",
+            gate_label="v44_ny_hard_disabled",
+        )
+
     v44_start_delay_min = int(v44_config.get("start_delay_minutes", 5))
     v44_max_entry_spread = float(v44_config.get("max_entry_spread_pips", support.V44_MAX_ENTRY_SPREAD))
     v44_ny_start_hour, v44_ny_end_hour = resolve_ny_window_hours(now_utc, v44_config)
@@ -753,25 +773,26 @@ def execute_v44_ny_session(
     m5_atr14_pips = None
     try:
         if m5_df is not None and len(m5_df) >= 14:
-            _high = m5_df["high"].astype(float)
-            _low = m5_df["low"].astype(float)
-            _close = m5_df["close"].astype(float)
-            _prev_close = _close.shift(1)
-            _tr = pd.concat([_high - _low, (_high - _prev_close).abs(), (_low - _prev_close).abs()], axis=1).max(axis=1)
-            _atr14 = _tr.rolling(window=14, min_periods=14).mean()
-            if not _atr14.empty and pd.notna(_atr14.iloc[-1]):
-                m5_atr14_pips = float(_atr14.iloc[-1]) / pip
+            hi = m5_df["high"].to_numpy(dtype=np.float64, copy=False)
+            lo = m5_df["low"].to_numpy(dtype=np.float64, copy=False)
+            cl = m5_df["close"].to_numpy(dtype=np.float64, copy=False)
+            prev = np.empty_like(cl)
+            prev[0] = cl[0]
+            prev[1:] = cl[:-1]
+            tr = np.maximum.reduce([hi - lo, np.abs(hi - prev), np.abs(lo - prev)])
+            m5_atr14_pips = float(np.mean(tr[-14:])) / pip
     except Exception:
         m5_atr14_pips = None
     if m5_atr14_pips is not None:
         parity_context["m5_atr14_pips"] = round(float(m5_atr14_pips), 4)
         parity_context["h1_atr14_max_pips"] = float(h1_atr14_max_pips)
         if float(m5_atr14_pips) > float(h1_atr14_max_pips):
-            print(
-                "[phase3] V44 BLOCKED by H1 ATR gate: "
-                f"time={_ts_now.isoformat()} side={side} strength={strength} "
-                f"ATR={float(m5_atr14_pips):.2f}p > {float(h1_atr14_max_pips):.2f}p"
-            )
+            if _phase3_stdout_verbose():
+                print(
+                    "[phase3] V44 BLOCKED by H1 ATR gate: "
+                    f"time={_ts_now.isoformat()} side={side} strength={strength} "
+                    f"ATR={float(m5_atr14_pips):.2f}p > {float(h1_atr14_max_pips):.2f}p"
+                )
             return _return_no_trade(
                 reason_text=(
                     f"v44_ny: H1 ATR gate blocked "
@@ -855,7 +876,8 @@ def execute_v44_ny_session(
         sdat["ownership_cell"] = _v44_cell_str
     _blocked, _block_reason = v44_defensive_veto_block_from_state(ownership_cell=_v44_cell_str, overlay_state=overlay_state)
     if _blocked:
-        print(f"[phase3] DEFENSIVE VETO: v44_ny blocked in cell {_v44_cell_str} (side={side}, strength={strength})")
+        if _phase3_stdout_verbose():
+            print(f"[phase3] DEFENSIVE VETO: v44_ny blocked in cell {_v44_cell_str} (side={side}, strength={strength})")
         return _return_no_trade(reason_text=_block_reason or "v44_ny: defensive veto", attempted=True, side_value=side)
 
     same_side_open_count = 0

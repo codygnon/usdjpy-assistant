@@ -44,7 +44,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.regime_classifier import RegimeThresholds
-from core.regime_features import compute_efficiency_ratio, compute_trend_decay_rate
+from core.regime_features import compute_efficiency_ratio, compute_trend_decay_rate_from_ema
 from scripts import backtest_merged_integrated_tokyo_london_v2_ny as merged_engine
 from scripts import backtest_v2_multisetup_london as v2_engine
 from scripts import validate_regime_classifier as regime_validation
@@ -80,6 +80,35 @@ def _json_default(obj: Any) -> Any:
     return str(obj)
 
 
+# Cached numpy views for Variant F (called very often in combined bar-by-bar runs).
+_M5_TIMES_NS_CACHE: dict[int, np.ndarray] = {}
+_CLASSIFIED_TIMES_NS_CACHE: dict[int, np.ndarray] = {}
+_ROUTER_EMA9_COL = "_router_ema9_decay"
+
+
+def _m5_times_ns_cached(m5: pd.DataFrame) -> np.ndarray:
+    k = id(m5)
+    arr = _M5_TIMES_NS_CACHE.get(k)
+    if arr is None:
+        arr = pd.to_datetime(m5["time"], utc=True).values.astype("datetime64[ns]")
+        _M5_TIMES_NS_CACHE[k] = arr
+    return arr
+
+
+def _classified_times_ns_cached(classified: pd.DataFrame) -> np.ndarray:
+    k = id(classified)
+    arr = _CLASSIFIED_TIMES_NS_CACHE.get(k)
+    if arr is None:
+        arr = pd.to_datetime(classified["time"], utc=True).values.astype("datetime64[ns]")
+        _CLASSIFIED_TIMES_NS_CACHE[k] = arr
+    return arr
+
+
+def _ensure_router_m5_ema9(m5: pd.DataFrame) -> None:
+    if _ROUTER_EMA9_COL not in m5.columns:
+        m5[_ROUTER_EMA9_COL] = m5["close"].astype(float).ewm(span=9, adjust=False).mean()
+
+
 # ── Load & classify bars ──────────────────────────────────────────────
 
 def _load_classified_bars(input_csv: str) -> pd.DataFrame:
@@ -89,10 +118,18 @@ def _load_classified_bars(input_csv: str) -> pd.DataFrame:
 
 
 def _lookup_regime(classified: pd.DataFrame, ts: pd.Timestamp) -> dict[str, Any]:
-    time_idx = pd.DatetimeIndex(classified["time"])
-    idx = time_idx.get_indexer([pd.Timestamp(ts)], method="ffill")[0]
+    ts_val = pd.Timestamp(ts)
+    if ts_val.tzinfo is None:
+        ts_val = ts_val.tz_localize("UTC")
+    else:
+        ts_val = ts_val.tz_convert("UTC")
+    ts64 = np.datetime64(ts_val.to_datetime64())
+    times_ns = _classified_times_ns_cached(classified)
+    idx = int(np.searchsorted(times_ns, ts64, side="right") - 1)
     if idx < 0:
-        idx = time_idx.get_indexer([pd.Timestamp(ts)], method="bfill")[0]
+        idx = int(np.searchsorted(times_ns, ts64, side="left"))
+        if idx >= len(times_ns):
+            idx = -1
     if idx < 0:
         return {"regime_label": "ambiguous", "regime_margin": 0.0, "regime_scores": {}}
     row = classified.iloc[idx]
@@ -118,19 +155,43 @@ def _build_m5(input_csv: str) -> pd.DataFrame:
 
 def _compute_er_decay_at(m5: pd.DataFrame, ts: pd.Timestamp,
                          er_lookback: int = 12, decay_lookback: int = 12) -> dict[str, float]:
-    """Compute ER and trend decay at a given timestamp using M5 bars up to that point."""
+    """Compute ER and trend decay at a given timestamp using M5 bars up to that point.
+
+    Uses binary search + a bounded tail slice (and a one-time full-series EMA column) so
+    Variant F stays O(log n) per call instead of scanning the entire M5 frame.
+    """
+    _ensure_router_m5_ema9(m5)
+
     ts_val = pd.Timestamp(ts)
     m5_tz = m5["time"].dt.tz
     if m5_tz is not None and ts_val.tzinfo is None:
         ts_val = ts_val.tz_localize(m5_tz)
     elif m5_tz is None and ts_val.tzinfo is not None:
         ts_val = ts_val.tz_localize(None)
-    mask = m5["time"] <= ts_val
-    available = m5.loc[mask]
-    if len(available) < max(er_lookback, decay_lookback) + 30:
+    # Comparable to _m5_times_ns_cached (UTC numpy).
+    ts_utc = pd.Timestamp(ts_val).tz_convert("UTC") if pd.Timestamp(ts_val).tzinfo else pd.Timestamp(ts_val).tz_localize("UTC")
+    ts64 = np.datetime64(ts_utc.asm8.astype("datetime64[ns]"))
+
+    times_ns = _m5_times_ns_cached(m5)
+    idx = int(np.searchsorted(times_ns, ts64, side="right") - 1)
+    if idx < 0:
         return {"efficiency_ratio": 0.5, "trend_decay_rate": 0.0}
+
+    # Same semantics as m5.loc[m5.time <= ts] for sorted M5; tail long enough for ER + decay.
+    min_rows = max(er_lookback, decay_lookback) + 30
+    tail_w = max(80, min_rows)
+    start = max(0, idx + 1 - tail_w)
+    available = m5.iloc[start : idx + 1]
+    if len(available) < min_rows:
+        return {"efficiency_ratio": 0.5, "trend_decay_rate": 0.0}
+
     er = compute_efficiency_ratio(available, lookback=er_lookback)
-    decay = compute_trend_decay_rate(available, lookback=decay_lookback)
+    decay = compute_trend_decay_rate_from_ema(
+        available,
+        available[_ROUTER_EMA9_COL],
+        slope_bars=4,
+        lookback=decay_lookback,
+    )
     return {"efficiency_ratio": er, "trend_decay_rate": decay}
 
 

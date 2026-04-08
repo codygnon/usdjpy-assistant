@@ -2548,12 +2548,16 @@ def _resolve_phase3_effective_preset_id(
     policy: Any | None = None,
     preferred_preset: str | None = None,
 ) -> str | None:
-    from core.phase3_package_spec import PHASE3_DEFENDED_PRESET_ID, uses_defended_phase3_package
+    from core.phase3_package_spec import PHASE3_DEFENDED_PRESET_ID, PHASE3_NO_V44_PRESET_ID, uses_defended_phase3_package
 
     defended_id = str(PHASE3_DEFENDED_PRESET_ID).strip().lower()
+    no_v44_id = str(PHASE3_NO_V44_PRESET_ID).strip().lower()
     profile_preset = str(getattr(profile, "active_preset_name", "") or "").strip().lower()
     requested = str(preferred_preset or "").strip().lower()
     policy_id = str(getattr(policy, "id", "") or "").strip().lower() if policy is not None else ""
+    # Preserve the no-V44 preset ID so its v44_ny.disabled flag flows through
+    if any(value == no_v44_id for value in (profile_preset, requested, policy_id)):
+        return PHASE3_NO_V44_PRESET_ID
     if any(value == defended_id for value in (profile_preset, requested, policy_id)):
         return PHASE3_DEFENDED_PRESET_ID
     if uses_defended_phase3_package(requested):
