@@ -17,9 +17,15 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Generator
 
 from core.profile import ProfileV1
+
+# LOGS_DIR mirrors api/main.py — persistent volume on Railway, else repo root.
+_data_base_env = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") or os.environ.get("USDJPY_DATA_DIR")
+_DATA_BASE = Path(_data_base_env) if _data_base_env else Path(__file__).resolve().parent.parent
+LOGS_DIR = _DATA_BASE / "logs"
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +111,117 @@ def _extract_order_book_clusters(
 
 
 # ---------------------------------------------------------------------------
+# Dashboard + runtime state (disk reads, no broker call)
+# ---------------------------------------------------------------------------
+
+def _read_dashboard_and_runtime(profile_name: str) -> dict[str, Any] | None:
+    """Read dashboard_state.json and runtime_state.json from disk. Returns None if unavailable."""
+    from core.dashboard_models import read_dashboard_state
+    from core.execution_state import load_state
+
+    log_dir = LOGS_DIR / profile_name
+    if not log_dir.exists():
+        return None
+
+    dash = read_dashboard_state(log_dir)
+    if dash is None:
+        return None
+
+    state_path = log_dir / "runtime_state.json"
+    runtime = load_state(state_path)
+
+    # Check staleness
+    stale = False
+    try:
+        ts = datetime.fromisoformat(dash.get("timestamp_utc", "").replace("Z", "+00:00"))
+        age = (datetime.now(timezone.utc) - ts).total_seconds()
+        stale = age > 60
+    except Exception:
+        stale = True
+
+    # Extract blocking filters (compact)
+    filters_raw = dash.get("filters", [])
+    blocking: list[dict[str, str]] = []
+    clear_count = 0
+    total_count = 0
+    for f in filters_raw:
+        if not f.get("enabled", True):
+            continue
+        total_count += 1
+        if f.get("is_clear", True):
+            clear_count += 1
+        else:
+            reason = f.get("block_reason") or f.get("explanation") or ""
+            blocking.append({"name": f.get("display_name", f.get("filter_id", "?")), "reason": reason})
+
+    # Daily summary from run loop
+    daily = dash.get("daily_summary") or {}
+
+    return {
+        "preset_name": dash.get("preset_name", ""),
+        "mode": dash.get("mode", ""),
+        "loop_running": dash.get("loop_running", False),
+        "kill_switch": getattr(runtime, "kill_switch", False),
+        "exit_system_only": getattr(runtime, "exit_system_only", False),
+        "entry_candidate_side": dash.get("entry_candidate_side"),
+        "entry_candidate_trigger": dash.get("entry_candidate_trigger"),
+        "blocking_filters": blocking[:8],
+        "clear_count": clear_count,
+        "total_count": total_count,
+        "daily_summary": {
+            "trades_today": daily.get("trades_today", 0),
+            "wins": daily.get("wins", 0),
+            "losses": daily.get("losses", 0),
+            "total_pips": daily.get("total_pips", 0),
+            "total_profit": daily.get("total_profit", 0),
+            "win_rate": daily.get("win_rate", 0),
+        } if daily else None,
+        "stale": stale,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Technical analysis snapshot (3 key timeframes)
+# ---------------------------------------------------------------------------
+
+def _compute_ta_snapshot(adapter: Any, profile: ProfileV1) -> dict[str, dict[str, Any]] | None:
+    """Compute TA for H1, M5, M1 only. Returns {timeframe: {regime, rsi, ...}} or None."""
+    from core.ta_analysis import compute_ta_for_tf
+
+    result: dict[str, dict[str, Any]] = {}
+    pip_size = float(profile.pip_size) if profile.pip_size else 0.01
+
+    for tf in ("H1", "M5", "M1"):
+        try:
+            df = adapter.get_bars(profile.symbol, tf, count=700)
+            if df is None or df.empty:
+                continue
+            ta = compute_ta_for_tf(profile, tf, df)
+
+            # MACD direction from histogram
+            macd_dir = "neutral"
+            if ta.macd_hist is not None:
+                macd_dir = "positive" if ta.macd_hist > 0 else "negative"
+
+            atr_pips = round(ta.atr_value / pip_size, 1) if ta.atr_value else None
+
+            result[tf] = {
+                "regime": ta.regime,
+                "rsi_value": round(ta.rsi_value, 1) if ta.rsi_value is not None else None,
+                "rsi_zone": ta.rsi_zone,
+                "macd_direction": macd_dir,
+                "atr_pips": atr_pips,
+                "atr_state": ta.atr_state,
+                "price": ta.price,
+                "summary": ta.summary,
+            }
+        except Exception:
+            continue
+
+    return result if result else None
+
+
+# ---------------------------------------------------------------------------
 # Session awareness (pure UTC clock math)
 # ---------------------------------------------------------------------------
 
@@ -174,8 +291,11 @@ def _compute_derived_stats(closed_trades: list[dict]) -> dict[str, Any]:
     # Week starts Monday 00:00 UTC
     week_start = today_start - timedelta(days=now_utc.weekday())
 
+    month_start = today_start - timedelta(days=30)
+
     today_trades: list[dict] = []
     week_trades: list[dict] = []
+    month_trades: list[dict] = []
 
     for t in closed_trades:
         ct_str = t.get("close_time", "")
@@ -189,6 +309,8 @@ def _compute_derived_stats(closed_trades: list[dict]) -> dict[str, Any]:
             today_trades.append(t)
         if ct >= week_start:
             week_trades.append(t)
+        if ct >= month_start:
+            month_trades.append(t)
 
     def _summarize(trades: list[dict]) -> dict[str, Any] | None:
         if not trades:
@@ -228,6 +350,9 @@ def _compute_derived_stats(closed_trades: list[dict]) -> dict[str, Any]:
     week_summary = _summarize(week_trades)
     if week_summary:
         result["week"] = week_summary
+    month_summary = _summarize(month_trades)
+    if month_summary:
+        result["month"] = month_summary
     return result
 
 
@@ -239,10 +364,22 @@ def _compute_guardrail_alerts(
     derived_stats: dict[str, Any],
     session_info: dict[str, Any],
     open_positions: list[dict],
+    dashboard: dict[str, Any] | None = None,
 ) -> list[str]:
     """Return list of active guardrail alert strings. Empty if nothing triggered."""
     alerts: list[str] = []
     now_utc = datetime.now(timezone.utc)
+
+    # Dashboard-based system alerts
+    if dashboard:
+        if dashboard.get("kill_switch"):
+            alerts.append("KILL SWITCH ACTIVE — all trading halted")
+        if dashboard.get("exit_system_only"):
+            alerts.append("EXIT-ONLY MODE — no new entries")
+        if dashboard.get("mode") == "DISARMED":
+            alerts.append("System is DISARMED — no automated entries")
+        if dashboard.get("stale") and not dashboard.get("loop_running"):
+            alerts.append("Run loop appears stopped — dashboard data is stale")
 
     # Consecutive losses
     today = derived_stats.get("today", {})
@@ -321,7 +458,7 @@ def _compute_volatility(adapter: Any, symbol: str) -> dict[str, Any] | None:
         return None
 
 
-def build_trading_context(profile: ProfileV1) -> dict[str, Any]:
+def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[str, Any]:
     """Fetch live account state from the broker and return a plain dict.
 
     Runs synchronously (caller wraps in ThreadPoolExecutor).
@@ -390,8 +527,12 @@ def build_trading_context(profile: ProfileV1) -> dict[str, Any]:
                     days_back=30,
                     symbol=profile.symbol,
                     pip_size=profile.pip_size,
-                )
+                ) or []
+                # Prompt shows only a sample; today/week/month stats must use the FULL 30d list
+                # or weekly P&L under-counts (e.g. user +$8k "yesterday" but only last 25 trades summed).
                 ctx["recent_closed_trades"] = closed[:25]
+                if closed:
+                    ctx["derived_stats"] = _compute_derived_stats(closed)
             else:
                 # MT5
                 try:
@@ -441,9 +582,27 @@ def build_trading_context(profile: ProfileV1) -> dict[str, Any]:
         except Exception:
             pass
 
+        # Technical analysis snapshot (H1, M5, M1 only)
+        try:
+            ta = _compute_ta_snapshot(adapter, profile)
+            if ta:
+                ctx["ta_snapshot"] = ta
+        except Exception:
+            pass
+
     finally:
         try:
             adapter.shutdown()
+        except Exception:
+            pass
+
+    # Dashboard + runtime state (disk reads, no broker call)
+    dashboard: dict[str, Any] | None = None
+    if profile_name:
+        try:
+            dashboard = _read_dashboard_and_runtime(profile_name)
+            if dashboard:
+                ctx["dashboard"] = dashboard
         except Exception:
             pass
 
@@ -451,16 +610,11 @@ def build_trading_context(profile: ProfileV1) -> dict[str, Any]:
     now_utc = datetime.now(timezone.utc)
     ctx["session"] = _compute_session_info(now_utc)
 
-    # Derived stats from closed trades
-    all_closed = ctx.get("recent_closed_trades", [])
-    if all_closed:
-        ctx["derived_stats"] = _compute_derived_stats(all_closed)
-
     # Guardrail alerts (conditional)
     derived = ctx.get("derived_stats", {})
     session = ctx.get("session", {})
     open_pos = ctx.get("open_positions", [])
-    alerts = _compute_guardrail_alerts(derived, session, open_pos)
+    alerts = _compute_guardrail_alerts(derived, session, open_pos, dashboard)
     if alerts:
         ctx["guardrail_alerts"] = alerts
 
@@ -478,6 +632,12 @@ def system_prompt_from_context(ctx: dict[str, Any]) -> str:
         "Be concise. Lead with numbers. Never give imperative trade instructions like 'buy now' or 'sell now'.",
         "You may discuss market context, account state, position sizing, and risk management.",
         "",
+        "SCOPE: The data below is a broker snapshot only. Recent closed trades are from roughly the last 30 days (capped in the prompt).",
+        "TODAY / THIS WEEK / MONTH stats (if present) are computed from the full 30-day closed-trade fetch from the broker, not from the short trade sample lines below.",
+        "THIS WEEK means Monday 00:00 UTC through now (UTC), not the user's local calendar week unless they ask.",
+        "The Logs & Stats equity curve in the app may use a longer window (e.g. 365 days) — do not claim totals or win rates for the whole chart unless you only summarize the trades actually listed below.",
+        "Do not invent weekly P/L or percentages; use the precomputed THIS WEEK / TODAY lines when present, else derive only from listed trades.",
+        "",
         "=== LIVE TRADING CONTEXT ===",
         f"Symbol: {ctx.get('symbol', 'USDJPY')}",
         f"Broker: {ctx.get('broker_type', 'unknown')}",
@@ -492,6 +652,43 @@ def system_prompt_from_context(ctx: dict[str, Any]) -> str:
         lines.append(f"  Equity: {acct.get('equity', '?')}")
         lines.append(f"  Margin Used: {acct.get('margin_used', '?')}")
         lines.append(f"  Margin Free: {acct.get('margin_free', '?')}")
+
+    # System state (from dashboard + runtime)
+    dash = ctx.get("dashboard")
+    if dash:
+        lines.append("")
+        lines.append("SYSTEM STATE:")
+        preset = dash.get("preset_name") or "unknown"
+        mode = dash.get("mode") or "unknown"
+        loop = "running" if dash.get("loop_running") else "stopped"
+        lines.append(f"  Preset: {preset} | Mode: {mode} | Loop: {loop}")
+        ks = "ON" if dash.get("kill_switch") else "OFF"
+        eo = "ON" if dash.get("exit_system_only") else "OFF"
+        lines.append(f"  Kill switch: {ks} | Exit-only: {eo}")
+        cand_side = dash.get("entry_candidate_side")
+        cand_trigger = dash.get("entry_candidate_trigger")
+        if cand_side:
+            trigger_str = f" ({cand_trigger} trigger)" if cand_trigger else ""
+            lines.append(f"  Entry signal: {cand_side.upper()}{trigger_str}")
+        clear = dash.get("clear_count", 0)
+        total = dash.get("total_count", 0)
+        blocking = dash.get("blocking_filters", [])
+        block_count = total - clear
+        lines.append(f"  Filters: {clear}/{total} clear | {block_count} blocking")
+        if blocking:
+            shown = blocking[:5]
+            parts = []
+            for bf in shown:
+                name = bf.get("name", "?")
+                reason = bf.get("reason", "")
+                if reason:
+                    parts.append(f"{name} ({reason})")
+                else:
+                    parts.append(name)
+            line = "  Blocking: " + ", ".join(parts)
+            if len(blocking) > 5:
+                line += f", ... and {len(blocking) - 5} more"
+            lines.append(line)
 
     positions = ctx.get("open_positions")
     if positions:
@@ -559,11 +756,29 @@ def system_prompt_from_context(ctx: dict[str, Any]) -> str:
     week_s = derived.get("week")
     if week_s:
         lines.append("")
-        lines.append("THIS WEEK:")
+        lines.append("THIS WEEK (Mon 00:00 UTC → now, all closed trades in 30d fetch):")
         lines.append(
             f"  Net P&L: ${week_s['net_pl']:+.2f} | Win Rate: {week_s['win_rate']}% "
             f"({week_s['trades']} trades)"
         )
+
+    month_s = derived.get("month")
+    if month_s:
+        lines.append("")
+        lines.append("THIS MONTH (30d):")
+        lines.append(
+            f"  Net P&L: ${month_s['net_pl']:+.2f} | Win Rate: {month_s['win_rate']}% "
+            f"({month_s['trades']} trades)"
+        )
+
+    # Dashboard daily summary (pips data not in derived stats)
+    dash_daily = (ctx.get("dashboard") or {}).get("daily_summary")
+    if dash_daily and dash_daily.get("trades_today", 0) > 0:
+        pips = dash_daily.get("total_pips", 0)
+        profit = dash_daily.get("total_profit", 0)
+        lines.append("")
+        lines.append("DASHBOARD DAILY (from run loop):")
+        lines.append(f"  Total pips today: {pips:+.1f} | Profit: ${profit:+.2f}")
 
     # Guardrail alerts (only if triggered)
     alerts = ctx.get("guardrail_alerts")
@@ -584,6 +799,25 @@ def system_prompt_from_context(ctx: dict[str, Any]) -> str:
         if ratio != 1.0:
             extra = f" ({ratio}x normal)"
         lines.append(f"VOLATILITY: {desc}{extra} — recent M1 avg range {pips}p")
+
+    # Technical analysis snapshot
+    ta = ctx.get("ta_snapshot")
+    if ta:
+        lines.append("")
+        lines.append("TECHNICAL SNAPSHOT:")
+        for tf in ("H1", "M5", "M1"):
+            t = ta.get(tf)
+            if not t:
+                continue
+            regime = t.get("regime", "?").capitalize()
+            rsi_val = t.get("rsi_value")
+            rsi_zone = t.get("rsi_zone", "")
+            rsi_str = f"RSI {rsi_val:.0f} ({rsi_zone})" if rsi_val is not None else "RSI n/a"
+            macd = t.get("macd_direction", "neutral")
+            atr = t.get("atr_pips")
+            atr_state = t.get("atr_state", "")
+            atr_str = f"ATR {atr}p ({atr_state})" if atr is not None else "ATR n/a"
+            lines.append(f"  {tf}: {regime} | {rsi_str} | MACD {macd} | {atr_str}")
 
     cross = ctx.get("cross_assets")
     if cross:

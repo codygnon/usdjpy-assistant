@@ -5490,7 +5490,7 @@ def ai_chat(profile_name: str, profile_path: str, req: AiChatRequest):
 
     try:
         with ThreadPoolExecutor(max_workers=1) as executor:
-            fut = executor.submit(build_trading_context, profile)
+            fut = executor.submit(build_trading_context, profile, profile_name)
             ctx = fut.result(timeout=ctx_timeout)
     except FuturesTimeoutError:
         raise HTTPException(status_code=502, detail="Broker context fetch timed out")

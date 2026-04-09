@@ -9387,8 +9387,9 @@ function EquityCurveChart({ profileName, profilePath }: { profileName: string; p
     api.getTradeHistory(profileName, profilePath, 365)
       .then((resp) => {
         setDisplayCurrency(resp.display_currency || 'USD');
+        // Use full ISO date as series key — MM/DD alone duplicates across years and breaks Recharts scale/tooltips.
         setData(resp.days.map((d) => ({
-          date: `${d.date.slice(5, 7)}/${d.date.slice(8, 10)}`,
+          date: d.date,
           dailyProfit: d.daily_profit,
           cumProfit: d.cum_profit,
           tradeCount: d.trade_count,
@@ -9416,11 +9417,24 @@ function EquityCurveChart({ profileName, profilePath }: { profileName: string; p
 
   const currency = displayCurrency;
 
-  const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number; dataKey: string }>; label?: string }) => {
+  const CustomTooltip = ({
+    active,
+    payload,
+    label,
+  }: {
+    active?: boolean;
+    payload?: Array<{ value: number; dataKey: string; payload?: EquityDataPoint }>;
+    label?: string;
+  }) => {
     if (!active || !payload || !payload.length) return null;
     const cum = payload.find(p => p.dataKey === 'cumProfit');
     const daily = payload.find(p => p.dataKey === 'dailyProfit');
     const count = payload.find(p => p.dataKey === 'tradeCount');
+    const row = payload[0]?.payload;
+    const labelPretty =
+      row?.date && row.date.length >= 10
+        ? row.date
+        : label;
     return (
       <div style={{
         background: '#1a1d24',
@@ -9430,7 +9444,7 @@ function EquityCurveChart({ profileName, profilePath }: { profileName: string; p
         fontSize: '0.8rem',
         lineHeight: 1.6,
       }}>
-        <div style={{ fontWeight: 600, marginBottom: 4, color: '#e0e0e0' }}>{label}</div>
+        <div style={{ fontWeight: 600, marginBottom: 4, color: '#e0e0e0' }}>{labelPretty}</div>
         {cum && (
           <div style={{ color: cum.value >= 0 ? '#28a745' : '#dc3545' }}>
             Cumulative: {cum.value >= 0 ? '+' : ''}{cum.value.toFixed(2)} {currency}
@@ -9468,6 +9482,10 @@ function EquityCurveChart({ profileName, profilePath }: { profileName: string; p
               tick={{ fontSize: 11, fill: '#a0a0a0' }}
               tickLine={false}
               axisLine={{ stroke: '#3a3d45' }}
+              tickFormatter={(iso: string) =>
+                iso && iso.length >= 10 ? `${iso.slice(5, 7)}/${iso.slice(8, 10)}` : String(iso)
+              }
+              interval="preserveStartEnd"
             />
             <YAxis
               yAxisId="left"

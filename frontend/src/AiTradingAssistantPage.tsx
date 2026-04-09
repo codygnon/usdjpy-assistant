@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import * as api from './api';
 
 const MAX_HISTORY_MESSAGES = 20; // 10 user + 10 assistant pairs
@@ -48,6 +49,41 @@ function saveChatToStorage(profilePath: string, messages: ChatLine[]): void {
 function capHistory(messages: ChatLine[]): api.AiChatHistoryMessage[] {
   const slice = messages.slice(-MAX_HISTORY_MESSAGES);
   return slice.map(({ role, content }) => ({ role, content }));
+}
+
+/** Renders Markdown-style `**bold**` segments (no extra deps). */
+function renderBoldSegments(text: string): ReactNode[] {
+  const re = /\*\*([^*]+)\*\*/g;
+  const out: ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let k = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) {
+      out.push(<span key={k++}>{text.slice(last, m.index)}</span>);
+    }
+    out.push(<strong key={k++}>{m[1]}</strong>);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) {
+    out.push(<span key={k++}>{text.slice(last)}</span>);
+  }
+  return out.length > 0 ? out : [text];
+}
+
+function AssistantFormattedBody({ content }: { content: string }): ReactNode {
+  if (!content) return null;
+  const lines = content.split('\n');
+  return (
+    <>
+      {lines.map((line, li) => (
+        <span key={li}>
+          {li > 0 ? <br /> : null}
+          {renderBoldSegments(line)}
+        </span>
+      ))}
+    </>
+  );
 }
 
 export default function AiTradingAssistantPage({ profile }: { profile: AiAssistantProfile }) {
@@ -194,7 +230,7 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
                   borderRadius: 10,
                   fontSize: '0.9rem',
                   lineHeight: 1.45,
-                  whiteSpace: 'pre-wrap',
+                  whiteSpace: line.role === 'user' ? 'pre-wrap' : 'normal',
                   wordBreak: 'break-word',
                   background:
                     line.role === 'user' ? 'var(--accent, #3b82f6)' : 'var(--card-border, rgba(255,255,255,0.08))',
@@ -203,7 +239,16 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
                 }}
               >
                 {line.role === 'user' ? <strong>You</strong> : <strong>Assistant</strong>}
-                <div style={{ marginTop: 4, fontWeight: 400 }}>{line.content || (sending && i === messages.length - 1 ? '…' : '')}</div>
+                <div style={{ marginTop: 4, fontWeight: 400 }}>
+                  {line.role === 'assistant' ? (
+                    <>
+                      <AssistantFormattedBody content={line.content} />
+                      {sending && i === messages.length - 1 && !line.content ? '…' : null}
+                    </>
+                  ) : (
+                    line.content || (sending && i === messages.length - 1 ? '…' : '')
+                  )}
+                </div>
               </div>
             </div>
           ))}
