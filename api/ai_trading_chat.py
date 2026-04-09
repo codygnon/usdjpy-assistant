@@ -26,6 +26,56 @@ from core.profile import ProfileV1
 # 1. Build trading context from broker
 # ---------------------------------------------------------------------------
 
+def _extract_order_book_clusters(
+    buckets: list[dict],
+    book_price: float,
+    range_pips: float = 100,
+    top_n: int = 5,
+) -> dict[str, Any]:
+    """Extract top buy/sell clusters from OANDA order book buckets within ±range_pips.
+
+    OANDA buckets: {"price": "148.200", "longCountPercent": "0.0841", "shortCountPercent": "0.0312"}
+    longCountPercent = pending buy orders at that level (support/demand).
+    shortCountPercent = pending sell orders at that level (resistance/supply).
+    """
+    pip_size = 0.01  # USDJPY
+    range_price = range_pips * pip_size
+    lo = book_price - range_price
+    hi = book_price + range_price
+
+    nearby = []
+    for b in buckets:
+        try:
+            price = float(b["price"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if lo <= price <= hi:
+            nearby.append({
+                "price": price,
+                "long_pct": float(b.get("longCountPercent", 0)),
+                "short_pct": float(b.get("shortCountPercent", 0)),
+            })
+
+    buy_clusters = sorted(nearby, key=lambda x: x["long_pct"], reverse=True)[:top_n]
+    sell_clusters = sorted(nearby, key=lambda x: x["short_pct"], reverse=True)[:top_n]
+
+    # Nearest support (highest buy cluster below price) / resistance (highest sell cluster above price)
+    below_buys = [b for b in buy_clusters if b["price"] < book_price]
+    above_sells = [s for s in sell_clusters if s["price"] > book_price]
+    nearest_support = below_buys[0]["price"] if below_buys else None
+    nearest_resistance = above_sells[0]["price"] if above_sells else None
+
+    return {
+        "current_price": book_price,
+        "buy_clusters": [{"price": b["price"], "pct": b["long_pct"]} for b in buy_clusters],
+        "sell_clusters": [{"price": s["price"], "pct": s["short_pct"]} for s in sell_clusters],
+        "nearest_support": nearest_support,
+        "nearest_resistance": nearest_resistance,
+        "nearest_support_distance_pips": round((book_price - nearest_support) / pip_size, 1) if nearest_support else None,
+        "nearest_resistance_distance_pips": round((nearest_resistance - book_price) / pip_size, 1) if nearest_resistance else None,
+    }
+
+
 def build_trading_context(profile: ProfileV1) -> dict[str, Any]:
     """Fetch live account state from the broker and return a plain dict.
 
@@ -117,13 +167,24 @@ def build_trading_context(profile: ProfileV1) -> dict[str, Any]:
         except Exception as e:
             ctx["closed_trades_error"] = str(e)
 
-        # OANDA order book (optional, small)
+        # Cross-asset snapshot (OANDA only): EUR/USD → DXY proxy, BCO/USD → Oil
+        if getattr(profile, "broker_type", None) == "oanda":
+            try:
+                ctx["cross_assets"] = _fetch_cross_asset_prices(adapter)
+            except Exception:
+                pass
+
+        # OANDA order book — extract buy/sell clusters near current price
         if getattr(profile, "broker_type", None) == "oanda" and hasattr(adapter, "get_order_book"):
             try:
                 book = adapter.get_order_book(profile.symbol)
-                buckets = book.get("orderBook", {}).get("buckets", [])
-                # Keep only top 10 around current price
-                ctx["order_book_sample"] = buckets[:10] if buckets else []
+                ob = book.get("orderBook", {})
+                buckets = ob.get("buckets", [])
+                book_price = float(ob.get("price", 0))
+                if buckets and book_price > 0:
+                    ctx["order_book"] = _extract_order_book_clusters(
+                        buckets, book_price, range_pips=100, top_n=5,
+                    )
             except Exception:
                 pass
 
@@ -188,6 +249,29 @@ def system_prompt_from_context(ctx: dict[str, Any]) -> str:
         lines.append("Recent Trade Stats (30d):")
         for k, v in stats.items():
             lines.append(f"  {k}: {v}")
+
+    ob = ctx.get("order_book")
+    if ob:
+        lines.append("")
+        lines.append("KEY LEVELS (OANDA Order Book):")
+        buy_cl = ob.get("buy_clusters", [])
+        sell_cl = ob.get("sell_clusters", [])
+        if buy_cl:
+            parts = [f"{c['price']:.3f} ({c['pct']:.1%})" for c in buy_cl]
+            lines.append(f"  Buy clusters: {', '.join(parts)}")
+        if sell_cl:
+            parts = [f"{c['price']:.3f} ({c['pct']:.1%})" for c in sell_cl]
+            lines.append(f"  Sell clusters: {', '.join(parts)}")
+        cp = ob.get("current_price")
+        if cp:
+            summary = f"  Current price: {cp:.3f}"
+            sup = ob.get("nearest_support")
+            res = ob.get("nearest_resistance")
+            if sup:
+                summary += f" — nearest support {ob['nearest_support_distance_pips']}p below at {sup:.3f}"
+            if res:
+                summary += f", nearest resistance {ob['nearest_resistance_distance_pips']}p above at {res:.3f}"
+            lines.append(summary)
 
     return "\n".join(lines)
 

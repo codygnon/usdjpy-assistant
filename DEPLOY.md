@@ -24,6 +24,72 @@ If you change the frontend, run `cd frontend && npm ci && npm run build` locally
 
 Leave as repo root (where `requirements.txt` and `frontend/` live).
 
+## Environment variables
+
+### AI Trading Assistant (OpenAI)
+
+The **AI Trading Assistant** tab calls OpenAI from the **same service** that runs `uvicorn` (your `web` process). It does **not** read secrets from the browser and is **not** configured by **Start loop** in the UI.
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `OPENAI_API_KEY` | Yes, for chat | Server-side key from [platform.openai.com](https://platform.openai.com/api-keys) |
+| `OPENAI_CHAT_MODEL` | No | Defaults to `gpt-4o-mini` in code if unset |
+
+**Set these on Railway** (the service that runs the API), then redeploy or wait for Railway to restart the service so the new variables are visible to `uvicorn`.
+
+#### Option A — Railway dashboard (no terminal)
+
+1. Open [Railway](https://railway.app) → your **project** → the **service** that runs this app (the one using the `Procfile` / uvicorn).
+2. Open the **Variables** tab (or **Settings → Variables**).
+3. Click **New Variable** (or **RAW Editor**).
+4. Add:
+   - **Name:** `OPENAI_API_KEY`  
+   - **Value:** your secret key (starts with `sk-...`).
+5. Optionally add `OPENAI_CHAT_MODEL` = `gpt-4o-mini`.
+6. Save. Railway usually triggers a **new deploy**; if not, use **Deploy** / **Restart** on that service.
+
+#### Option B — Railway CLI (exact commands)
+
+Run these **on your Mac** in any folder (or in your repo after `railway link`):
+
+```bash
+# One-time: install CLI and log in
+npm i -g @railway/cli
+railway login
+```
+
+From your **project repo root** (or any directory after linking):
+
+```bash
+cd /path/to/usdjpy_assistant
+railway link
+```
+
+Select the same Railway project and **service** that hosts the API. Then set the secret (paste your real key; avoid sharing the line or committing it):
+
+```bash
+railway variable set OPENAI_API_KEY="sk-your-key-here"
+```
+
+Optional:
+
+```bash
+railway variable set OPENAI_CHAT_MODEL="gpt-4o-mini"
+```
+
+If you have multiple services, target the web service:
+
+```bash
+railway variable set OPENAI_API_KEY="sk-your-key-here" --service "YourServiceName"
+```
+
+After variables change, ensure a deploy completes (Railway normally redeploys automatically).
+
+#### Verify
+
+1. Open your deployed site → unlock profile → **AI Trading Assistant** → send a message.  
+2. If the key is missing, the API returns **503** and the UI explains that `OPENAI_API_KEY` must be set on the server.
+
 ## Notes
 
 - **PORT** is set by the PaaS; the app binds to `0.0.0.0` and that port.

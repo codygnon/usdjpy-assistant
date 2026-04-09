@@ -10,18 +10,61 @@ export interface AiAssistantProfile {
 
 type ChatLine = { role: 'user' | 'assistant'; content: string };
 
+const CHAT_STORAGE_PREFIX = 'usdjpy_ai_chat:';
+
+function chatStorageKey(profilePath: string): string {
+  return `${CHAT_STORAGE_PREFIX}${profilePath}`;
+}
+
+function loadChatFromStorage(profilePath: string): ChatLine[] {
+  if (typeof sessionStorage === 'undefined') return [];
+  try {
+    const raw = sessionStorage.getItem(chatStorageKey(profilePath));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (row): row is ChatLine =>
+        row !== null &&
+        typeof row === 'object' &&
+        (row as ChatLine).role !== undefined &&
+        ((row as ChatLine).role === 'user' || (row as ChatLine).role === 'assistant') &&
+        typeof (row as ChatLine).content === 'string'
+    );
+  } catch {
+    return [];
+  }
+}
+
+function saveChatToStorage(profilePath: string, messages: ChatLine[]): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.setItem(chatStorageKey(profilePath), JSON.stringify(messages));
+  } catch {
+    // quota or private mode
+  }
+}
+
 function capHistory(messages: ChatLine[]): api.AiChatHistoryMessage[] {
   const slice = messages.slice(-MAX_HISTORY_MESSAGES);
   return slice.map(({ role, content }) => ({ role, content }));
 }
 
 export default function AiTradingAssistantPage({ profile }: { profile: AiAssistantProfile }) {
-  const [messages, setMessages] = useState<ChatLine[]>([]);
+  const [messages, setMessages] = useState<ChatLine[]>(() => loadChatFromStorage(profile.path));
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    setMessages(loadChatFromStorage(profile.path));
+  }, [profile.path]);
+
+  useEffect(() => {
+    saveChatToStorage(profile.path, messages);
+  }, [profile.path, messages]);
 
   useEffect(() => {
     const el = scrollRef.current;
