@@ -232,6 +232,88 @@ def _read_dashboard_and_runtime(profile_name: str) -> dict[str, Any] | None:
 # Technical analysis snapshot (3 key timeframes)
 # ---------------------------------------------------------------------------
 
+def _compute_adx(df: Any, period: int = 14) -> tuple[float | None, float | None]:
+    """Compute ADX and ADXR from OHLC DataFrame using Wilder's smoothing.
+
+    Returns (adx_value, adxr_value) or (None, None) if insufficient data.
+    ADXR = (ADX_today + ADX_{period_bars_ago}) / 2.
+    """
+    import numpy as np
+
+    if df is None or len(df) < period * 3:
+        return None, None
+
+    high = df["high"].values.astype(float)
+    low = df["low"].values.astype(float)
+    close = df["close"].values.astype(float)
+    n = len(high)
+
+    # True Range, +DM, -DM
+    tr = np.empty(n)
+    plus_dm = np.empty(n)
+    minus_dm = np.empty(n)
+    tr[0] = plus_dm[0] = minus_dm[0] = 0.0
+
+    for i in range(1, n):
+        h_l = high[i] - low[i]
+        h_pc = abs(high[i] - close[i - 1])
+        l_pc = abs(low[i] - close[i - 1])
+        tr[i] = max(h_l, h_pc, l_pc)
+
+        up = high[i] - high[i - 1]
+        down = low[i - 1] - low[i]
+        plus_dm[i] = up if (up > down and up > 0) else 0.0
+        minus_dm[i] = down if (down > up and down > 0) else 0.0
+
+    # Wilder's smoothing (period-bar EMA)
+    def _wilder_smooth(arr: np.ndarray, p: int) -> np.ndarray:
+        out = np.empty_like(arr)
+        out[:p] = np.nan
+        out[p] = np.sum(arr[1:p + 1])  # first value = sum of first p values
+        for i in range(p + 1, len(arr)):
+            out[i] = out[i - 1] - out[i - 1] / p + arr[i]
+        return out
+
+    atr_s = _wilder_smooth(tr, period)
+    plus_di_s = _wilder_smooth(plus_dm, period)
+    minus_di_s = _wilder_smooth(minus_dm, period)
+
+    # DX series
+    dx = np.full(n, np.nan)
+    for i in range(period, n):
+        if atr_s[i] == 0:
+            continue
+        pdi = 100.0 * plus_di_s[i] / atr_s[i]
+        mdi = 100.0 * minus_di_s[i] / atr_s[i]
+        s = pdi + mdi
+        dx[i] = 100.0 * abs(pdi - mdi) / s if s > 0 else 0.0
+
+    # ADX = Wilder's smooth of DX
+    # Find first valid DX window
+    first_valid = period
+    while first_valid < n and np.isnan(dx[first_valid]):
+        first_valid += 1
+    if first_valid + period >= n:
+        return None, None
+
+    adx = np.full(n, np.nan)
+    adx[first_valid + period - 1] = np.nanmean(dx[first_valid:first_valid + period])
+    for i in range(first_valid + period, n):
+        adx[i] = (adx[i - 1] * (period - 1) + dx[i]) / period
+
+    adx_val = float(adx[-1]) if not np.isnan(adx[-1]) else None
+
+    # ADXR = (ADX_today + ADX_{period_ago}) / 2
+    adxr_val = None
+    if adx_val is not None and len(adx) > period and not np.isnan(adx[-1 - period]):
+        adxr_val = round((adx[-1] + adx[-1 - period]) / 2.0, 1)
+
+    if adx_val is not None:
+        adx_val = round(adx_val, 1)
+
+    return adx_val, adxr_val
+
+
 def _compute_ta_snapshot(adapter: Any, profile: ProfileV1) -> dict[str, dict[str, Any]] | None:
     """Compute TA for H1, M5, M1 only. Returns {timeframe: {regime, rsi, ...}} or None."""
     from core.ta_analysis import compute_ta_for_tf
@@ -253,6 +335,9 @@ def _compute_ta_snapshot(adapter: Any, profile: ProfileV1) -> dict[str, dict[str
 
             atr_pips = round(ta.atr_value / pip_size, 1) if ta.atr_value else None
 
+            # ADX / ADXR
+            adx_val, adxr_val = _compute_adx(df, period=14)
+
             result[tf] = {
                 "regime": ta.regime,
                 "rsi_value": round(ta.rsi_value, 1) if ta.rsi_value is not None else None,
@@ -260,6 +345,8 @@ def _compute_ta_snapshot(adapter: Any, profile: ProfileV1) -> dict[str, dict[str
                 "macd_direction": macd_dir,
                 "atr_pips": atr_pips,
                 "atr_state": ta.atr_state,
+                "adx": adx_val,
+                "adxr": adxr_val,
                 "price": ta.price,
                 "summary": ta.summary,
             }
@@ -874,7 +961,15 @@ def system_prompt_from_context(ctx: dict[str, Any]) -> str:
             atr = t.get("atr_pips")
             atr_state = t.get("atr_state", "")
             atr_str = f"ATR {atr}p ({atr_state})" if atr is not None else "ATR n/a"
-            lines.append(f"  {tf}: {regime} | {rsi_str} | MACD {macd} | {atr_str}")
+            adx_val = t.get("adx")
+            adxr_val = t.get("adxr")
+            adx_str = f"ADX {adx_val}" if adx_val is not None else ""
+            if adxr_val is not None:
+                adx_str += f"/ADXR {adxr_val}"
+            parts_line = f"  {tf}: {regime} | {rsi_str} | MACD {macd} | {atr_str}"
+            if adx_str:
+                parts_line += f" | {adx_str}"
+            lines.append(parts_line)
 
     cross = ctx.get("cross_assets")
     if cross:
