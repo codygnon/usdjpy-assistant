@@ -625,6 +625,24 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
         except Exception as e:
             ctx["account_error"] = str(e)
 
+        # Live spot price (bid/ask) for the traded symbol.
+        # Prefer this for "current price"; order-book price is a slower snapshot.
+        try:
+            tick = adapter.get_tick(profile.symbol)
+            bid = float(getattr(tick, "bid", 0) or 0)
+            ask = float(getattr(tick, "ask", 0) or 0)
+            if bid > 0 and ask > 0:
+                pip_size = float(getattr(profile, "pip_size", 0.01) or 0.01)
+                spread_pips = ((ask - bid) / pip_size) if pip_size > 0 else None
+                ctx["spot_price"] = {
+                    "bid": round(bid, 3),
+                    "ask": round(ask, 3),
+                    "mid": round((bid + ask) / 2.0, 3),
+                    "spread_pips": round(spread_pips, 1) if spread_pips is not None else None,
+                }
+        except Exception:
+            pass
+
         # Open positions
         try:
             positions = adapter.get_open_positions(profile.symbol)
@@ -771,10 +789,12 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
 
 def system_prompt_from_context(ctx: dict[str, Any]) -> str:
     """Build a system prompt that grounds the assistant in live trading data."""
+    configured_model = os.environ.get("OPENAI_CHAT_MODEL", "gpt-5-mini")
     lines = [
         "You are a trading assistant for a manual USDJPY trader.",
         "Be concise. Lead with numbers. Never give imperative trade instructions like 'buy now' or 'sell now'.",
         "You may discuss market context, account state, position sizing, and risk management.",
+        f"MODEL IDENTITY: You are running as '{configured_model}'. If asked which model you are, answer exactly '{configured_model}'. Never guess or mention any other model family.",
         "",
         "SCOPE: The data below is a broker snapshot only. Recent closed trades are from roughly the last 30 days (capped in the prompt).",
         "TODAY / THIS WEEK / MONTH stats (if present) are computed from the full 30-day closed-trade fetch from the broker, not from the short trade sample lines below.",
@@ -881,6 +901,16 @@ def system_prompt_from_context(ctx: dict[str, Any]) -> str:
         for w in session.get("warnings", []):
             line += f" | {w}"
         lines.append(line)
+
+    spot = ctx.get("spot_price")
+    if spot:
+        lines.append("")
+        spread = spot.get("spread_pips")
+        spread_txt = f" | spread {spread}p" if spread is not None else ""
+        lines.append(
+            f"LIVE PRICE ({ctx.get('symbol', 'USDJPY')}): {spot['bid']:.3f}/{spot['ask']:.3f} "
+            f"(mid {spot['mid']:.3f}){spread_txt}"
+        )
 
     # Today's / this week's derived stats
     derived = ctx.get("derived_stats", {})
@@ -1013,7 +1043,7 @@ def system_prompt_from_context(ctx: dict[str, Any]) -> str:
             lines.append(f"  Sell clusters: {', '.join(parts)}")
         cp = ob.get("current_price")
         if cp:
-            summary = f"  Current price: {cp:.3f}"
+            summary = f"  Order-book snapshot price: {cp:.3f}"
             sup = ob.get("nearest_support")
             res = ob.get("nearest_resistance")
             if sup:
