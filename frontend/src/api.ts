@@ -891,3 +891,129 @@ export async function getTrial7ReversalRiskStatus(profileName: string, profilePa
   const params = profilePath ? `?profile_path=${encodeURIComponent(profilePath)}` : '';
   return fetchJson<Trial7ReversalRiskStatus>(`${API_BASE}/data/${profileName}/reversal-risk${params}`);
 }
+
+// --- AI Trading Assistant (streaming chat; POST + SSE) ---
+
+export interface AiChatHistoryMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface AiChatRequestBody {
+  message: string;
+  history: AiChatHistoryMessage[];
+}
+
+async function readApiErrorDetail(res: Response): Promise<string> {
+  const text = await res.text();
+  try {
+    const j = JSON.parse(text) as { detail?: unknown };
+    if (typeof j.detail === 'string') return j.detail;
+    if (Array.isArray(j.detail)) {
+      return j.detail.map((x) => (typeof x === 'object' && x && 'msg' in x ? String((x as { msg: unknown }).msg) : String(x))).join('; ');
+    }
+    return text || res.statusText;
+  } catch {
+    return text || res.statusText || `HTTP ${res.status}`;
+  }
+}
+
+function parseSseBlock(buffer: string): { events: Record<string, unknown>[]; rest: string } {
+  const events: Record<string, unknown>[] = [];
+  const normalized = buffer.replace(/\r\n/g, '\n');
+  const sep = '\n\n';
+  let rest = normalized;
+  let pos = rest.indexOf(sep);
+  while (pos !== -1) {
+    const block = rest.slice(0, pos);
+    rest = rest.slice(pos + sep.length);
+    pos = rest.indexOf(sep);
+    for (const line of block.split('\n')) {
+      const t = line.trimEnd();
+      if (!t.startsWith('data:')) continue;
+      const raw = t.slice(5).trimStart();
+      if (raw === '[DONE]') {
+        events.push({ type: 'done' });
+        continue;
+      }
+      try {
+        events.push(JSON.parse(raw) as Record<string, unknown>);
+      } catch {
+        // ignore malformed SSE payload
+      }
+    }
+  }
+  return { events, rest };
+}
+
+/**
+ * POST /api/data/{profile_name}/ai-chat — Server-Sent Events with JSON payloads:
+ * { "type": "delta", "text": "..." } and { "type": "done" }.
+ */
+export async function streamAiChat(
+  profileName: string,
+  profilePath: string,
+  body: AiChatRequestBody,
+  options: { onDelta: (text: string) => void; signal?: AbortSignal }
+): Promise<void> {
+  const url = `${API_BASE}/data/${encodeURIComponent(profileName)}/ai-chat?profile_path=${encodeURIComponent(profilePath)}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+    },
+    body: JSON.stringify(body),
+    signal: options.signal,
+  });
+
+  if (!res.ok) {
+    const detail = await readApiErrorDetail(res);
+    throw new Error(detail);
+  }
+
+  const reader = res.body?.getReader();
+  if (!reader) {
+    throw new Error('No response body');
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const { events, rest } = parseSseBlock(buffer);
+    buffer = rest;
+    for (const ev of events) {
+      const typ = ev.type;
+      if (typ === 'delta' && typeof ev.text === 'string') {
+        options.onDelta(ev.text);
+      }
+      if (typ === 'done') {
+        return;
+      }
+      if (typ === 'error' && typeof ev.message === 'string') {
+        throw new Error(ev.message);
+      }
+    }
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    const { events } = parseSseBlock(buffer.endsWith('\n\n') ? buffer : `${buffer}\n\n`);
+    for (const ev of events) {
+      const typ = ev.type;
+      if (typ === 'delta' && typeof ev.text === 'string') {
+        options.onDelta(ev.text);
+      }
+      if (typ === 'done') {
+        return;
+      }
+      if (typ === 'error' && typeof ev.message === 'string') {
+        throw new Error(ev.message);
+      }
+    }
+  }
+}

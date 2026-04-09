@@ -6,3 +6,4 @@ requests
 streamlit
 fastapi
 uvicorn[standard]
+openai

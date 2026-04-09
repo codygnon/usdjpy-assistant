@@ -3,6 +3,7 @@ import { createChart, IChartApi, ISeriesApi, CandlestickData, Time, CandlestickS
 import { ComposedChart, Area, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ScatterChart, Scatter, Cell, BarChart, LineChart, AreaChart } from 'recharts';
 import * as api from './api';
 import DashboardPage from './DashboardPage';
+import AiTradingAssistantPage from './AiTradingAssistantPage';
 
 // Error boundary to prevent white-screen crashes
 class ErrorBoundary extends React.Component<
@@ -34,7 +35,7 @@ class ErrorBoundary extends React.Component<
   }
 }
 
-type Page = 'dashboard' | 'presets' | 'profile' | 'logs' | 'analysis' | 'guide';
+type Page = 'ai-assistant' | 'dashboard' | 'presets' | 'profile' | 'logs' | 'analysis' | 'guide';
 
 interface Profile {
   path: string;
@@ -390,6 +391,12 @@ export default function App() {
 
         <nav style={{ marginTop: 24 }}>
           <button
+            className={`nav-item ${page === 'ai-assistant' ? 'active' : ''}`}
+            onClick={() => setPage('ai-assistant')}
+          >
+            AI Trading Assistant
+          </button>
+          <button
             className={`nav-item ${page === 'dashboard' ? 'active' : ''}`}
             onClick={() => setPage('dashboard')}
           >
@@ -474,6 +481,7 @@ export default function App() {
           ) : (
             <>
               <ErrorBoundary>
+              {page === 'ai-assistant' && <AiTradingAssistantPage profile={selectedProfile} />}
               {page === 'dashboard' && <DashboardPage profileName={selectedProfile.name} profilePath={selectedProfile.path} />}
               {page === 'analysis' && <AnalysisPage profile={selectedProfile} />}
               {page === 'presets' && <PresetsPage profile={selectedProfile} />}

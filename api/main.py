@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
@@ -5433,6 +5433,89 @@ def _backfill_trade_event_tier_labels(profile_name: str, log_dir: Path) -> None:
             events_path.write_text(json.dumps(events, default=str) + "\n", encoding="utf-8")
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# AI Trading Chat (SSE streaming)
+# ---------------------------------------------------------------------------
+
+class _AiChatMessage(BaseModel):
+    role: str
+    content: str
+
+class AiChatRequest(BaseModel):
+    message: str
+    history: list[_AiChatMessage] = []
+
+
+@app.post("/api/data/{profile_name}/ai-chat")
+def ai_chat(profile_name: str, profile_path: str, req: AiChatRequest):
+    """Streaming AI chat endpoint — SSE delta/done contract."""
+    # --- Validate API key ---
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured on the server")
+
+    # --- Validate message ---
+    user_message = req.message.strip() if req.message else ""
+    if not user_message:
+        raise HTTPException(status_code=400, detail="message must be a non-empty string")
+
+    # --- Validate history roles ---
+    allowed_roles = {"user", "assistant"}
+    for entry in req.history:
+        if entry.role not in allowed_roles:
+            raise HTTPException(status_code=400, detail=f"Invalid role in history: {entry.role!r}")
+
+    # Cap history to last 10 pairs (20 messages)
+    history_dicts = [{"role": h.role, "content": h.content} for h in req.history[-20:]]
+
+    # --- Resolve profile ---
+    path = _resolve_profile_path(profile_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    try:
+        profile = load_profile_v1(path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to load profile: {e}")
+
+    # --- Build trading context (blocking broker call in thread pool) ---
+    from api.ai_trading_chat import build_trading_context, system_prompt_from_context, stream_openai_chat
+
+    try:
+        ctx_timeout = float(os.environ.get("API_AI_CHAT_CTX_TIMEOUT_SEC", "20"))
+    except ValueError:
+        ctx_timeout = 20.0
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            fut = executor.submit(build_trading_context, profile)
+            ctx = fut.result(timeout=ctx_timeout)
+    except FuturesTimeoutError:
+        raise HTTPException(status_code=502, detail="Broker context fetch timed out")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch broker context: {e}")
+
+    system = system_prompt_from_context(ctx)
+
+    # --- Stream OpenAI response ---
+    def event_stream():
+        try:
+            yield from stream_openai_chat(
+                system=system,
+                user_message=user_message,
+                history=history_dicts,
+            )
+        except Exception as e:
+            import json as _json
+            yield f"data: {_json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 # Catch-all for SPA routing (must be last so API routes match first)
