@@ -877,7 +877,8 @@ def stream_openai_chat(
     client = openai.OpenAI()  # uses OPENAI_API_KEY env var
 
     if model is None:
-        model = os.environ.get("OPENAI_CHAT_MODEL", "gpt-4o-mini")
+        # Default: stronger than gpt-4o-mini; override with OPENAI_CHAT_MODEL (e.g. gpt-4o-mini, gpt-4o).
+        model = os.environ.get("OPENAI_CHAT_MODEL", "gpt-5-mini")
 
     messages: list[dict[str, str]] = [{"role": "system", "content": system}]
     messages.extend(history)

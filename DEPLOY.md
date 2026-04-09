@@ -33,7 +33,7 @@ The **AI Trading Assistant** tab calls OpenAI from the **same service** that run
 | Variable | Required | Purpose |
 |----------|----------|---------|
 | `OPENAI_API_KEY` | Yes, for chat | Server-side key from [platform.openai.com](https://platform.openai.com/api-keys) |
-| `OPENAI_CHAT_MODEL` | No | Defaults to `gpt-4o-mini` in code if unset |
+| `OPENAI_CHAT_MODEL` | No | Defaults to `gpt-5-mini` in code if unset (`gpt-4o-mini` to save cost or if a model errors) |
 
 **Set these on Railway** (the service that runs the API), then redeploy or wait for Railway to restart the service so the new variables are visible to `uvicorn`.
 
@@ -45,7 +45,7 @@ The **AI Trading Assistant** tab calls OpenAI from the **same service** that run
 4. Add:
    - **Name:** `OPENAI_API_KEY`  
    - **Value:** your secret key (starts with `sk-...`).
-5. Optionally add `OPENAI_CHAT_MODEL` = `gpt-4o-mini`.
+5. Optionally set `OPENAI_CHAT_MODEL` (e.g. `gpt-5-mini` default in code, or `gpt-4o-mini` / `gpt-4o` if you prefer).
 6. Save. Railway usually triggers a **new deploy**; if not, use **Deploy** / **Restart** on that service.
 
 #### Option B — Railway CLI (exact commands)
@@ -74,7 +74,7 @@ railway variable set OPENAI_API_KEY="sk-your-key-here"
 Optional:
 
 ```bash
-railway variable set OPENAI_CHAT_MODEL="gpt-4o-mini"
+railway variable set OPENAI_CHAT_MODEL="gpt-5-mini"
 ```
 
 If you have multiple services, target the web service:
