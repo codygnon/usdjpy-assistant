@@ -1502,6 +1502,49 @@ def get_trade_history(
     if profile:
         curr, rate = _get_display_currency(profile)
 
+    # Prefer broker history for OANDA so the chart matches the live broker view.
+    if profile and getattr(profile, "broker_type", None) == "oanda":
+        try:
+            adapter = get_adapter(profile)
+            adapter.initialize()
+            try:
+                closed_trades = adapter.get_closed_trade_summaries(
+                    days_back=days_back,
+                    symbol=profile.symbol,
+                    pip_size=profile.pip_size,
+                ) if hasattr(adapter, "get_closed_trade_summaries") else []
+            finally:
+                try:
+                    adapter.shutdown()
+                except Exception:
+                    pass
+            if closed_trades:
+                by_date: dict[str, dict[str, Any]] = {}
+                for t in closed_trades:
+                    close_time = str(t.get("close_time") or "")
+                    date_str = close_time[:10] if len(close_time) >= 10 else ""
+                    if not date_str:
+                        continue
+                    profit_display = _convert_amount(float(t.get("profit", 0.0) or 0.0), rate) or 0.0
+                    if date_str in by_date:
+                        by_date[date_str]["daily_profit"] += profit_display
+                        by_date[date_str]["trade_count"] += 1
+                    else:
+                        by_date[date_str] = {
+                            "date": date_str,
+                            "daily_profit": profit_display,
+                            "trade_count": 1,
+                        }
+                sorted_days = sorted(by_date.values(), key=lambda d: d["date"])
+                cum = 0.0
+                for day in sorted_days:
+                    day["daily_profit"] = round(day["daily_profit"], 2)
+                    cum += day["daily_profit"]
+                    day["cum_profit"] = round(cum, 2)
+                return {"days": sorted_days, "display_currency": curr, "source": "broker"}
+        except Exception as e:
+            print(f"[api] trade-history oanda broker error: {e}")
+
     # Primary: local DB (has complete trade history)
     store = _store_for(profile_name)
     df = store.read_trades_df(profile_name)
@@ -1947,8 +1990,8 @@ def get_quick_stats(profile_name: str, profile_path: Optional[str] = None, sync:
                 except Exception:
                     pass
 
-    # Try broker report stats only when explicitly requested.
-    if sync and profile:
+    # Prefer broker report stats for OANDA, or when explicitly requested.
+    if profile and (sync or getattr(profile, "broker_type", None) == "oanda"):
         try:
             adapter = get_adapter(profile)
             adapter.initialize()

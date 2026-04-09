@@ -939,6 +939,83 @@ class OandaAdapter:
             })
         return results
 
+    def get_closed_trade_summaries(
+        self,
+        symbol: str | None = None,
+        pip_size: float | None = None,
+        days_back: int = 90,
+        max_pages: int = 20,
+    ) -> list[dict]:
+        """Fetch recently closed trades from OANDA's closed-trades endpoint.
+
+        This avoids the heavier transaction-history scan and is suitable for
+        quick broker-truth summaries and daily equity-curve aggregation.
+        """
+        aid = self._get_account_id()
+        inst = _symbol_to_instrument(symbol) if symbol else None
+        cutoff_dt = datetime.now(timezone.utc) - timedelta(days=days_back)
+
+        before_id: str | None = None
+        seen_last_ids: set[str] = set()
+        results: list[dict] = []
+
+        for _ in range(max_pages):
+            params: dict[str, object] = {"state": "CLOSED", "count": 500}
+            if inst:
+                params["instrument"] = inst
+            if before_id:
+                params["beforeID"] = before_id
+
+            data = self._req("GET", f"/v3/accounts/{aid}/trades", params=params)
+            trades = data.get("trades", []) or []
+            if not trades:
+                break
+
+            stop_paging = False
+            for t in trades:
+                close_time = str(t.get("closeTime") or "")
+                if not close_time:
+                    continue
+                try:
+                    close_dt = datetime.fromisoformat(close_time.replace("Z", "+00:00"))
+                except Exception:
+                    continue
+                if close_dt < cutoff_dt:
+                    stop_paging = True
+                    continue
+
+                initial_units = _to_int(t.get("initialUnits"), 0)
+                side = "buy" if initial_units > 0 else "sell"
+                entry_price = _to_float(t.get("price"), 0.0)
+                exit_price = _to_float(t.get("averageClosePrice"), 0.0)
+                realized_pl = _to_float(t.get("realizedPL"), 0.0)
+                volume = abs(initial_units) / 100_000.0
+                pips_val = None
+                if pip_size and pip_size > 0 and entry_price and exit_price:
+                    if side == "buy":
+                        pips_val = (exit_price - entry_price) / pip_size
+                    else:
+                        pips_val = (entry_price - exit_price) / pip_size
+
+                results.append({
+                    "trade_id": str(t.get("id", "")),
+                    "side": side,
+                    "entry_price": entry_price,
+                    "exit_price": exit_price,
+                    "profit": realized_pl,
+                    "volume": volume,
+                    "close_time": close_time,
+                    "pips": pips_val,
+                })
+
+            last_id = str(trades[-1].get("id", "") or "")
+            if stop_paging or not last_id or last_id in seen_last_ids:
+                break
+            seen_last_ids.add(last_id)
+            before_id = last_id
+
+        return results
+
     def get_order_book(self, instrument: str) -> dict:
         """GET /v3/instruments/{inst}/orderBook — returns price bucket array."""
         inst = _symbol_to_instrument(instrument)
@@ -952,7 +1029,7 @@ class OandaAdapter:
     def get_mt5_report_stats(self, symbol: str | None = None, pip_size: float | None = None, days_back: int = 90):
         from adapters.mt5_adapter import Mt5ReportStats
 
-        closed = self.get_closed_positions_from_history(
+        closed = self.get_closed_trade_summaries(
             days_back=days_back,
             symbol=symbol,
             pip_size=pip_size,
@@ -977,22 +1054,22 @@ class OandaAdapter:
                 total_pips=0.0,
             )
 
-        total_profit = sum(p.profit for p in closed)
-        total_commission = sum(p.commission for p in closed)
-        total_swap = sum(p.swap for p in closed)
-        wins = sum(1 for p in closed if p.profit > 0)
-        losses = sum(1 for p in closed if p.profit < 0)
+        total_profit = sum(float(t.get("profit", 0.0) or 0.0) for t in closed)
+        total_commission = 0.0
+        total_swap = 0.0
+        wins = sum(1 for t in closed if float(t.get("profit", 0.0) or 0.0) > 0)
+        losses = sum(1 for t in closed if float(t.get("profit", 0.0) or 0.0) < 0)
         total = len(closed)
         win_rate = wins / total if total > 0 else 0.0
 
-        gross_profit = sum(p.profit for p in closed if p.profit > 0)
-        gross_loss = sum(p.profit for p in closed if p.profit < 0)
+        gross_profit = sum(float(t.get("profit", 0.0) or 0.0) for t in closed if float(t.get("profit", 0.0) or 0.0) > 0)
+        gross_loss = sum(float(t.get("profit", 0.0) or 0.0) for t in closed if float(t.get("profit", 0.0) or 0.0) < 0)
         profit_factor = gross_profit / abs(gross_loss) if gross_loss != 0 else (1.0 if gross_profit > 0 else 1.0)
-        largest_profit = max((p.profit for p in closed if p.profit > 0), default=0.0)
-        largest_loss = min((p.profit for p in closed if p.profit < 0), default=0.0)
+        largest_profit = max((float(t.get("profit", 0.0) or 0.0) for t in closed if float(t.get("profit", 0.0) or 0.0) > 0), default=0.0)
+        largest_loss = min((float(t.get("profit", 0.0) or 0.0) for t in closed if float(t.get("profit", 0.0) or 0.0) < 0), default=0.0)
         expected_payoff = total_profit / total if total > 0 else 0.0
 
-        pips_list = [p.pips for p in closed if p.pips is not None]
+        pips_list = [float(t.get("pips")) for t in closed if t.get("pips") is not None]
         total_pips_val = sum(pips_list)
         avg_pips = total_pips_val / len(pips_list) if pips_list else None
 
@@ -1016,7 +1093,7 @@ class OandaAdapter:
 
     def get_mt5_full_report(self, symbol: str | None = None, pip_size: float | None = None, days_back: int = 90) -> dict | None:
         acct = self.get_account_info()
-        closed = self.get_closed_positions_from_history(
+        closed = self.get_closed_trade_summaries(
             days_back=days_back,
             symbol=symbol,
             pip_size=pip_size,
@@ -1029,20 +1106,20 @@ class OandaAdapter:
             "free_margin": round(float(getattr(acct, "margin_free", 0.0) or 0.0), 2),
         }
 
-        total_profit = sum(p.profit for p in closed)
-        total_commission = sum(p.commission for p in closed)
-        total_swap = sum(p.swap for p in closed)
-        wins = sum(1 for p in closed if p.profit > 0)
-        losses = sum(1 for p in closed if p.profit < 0)
+        total_profit = sum(float(t.get("profit", 0.0) or 0.0) for t in closed)
+        total_commission = 0.0
+        total_swap = 0.0
+        wins = sum(1 for t in closed if float(t.get("profit", 0.0) or 0.0) > 0)
+        losses = sum(1 for t in closed if float(t.get("profit", 0.0) or 0.0) < 0)
         total = len(closed)
         win_rate = round(wins / total, 3) if total > 0 else 0.0
-        gross_profit = sum(p.profit for p in closed if p.profit > 0)
-        gross_loss = sum(p.profit for p in closed if p.profit < 0)
+        gross_profit = sum(float(t.get("profit", 0.0) or 0.0) for t in closed if float(t.get("profit", 0.0) or 0.0) > 0)
+        gross_loss = sum(float(t.get("profit", 0.0) or 0.0) for t in closed if float(t.get("profit", 0.0) or 0.0) < 0)
         profit_factor = round(gross_profit / abs(gross_loss), 3) if gross_loss != 0 else 1.0
-        largest_profit = max((p.profit for p in closed if p.profit > 0), default=0.0)
-        largest_loss = min((p.profit for p in closed if p.profit < 0), default=0.0)
+        largest_profit = max((float(t.get("profit", 0.0) or 0.0) for t in closed if float(t.get("profit", 0.0) or 0.0) > 0), default=0.0)
+        largest_loss = min((float(t.get("profit", 0.0) or 0.0) for t in closed if float(t.get("profit", 0.0) or 0.0) < 0), default=0.0)
         expected_payoff = round(total_profit / total, 2) if total > 0 else 0.0
-        pips_list = [p.pips for p in closed if p.pips is not None]
+        pips_list = [float(t.get("pips")) for t in closed if t.get("pips") is not None]
         total_pips_val = sum(pips_list)
         avg_pips = round(total_pips_val / len(pips_list), 3) if pips_list else None
 
@@ -1064,10 +1141,10 @@ class OandaAdapter:
             "total_pips": round(total_pips_val, 2),
         }
 
-        long_trades = [p for p in closed if p.side == "buy"]
-        short_trades = [p for p in closed if p.side == "sell"]
-        long_wins = sum(1 for p in long_trades if p.profit > 0)
-        short_wins = sum(1 for p in short_trades if p.profit > 0)
+        long_trades = [t for t in closed if str(t.get("side") or "") == "buy"]
+        short_trades = [t for t in closed if str(t.get("side") or "") == "sell"]
+        long_wins = sum(1 for t in long_trades if float(t.get("profit", 0.0) or 0.0) > 0)
+        short_wins = sum(1 for t in short_trades if float(t.get("profit", 0.0) or 0.0) > 0)
         long_short = {
             "long_trades": len(long_trades),
             "long_wins": long_wins,
