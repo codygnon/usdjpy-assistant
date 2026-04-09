@@ -33,12 +33,12 @@ LOGS_DIR = _DATA_BASE / "logs"
 # ---------------------------------------------------------------------------
 
 def _fetch_cross_asset_prices(adapter: Any) -> dict[str, Any]:
-    """Fetch EUR/USD and BCO/USD from OANDA pricing endpoint for cross-asset context.
+    """Fetch EUR/USD, BCO/USD (Brent), and WTICO/USD (WTI) from OANDA pricing endpoint.
 
     DXY proxy: ~1/EURUSD * 100 gives directional sense (higher = stronger USD).
     """
     aid = adapter._get_account_id()
-    instruments = "EUR_USD,BCO_USD"
+    instruments = "EUR_USD,BCO_USD,WTICO_USD"
     data = adapter._req("GET", f"/v3/accounts/{aid}/pricing?instruments={instruments}")
     prices = data.get("prices", [])
 
@@ -56,8 +56,56 @@ def _fetch_cross_asset_prices(adapter: Any) -> dict[str, Any]:
             result["dxy_proxy"] = round(1.0 / mid * 100, 2)
         elif inst == "BCO_USD" and mid > 0:
             result["bco_usd"] = round(mid, 2)
+        elif inst == "WTICO_USD" and mid > 0:
+            result["wti_usd"] = round(mid, 2)
 
     return result
+
+
+def _fetch_position_book_sentiment(adapter: Any, symbol: str) -> dict[str, Any] | None:
+    """Fetch OANDA position book and compute net long/short sentiment.
+
+    Position book shows % of traders with open positions at each price level.
+    We aggregate to get overall long vs short ratio — OANDA's volume proxy.
+    """
+    try:
+        book = adapter.get_position_book(symbol)
+    except Exception:
+        return None
+
+    pb = book.get("positionBook", {})
+    buckets = pb.get("buckets", [])
+    book_price = float(pb.get("price", 0)) if pb.get("price") else None
+    if not buckets:
+        return None
+
+    total_long = 0.0
+    total_short = 0.0
+    for b in buckets:
+        total_long += float(b.get("longCountPercent", 0))
+        total_short += float(b.get("shortCountPercent", 0))
+
+    total = total_long + total_short
+    if total <= 0:
+        return None
+
+    long_pct = round(total_long / total * 100, 1)
+    short_pct = round(total_short / total * 100, 1)
+
+    # Net sentiment
+    if long_pct > short_pct + 5:
+        bias = "net long"
+    elif short_pct > long_pct + 5:
+        bias = "net short"
+    else:
+        bias = "balanced"
+
+    return {
+        "long_pct": long_pct,
+        "short_pct": short_pct,
+        "bias": bias,
+        "book_price": book_price,
+    }
 
 
 def _extract_order_book_clusters(
@@ -574,6 +622,15 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
             except Exception:
                 pass
 
+        # OANDA position book — trader sentiment / volume proxy
+        if getattr(profile, "broker_type", None) == "oanda" and hasattr(adapter, "get_position_book"):
+            try:
+                sentiment = _fetch_position_book_sentiment(adapter, profile.symbol)
+                if sentiment:
+                    ctx["position_book"] = sentiment
+            except Exception:
+                pass
+
         # Volatility indicator (M1 candle range comparison)
         try:
             vol = _compute_volatility(adapter, profile.symbol)
@@ -827,9 +884,25 @@ def system_prompt_from_context(ctx: dict[str, Any]) -> str:
         dxy = cross.get("dxy_proxy")
         if eurusd and dxy:
             lines.append(f"  DXY proxy: {dxy} (via EUR/USD @ {eurusd})")
-        oil = cross.get("bco_usd")
-        if oil:
-            lines.append(f"  Oil (BCO/USD): {oil}")
+        brent = cross.get("bco_usd")
+        wti = cross.get("wti_usd")
+        if brent and wti:
+            lines.append(f"  Oil — WTI: {wti} | Brent: {brent}")
+        elif wti:
+            lines.append(f"  Oil — WTI (WTICO/USD): {wti}")
+        elif brent:
+            lines.append(f"  Oil — Brent (BCO/USD): {brent}")
+
+    # Position book sentiment (OANDA volume proxy)
+    pb = ctx.get("position_book")
+    if pb:
+        lines.append("")
+        lines.append("OANDA VOLUME (Position Book):")
+        lines.append(
+            f"  Traders long: {pb['long_pct']}% | short: {pb['short_pct']}% | Bias: {pb['bias']}"
+        )
+        if pb.get("book_price"):
+            lines.append(f"  Snapshot price: {pb['book_price']:.3f}")
 
     ob = ctx.get("order_book")
     if ob:
