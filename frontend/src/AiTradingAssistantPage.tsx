@@ -213,6 +213,7 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
               get_cross_asset_bias: 'Checking macro bias...',
               get_economic_calendar: 'Checking calendar...',
               get_news_headlines: 'Searching news...',
+              web_search: 'Searching the web...',
             };
             setToolStatus(labels[name] || `Running ${name}...`);
           },

@@ -982,9 +982,10 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
         "  - get_cross_asset_bias(): Full macro bias reading (oil, DXY, combined USDJPY implication)",
         "  - get_economic_calendar(days_ahead): Upcoming high-impact USD/JPY events (FOMC, NFP, BOJ, CPI)",
         "  - get_news_headlines(count): Recent USDJPY/forex news from RSS feeds",
-        "Use tools when the question benefits from fresh data. For example: get_news_headlines for recent developments, get_economic_calendar for upcoming events, and get_trade_history for specific past trades.",
+        "  - web_search(query, count): Full web search via Brave Search — use for current events, analysis, central bank statements, geopolitical context, or any question needing live web data",
+        "Use tools proactively when the user's question would benefit from fresh data. Prefer web_search for broad questions about markets or events. Use get_news_headlines for quick headline scans. Use get_economic_calendar for upcoming events, and get_trade_history for specific past trades.",
         "Never mention training-data cutoff dates or generic model limitations.",
-        "Non-trading questions (politics, history, etc.) are out of scope. Redirect to trading context.",
+        "You may answer general knowledge questions using web_search if needed. You are not limited to trading topics.",
         "",
         "SCOPE: The data below is a broker snapshot only. Recent closed trades are from roughly the last 30 days (capped in the prompt).",
         "If asked about the trader's style: they trade three modes — post-impulse range fades, proven organic range bounces, and spike mean reversion.",
@@ -1338,6 +1339,21 @@ _AI_CHAT_TOOLS = [
                 "properties": {
                     "count": {"type": "integer", "minimum": 1, "maximum": 20, "description": "Number of headlines (default 10)"},
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Search the web using Brave Search. Use when the user asks about current events, news, market analysis, economic data, or anything that needs live web information. Also useful for looking up specific topics like central bank statements, geopolitical events, or market commentary.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The search query"},
+                    "count": {"type": "integer", "minimum": 1, "maximum": 10, "description": "Number of results (default 5)"},
+                },
+                "required": ["query"],
             },
         },
     },
@@ -1723,7 +1739,63 @@ def _format_headlines(headlines: list[dict[str, str]], count: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 3d. Tool dispatch
+# 3d. Web search (Brave Search API — free tier: 2,000 queries/month)
+# ---------------------------------------------------------------------------
+
+def _exec_web_search(args: dict, **_: Any) -> str:
+    """Search the web via Brave Search API. Requires BRAVE_SEARCH_API_KEY env var."""
+    api_key = os.environ.get("BRAVE_SEARCH_API_KEY", "").strip()
+    if not api_key:
+        return "Web search not available — BRAVE_SEARCH_API_KEY is not configured on the server."
+
+    query = (args.get("query") or "").strip()
+    if not query:
+        return "No search query provided."
+
+    count = min(int(args.get("count", 5)), 10)
+
+    try:
+        import urllib.parse
+        encoded_q = urllib.parse.quote_plus(query)
+        url = f"https://api.search.brave.com/res/v1/web/search?q={encoded_q}&count={count}"
+        req = _Request(url, headers={
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip",
+            "X-Subscription-Token": api_key,
+        })
+        with _urlopen(req, timeout=8) as resp:
+            raw = resp.read()
+            # Handle gzip
+            if resp.headers.get("Content-Encoding") == "gzip":
+                import gzip
+                raw = gzip.decompress(raw)
+            data = json.loads(raw)
+    except Exception as e:
+        return f"Web search failed: {e}"
+
+    results = data.get("web", {}).get("results", [])
+    if not results:
+        return f"No web results found for: {query}"
+
+    lines = [f"Web search results for \"{query}\" ({len(results)} results):"]
+    for r in results[:count]:
+        title = r.get("title", "")
+        url_str = r.get("url", "")
+        description = r.get("description", "")
+        # Strip HTML tags from description
+        import re as _re
+        description = _re.sub(r"<[^>]+>", "", description)
+        age = r.get("age", "")
+        age_str = f" ({age})" if age else ""
+        lines.append(f"\n  [{title}]{age_str}")
+        lines.append(f"  {url_str}")
+        if description:
+            lines.append(f"  {description[:200]}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# 3e. Tool dispatch
 # ---------------------------------------------------------------------------
 
 _TOOL_EXECUTORS: dict[str, Any] = {
@@ -1733,6 +1805,7 @@ _TOOL_EXECUTORS: dict[str, Any] = {
     "get_cross_asset_bias": lambda args, **kw: _exec_get_cross_asset_bias(**kw),
     "get_economic_calendar": _exec_get_economic_calendar,
     "get_news_headlines": _exec_get_news_headlines,
+    "web_search": _exec_web_search,
 }
 
 
