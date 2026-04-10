@@ -5466,6 +5466,18 @@ class _AiChatMessage(BaseModel):
 class AiChatRequest(BaseModel):
     message: str
     history: list[_AiChatMessage] = []
+    chat_model: Optional[str] = None
+
+
+@app.get("/api/ai-chat/models")
+def get_ai_chat_models_list() -> dict[str, Any]:
+    """Models the assistant UI may select (allowlist; extend via AI_CHAT_ALLOWED_MODELS)."""
+    from api.ai_trading_chat import allowed_ai_chat_models, default_ai_chat_model
+
+    return {
+        "models": allowed_ai_chat_models(),
+        "default_model": default_ai_chat_model(),
+    }
 
 
 @app.post("/api/data/{profile_name}/ai-chat")
@@ -5501,7 +5513,12 @@ def ai_chat(profile_name: str, profile_path: str, req: AiChatRequest):
         raise HTTPException(status_code=400, detail=f"API fetch error (profile): {e}")
 
     # --- Build trading context (blocking broker call in thread pool) ---
-    from api.ai_trading_chat import build_trading_context, system_prompt_from_context, stream_openai_chat
+    from api.ai_trading_chat import (
+        build_trading_context,
+        resolve_ai_chat_model,
+        system_prompt_from_context,
+        stream_openai_chat,
+    )
 
     try:
         ctx_timeout = float(os.environ.get("API_AI_CHAT_CTX_TIMEOUT_SEC", "20"))
@@ -5515,7 +5532,12 @@ def ai_chat(profile_name: str, profile_path: str, req: AiChatRequest):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"API fetch error (broker context): {e}")
 
-    system = system_prompt_from_context(ctx)
+    try:
+        effective_model = resolve_ai_chat_model(req.chat_model)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    system = system_prompt_from_context(ctx, effective_model)
 
     # --- Stream OpenAI response ---
     def event_stream():
@@ -5524,6 +5546,9 @@ def ai_chat(profile_name: str, profile_path: str, req: AiChatRequest):
                 system=system,
                 user_message=user_message,
                 history=history_dicts,
+                model=effective_model,
+                profile=profile,
+                profile_name=profile_name,
             )
         except Exception as e:
             import json as _json

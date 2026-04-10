@@ -12,9 +12,33 @@ export interface AiAssistantProfile {
 type ChatLine = { role: 'user' | 'assistant'; content: string };
 
 const CHAT_STORAGE_PREFIX = 'usdjpy_ai_chat:';
+const MODEL_STORAGE_PREFIX = 'usdjpy_ai_chat_model:';
 
 function chatStorageKey(profilePath: string): string {
   return `${CHAT_STORAGE_PREFIX}${profilePath}`;
+}
+
+function modelStorageKey(profilePath: string): string {
+  return `${MODEL_STORAGE_PREFIX}${profilePath}`;
+}
+
+function loadModelFromStorage(profilePath: string): string | null {
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    const v = sessionStorage.getItem(modelStorageKey(profilePath));
+    return v && v.trim() ? v.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveModelToStorage(profilePath: string, model: string): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.setItem(modelStorageKey(profilePath), model);
+  } catch {
+    // ignore
+  }
 }
 
 function loadChatFromStorage(profilePath: string): ChatLine[] {
@@ -86,16 +110,48 @@ function AssistantFormattedBody({ content }: { content: string }): ReactNode {
   );
 }
 
+const FALLBACK_AI_MODELS: string[] = ['gpt-5-mini', 'gpt-4o-mini', 'gpt-4o'];
+
 export default function AiTradingAssistantPage({ profile }: { profile: AiAssistantProfile }) {
   const [messages, setMessages] = useState<ChatLine[]>(() => loadChatFromStorage(profile.path));
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [modelList, setModelList] = useState<string[]>([]);
+  const [chatModel, setChatModel] = useState<string>('');
+  const [modelsReady, setModelsReady] = useState(false);
+  const [toolStatus, setToolStatus] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     setMessages(loadChatFromStorage(profile.path));
+  }, [profile.path]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getAiChatModels()
+      .then((res) => {
+        if (cancelled) return;
+        const list = res.models.length > 0 ? res.models : [...FALLBACK_AI_MODELS];
+        setModelList(list);
+        const stored = loadModelFromStorage(profile.path);
+        const def = list.includes(res.default_model) ? res.default_model : list[0];
+        setChatModel(stored && list.includes(stored) ? stored : def);
+        setModelsReady(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        const list = [...FALLBACK_AI_MODELS];
+        setModelList(list);
+        const stored = loadModelFromStorage(profile.path);
+        setChatModel(stored && list.includes(stored) ? stored : list[0]);
+        setModelsReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [profile.path]);
 
   useEffect(() => {
@@ -115,8 +171,8 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
     };
   }, []);
 
-  const send = useCallback(async () => {
-    const text = input.trim();
+  const send = useCallback(async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim();
     if (!text || sending) return;
 
     setError(null);
@@ -133,10 +189,11 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
       await api.streamAiChat(
         profile.name,
         profile.path,
-        { message: text, history },
+        { message: text, history, chat_model: chatModel || undefined },
         {
           signal,
           onDelta: (delta) => {
+            setToolStatus(null);
             setMessages((m) => {
               if (m.length === 0) return m;
               const next = [...m];
@@ -146,6 +203,18 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
               }
               return next;
             });
+          },
+          onToolStatus: (name) => {
+            const labels: Record<string, string> = {
+              get_candles: 'Fetching candles...',
+              get_trade_history: 'Loading trades...',
+              get_trade_details: 'Looking up trade...',
+              analyze_trade_patterns: 'Analyzing patterns...',
+              get_cross_asset_bias: 'Checking macro bias...',
+              get_economic_calendar: 'Checking calendar...',
+              get_news_headlines: 'Searching news...',
+            };
+            setToolStatus(labels[name] || `Running ${name}...`);
           },
         }
       );
@@ -179,9 +248,10 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
       });
     } finally {
       setSending(false);
+      setToolStatus(null);
       abortRef.current = null;
     }
-  }, [input, messages, profile.name, profile.path, sending]);
+  }, [chatModel, input, messages, profile.name, profile.path, sending]);
 
   return (
     <div>
@@ -190,9 +260,68 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
         Context-aware help using your profile&apos;s broker connection on the server. Not financial advice.
       </p>
 
+      <div className="form-group" style={{ marginBottom: 16, maxWidth: 360 }}>
+        <label htmlFor="ai-chat-model">Model</label>
+        <select
+          id="ai-chat-model"
+          value={chatModel}
+          disabled={!modelsReady || sending || modelList.length === 0}
+          onChange={(e) => {
+            const v = e.target.value;
+            setChatModel(v);
+            saveModelToStorage(profile.path, v);
+          }}
+          style={{ width: '100%', padding: '8px 10px', borderRadius: 8 }}
+        >
+          {!modelsReady ? (
+            <option value="">Loading…</option>
+          ) : (
+            modelList.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))
+          )}
+        </select>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', margin: '6px 0 0' }}>
+          Choices come from the server allowlist. Admins can set{' '}
+          <code style={{ fontSize: '0.7rem' }}>AI_CHAT_ALLOWED_MODELS</code> (comma-separated).
+        </p>
+      </div>
+
       {error && (
         <div className="card mb-4" style={{ borderColor: 'var(--danger)' }}>
           <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p>
+        </div>
+      )}
+
+      {messages.length === 0 && !sending && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, maxWidth: 720 }}>
+          {[
+            "How's my P&L today?",
+            "What's the current setup?",
+            "Position sizing help",
+            "Analyze recent losses",
+            "Any upcoming events?",
+            "What's the latest USDJPY news?",
+          ].map((chip) => (
+            <button
+              key={chip}
+              type="button"
+              onClick={() => void send(chip)}
+              style={{
+                padding: '6px 14px',
+                borderRadius: 20,
+                border: '1px solid var(--card-border, rgba(255,255,255,0.12))',
+                background: 'var(--bg-secondary, rgba(0,0,0,0.2))',
+                color: 'var(--text-secondary)',
+                fontSize: '0.8rem',
+                cursor: 'pointer',
+              }}
+            >
+              {chip}
+            </button>
+          ))}
         </div>
       )}
 
@@ -252,6 +381,11 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
               </div>
             </div>
           ))}
+          {toolStatus && (
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', fontStyle: 'italic', padding: '4px 0' }}>
+              {toolStatus}
+            </div>
+          )}
         </div>
 
         <div className="form-group" style={{ marginBottom: 8 }}>
@@ -286,19 +420,41 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
               Stop
             </button>
           )}
-          <button
-            type="button"
-            className="btn btn-secondary"
-            disabled={sending || messages.length === 0}
-            onClick={() => {
-              setMessages([]);
-              saveChatToStorage(profile.path, []);
-              setError(null);
-            }}
-            style={{ marginLeft: 'auto' }}
-          >
-            Clear Chat
-          </button>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={sending || messages.length === 0}
+              onClick={() => {
+                const lines = messages.map((m) => {
+                  const label = m.role === 'user' ? 'You' : 'Assistant';
+                  return `### ${label}\n${m.content}\n`;
+                });
+                const header = `# USDJPY AI Chat Export\n# Profile: ${profile.name}\n# Date: ${new Date().toISOString()}\n\n`;
+                const blob = new Blob([header + lines.join('\n---\n\n')], { type: 'text/markdown' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `usdjpy-chat-${new Date().toISOString().slice(0, 10)}.md`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+            >
+              Export
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={sending || messages.length === 0}
+              onClick={() => {
+                setMessages([]);
+                saveChatToStorage(profile.path, []);
+                setError(null);
+              }}
+            >
+              Clear Chat
+            </button>
+          </div>
         </div>
       </div>
     </div>

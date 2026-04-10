@@ -33,7 +33,8 @@ The **AI Trading Assistant** tab calls OpenAI from the **same service** that run
 | Variable | Required | Purpose |
 |----------|----------|---------|
 | `OPENAI_API_KEY` | Yes, for chat | Server-side key from [platform.openai.com](https://platform.openai.com/api-keys) |
-| `OPENAI_CHAT_MODEL` | No | Defaults to `gpt-5-mini` in code if unset (`gpt-4o-mini` to save cost or if a model errors) |
+| `OPENAI_CHAT_MODEL` | No | Default model when the UI does not pick one; must appear in the allowlist below (defaults to `gpt-5-mini`) |
+| `AI_CHAT_ALLOWED_MODELS` | No | Comma-separated model ids users may choose in the AI Assistant (default: `gpt-5-mini`, `gpt-4o-mini`, `gpt-4o`) |
 
 **Set these on Railway** (the service that runs the API), then redeploy or wait for Railway to restart the service so the new variables are visible to `uvicorn`.
 

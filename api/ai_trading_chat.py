@@ -27,6 +27,44 @@ _data_base_env = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") or os.environ.get("
 _DATA_BASE = Path(_data_base_env) if _data_base_env else Path(__file__).resolve().parent.parent
 LOGS_DIR = _DATA_BASE / "logs"
 
+# Chat models: optional UI + request body must pick from this allowlist (override with AI_CHAT_ALLOWED_MODELS).
+_DEFAULT_CHAT_MODEL = "gpt-5-mini"
+_DEFAULT_ALLOWED_CHAT_MODELS: tuple[str, ...] = (
+    "gpt-5-mini",
+    "gpt-4o-mini",
+    "gpt-4o",
+)
+
+
+def allowed_ai_chat_models() -> list[str]:
+    """Ordered list of model ids the UI may offer and the API will accept."""
+    raw = os.environ.get("AI_CHAT_ALLOWED_MODELS", "").strip()
+    if raw:
+        out = [m.strip() for m in raw.split(",") if m.strip()]
+        return out if out else list(_DEFAULT_ALLOWED_CHAT_MODELS)
+    return list(_DEFAULT_ALLOWED_CHAT_MODELS)
+
+
+def default_ai_chat_model() -> str:
+    """Server default when the client omits chat_model."""
+    allowed = allowed_ai_chat_models()
+    allowed_set = frozenset(allowed)
+    env = os.environ.get("OPENAI_CHAT_MODEL", _DEFAULT_CHAT_MODEL).strip() or _DEFAULT_CHAT_MODEL
+    if env in allowed_set:
+        return env
+    return allowed[0] if allowed else _DEFAULT_CHAT_MODEL
+
+
+def resolve_ai_chat_model(requested: str | None) -> str:
+    """Return the model id to call OpenAI with, or raise ValueError."""
+    allowed_set = frozenset(allowed_ai_chat_models())
+    if not requested or not str(requested).strip():
+        return default_ai_chat_model()
+    rid = str(requested).strip()
+    if rid not in allowed_set:
+        raise ValueError(f"chat_model not allowed: {rid!r} (allowed: {', '.join(sorted(allowed_set))})")
+    return rid
+
 
 # ---------------------------------------------------------------------------
 # 1. Build trading context from broker
@@ -38,7 +76,7 @@ def _fetch_cross_asset_prices(adapter: Any) -> dict[str, Any]:
     DXY proxy: ~1/EURUSD * 100 gives directional sense (higher = stronger USD).
     """
     aid = adapter._get_account_id()
-    instruments = "EUR_USD,BCO_USD,WTICO_USD"
+    instruments = "EUR_USD,BCO_USD,WTICO_USD,XAU_USD,XAG_USD"
     data = adapter._req("GET", f"/v3/accounts/{aid}/pricing?instruments={instruments}")
     prices = data.get("prices", [])
 
@@ -58,6 +96,10 @@ def _fetch_cross_asset_prices(adapter: Any) -> dict[str, Any]:
             result["bco_usd"] = round(mid, 2)
         elif inst == "WTICO_USD" and mid > 0:
             result["wti_usd"] = round(mid, 2)
+        elif inst == "XAU_USD" and mid > 0:
+            result["xau_usd"] = round(mid, 2)
+        elif inst == "XAG_USD" and mid > 0:
+            result["xag_usd"] = round(mid, 2)
 
     return result
 
@@ -587,6 +629,94 @@ def _compute_volatility(adapter: Any, symbol: str) -> dict[str, Any] | None:
         return None
 
 
+def _compute_cross_asset_bias(adapter: Any) -> dict[str, Any] | None:
+    """Compute macro bias from oil and EUR/USD (DXY proxy) daily candle returns.
+
+    Replicates CrossAssetDashboard logic using the adapter's get_bars().
+    """
+    def _direction(five_day_ret: float, threshold: float) -> str:
+        if five_day_ret > threshold:
+            return "bullish"
+        elif five_day_ret < -threshold:
+            return "bearish"
+        return "neutral"
+
+    result: dict[str, Any] = {}
+
+    # Oil (Brent)
+    try:
+        oil_df = adapter.get_bars("BCO_USD", "D", count=25)
+        if oil_df is not None and len(oil_df) >= 6:
+            closes = oil_df["close"].values.astype(float)
+            current = closes[-1]
+            five_ago = closes[-6]
+            ret_5d = (current - five_ago) / five_ago
+            twenty_ago = closes[-21] if len(closes) >= 21 else closes[0]
+            ret_20d = (current - twenty_ago) / twenty_ago
+            oil_dir = _direction(ret_5d, 0.005)
+            result["oil"] = {
+                "direction": oil_dir,
+                "5d_return": round(ret_5d * 100, 2),
+                "20d_return": round(ret_20d * 100, 2),
+                "price": round(current, 2),
+            }
+    except Exception:
+        pass
+
+    # EUR/USD → DXY proxy (inverted: EUR down = USD strong = bullish for USDJPY)
+    try:
+        eur_df = adapter.get_bars("EUR_USD", "D", count=25)
+        if eur_df is not None and len(eur_df) >= 6:
+            closes = eur_df["close"].values.astype(float)
+            current = closes[-1]
+            five_ago = closes[-6]
+            eur_ret_5d = (current - five_ago) / five_ago
+            twenty_ago = closes[-21] if len(closes) >= 21 else closes[0]
+            eur_ret_20d = (current - twenty_ago) / twenty_ago
+            # Invert: EUR down = USD strong = bullish
+            dxy_dir = _direction(-eur_ret_5d, 0.003)
+            result["dxy_proxy"] = {
+                "direction": dxy_dir,
+                "5d_return": round(-eur_ret_5d * 100, 2),
+                "20d_return": round(-eur_ret_20d * 100, 2),
+                "eurusd_price": round(current, 5),
+            }
+    except Exception:
+        pass
+
+    # Combined bias
+    oil_dir = result.get("oil", {}).get("direction", "neutral")
+    dxy_dir = result.get("dxy_proxy", {}).get("direction", "neutral")
+
+    if oil_dir == "bullish" and dxy_dir == "bullish":
+        combined = "bullish"
+        confidence = "high"
+        implication = "Oil up + USD strong both support USDJPY longs"
+    elif oil_dir == "bearish" and dxy_dir == "bearish":
+        combined = "bearish"
+        confidence = "high"
+        implication = "Oil down + USD soft both support USDJPY shorts"
+    elif oil_dir == "neutral" and dxy_dir == "neutral":
+        combined = "neutral"
+        confidence = "low"
+        implication = "No clear macro direction — trade technicals only"
+    elif oil_dir == "neutral" or dxy_dir == "neutral":
+        active = oil_dir if oil_dir != "neutral" else dxy_dir
+        combined = active
+        confidence = "low"
+        implication = f"Weak {active} bias — only one macro factor aligned"
+    else:
+        combined = "conflicting"
+        confidence = "low"
+        implication = f"Conflict: oil says {oil_dir}, DXY proxy says {dxy_dir} — reduce size or skip"
+
+    result["combined_bias"] = combined
+    result["confidence"] = confidence
+    result["usdjpy_implication"] = implication
+
+    return result if result else None
+
+
 def _fetch_ohlc_history(adapter: Any, profile: ProfileV1) -> dict[str, list[dict[str, Any]]] | None:
     """Fetch recent OHLC candle history for M1, M5, H1, and D timeframes.
 
@@ -744,10 +874,17 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
         except Exception as e:
             ctx["closed_trades_error"] = str(e)
 
-        # Cross-asset snapshot (OANDA only): EUR/USD → DXY proxy, BCO/USD → Oil
+        # Cross-asset snapshot (OANDA only): EUR/USD → DXY proxy, BCO/USD → Oil, Gold, Silver
         if getattr(profile, "broker_type", None) == "oanda":
             try:
                 ctx["cross_assets"] = _fetch_cross_asset_prices(adapter)
+            except Exception:
+                pass
+            # Macro bias from daily candle returns
+            try:
+                bias = _compute_cross_asset_bias(adapter)
+                if bias:
+                    ctx["cross_asset_bias"] = bias
             except Exception:
                 pass
 
@@ -833,17 +970,22 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
 # 2. System prompt
 # ---------------------------------------------------------------------------
 
-def system_prompt_from_context(ctx: dict[str, Any]) -> str:
+def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str:
     """Build a system prompt that grounds the assistant in live trading data."""
-    configured_model = os.environ.get("OPENAI_CHAT_MODEL", "gpt-5-mini")
     lines = [
         "You are a trading assistant for a manual USDJPY trader.",
         "Be concise. Lead with numbers. Never give imperative trade instructions like 'buy now' or 'sell now'.",
         "You may discuss market context, account state, position sizing, and risk management.",
-        f"MODEL IDENTITY: You are running as '{configured_model}'. If asked which model you are, answer exactly '{configured_model}'. Never guess or mention any other model family.",
-        "CAPABILITIES: You have live broker context from this request. You do NOT have built-in web search in this app unless explicit web results are included below.",
+        f"MODEL IDENTITY: You are running as '{effective_model}'. If asked which model you are, answer exactly '{effective_model}'. Never guess or mention any other model family.",
+        "CAPABILITIES: You have live broker context AND function-calling tools. Available tools:",
+        "  - get_candles(timeframe, count): Fetch OHLC candles for any timeframe (M1/M5/M15/H1/H4/D)",
+        "  - get_trade_history(days_back, limit): Query closed trades from database",
+        "  - analyze_trade_patterns(days_back): Win/loss stats by session, tier, entry type",
+        "  - get_cross_asset_bias(): Full macro bias reading (oil, DXY, combined USDJPY implication)",
+        "  - get_economic_calendar(days_ahead): Upcoming high-impact USD/JPY events (FOMC, NFP, BOJ, CPI)",
+        "  - get_news_headlines(count): Recent USDJPY/forex news from RSS feeds",
+        "Use tools proactively when the user's question would benefit from fresh data. For example, use get_news_headlines when asked about recent developments, get_economic_calendar when asked about upcoming events, or get_trade_history when asked about specific past trades.",
         "Never mention training-data cutoff dates or generic model limitations.",
-        "Never say 'I don't have live web access' unless the user explicitly asks about web search capability; if asked, say web search is not enabled in this app yet.",
         "If a user asks non-trading general knowledge (e.g., politics/history) and no web results are provided, state it's outside this trading assistant's scope and redirect to trading/account context.",
         "",
         "SCOPE: The data below is a broker snapshot only. Recent closed trades are from roughly the last 30 days (capped in the prompt).",
@@ -1034,6 +1176,29 @@ def system_prompt_from_context(ctx: dict[str, Any]) -> str:
             lines.append(f"  Oil — WTI (WTICO/USD): {wti}")
         elif brent:
             lines.append(f"  Oil — Brent (BCO/USD): {brent}")
+        gold = cross.get("xau_usd")
+        silver = cross.get("xag_usd")
+        if gold:
+            lines.append(f"  Gold (XAU/USD): {gold}")
+        if silver:
+            lines.append(f"  Silver (XAG/USD): {silver}")
+
+    # Macro bias (cross-asset daily returns)
+    bias = ctx.get("cross_asset_bias")
+    if bias:
+        lines.append("")
+        lines.append("MACRO BIAS:")
+        oil_b = bias.get("oil")
+        if oil_b:
+            lines.append(f"  Oil: {oil_b['direction'].upper()} (5D: {oil_b['5d_return']:+.1f}%, 20D: {oil_b['20d_return']:+.1f}%)")
+        dxy_b = bias.get("dxy_proxy")
+        if dxy_b:
+            lines.append(f"  DXY proxy: {dxy_b['direction'].upper()} (5D: {dxy_b['5d_return']:+.1f}%, 20D: {dxy_b['20d_return']:+.1f}%)")
+        combined = bias.get("combined_bias", "")
+        conf = bias.get("confidence", "")
+        impl = bias.get("usdjpy_implication", "")
+        if combined:
+            lines.append(f"  Combined: {combined.upper()} ({conf} confidence) — {impl}")
 
     # Position book sentiment (OANDA volume proxy)
     pb = ctx.get("position_book")
@@ -1090,7 +1255,500 @@ def system_prompt_from_context(ctx: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 3. OpenAI streaming
+# 3. Function calling tools
+# ---------------------------------------------------------------------------
+
+_AI_CHAT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_candles",
+            "description": "Fetch OHLC candle data for USDJPY at a specific timeframe. Use when the user asks about price action, chart patterns, or specific timeframe analysis.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "timeframe": {"type": "string", "enum": ["M1", "M5", "M15", "H1", "H4", "D"], "description": "Candle timeframe"},
+                    "count": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Number of candles (default 30)"},
+                },
+                "required": ["timeframe"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_trade_history",
+            "description": "Query closed trade history from the database. Use when the user asks about past trades, P&L breakdown, or specific trade details.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days_back": {"type": "integer", "minimum": 1, "maximum": 90, "description": "How many days back to look (default 7)"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Max trades to return (default 20)"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_trade_patterns",
+            "description": "Analyze win/loss patterns grouped by session (Tokyo/London/NY), entry type, and tier. Use when the user asks about which setups work best or worst.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days_back": {"type": "integer", "minimum": 1, "maximum": 90, "description": "How many days to analyze (default 30)"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_cross_asset_bias",
+            "description": "Get full macro bias reading from oil, DXY, and their combined USDJPY implication. Use for macro/correlation context.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_economic_calendar",
+            "description": "Get upcoming high-impact economic events for USD and JPY. Use when the user asks about events, catalysts, or risk ahead.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days_ahead": {"type": "integer", "minimum": 1, "maximum": 30, "description": "How many days ahead to look (default 7)"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_news_headlines",
+            "description": "Fetch recent forex/USDJPY news headlines from free RSS feeds. Use when the user asks about news, what's moving the market, or recent developments.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "count": {"type": "integer", "minimum": 1, "maximum": 20, "description": "Number of headlines (default 10)"},
+                },
+            },
+        },
+    },
+]
+
+
+# ---------------------------------------------------------------------------
+# 3a. Tool executors
+# ---------------------------------------------------------------------------
+
+def _exec_get_candles(args: dict, profile: ProfileV1, **_: Any) -> str:
+    """Fetch OHLC candles via broker adapter."""
+    from adapters.broker import get_adapter
+
+    tf = args.get("timeframe", "H1")
+    count = min(int(args.get("count", 30)), 100)
+    adapter = get_adapter(profile)
+    try:
+        adapter.initialize()
+        if hasattr(adapter, "ensure_symbol"):
+            adapter.ensure_symbol(profile.symbol)
+        df = adapter.get_bars(profile.symbol, tf, count=count)
+        if df is None or df.empty:
+            return f"No candle data available for {tf}."
+        pip_size = float(profile.pip_size) if profile.pip_size else 0.01
+        lines = [f"{tf} candles ({len(df)} bars, oldest→newest):"]
+        for idx, row in df.iterrows():
+            o, h, l, c = float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"])
+            rng = round((h - l) / pip_size, 1)
+            t_str = str(idx) if idx is not None else ""
+            lines.append(f"  {o:.3f}/{h:.3f}/{l:.3f}/{c:.3f} rng={rng}p @{t_str}")
+        return "\n".join(lines)
+    finally:
+        try:
+            adapter.shutdown()
+        except Exception:
+            pass
+
+
+def _exec_get_trade_history(args: dict, profile_name: str, **_: Any) -> str:
+    """Query closed trades from SQLite database."""
+    from storage.sqlite_store import SqliteStore
+
+    days_back = min(int(args.get("days_back", 7)), 90)
+    limit = min(int(args.get("limit", 20)), 50)
+
+    db_path = LOGS_DIR / profile_name / "assistant.db"
+    if not db_path.exists():
+        return "No trade database found for this profile."
+
+    store = SqliteStore(db_path)
+    df = store.read_trades_df(profile_name)
+    if df.empty:
+        return "No trades found in database."
+
+    # Filter by date
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days_back)).isoformat()
+    if "exit_timestamp_utc" in df.columns:
+        closed = df[df["exit_price"].notna() & (df["exit_timestamp_utc"] >= cutoff)].copy()
+    else:
+        closed = df[df["exit_price"].notna()].copy()
+
+    if closed.empty:
+        return f"No closed trades in the last {days_back} days."
+
+    closed = closed.sort_values("exit_timestamp_utc", ascending=False).head(limit)
+
+    lines = [f"Closed trades (last {days_back}d, showing {len(closed)}):"]
+    for _, row in closed.iterrows():
+        side = row.get("side", "?")
+        entry = row.get("entry_price", "?")
+        exit_p = row.get("exit_price", "?")
+        pips = row.get("pips")
+        profit = row.get("profit")
+        entry_type = row.get("entry_type", "")
+        exit_reason = row.get("exit_reason", "")
+        session = row.get("entry_session", "")
+        tier = row.get("tier_number", "")
+        exit_time = row.get("exit_timestamp_utc", "")
+
+        parts = [f"{side}"]
+        if entry != "?":
+            parts.append(f"@{entry}")
+        if exit_p != "?":
+            parts.append(f"→{exit_p}")
+        if pips is not None:
+            parts.append(f"{float(pips):+.1f}p")
+        if profit is not None:
+            parts.append(f"${float(profit):+.2f}")
+        if entry_type:
+            parts.append(f"[{entry_type}]")
+        if tier:
+            parts.append(f"tier{tier}")
+        if session:
+            parts.append(f"({session})")
+        if exit_reason:
+            parts.append(f"exit:{exit_reason}")
+        if exit_time:
+            parts.append(f"@{str(exit_time)[:16]}")
+        lines.append("  " + " ".join(parts))
+
+    return "\n".join(lines)
+
+
+def _exec_analyze_trade_patterns(args: dict, profile_name: str, **_: Any) -> str:
+    """Analyze win/loss patterns by session, entry type, and tier."""
+    from storage.sqlite_store import SqliteStore
+
+    days_back = min(int(args.get("days_back", 30)), 90)
+    db_path = LOGS_DIR / profile_name / "assistant.db"
+    if not db_path.exists():
+        return "No trade database found."
+
+    store = SqliteStore(db_path)
+    df = store.read_trades_df(profile_name)
+    if df.empty:
+        return "No trades found."
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days_back)).isoformat()
+    closed = df[df["exit_price"].notna()].copy()
+    if "exit_timestamp_utc" in closed.columns:
+        closed = closed[closed["exit_timestamp_utc"] >= cutoff]
+    if closed.empty:
+        return f"No closed trades in the last {days_back} days."
+
+    lines = [f"Trade pattern analysis ({len(closed)} trades, last {days_back}d):"]
+
+    def _group_stats(group_col: str, label: str) -> None:
+        if group_col not in closed.columns or closed[group_col].isna().all():
+            return
+        lines.append(f"\n  By {label}:")
+        for name, grp in closed.groupby(group_col):
+            if not name:
+                continue
+            total = len(grp)
+            wins = len(grp[grp["profit"] > 0]) if "profit" in grp.columns else 0
+            wr = round(wins / total * 100, 1) if total else 0
+            avg_profit = round(grp["profit"].mean(), 2) if "profit" in grp.columns else 0
+            avg_pips = round(grp["pips"].mean(), 1) if "pips" in grp.columns else 0
+            lines.append(f"    {name}: {total} trades, {wr}% WR, avg {avg_pips:+.1f}p, avg ${avg_profit:+.2f}")
+
+    _group_stats("entry_session", "Session")
+    _group_stats("entry_type", "Entry Type")
+    _group_stats("tier_number", "Tier")
+    _group_stats("side", "Side")
+
+    return "\n".join(lines)
+
+
+def _exec_get_cross_asset_bias(profile: ProfileV1, **_: Any) -> str:
+    """Get full cross-asset macro bias."""
+    from adapters.broker import get_adapter
+
+    adapter = get_adapter(profile)
+    try:
+        adapter.initialize()
+        bias = _compute_cross_asset_bias(adapter)
+        if not bias:
+            return "Unable to compute cross-asset bias."
+        lines = ["Cross-Asset Macro Bias:"]
+        oil = bias.get("oil")
+        if oil:
+            lines.append(f"  Oil (Brent): {oil['direction'].upper()} — 5D: {oil['5d_return']:+.1f}%, 20D: {oil['20d_return']:+.1f}%, price: {oil['price']}")
+        dxy = bias.get("dxy_proxy")
+        if dxy:
+            lines.append(f"  DXY proxy: {dxy['direction'].upper()} — 5D: {dxy['5d_return']:+.1f}%, 20D: {dxy['20d_return']:+.1f}%, EUR/USD: {dxy['eurusd_price']}")
+        lines.append(f"  Combined: {bias.get('combined_bias', '?').upper()} ({bias.get('confidence', '?')} confidence)")
+        lines.append(f"  Implication: {bias.get('usdjpy_implication', '?')}")
+        return "\n".join(lines)
+    finally:
+        try:
+            adapter.shutdown()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# 3b. Economic calendar (free: static + ForexFactory XML)
+# ---------------------------------------------------------------------------
+
+import time as _time
+import xml.etree.ElementTree as _ET
+from calendar import monthrange as _monthrange
+from urllib.request import Request as _Request, urlopen as _urlopen
+
+_CALENDAR_CACHE: dict[str, tuple[float, list[dict[str, str]]]] = {}
+_CALENDAR_CACHE_TTL = 3600  # 1 hour
+
+# FOMC 2025-2026 meeting dates (public: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+_FOMC_DATES = [
+    "2025-01-29", "2025-03-19", "2025-05-07", "2025-06-18",
+    "2025-07-30", "2025-09-17", "2025-10-29", "2025-12-17",
+    "2026-01-28", "2026-03-18", "2026-04-29", "2026-06-17",
+    "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-16",
+]
+
+# BOJ 2025-2026 meeting dates (approximate — usually 2 days)
+_BOJ_DATES = [
+    "2025-01-24", "2025-03-14", "2025-04-25", "2025-06-13",
+    "2025-07-31", "2025-09-19", "2025-10-31", "2025-12-19",
+    "2026-01-23", "2026-03-13", "2026-04-28", "2026-06-16",
+    "2026-07-16", "2026-09-17", "2026-10-29", "2026-12-18",
+]
+
+
+def _nth_weekday_of_month(year: int, month: int, weekday: int, n: int) -> datetime:
+    """Return the nth occurrence of weekday (0=Mon, 4=Fri) in the given month."""
+    first_day = datetime(year, month, 1, tzinfo=timezone.utc)
+    # weekday of first day
+    first_wd = first_day.weekday()
+    # days until first target weekday
+    days_until = (weekday - first_wd) % 7
+    first_occurrence = first_day + timedelta(days=days_until)
+    return first_occurrence + timedelta(weeks=n - 1)
+
+
+def _get_static_calendar_events(days_ahead: int) -> list[dict[str, str]]:
+    """Generate static calendar events for known recurring USD/JPY events."""
+    now = datetime.now(timezone.utc)
+    cutoff = now + timedelta(days=days_ahead)
+    events: list[dict[str, str]] = []
+
+    # FOMC
+    for d in _FOMC_DATES:
+        dt = datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=timezone.utc, hour=18)
+        if now <= dt <= cutoff:
+            events.append({"date": d, "time": "18:00 UTC", "currency": "USD", "event": "FOMC Interest Rate Decision", "impact": "HIGH"})
+
+    # BOJ
+    for d in _BOJ_DATES:
+        dt = datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=timezone.utc, hour=3)
+        if now <= dt <= cutoff:
+            events.append({"date": d, "time": "~03:00 UTC", "currency": "JPY", "event": "BOJ Interest Rate Decision", "impact": "HIGH"})
+
+    # NFP: first Friday of each month, 12:30 UTC
+    for month_offset in range(0, max(days_ahead // 28 + 2, 3)):
+        m = now.month + month_offset
+        y = now.year + (m - 1) // 12
+        m = ((m - 1) % 12) + 1
+        nfp = _nth_weekday_of_month(y, m, 4, 1)  # Friday=4, 1st occurrence
+        nfp = nfp.replace(hour=12, minute=30)
+        if now <= nfp <= cutoff:
+            events.append({"date": nfp.strftime("%Y-%m-%d"), "time": "12:30 UTC", "currency": "USD", "event": "Non-Farm Payrolls (NFP)", "impact": "HIGH"})
+
+    # US CPI: typically 10th-15th of each month, 12:30 UTC
+    for month_offset in range(0, max(days_ahead // 28 + 2, 3)):
+        m = now.month + month_offset
+        y = now.year + (m - 1) // 12
+        m = ((m - 1) % 12) + 1
+        # Approximate: 2nd Tuesday-Thursday of month
+        cpi_approx = _nth_weekday_of_month(y, m, 2, 2)  # 2nd Wednesday
+        cpi_approx = cpi_approx.replace(hour=12, minute=30)
+        if now <= cpi_approx <= cutoff:
+            events.append({"date": cpi_approx.strftime("%Y-%m-%d"), "time": "12:30 UTC (approx)", "currency": "USD", "event": "US CPI (Consumer Price Index)", "impact": "HIGH"})
+
+    events.sort(key=lambda e: e["date"])
+    return events
+
+
+def _fetch_forexfactory_calendar() -> list[dict[str, str]]:
+    """Try to fetch ForexFactory XML calendar for additional events. Best-effort."""
+    now = _time.time()
+    cached = _CALENDAR_CACHE.get("ff")
+    if cached and now - cached[0] < _CALENDAR_CACHE_TTL:
+        return cached[1]
+
+    events: list[dict[str, str]] = []
+    try:
+        req = _Request(
+            "https://nfs.faireconomy.media/ff_calendar_thisweek.xml",
+            headers={"User-Agent": "USDJPY-Assistant/1.0"},
+        )
+        with _urlopen(req, timeout=5) as resp:
+            tree = _ET.parse(resp)
+        for item in tree.findall(".//event"):
+            currency = (item.findtext("country", "") or "").upper()
+            if currency not in ("USD", "JPY"):
+                continue
+            impact = (item.findtext("impact", "") or "").upper()
+            if impact not in ("HIGH", "MEDIUM"):
+                continue
+            title = item.findtext("title", "") or ""
+            date = item.findtext("date", "") or ""
+            time_str = item.findtext("time", "") or ""
+            events.append({
+                "date": date,
+                "time": time_str,
+                "currency": currency,
+                "event": title,
+                "impact": impact,
+            })
+    except Exception:
+        pass
+
+    _CALENDAR_CACHE["ff"] = (now, events)
+    return events
+
+
+def _exec_get_economic_calendar(args: dict, **_: Any) -> str:
+    """Get upcoming economic events for USD/JPY."""
+    days_ahead = min(int(args.get("days_ahead", 7)), 30)
+    events = _get_static_calendar_events(days_ahead)
+
+    # Try ForexFactory supplement
+    try:
+        ff = _fetch_forexfactory_calendar()
+        if ff:
+            # Deduplicate by date + event name similarity
+            existing = {(e["date"], e["event"][:20]) for e in events}
+            for f in ff:
+                key = (f["date"], f["event"][:20])
+                if key not in existing:
+                    events.append(f)
+    except Exception:
+        pass
+
+    events.sort(key=lambda e: e["date"])
+
+    if not events:
+        return f"No high-impact USD/JPY events found in the next {days_ahead} days."
+
+    lines = [f"Upcoming USD/JPY events (next {days_ahead}d):"]
+    for e in events:
+        lines.append(f"  {e['date']} {e.get('time', '')} [{e['currency']}] {e['event']} ({e['impact']})")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# 3c. News headlines (free RSS)
+# ---------------------------------------------------------------------------
+
+_NEWS_CACHE: dict[str, tuple[float, list[dict[str, str]]]] = {}
+_NEWS_CACHE_TTL = 600  # 10 minutes
+
+_RSS_FEEDS = [
+    ("Google News", "https://news.google.com/rss/search?q=USDJPY+forex&hl=en-US&gl=US&ceid=US:en"),
+    ("Google News JPY", "https://news.google.com/rss/search?q=japanese+yen+dollar&hl=en-US&gl=US&ceid=US:en"),
+]
+
+
+def _exec_get_news_headlines(args: dict, **_: Any) -> str:
+    """Fetch recent forex/USDJPY news from RSS feeds."""
+    count = min(int(args.get("count", 10)), 20)
+    now = _time.time()
+
+    cached = _NEWS_CACHE.get("news")
+    if cached and now - cached[0] < _NEWS_CACHE_TTL:
+        return _format_headlines(cached[1], count)
+
+    headlines: list[dict[str, str]] = []
+    seen_titles: set[str] = set()
+    for source_name, url in _RSS_FEEDS:
+        try:
+            req = _Request(url, headers={"User-Agent": "USDJPY-Assistant/1.0"})
+            with _urlopen(req, timeout=5) as resp:
+                raw = resp.read()
+            tree = _ET.fromstring(raw)
+            for item in tree.findall(".//item"):
+                title = (item.findtext("title") or "").strip()
+                if not title or title in seen_titles:
+                    continue
+                seen_titles.add(title)
+                pub_date = (item.findtext("pubDate") or "").strip()
+                source = item.findtext("source") or source_name
+                if hasattr(source, "text"):
+                    source = source
+                headlines.append({"title": title, "date": pub_date, "source": str(source)})
+        except Exception:
+            continue
+
+    _NEWS_CACHE["news"] = (now, headlines)
+    return _format_headlines(headlines, count)
+
+
+def _format_headlines(headlines: list[dict[str, str]], count: int) -> str:
+    if not headlines:
+        return "No recent USDJPY/forex news headlines available."
+    lines = [f"Recent forex news ({min(count, len(headlines))} headlines):"]
+    for h in headlines[:count]:
+        date_short = h["date"][:22] if h["date"] else ""
+        lines.append(f"  [{h['source']}] {h['title']} ({date_short})")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# 3d. Tool dispatch
+# ---------------------------------------------------------------------------
+
+_TOOL_EXECUTORS: dict[str, Any] = {
+    "get_candles": _exec_get_candles,
+    "get_trade_history": _exec_get_trade_history,
+    "analyze_trade_patterns": _exec_analyze_trade_patterns,
+    "get_cross_asset_bias": lambda args, **kw: _exec_get_cross_asset_bias(**kw),
+    "get_economic_calendar": _exec_get_economic_calendar,
+    "get_news_headlines": _exec_get_news_headlines,
+}
+
+
+def _execute_tool(name: str, args_str: str, profile: ProfileV1, profile_name: str) -> str:
+    """Execute a tool by name and return the result as a string."""
+    try:
+        args = json.loads(args_str) if args_str else {}
+    except json.JSONDecodeError:
+        args = {}
+
+    executor = _TOOL_EXECUTORS.get(name)
+    if not executor:
+        return f"Unknown tool: {name}"
+
+    try:
+        return executor(args, profile=profile, profile_name=profile_name)
+    except Exception as e:
+        return f"Tool error ({name}): {e}"
+
+
+# ---------------------------------------------------------------------------
+# 4. OpenAI streaming with function calling
 # ---------------------------------------------------------------------------
 
 def stream_openai_chat(
@@ -1099,32 +1757,103 @@ def stream_openai_chat(
     user_message: str,
     history: list[dict[str, str]],
     model: str | None = None,
+    profile: ProfileV1 | None = None,
+    profile_name: str = "",
 ) -> Generator[str, None, None]:
-    """Yield SSE-formatted lines: {"type":"delta","text":"..."} then {"type":"done"}.
+    """Yield SSE-formatted lines with function calling support.
 
-    Uses the official openai SDK with synchronous streaming.
+    SSE events:
+      {"type":"delta","text":"..."}        — text content
+      {"type":"tool_status","name":"..."}  — tool being executed
+      {"type":"done"}                      — stream finished
     """
     import openai
 
-    client = openai.OpenAI()  # uses OPENAI_API_KEY env var
+    client = openai.OpenAI()
 
     if model is None:
-        # Default: stronger than gpt-4o-mini; override with OPENAI_CHAT_MODEL (e.g. gpt-4o-mini, gpt-4o).
         model = os.environ.get("OPENAI_CHAT_MODEL", "gpt-5-mini")
 
-    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
     messages.extend(history)
     messages.append({"role": "user", "content": user_message})
 
-    stream = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        stream=True,
-    )
+    max_tool_rounds = 3  # prevent infinite tool loops
+    tools_available = profile is not None
 
-    for chunk in stream:
-        delta = chunk.choices[0].delta if chunk.choices else None
-        if delta and delta.content:
-            yield f"data: {json.dumps({'type': 'delta', 'text': delta.content})}\n\n"
+    for _round in range(max_tool_rounds + 1):
+        create_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "stream": True,
+        }
+        if tools_available:
+            create_kwargs["tools"] = _AI_CHAT_TOOLS
+
+        stream = client.chat.completions.create(**create_kwargs)
+
+        # Accumulate tool calls across streamed chunks
+        tool_calls_acc: dict[int, dict[str, str]] = {}  # index -> {id, name, arguments}
+        finish_reason = None
+
+        for chunk in stream:
+            choice = chunk.choices[0] if chunk.choices else None
+            if not choice:
+                continue
+
+            delta = choice.delta
+            if delta and delta.content:
+                yield f"data: {json.dumps({'type': 'delta', 'text': delta.content})}\n\n"
+
+            # Accumulate tool call deltas
+            if delta and delta.tool_calls:
+                for tc_delta in delta.tool_calls:
+                    idx = tc_delta.index
+                    if idx not in tool_calls_acc:
+                        tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                    if tc_delta.id:
+                        tool_calls_acc[idx]["id"] = tc_delta.id
+                    if tc_delta.function and tc_delta.function.name:
+                        tool_calls_acc[idx]["name"] = tc_delta.function.name
+                    if tc_delta.function and tc_delta.function.arguments:
+                        tool_calls_acc[idx]["arguments"] += tc_delta.function.arguments
+
+            if choice.finish_reason:
+                finish_reason = choice.finish_reason
+
+        # If no tool calls, we're done
+        if finish_reason != "tool_calls" or not tool_calls_acc or not tools_available:
+            break
+
+        # Execute tool calls and append results
+        # First append the assistant message with tool_calls
+        assistant_tool_calls = []
+        for idx in sorted(tool_calls_acc.keys()):
+            tc = tool_calls_acc[idx]
+            assistant_tool_calls.append({
+                "id": tc["id"],
+                "type": "function",
+                "function": {"name": tc["name"], "arguments": tc["arguments"]},
+            })
+
+        messages.append({"role": "assistant", "tool_calls": assistant_tool_calls})
+
+        # Execute each tool and append result
+        for tc_msg in assistant_tool_calls:
+            tool_name = tc_msg["function"]["name"]
+            tool_args = tc_msg["function"]["arguments"]
+            tool_id = tc_msg["id"]
+
+            # Notify frontend
+            yield f"data: {json.dumps({'type': 'tool_status', 'name': tool_name})}\n\n"
+
+            result = _execute_tool(tool_name, tool_args, profile, profile_name)  # type: ignore[arg-type]
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_id,
+                "content": result,
+            })
+
+        # Loop back to get the model's response after tool results
 
     yield f"data: {json.dumps({'type': 'done'})}\n\n"

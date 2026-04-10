@@ -902,6 +902,17 @@ export interface AiChatHistoryMessage {
 export interface AiChatRequestBody {
   message: string;
   history: AiChatHistoryMessage[];
+  /** Must be in server allowlist from GET /api/ai-chat/models */
+  chat_model?: string;
+}
+
+export interface AiChatModelsResponse {
+  models: string[];
+  default_model: string;
+}
+
+export async function getAiChatModels(): Promise<AiChatModelsResponse> {
+  return fetchJson<AiChatModelsResponse>(`${API_BASE}/ai-chat/models`);
 }
 
 async function readApiErrorDetail(res: Response): Promise<string> {
@@ -954,7 +965,7 @@ export async function streamAiChat(
   profileName: string,
   profilePath: string,
   body: AiChatRequestBody,
-  options: { onDelta: (text: string) => void; signal?: AbortSignal }
+  options: { onDelta: (text: string) => void; onToolStatus?: (name: string) => void; signal?: AbortSignal }
 ): Promise<void> {
   const url = `${API_BASE}/data/${encodeURIComponent(profileName)}/ai-chat?profile_path=${encodeURIComponent(profilePath)}`;
   const res = await fetch(url, {
@@ -991,6 +1002,9 @@ export async function streamAiChat(
       if (typ === 'delta' && typeof ev.text === 'string') {
         options.onDelta(ev.text);
       }
+      if (typ === 'tool_status' && typeof ev.name === 'string' && options.onToolStatus) {
+        options.onToolStatus(ev.name);
+      }
       if (typ === 'done') {
         return;
       }
@@ -1007,6 +1021,9 @@ export async function streamAiChat(
       const typ = ev.type;
       if (typ === 'delta' && typeof ev.text === 'string') {
         options.onDelta(ev.text);
+      }
+      if (typ === 'tool_status' && typeof ev.name === 'string' && options.onToolStatus) {
+        options.onToolStatus(ev.name);
       }
       if (typ === 'done') {
         return;
