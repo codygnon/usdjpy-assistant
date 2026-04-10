@@ -13,7 +13,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -116,6 +116,28 @@ LEAN_UI_MODE = os.environ.get("LEAN_UI_MODE", "true").strip().lower() in {"1", "
 
 # Verbose stdout logging (Railway log volume / CPU); default off.
 API_VERBOSE_LOGS = os.environ.get("API_VERBOSE_LOGS", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _run_in_threadpool_with_timeout(
+    fn: Callable[..., Any],
+    timeout_seconds: float,
+    /,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Run *fn* in a worker thread and return its result (or propagate its exception).
+
+    Uses ``shutdown(wait=False)`` so a timed-out ``fut.result`` does **not** block until a
+    stuck broker/HTTP call finishes. The default ``with ThreadPoolExecutor`` path calls
+    ``shutdown(wait=True)`` on exit, which defeats timeouts and can trigger Railway/proxy
+    **502 Application failed to respond** under slow OANDA responses.
+    """
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        fut = executor.submit(fn, *args, **kwargs)
+        return fut.result(timeout=timeout_seconds)
+    finally:
+        executor.shutdown(wait=False)
 
 # Short-lived endpoint response cache for expensive read endpoints.
 _endpoint_response_cache: dict[str, tuple[float, Any]] = {}
@@ -2631,20 +2653,18 @@ def get_technical_analysis(profile_name: str, profile_path: str) -> dict[str, An
     except ValueError:
         ta_timeout = 12.0
 
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        fut = executor.submit(_compute_technical_analysis_payload, path)
-        try:
-            return fut.result(timeout=ta_timeout)
-        except FuturesTimeoutError:
-            return {
-                "timeframes": {},
-                "error": "compute_timeout",
-                "detail": "Technical analysis exceeded the server time limit (slow broker or network). Retry in a moment.",
-            }
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"TA error: {str(e)}") from e
+    try:
+        return _run_in_threadpool_with_timeout(_compute_technical_analysis_payload, ta_timeout, path)
+    except FuturesTimeoutError:
+        return {
+            "timeframes": {},
+            "error": "compute_timeout",
+            "detail": "Technical analysis exceeded the server time limit (slow broker or network). Retry in a moment.",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"TA error: {str(e)}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -2939,13 +2959,13 @@ def get_open_trades(profile_name: str, profile_path: Optional[str] = None, sync:
                     sync_timeout = float(os.environ.get("API_OPEN_TRADES_SYNC_TIMEOUT_SEC", "8"))
                 except ValueError:
                     sync_timeout = 8.0
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    fut = executor.submit(_open_trades_sync_and_broker_live, loaded_profile, store)
-                    try:
-                        broker_live = fut.result(timeout=sync_timeout)
-                    except FuturesTimeoutError:
-                        print(f"[api] open-trades broker sync timed out after {sync_timeout}s")
-                        broker_live = {}
+                try:
+                    broker_live = _run_in_threadpool_with_timeout(
+                        _open_trades_sync_and_broker_live, sync_timeout, loaded_profile, store
+                    )
+                except FuturesTimeoutError:
+                    print(f"[api] open-trades broker sync timed out after {sync_timeout}s")
+                    broker_live = {}
             except Exception as e:
                 print(f"[api] sync error in open-trades: {e}")
 
@@ -4583,14 +4603,14 @@ def _build_live_dashboard_state_with_timeout(
             timeout_seconds = float(os.environ.get("LIVE_DASHBOARD_TIMEOUT_SEC", "2.5"))
         except ValueError:
             timeout_seconds = 2.5
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        fut = executor.submit(_build_live_dashboard_state, profile_name, profile_path, log_dir)
-        try:
-            return fut.result(timeout=timeout_seconds)
-        except FuturesTimeoutError:
-            return {"error": "live_dashboard_timeout", "timestamp_utc": None}
-        except Exception as e:
-            return {"error": f"live_dashboard_exception:{e}", "timestamp_utc": None}
+    try:
+        return _run_in_threadpool_with_timeout(
+            _build_live_dashboard_state, timeout_seconds, profile_name, profile_path, log_dir
+        )
+    except FuturesTimeoutError:
+        return {"error": "live_dashboard_timeout", "timestamp_utc": None}
+    except Exception as e:
+        return {"error": f"live_dashboard_exception:{e}", "timestamp_utc": None}
 
 
 def _strip_trial10_directional_cap_filter(payload: dict[str, Any]) -> dict[str, Any]:
@@ -5489,9 +5509,7 @@ def ai_chat(profile_name: str, profile_path: str, req: AiChatRequest):
         ctx_timeout = 20.0
 
     try:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            fut = executor.submit(build_trading_context, profile, profile_name)
-            ctx = fut.result(timeout=ctx_timeout)
+        ctx = _run_in_threadpool_with_timeout(build_trading_context, ctx_timeout, profile, profile_name)
     except FuturesTimeoutError:
         raise HTTPException(status_code=502, detail="API fetch error (broker context timed out)")
     except Exception as e:
