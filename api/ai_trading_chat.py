@@ -718,18 +718,16 @@ def _compute_cross_asset_bias(adapter: Any) -> dict[str, Any] | None:
 
 
 def _fetch_ohlc_history(adapter: Any, profile: ProfileV1) -> dict[str, list[dict[str, Any]]] | None:
-    """Fetch recent OHLC candle history for M1, M5, H1, and D timeframes.
+    """Fetch compact OHLC history for prompt grounding.
 
-    Returns compact candle lists keyed by timeframe so the model can read chart history.
+    Keep this intentionally small for token efficiency; deeper history should use tools.
     """
     pip_size = float(profile.pip_size) if profile.pip_size else 0.01
     result: dict[str, list[dict[str, Any]]] = {}
 
     configs = [
+        ("H1", 12),   # last 12 H1 bars
         ("M1", 30),   # last 30 M1 bars
-        ("M5", 24),   # last 2 hours of M5
-        ("H1", 24),   # last 24 H1 bars
-        ("D", 10),    # last 10 daily bars
     ]
 
     for tf, count in configs:
@@ -849,9 +847,8 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
                     symbol=profile.symbol,
                     pip_size=profile.pip_size,
                 ) or []
-                # Prompt shows only a sample; today/week/month stats must use the FULL 30d list
-                # or weekly P&L under-counts (e.g. user +$8k "yesterday" but only last 25 trades summed).
-                ctx["recent_closed_trades"] = closed[:25]
+                # Prompt shows only a sample; today/week/month stats must use the FULL 30d list.
+                ctx["recent_closed_trades"] = closed[:10]
                 if closed:
                     ctx["derived_stats"] = _compute_derived_stats(closed)
             else:
@@ -973,10 +970,11 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
 def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str:
     """Build a system prompt that grounds the assistant in live trading data."""
     lines = [
-        "You are a trading assistant for a manual USDJPY trader.",
+        "You are a trading assistant for a professional manual USDJPY scalper with a proven profitable track record.",
+        "Your job is to make them faster and more informed — not to tell them what to do. Do not question their edge.",
         "Be concise. Lead with numbers. Never give imperative trade instructions like 'buy now' or 'sell now'.",
         "You may discuss market context, account state, position sizing, and risk management.",
-        f"MODEL IDENTITY: You are running as '{effective_model}'. If asked which model you are, answer exactly '{effective_model}'. Never guess or mention any other model family.",
+        f"MODEL IDENTITY: You are '{effective_model}'. If asked, say exactly that.",
         "CAPABILITIES: You have live broker context AND function-calling tools. Available tools:",
         "  - get_candles(timeframe, count): Fetch OHLC candles for any timeframe (M1/M5/M15/H1/H4/D)",
         "  - get_trade_history(days_back, limit): Query closed trades from database",
@@ -984,19 +982,26 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
         "  - get_cross_asset_bias(): Full macro bias reading (oil, DXY, combined USDJPY implication)",
         "  - get_economic_calendar(days_ahead): Upcoming high-impact USD/JPY events (FOMC, NFP, BOJ, CPI)",
         "  - get_news_headlines(count): Recent USDJPY/forex news from RSS feeds",
-        "Use tools proactively when the user's question would benefit from fresh data. For example, use get_news_headlines when asked about recent developments, get_economic_calendar when asked about upcoming events, or get_trade_history when asked about specific past trades.",
+        "Use tools when the question benefits from fresh data. For example: get_news_headlines for recent developments, get_economic_calendar for upcoming events, and get_trade_history for specific past trades.",
         "Never mention training-data cutoff dates or generic model limitations.",
-        "If a user asks non-trading general knowledge (e.g., politics/history) and no web results are provided, state it's outside this trading assistant's scope and redirect to trading/account context.",
+        "Non-trading questions (politics, history, etc.) are out of scope. Redirect to trading context.",
         "",
         "SCOPE: The data below is a broker snapshot only. Recent closed trades are from roughly the last 30 days (capped in the prompt).",
+        "If asked about the trader's style: they trade three modes — post-impulse range fades, proven organic range bounces, and spike mean reversion.",
+        "Typical targets 4-10 pips, stops 10-15 pips, high win-rate style. They size large at strong levels and DCA within ranges.",
         "TODAY / THIS WEEK / MONTH stats (if present) are computed from the full 30-day closed-trade fetch from the broker, not from the short trade sample lines below.",
         "THIS WEEK means Monday 00:00 UTC through now (UTC), not the user's local calendar week unless they ask.",
         "The Logs & Stats equity curve in the app may use a longer window (e.g. 365 days) — do not claim totals or win rates for the whole chart unless you only summarize the trades actually listed below.",
         "Do not invent weekly P/L or percentages; use the precomputed THIS WEEK / TODAY lines when present, else derive only from listed trades.",
         "",
         "DELIVERY (desk style): Target ~80 words for simple questions; ~150 max for multi-part. One tight paragraph or short bullets.",
+        "Never say 'I can't give financial advice', 'consult a professional', 'this is not financial advice', or similar disclaimers.",
+        "Never say 'based on the data provided' or 'according to my context' — answer directly.",
         "Never use numbered sections (1) 2)) or Roman numerals. No essay structure.",
         "Never end with offers to recalculate, clarify, or do more — answer once and stop.",
+        "Never summarize what you just said at the end of a response.",
+        "When no positions are open, keep responses under 80 words.",
+        "When positions ARE open, always lead with position status and P&L before anything else.",
         "Never hedge with 'if your definition differs', 'assumption:', or 'say so and I'll recalc' — state facts using the definitions below.",
         "",
         "SIZING DEFAULTS (USDJPY desk math; use unless broker context clearly contradicts):",
@@ -1038,8 +1043,9 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
     closed = ctx.get("recent_closed_trades")
     if closed:
         lines.append("")
-        lines.append(f"Recent Closed Trades (last 30 days, showing {len(closed)}):")
-        for t in closed[:10]:  # show top 10 in prompt
+        shown = min(len(closed), 10)
+        lines.append(f"Recent Closed Trades (last 30 days, showing {shown}):")
+        for t in closed[:10]:
             lines.append(f"  {t}")
 
     stats = ctx.get("recent_trade_stats")
@@ -1239,7 +1245,7 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
     if ohlc:
         lines.append("")
         lines.append("OHLC CANDLE HISTORY (o=open, h=high, l=low, c=close, t=time):")
-        for tf in ("D", "H1", "M5", "M1"):
+        for tf in ("H1", "M1"):
             candles = ohlc.get(tf)
             if not candles:
                 continue
