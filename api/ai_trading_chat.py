@@ -1912,6 +1912,62 @@ def _exec_get_economic_calendar(args: dict, **_: Any) -> str:
     return "\n".join(lines)
 
 
+def _parse_event_datetime_utc(event: dict[str, str]) -> datetime | None:
+    """Best-effort parser for calendar event date/time into UTC datetime."""
+    try:
+        d = str(event.get("date") or "").strip()
+        if not d:
+            return None
+        base = datetime.strptime(d[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+    t = str(event.get("time") or "").strip().upper()
+    # Expected formats: "18:00 UTC", "~03:00 UTC", "12:30 UTC (approx)"
+    import re as _re
+    m = _re.search(r"(\d{1,2}):(\d{2})", t)
+    if not m:
+        return base.replace(hour=0, minute=0, second=0, microsecond=0)
+    hh = int(m.group(1))
+    mm = int(m.group(2))
+    return base.replace(hour=hh, minute=mm, second=0, microsecond=0)
+
+
+def get_economic_calendar_events(days_ahead: int = 7, limit: int = 3) -> list[dict[str, Any]]:
+    """Structured upcoming USD/JPY events for UI tiles."""
+    days_ahead = max(1, min(int(days_ahead), 30))
+    events = _get_static_calendar_events(days_ahead)
+    try:
+        ff = _fetch_forexfactory_calendar()
+        if ff:
+            existing = {(str(e.get("date", "")), str(e.get("event", ""))[:24]) for e in events}
+            for f in ff:
+                key = (str(f.get("date", "")), str(f.get("event", ""))[:24])
+                if key not in existing:
+                    events.append(f)
+    except Exception:
+        pass
+    now_utc = datetime.now(timezone.utc)
+    structured: list[dict[str, Any]] = []
+    for e in events:
+        dt = _parse_event_datetime_utc(e)
+        if not dt:
+            continue
+        if dt < now_utc:
+            continue
+        mins = int((dt - now_utc).total_seconds() // 60)
+        structured.append({
+            "timestamp_utc": dt.isoformat(),
+            "date": str(e.get("date", "")),
+            "time": str(e.get("time", "")),
+            "currency": str(e.get("currency", "")),
+            "event": str(e.get("event", "")),
+            "impact": str(e.get("impact", "")),
+            "minutes_to_event": mins,
+        })
+    structured.sort(key=lambda x: str(x.get("timestamp_utc", "")))
+    return structured[: max(1, int(limit))]
+
+
 # ---------------------------------------------------------------------------
 # 3c. News headlines (free RSS)
 # ---------------------------------------------------------------------------

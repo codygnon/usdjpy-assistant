@@ -5480,6 +5480,114 @@ def get_ai_chat_models_list() -> dict[str, Any]:
     }
 
 
+@app.get("/api/data/{profile_name}/ai-rail")
+def get_ai_assistant_rail(profile_name: str, profile_path: str, days_ahead: int = 7) -> dict[str, Any]:
+    """Compact right-rail payload for AI assistant UI tiles."""
+    path = _resolve_profile_path(profile_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Profile not found")
+    try:
+        profile = load_profile_v1(path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"API fetch error (profile): {e}")
+
+    from api.ai_trading_chat import build_trading_context, get_economic_calendar_events
+
+    try:
+        rail_timeout = float(os.environ.get("API_AI_RAIL_TIMEOUT_SEC", "12"))
+    except ValueError:
+        rail_timeout = 12.0
+
+    try:
+        ctx = _run_in_threadpool_with_timeout(build_trading_context, rail_timeout, profile, profile_name)
+    except FuturesTimeoutError:
+        raise HTTPException(status_code=502, detail="API fetch error (rail context timed out)")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"API fetch error (rail context): {e}")
+
+    spot = ctx.get("spot_price") or {}
+    mid = float(spot.get("mid", 0) or 0)
+    ob = ctx.get("order_book") or {}
+    supports = list(ob.get("buy_clusters") or [])
+    resistances = list(ob.get("sell_clusters") or [])
+
+    def _level_rows(rows: list[dict[str, Any]], direction: str) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for r in rows[:3]:
+            try:
+                price = float(r.get("price", 0) or 0)
+                pct = float(r.get("pct", 0) or 0)
+            except Exception:
+                continue
+            if price <= 0:
+                continue
+            dist = None
+            if mid > 0:
+                dist = round(((price - mid) / 0.01), 1)
+            out.append({
+                "price": round(price, 3),
+                "weight_pct": round(pct * 100, 2),
+                "distance_pips": dist,
+                "direction": direction,
+            })
+        return out
+
+    bias = ctx.get("cross_asset_bias") or {}
+    cross = ctx.get("cross_assets") or {}
+    oil = bias.get("oil") or {}
+    dxy = bias.get("dxy") or {}
+    macro = {
+        "combined_bias": str(bias.get("combined_bias", "neutral")),
+        "confidence": str(bias.get("confidence", "low")),
+        "implication": str(bias.get("usdjpy_implication", "")),
+        "dxy": {
+            "value": cross.get("dxy"),
+            "one_day": None,
+            "five_day": dxy.get("5d_return"),
+        },
+        "us10y": {
+            "value": cross.get("us10y_yield"),
+            "one_day": None,
+            "five_day": None,
+        },
+        "oil": {
+            "value": cross.get("bco_usd"),
+            "one_day": None,
+            "five_day": oil.get("5d_return"),
+        },
+        "gold": {
+            "value": cross.get("xau_usd"),
+            "one_day": None,
+            "five_day": None,
+        },
+    }
+
+    session = ctx.get("session") or {}
+    vol = ctx.get("volatility") or {}
+    events = get_economic_calendar_events(days_ahead=days_ahead, limit=3)
+
+    return {
+        "as_of": ctx.get("as_of"),
+        "macro": macro,
+        "events": events,
+        "levels": {
+            "mid": round(mid, 3) if mid > 0 else None,
+            "supports": _level_rows(supports, "support"),
+            "resistances": _level_rows(resistances, "resistance"),
+        },
+        "session_vol": {
+            "active_sessions": list(session.get("active_sessions") or []),
+            "overlap": session.get("overlap"),
+            "next_close": session.get("next_close"),
+            "warnings": list(session.get("warnings") or []),
+            "spread_pips": spot.get("spread_pips"),
+            "vol_label": vol.get("label"),
+            "vol_ratio": vol.get("ratio"),
+            "recent_avg_pips": vol.get("recent_avg_pips"),
+        },
+    }
+
+
 @app.post("/api/data/{profile_name}/ai-chat")
 def ai_chat(profile_name: str, profile_path: str, req: AiChatRequest):
     """Streaming AI chat endpoint — SSE delta/done contract."""

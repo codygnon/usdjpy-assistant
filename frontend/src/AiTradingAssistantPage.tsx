@@ -112,6 +112,26 @@ function AssistantFormattedBody({ content }: { content: string }): ReactNode {
 
 const FALLBACK_AI_MODELS: string[] = ['gpt-5-mini', 'gpt-4o-mini', 'gpt-4o'];
 
+function signedPct(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return '-';
+  return `${v > 0 ? '+' : ''}${v.toFixed(1)}%`;
+}
+
+function moveArrow(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return '-';
+  if (v > 0) return 'UP';
+  if (v < 0) return 'DOWN';
+  return 'FLAT';
+}
+
+function countdownLabel(minutesToEvent: number): string {
+  if (!Number.isFinite(minutesToEvent) || minutesToEvent < 0) return 'now';
+  const h = Math.floor(minutesToEvent / 60);
+  const m = Math.floor(minutesToEvent % 60);
+  if (h <= 0) return `${m}m`;
+  return `${h}h ${m}m`;
+}
+
 export default function AiTradingAssistantPage({ profile }: { profile: AiAssistantProfile }) {
   const [messages, setMessages] = useState<ChatLine[]>(() => loadChatFromStorage(profile.path));
   const [input, setInput] = useState('');
@@ -121,6 +141,7 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
   const [chatModel, setChatModel] = useState<string>('');
   const [modelsReady, setModelsReady] = useState(false);
   const [toolStatus, setToolStatus] = useState<string | null>(null);
+  const [rail, setRail] = useState<api.AiRailPayload | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -170,6 +191,18 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
       abortRef.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const pull = () => {
+      api.getAiRail(profile.name, profile.path, 7).then((r) => {
+        if (mounted) setRail(r);
+      }).catch(() => {});
+    };
+    pull();
+    const id = setInterval(pull, 30000);
+    return () => { mounted = false; clearInterval(id); };
+  }, [profile.name, profile.path]);
 
   const send = useCallback(async (overrideText?: string) => {
     const text = (overrideText ?? input).trim();
@@ -254,8 +287,37 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
     }
   }, [chatModel, input, messages, profile.name, profile.path, sending]);
 
+  const macroImplication = (() => {
+    const b = (rail?.macro.combined_bias || '').toLowerCase();
+    if (b === 'bullish') return 'Directional confirmation for longs; macro tailwind is aligned.';
+    if (b === 'bearish') return 'Directional caution for longs; macro setup currently favors downside.';
+    if (b === 'conflicting') return 'Mixed macro inputs; size down and rely more on level location.';
+    return 'Macro signal is neutral; rely primarily on levels, session and volatility.';
+  })();
+
+  const sessionImplication = (() => {
+    const label = String(rail?.session_vol.vol_label || '').toLowerCase();
+    if (label.includes('elevated') || label.includes('above')) return 'Higher volatility regime; expect wider swings and faster invalidation.';
+    if (label.includes('below') || label.includes('very low') || label.includes('compressed')) return 'Compressed regime; range behavior more likely than clean breakouts.';
+    return 'Normal volatility regime; use standard target/stop expectations.';
+  })();
+
+  const ladderImplication = (() => {
+    const nearestSup = rail?.levels.supports?.[0];
+    const nearestRes = rail?.levels.resistances?.[0];
+    const ds = nearestSup?.distance_pips != null ? Math.abs(nearestSup.distance_pips) : null;
+    const dr = nearestRes?.distance_pips != null ? Math.abs(nearestRes.distance_pips) : null;
+    if (ds != null && dr != null) {
+      if (dr < 6) return 'Price is close to resistance; upside room is limited without a clean break.';
+      if (ds < 6) return 'Price is close to support; downside room is limited unless support fails.';
+      return 'Price sits between levels; entries are cleaner nearer the edges of the ladder.';
+    }
+    return 'Use nearest support/resistance distances to gauge immediate room before adding.';
+  })();
+
   return (
-    <div>
+    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 360px', gap: 16, alignItems: 'start' }}>
+      <div>
       <h2 className="page-title">AI Trading Assistant</h2>
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: 16, maxWidth: 720 }}>
         Context-aware help using your profile&apos;s broker connection on the server. Not financial advice.
@@ -326,7 +388,7 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
         </div>
       )}
 
-      <div className="card" style={{ display: 'flex', flexDirection: 'column', maxWidth: 720, minHeight: 420 }}>
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', maxWidth: 720, height: 'calc(100vh - 280px)', minHeight: 420 }}>
         <div
           ref={scrollRef}
           style={{
@@ -336,7 +398,7 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
             marginBottom: 12,
             background: 'var(--bg-secondary, rgba(0,0,0,0.2))',
             borderRadius: 8,
-            minHeight: 280,
+            minHeight: 0,
           }}
         >
           {messages.length === 0 && (
@@ -456,6 +518,81 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
               Clear Chat
             </button>
           </div>
+        </div>
+      </div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, position: 'sticky', top: 12 }}>
+        <div className="card">
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Macro Confirmation</div>
+          <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginBottom: 8 }}>
+            Bias: <strong style={{ color: 'var(--text-primary)' }}>{rail?.macro.combined_bias || 'n/a'}</strong> ({rail?.macro.confidence || 'n/a'})
+          </div>
+          <div style={{ fontSize: '0.8rem', display: 'grid', gap: 4 }}>
+            <div>DXY: {rail?.macro.dxy.value ?? '-'} | 1D {moveArrow(rail?.macro.dxy.one_day)} | 5D {moveArrow(rail?.macro.dxy.five_day)} ({signedPct(rail?.macro.dxy.five_day)})</div>
+            <div>US10Y: {rail?.macro.us10y.value ?? '-'}% | 1D {moveArrow(rail?.macro.us10y.one_day)} | 5D {moveArrow(rail?.macro.us10y.five_day)}</div>
+            <div>Oil: {rail?.macro.oil.value ?? '-'} | 1D {moveArrow(rail?.macro.oil.one_day)} | 5D {moveArrow(rail?.macro.oil.five_day)} ({signedPct(rail?.macro.oil.five_day)})</div>
+            <div>Gold: {rail?.macro.gold.value ?? '-'} | 1D {moveArrow(rail?.macro.gold.one_day)} | 5D {moveArrow(rail?.macro.gold.five_day)}</div>
+          </div>
+          <div style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: '0.78rem' }}>{macroImplication}</div>
+        </div>
+
+        <div className="card">
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Event Risk Countdown</div>
+          {(rail?.events || []).length === 0 ? (
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>No upcoming high-impact USD/JPY events.</div>
+          ) : (
+            <div style={{ display: 'grid', gap: 6 }}>
+              {(rail?.events || []).slice(0, 3).map((ev, idx) => {
+                const mins = Number(ev.minutes_to_event || 0);
+                const urgent = mins <= 60;
+                const soon = mins > 60 && mins <= 180;
+                const tone = urgent ? 'var(--danger)' : soon ? 'var(--warning, #d4a017)' : 'var(--text-secondary)';
+                return (
+                  <div key={`${ev.timestamp_utc}-${idx}`} style={{ fontSize: '0.8rem' }}>
+                    <div style={{ color: 'var(--text-primary)' }}>{ev.currency} {ev.event}</div>
+                    <div style={{ color: tone }}>
+                      {countdownLabel(mins)} ({ev.time || ev.date})
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
+            {(rail?.events?.[0]?.minutes_to_event ?? 9999) <= 60
+              ? 'Event risk elevated: avoid fresh adds into the release window.'
+              : 'No immediate high-impact release window; event risk is manageable.'}
+          </div>
+        </div>
+
+        <div className="card">
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Key Levels Ladder</div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 6 }}>
+            Mid: <span style={{ color: 'var(--text-primary)' }}>{rail?.levels.mid ?? '-'}</span>
+          </div>
+          <div style={{ fontSize: '0.8rem', display: 'grid', gap: 4 }}>
+            <div style={{ color: 'var(--text-secondary)' }}>Resistance</div>
+            {(rail?.levels.resistances || []).slice(0, 2).map((r, i) => (
+              <div key={`r-${i}`}>{r.price} ({r.distance_pips ?? '-'}p)</div>
+            ))}
+            <div style={{ color: 'var(--text-secondary)', marginTop: 6 }}>Support</div>
+            {(rail?.levels.supports || []).slice(0, 2).map((s, i) => (
+              <div key={`s-${i}`}>{s.price} ({s.distance_pips ?? '-'}p)</div>
+            ))}
+          </div>
+          <div style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: '0.78rem' }}>{ladderImplication}</div>
+        </div>
+
+        <div className="card">
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Session &amp; Volatility</div>
+          <div style={{ fontSize: '0.8rem', display: 'grid', gap: 4 }}>
+            <div>Session: {rail?.session_vol.overlap || (rail?.session_vol.active_sessions || []).join(' + ') || 'none'}</div>
+            <div>Next close: {rail?.session_vol.next_close || '-'}</div>
+            <div>Spread: {rail?.session_vol.spread_pips ?? '-'}p</div>
+            <div>ATR regime: {rail?.session_vol.vol_label || 'n/a'} ({rail?.session_vol.vol_ratio ?? '-'}x)</div>
+          </div>
+          <div style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: '0.78rem' }}>{sessionImplication}</div>
         </div>
       </div>
     </div>

@@ -915,6 +915,60 @@ export async function getAiChatModels(): Promise<AiChatModelsResponse> {
   return fetchJson<AiChatModelsResponse>(`${API_BASE}/ai-chat/models`);
 }
 
+export interface AiRailLevel {
+  price: number;
+  weight_pct: number;
+  distance_pips: number | null;
+  direction: 'support' | 'resistance';
+}
+
+export interface AiRailEvent {
+  timestamp_utc: string;
+  date: string;
+  time: string;
+  currency: string;
+  event: string;
+  impact: string;
+  minutes_to_event: number;
+}
+
+export interface AiRailPayload {
+  as_of: string | null;
+  macro: {
+    combined_bias: string;
+    confidence: string;
+    implication: string;
+    dxy: { value: number | null; one_day: number | null; five_day: number | null };
+    us10y: { value: number | null; one_day: number | null; five_day: number | null };
+    oil: { value: number | null; one_day: number | null; five_day: number | null };
+    gold: { value: number | null; one_day: number | null; five_day: number | null };
+  };
+  events: AiRailEvent[];
+  levels: {
+    mid: number | null;
+    supports: AiRailLevel[];
+    resistances: AiRailLevel[];
+  };
+  session_vol: {
+    active_sessions: string[];
+    overlap?: string | null;
+    next_close?: string | null;
+    warnings: string[];
+    spread_pips?: number | null;
+    vol_label?: string | null;
+    vol_ratio?: number | null;
+    recent_avg_pips?: number | null;
+  };
+}
+
+export async function getAiRail(profileName: string, profilePath: string, daysAhead = 7): Promise<AiRailPayload> {
+  const params = new URLSearchParams({
+    profile_path: profilePath,
+    days_ahead: String(daysAhead),
+  });
+  return fetchJson<AiRailPayload>(`${API_BASE}/data/${encodeURIComponent(profileName)}/ai-rail?${params.toString()}`);
+}
+
 async function readApiErrorDetail(res: Response): Promise<string> {
   const text = await res.text();
   try {
