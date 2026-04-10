@@ -5639,7 +5639,6 @@ def ai_suggest_trade(
                 {"role": "system", "content": system},
                 {"role": "user", "content": suggest_prompt},
             ],
-            temperature=0.3,
         )
         raw = (resp.choices[0].message.content or "").strip()
         # Strip markdown code fences if present
