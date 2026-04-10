@@ -71,16 +71,20 @@ def resolve_ai_chat_model(requested: str | None) -> str:
 # ---------------------------------------------------------------------------
 
 def _fetch_cross_asset_prices(adapter: Any) -> dict[str, Any]:
-    """Fetch EUR/USD, BCO/USD (Brent), and WTICO/USD (WTI) from OANDA pricing endpoint.
+    """Fetch cross-asset prices from OANDA including DXY constituents.
 
-    DXY proxy: ~1/EURUSD * 100 gives directional sense (higher = stronger USD).
+    Real DXY is computed from the ICE formula:
+    DXY = 50.14348112 × EURUSD^(-0.576) × USDJPY^(0.136) × GBPUSD^(-0.119)
+                       × USDCAD^(0.091) × USDSEK^(0.042) × USDCHF^(0.036)
     """
     aid = adapter._get_account_id()
-    instruments = "EUR_USD,BCO_USD,WTICO_USD,XAU_USD,XAG_USD"
+    # DXY constituents + commodities + metals
+    instruments = "EUR_USD,GBP_USD,USD_CAD,USD_SEK,USD_CHF,USD_JPY,BCO_USD,WTICO_USD,XAU_USD,XAG_USD"
     data = adapter._req("GET", f"/v3/accounts/{aid}/pricing?instruments={instruments}")
     prices = data.get("prices", [])
 
     result: dict[str, Any] = {}
+    pair_mids: dict[str, float] = {}
     for p in prices:
         inst = p.get("instrument", "")
         bids = p.get("bids", [{}])
@@ -89,9 +93,11 @@ def _fetch_cross_asset_prices(adapter: Any) -> dict[str, Any]:
         ask = float(asks[0].get("price", 0)) if asks else 0
         mid = (bid + ask) / 2 if (bid and ask) else 0
 
+        if mid > 0:
+            pair_mids[inst] = mid
+
         if inst == "EUR_USD" and mid > 0:
             result["eurusd"] = round(mid, 5)
-            result["dxy_proxy"] = round(1.0 / mid * 100, 2)
         elif inst == "BCO_USD" and mid > 0:
             result["bco_usd"] = round(mid, 2)
         elif inst == "WTICO_USD" and mid > 0:
@@ -101,7 +107,49 @@ def _fetch_cross_asset_prices(adapter: Any) -> dict[str, Any]:
         elif inst == "XAG_USD" and mid > 0:
             result["xag_usd"] = round(mid, 2)
 
+    # Compute real DXY from ICE formula
+    eurusd = pair_mids.get("EUR_USD")
+    usdjpy = pair_mids.get("USD_JPY")
+    gbpusd = pair_mids.get("GBP_USD")
+    usdcad = pair_mids.get("USD_CAD")
+    usdsek = pair_mids.get("USD_SEK")
+    usdchf = pair_mids.get("USD_CHF")
+    if all(v and v > 0 for v in (eurusd, usdjpy, gbpusd, usdcad, usdsek, usdchf)):
+        dxy = (50.14348112
+               * (eurusd ** -0.576)
+               * (usdjpy ** 0.136)
+               * (gbpusd ** -0.119)
+               * (usdcad ** 0.091)
+               * (usdsek ** 0.042)
+               * (usdchf ** 0.036))
+        result["dxy"] = round(dxy, 2)
+
     return result
+
+
+def _fetch_us10y_yield() -> float | None:
+    """Fetch latest US 10-Year Treasury yield from FRED (free, no API key).
+
+    Uses the FRED observation endpoint for DGS10 series.
+    Returns the yield as a percentage (e.g. 4.32) or None on failure.
+    """
+    from urllib.request import Request, urlopen
+
+    try:
+        url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10&cosd=2025-01-01"
+        req = Request(url, headers={"User-Agent": "USDJPY-Assistant/1.0"})
+        with urlopen(req, timeout=5) as resp:
+            raw = resp.read().decode("utf-8")
+        # CSV format: DATE,DGS10\n2025-01-02,4.32\n...
+        lines = raw.strip().split("\n")
+        # Find last non-empty, non-"." value (FRED uses "." for missing)
+        for line in reversed(lines):
+            parts = line.split(",")
+            if len(parts) >= 2 and parts[1].strip() not in ("", ".", "DGS10"):
+                return round(float(parts[1].strip()), 2)
+    except Exception:
+        pass
+    return None
 
 
 def _fetch_position_book_sentiment(adapter: Any, symbol: str) -> dict[str, Any] | None:
@@ -663,30 +711,51 @@ def _compute_cross_asset_bias(adapter: Any) -> dict[str, Any] | None:
     except Exception:
         pass
 
-    # EUR/USD → DXY proxy (inverted: EUR down = USD strong = bullish for USDJPY)
+    # Real DXY from constituent pairs
     try:
-        eur_df = adapter.get_bars("EUR_USD", "D", count=25)
-        if eur_df is not None and len(eur_df) >= 6:
-            closes = eur_df["close"].values.astype(float)
-            current = closes[-1]
-            five_ago = closes[-6]
-            eur_ret_5d = (current - five_ago) / five_ago
-            twenty_ago = closes[-21] if len(closes) >= 21 else closes[0]
-            eur_ret_20d = (current - twenty_ago) / twenty_ago
-            # Invert: EUR down = USD strong = bullish
-            dxy_dir = _direction(-eur_ret_5d, 0.003)
-            result["dxy_proxy"] = {
+        # Fetch daily bars for all 6 DXY constituents
+        dxy_pairs = {
+            "EUR_USD": None, "USD_JPY": None, "GBP_USD": None,
+            "USD_CAD": None, "USD_SEK": None, "USD_CHF": None,
+        }
+        for pair in dxy_pairs:
+            try:
+                pair_df = adapter.get_bars(pair, "D", count=25)
+                if pair_df is not None and len(pair_df) >= 6:
+                    dxy_pairs[pair] = pair_df["close"].values.astype(float)
+            except Exception:
+                pass
+
+        # Compute DXY for current and 5-day-ago if all pairs available
+        if all(v is not None and len(v) >= 6 for v in dxy_pairs.values()):
+            def _calc_dxy(idx: int) -> float:
+                return (50.14348112
+                        * (dxy_pairs["EUR_USD"][idx] ** -0.576)
+                        * (dxy_pairs["USD_JPY"][idx] ** 0.136)
+                        * (dxy_pairs["GBP_USD"][idx] ** -0.119)
+                        * (dxy_pairs["USD_CAD"][idx] ** 0.091)
+                        * (dxy_pairs["USD_SEK"][idx] ** 0.042)
+                        * (dxy_pairs["USD_CHF"][idx] ** 0.036))
+
+            dxy_now = _calc_dxy(-1)
+            dxy_5ago = _calc_dxy(-6)
+            dxy_20ago = _calc_dxy(-21) if all(len(v) >= 21 for v in dxy_pairs.values()) else _calc_dxy(0)
+            dxy_ret_5d = (dxy_now - dxy_5ago) / dxy_5ago
+            dxy_ret_20d = (dxy_now - dxy_20ago) / dxy_20ago
+            # DXY up = USD strong = bullish for USDJPY
+            dxy_dir = _direction(dxy_ret_5d, 0.003)
+            result["dxy"] = {
                 "direction": dxy_dir,
-                "5d_return": round(-eur_ret_5d * 100, 2),
-                "20d_return": round(-eur_ret_20d * 100, 2),
-                "eurusd_price": round(current, 5),
+                "5d_return": round(dxy_ret_5d * 100, 2),
+                "20d_return": round(dxy_ret_20d * 100, 2),
+                "value": round(dxy_now, 2),
             }
     except Exception:
         pass
 
     # Combined bias
     oil_dir = result.get("oil", {}).get("direction", "neutral")
-    dxy_dir = result.get("dxy_proxy", {}).get("direction", "neutral")
+    dxy_dir = result.get("dxy", {}).get("direction", "neutral")
 
     if oil_dir == "bullish" and dxy_dir == "bullish":
         combined = "bullish"
@@ -871,10 +940,17 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
         except Exception as e:
             ctx["closed_trades_error"] = str(e)
 
-        # Cross-asset snapshot (OANDA only): EUR/USD → DXY proxy, BCO/USD → Oil, Gold, Silver
+        # Cross-asset snapshot (OANDA only): DXY, Oil, Gold, Silver
         if getattr(profile, "broker_type", None) == "oanda":
             try:
                 ctx["cross_assets"] = _fetch_cross_asset_prices(adapter)
+            except Exception:
+                pass
+            # US 10Y Treasury yield from FRED (no API key needed)
+            try:
+                us10y = _fetch_us10y_yield()
+                if us10y is not None:
+                    ctx.setdefault("cross_assets", {})["us10y_yield"] = us10y
             except Exception:
                 pass
             # Macro bias from daily candle returns
@@ -1171,10 +1247,15 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
     if cross:
         lines.append("")
         lines.append("CROSS-ASSET SNAPSHOT:")
+        dxy = cross.get("dxy")
+        if dxy:
+            lines.append(f"  DXY (US Dollar Index): {dxy}")
         eurusd = cross.get("eurusd")
-        dxy = cross.get("dxy_proxy")
-        if eurusd and dxy:
-            lines.append(f"  DXY proxy: {dxy} (via EUR/USD @ {eurusd})")
+        if eurusd:
+            lines.append(f"  EUR/USD: {eurusd}")
+        us10y = cross.get("us10y_yield")
+        if us10y is not None:
+            lines.append(f"  US 10Y Treasury Yield: {us10y}%")
         brent = cross.get("bco_usd")
         wti = cross.get("wti_usd")
         if brent and wti:
@@ -1198,9 +1279,9 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
         oil_b = bias.get("oil")
         if oil_b:
             lines.append(f"  Oil: {oil_b['direction'].upper()} (5D: {oil_b['5d_return']:+.1f}%, 20D: {oil_b['20d_return']:+.1f}%)")
-        dxy_b = bias.get("dxy_proxy")
+        dxy_b = bias.get("dxy")
         if dxy_b:
-            lines.append(f"  DXY proxy: {dxy_b['direction'].upper()} (5D: {dxy_b['5d_return']:+.1f}%, 20D: {dxy_b['20d_return']:+.1f}%)")
+            lines.append(f"  DXY: {dxy_b['direction'].upper()} (5D: {dxy_b['5d_return']:+.1f}%, 20D: {dxy_b['20d_return']:+.1f}%, value: {dxy_b.get('value', '?')})")
         combined = bias.get("combined_bias", "")
         conf = bias.get("confidence", "")
         impl = bias.get("usdjpy_implication", "")
@@ -1517,9 +1598,9 @@ def _exec_get_cross_asset_bias(profile: ProfileV1, **_: Any) -> str:
         oil = bias.get("oil")
         if oil:
             lines.append(f"  Oil (Brent): {oil['direction'].upper()} — 5D: {oil['5d_return']:+.1f}%, 20D: {oil['20d_return']:+.1f}%, price: {oil['price']}")
-        dxy = bias.get("dxy_proxy")
+        dxy = bias.get("dxy")
         if dxy:
-            lines.append(f"  DXY proxy: {dxy['direction'].upper()} — 5D: {dxy['5d_return']:+.1f}%, 20D: {dxy['20d_return']:+.1f}%, EUR/USD: {dxy['eurusd_price']}")
+            lines.append(f"  DXY: {dxy['direction'].upper()} — 5D: {dxy['5d_return']:+.1f}%, 20D: {dxy['20d_return']:+.1f}%, value: {dxy.get('value', '?')}")
         lines.append(f"  Combined: {bias.get('combined_bias', '?').upper()} ({bias.get('confidence', '?')} confidence)")
         lines.append(f"  Implication: {bias.get('usdjpy_implication', '?')}")
         return "\n".join(lines)
