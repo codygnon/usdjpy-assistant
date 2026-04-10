@@ -66,6 +66,57 @@ def resolve_ai_chat_model(requested: str | None) -> str:
     return rid
 
 
+BOT_ENTRY_TAGS: tuple[str, ...] = (
+    "phase3",
+    "v44",
+    "tiered_pullback",
+    "zone_entry",
+    "momentum",
+    "er_low",
+    "er_high",
+    "defended",
+)
+
+
+def classify_trade_source(entry_type: Any) -> str:
+    """Classify trade source as manual or bot."""
+    et = str(entry_type or "").strip().lower()
+    if not et:
+        return "manual"
+    if any(tag in et for tag in BOT_ENTRY_TAGS):
+        return "bot"
+    return "manual"
+
+
+def _plain_bot_label(entry_type: Any) -> str:
+    """Human-readable bot label for prompt/tool output."""
+    et = str(entry_type or "").strip().lower()
+    if not et:
+        return "automated strategy"
+    if "momentum" in et:
+        return "automated momentum entries"
+    if "zone_entry" in et or "zone" in et:
+        return "automated zone entries"
+    if "tiered_pullback" in et:
+        return "automated pullback entries"
+    if "v44" in et:
+        return "automated NY entries"
+    if "phase3" in et:
+        return "automated phase3 entries"
+    if "er_low" in et or "er_high" in et:
+        return "automated expansion-range entries"
+    if "defended" in et:
+        return "automated defended entries"
+    return "automated strategy"
+
+
+def _source_label_for_trade(entry_type: Any) -> str:
+    src = classify_trade_source(entry_type)
+    if src == "manual":
+        return "manual"
+    return f"bot:{_plain_bot_label(entry_type)}"
+
+
 # ---------------------------------------------------------------------------
 # 1. Build trading context from broker
 # ---------------------------------------------------------------------------
@@ -904,6 +955,44 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
                             "unrealized_pl": getattr(pos, "profit", None),
                         })
             ctx["open_positions"] = open_list
+            # Aggregate position stats per side so the assistant can reason about adding/scaling.
+            side_summary: dict[str, dict[str, Any]] = {}
+            for side, side_key in (("BUY", "long"), ("SELL", "short")):
+                side_rows = [p for p in open_list if str(p.get("side", "")).upper() == side]
+                if len(side_rows) < 2:
+                    continue
+                total_units = 0.0
+                weighted_entry = 0.0
+                total_pl = 0.0
+                for p in side_rows:
+                    try:
+                        units = abs(float(p.get("units", 0) or 0))
+                    except Exception:
+                        units = 0.0
+                    try:
+                        entry = float(p.get("entry_price", 0) or 0)
+                    except Exception:
+                        entry = 0.0
+                    try:
+                        upl = float(p.get("unrealized_pl", 0) or 0)
+                    except Exception:
+                        upl = 0.0
+                    total_units += units
+                    weighted_entry += (entry * units)
+                    total_pl += upl
+                if total_units <= 0:
+                    continue
+                avg_entry = weighted_entry / total_units
+                side_summary[side_key] = {
+                    "count": len(side_rows),
+                    "total_units": round(total_units, 2),
+                    "total_lots": round(total_units / 100_000.0, 4),
+                    "avg_entry": round(avg_entry, 3),
+                    "breakeven": round(avg_entry, 3),
+                    "total_pl": round(total_pl, 2),
+                }
+            if side_summary:
+                ctx["position_summary"] = side_summary
         except Exception as e:
             ctx["open_positions_error"] = str(e)
 
@@ -917,7 +1006,17 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
                     pip_size=profile.pip_size,
                 ) or []
                 # Prompt shows only a sample; today/week/month stats must use the FULL 30d list.
-                ctx["recent_closed_trades"] = closed[:10]
+                tagged_closed: list[str] = []
+                for row in closed[:10]:
+                    if isinstance(row, dict):
+                        src = _source_label_for_trade(row.get("entry_type"))
+                        base = str(row.get("summary") or row.get("text") or row)
+                        tagged_closed.append(f"{base} | [{src}]")
+                    else:
+                        txt = str(row)
+                        src = "bot" if classify_trade_source(txt) == "bot" else "manual"
+                        tagged_closed.append(f"{txt} | [{src}]")
+                ctx["recent_closed_trades"] = tagged_closed
                 if closed:
                     ctx["derived_stats"] = _compute_derived_stats(closed)
             else:
@@ -1074,6 +1173,11 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
         "DELIVERY (desk style): Target ~80 words for simple questions; ~150 max for multi-part. One tight paragraph or short bullets.",
         "Never say 'I can't give financial advice', 'consult a professional', 'this is not financial advice', or similar disclaimers.",
         "Never say 'based on the data provided' or 'according to my context' — answer directly.",
+        "When the user mentions adding to a position, scaling in, or averaging — proactively include: margin cost of the addition, new total margin used, and updated average entry price / breakeven. Do not wait to be asked.",
+        "When the user discusses directional positioning (adding longs, going short, etc.), reference the MACRO BIAS section if it confirms or contradicts their direction in one sentence.",
+        "TRADE SOURCE LABELS: Trades have a 'source' field — either 'manual' or a bot strategy label. ALWAYS break down performance by source.",
+        "Never blend manual and bot stats into one number without labeling which is which. Lead with manual stats, then show bot stats separately.",
+        "When discussing bot/automated trades, use plain language labels (e.g., 'bot momentum trades', 'automated NY entries'), not raw internal strategy codes.",
         "Never use numbered sections (1) 2)) or Roman numerals. No essay structure.",
         "Never end with offers to recalculate, clarify, or do more — answer once and stop.",
         "Never summarize what you just said at the end of a response.",
@@ -1116,6 +1220,25 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
     elif positions is not None:
         lines.append("")
         lines.append("Open Positions: none")
+
+    pos_summary = ctx.get("position_summary")
+    if isinstance(pos_summary, dict):
+        rendered = False
+        for side_key, label in (("long", "longs"), ("short", "shorts")):
+            s = pos_summary.get(side_key)
+            if not isinstance(s, dict):
+                continue
+            rendered = True
+            lines.append("")
+            if side_key == "long":
+                lines.append("POSITION SUMMARY:")
+            lines.append(
+                f"  {s.get('count', 0)} open {label} | Total: {s.get('total_units', 0):,} units "
+                f"({s.get('total_lots', 0)} lots) | Avg entry: {s.get('avg_entry', '?')} | "
+                f"Aggregate P&L: ${s.get('total_pl', 0):+,.2f} | Breakeven: {s.get('breakeven', '?')}"
+            )
+        if rendered:
+            lines.append("  Use this summary when evaluating adds/scales and new breakeven.")
 
     closed = ctx.get("recent_closed_trades")
     if closed:
@@ -1514,6 +1637,8 @@ def _exec_get_trade_history(args: dict, profile_name: str, **_: Any) -> str:
         session = row.get("entry_session", "")
         tier = row.get("tier_number", "")
         exit_time = row.get("exit_timestamp_utc", "")
+        source = classify_trade_source(entry_type)
+        source_label = _source_label_for_trade(entry_type)
 
         parts = [f"{side}"]
         if entry != "?":
@@ -1524,8 +1649,9 @@ def _exec_get_trade_history(args: dict, profile_name: str, **_: Any) -> str:
             parts.append(f"{float(pips):+.1f}p")
         if profit is not None:
             parts.append(f"${float(profit):+.2f}")
-        if entry_type:
-            parts.append(f"[{entry_type}]")
+        if source == "bot":
+            parts.append(f"[{_plain_bot_label(entry_type)}]")
+        parts.append(f"[source:{source_label}]")
         if tier:
             parts.append(f"tier{tier}")
         if session:
@@ -1560,7 +1686,26 @@ def _exec_analyze_trade_patterns(args: dict, profile_name: str, **_: Any) -> str
     if closed.empty:
         return f"No closed trades in the last {days_back} days."
 
+    if "entry_type" in closed.columns:
+        closed["source"] = closed["entry_type"].apply(classify_trade_source)
+    else:
+        closed["source"] = "manual"
     lines = [f"Trade pattern analysis ({len(closed)} trades, last {days_back}d):"]
+    lines.append("")
+    lines.append("  By source (manual first):")
+    for src in ("manual", "bot"):
+        grp = closed[closed["source"] == src]
+        if grp.empty:
+            lines.append(f"    {src}: 0 trades, 0.0% WR, net $+0.00")
+            continue
+        wins = len(grp[grp["profit"] > 0]) if "profit" in grp.columns else 0
+        losses = len(grp[grp["profit"] <= 0]) if "profit" in grp.columns else 0
+        total = len(grp)
+        wr = round(wins / total * 100, 1) if total else 0.0
+        net_pl = float(grp["profit"].sum()) if "profit" in grp.columns else 0.0
+        lines.append(
+            f"    {src}: {total} trades, {wins}W/{losses}L, {wr}% WR, net ${net_pl:+.2f}"
+        )
 
     def _group_stats(group_col: str, label: str) -> None:
         if group_col not in closed.columns or closed[group_col].isna().all():
@@ -1574,7 +1719,12 @@ def _exec_analyze_trade_patterns(args: dict, profile_name: str, **_: Any) -> str
             wr = round(wins / total * 100, 1) if total else 0
             avg_profit = round(grp["profit"].mean(), 2) if "profit" in grp.columns else 0
             avg_pips = round(grp["pips"].mean(), 1) if "pips" in grp.columns else 0
-            lines.append(f"    {name}: {total} trades, {wr}% WR, avg {avg_pips:+.1f}p, avg ${avg_profit:+.2f}")
+            display_name = str(name)
+            if group_col == "entry_type":
+                display_name = _plain_bot_label(name) if classify_trade_source(name) == "bot" else str(name)
+            lines.append(
+                f"    {display_name}: {total} trades, {wr}% WR, avg {avg_pips:+.1f}p, avg ${avg_profit:+.2f}"
+            )
 
     _group_stats("entry_session", "Session")
     _group_stats("entry_type", "Entry Type")
