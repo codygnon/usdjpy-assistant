@@ -165,12 +165,15 @@ class OandaAdapter:
     """Adapter for OANDA v3 REST API. Use get_oanda_adapter(profile) to build from profile."""
 
     def __init__(self, token: str, account_id: str | None, environment: Literal["practice", "live"]) -> None:
+        import threading
         self.token = token.strip()
         self._account_id = account_id
         self._base = _BASE_URLS.get(environment, _BASE_URLS["practice"])
         self._session = requests.Session()
         self._session.headers["Authorization"] = f"Bearer {self.token}"
         self._session.headers["Content-Type"] = "application/json"
+        # Thread safety: requests.Session is not fully thread-safe, so serialize access.
+        self._req_lock = threading.Lock()
         # Lightweight client-side throttling + caching to reduce API load under high trade volume.
         self._last_req_time: float = 0.0
         self._positions_cache: list[dict] | None = None
@@ -199,15 +202,17 @@ class OandaAdapter:
         max_attempts = 2  # was 4; 1 initial + 1 retry
         for attempt in range(max_attempts):
             try:
-                # Simple per-process rate limiter: ensure a small gap between OANDA requests
-                now = time.time()
-                min_gap = 0.10  # seconds; keeps bursts smoother without imposing a 250ms floor on every loop
-                if self._last_req_time:
-                    gap = now - self._last_req_time
-                    if gap < min_gap:
-                        time.sleep(min_gap - gap)
-                self._last_req_time = time.time()
-                resp = self._session.request(method, url, **kwargs)
+                # Serialize access: requests.Session is not fully thread-safe.
+                with self._req_lock:
+                    # Simple per-process rate limiter: ensure a small gap between OANDA requests
+                    now = time.time()
+                    min_gap = 0.10  # seconds; keeps bursts smoother without imposing a 250ms floor on every loop
+                    if self._last_req_time:
+                        gap = now - self._last_req_time
+                        if gap < min_gap:
+                            time.sleep(min_gap - gap)
+                    self._last_req_time = time.time()
+                    resp = self._session.request(method, url, **kwargs)
             except requests.RequestException as e:
                 last_err = e
                 if attempt < max_attempts - 1:

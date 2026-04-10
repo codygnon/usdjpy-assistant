@@ -5582,6 +5582,9 @@ def ai_suggest_trade(
     except ValueError:
         ctx_timeout = 20.0
 
+    import json as _json
+    import traceback as _tb
+
     try:
         ctx = _run_in_threadpool_with_timeout(build_trading_context, ctx_timeout, profile, profile_name)
     except FuturesTimeoutError:
@@ -5594,7 +5597,10 @@ def ai_suggest_trade(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    system = system_prompt_from_context(ctx, effective_model)
+    try:
+        system = system_prompt_from_context(ctx, effective_model)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"System prompt build error: {e}")
 
     suggest_prompt = (
         "Based on the current market context (technicals, macro bias, levels, session, volatility, and any recent news/events), "
@@ -5619,12 +5625,14 @@ def ai_suggest_trade(
         "- Lot size should be proportional to confidence (0.01-0.10 typical range).\n"
         "- Default to GTC unless there is a clear time-based reason (event risk, session close).\n"
         "- If you genuinely see no good setup, return the JSON with confidence 'low' and explain in rationale.\n"
+        "- If market is closed or data is stale, still provide a suggestion based on last known levels and context.\n"
     )
 
     import openai
 
-    client = openai.OpenAI()
+    raw = ""
     try:
+        client = openai.OpenAI()
         resp = client.chat.completions.create(
             model=effective_model,
             messages=[
@@ -5640,7 +5648,6 @@ def ai_suggest_trade(
         if raw.endswith("```"):
             raw = raw[: raw.rfind("```")]
         raw = raw.strip()
-        import json as _json
 
         suggestion = _json.loads(raw)
         # Validate required fields
@@ -5662,7 +5669,8 @@ def ai_suggest_trade(
     except _json.JSONDecodeError:
         raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {raw[:500]}")
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"AI suggestion error: {e}")
+        detail = f"AI suggestion error: {e}\n{_tb.format_exc()}"
+        raise HTTPException(status_code=502, detail=detail)
 
 
 @app.get("/api/ai-chat/models")
