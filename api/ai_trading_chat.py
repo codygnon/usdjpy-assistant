@@ -505,16 +505,10 @@ def _compute_guardrail_alerts(
     alerts: list[str] = []
     now_utc = datetime.now(timezone.utc)
 
-    # Dashboard-based system alerts
+    # Dashboard: only surface kill switch — manual traders don't need bot ARMED/DISARMED/EXIT-ONLY noise.
     if dashboard:
         if dashboard.get("kill_switch"):
             alerts.append("KILL SWITCH ACTIVE — all trading halted")
-        if dashboard.get("exit_system_only"):
-            alerts.append("EXIT-ONLY MODE — no new entries")
-        if dashboard.get("mode") == "DISARMED":
-            alerts.append("System is DISARMED — no automated entries")
-        if dashboard.get("stale") and not dashboard.get("loop_running"):
-            alerts.append("Run loop appears stopped — dashboard data is stale")
 
     # Consecutive losses
     today = derived_stats.get("today", {})
@@ -591,6 +585,50 @@ def _compute_volatility(adapter: Any, symbol: str) -> dict[str, Any] | None:
         }
     except Exception:
         return None
+
+
+def _fetch_ohlc_history(adapter: Any, profile: ProfileV1) -> dict[str, list[dict[str, Any]]] | None:
+    """Fetch recent OHLC candle history for M1, M5, H1, and D timeframes.
+
+    Returns compact candle lists keyed by timeframe so the model can read chart history.
+    """
+    pip_size = float(profile.pip_size) if profile.pip_size else 0.01
+    result: dict[str, list[dict[str, Any]]] = {}
+
+    configs = [
+        ("M1", 30),   # last 30 M1 bars
+        ("M5", 24),   # last 2 hours of M5
+        ("H1", 24),   # last 24 H1 bars
+        ("D", 10),    # last 10 daily bars
+    ]
+
+    for tf, count in configs:
+        try:
+            df = adapter.get_bars(profile.symbol, tf, count=count)
+            if df is None or df.empty:
+                continue
+            candles: list[dict[str, Any]] = []
+            for idx, row in df.tail(count).iterrows():
+                candle: dict[str, Any] = {
+                    "o": round(float(row["open"]), 3),
+                    "h": round(float(row["high"]), 3),
+                    "l": round(float(row["low"]), 3),
+                    "c": round(float(row["close"]), 3),
+                }
+                if "volume" in row.index and row["volume"] is not None:
+                    try:
+                        candle["v"] = int(row["volume"])
+                    except (ValueError, TypeError):
+                        pass
+                if idx is not None:
+                    candle["t"] = str(idx)
+                candles.append(candle)
+            if candles:
+                result[tf] = candles
+        except Exception:
+            continue
+
+    return result if result else None
 
 
 def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[str, Any]:
@@ -752,6 +790,14 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
         except Exception:
             pass
 
+        # OHLC candle history for chart context
+        try:
+            ohlc = _fetch_ohlc_history(adapter, profile)
+            if ohlc:
+                ctx["ohlc_history"] = ohlc
+        except Exception:
+            pass
+
     finally:
         try:
             adapter.shutdown()
@@ -795,12 +841,29 @@ def system_prompt_from_context(ctx: dict[str, Any]) -> str:
         "Be concise. Lead with numbers. Never give imperative trade instructions like 'buy now' or 'sell now'.",
         "You may discuss market context, account state, position sizing, and risk management.",
         f"MODEL IDENTITY: You are running as '{configured_model}'. If asked which model you are, answer exactly '{configured_model}'. Never guess or mention any other model family.",
+        "CAPABILITIES: You have live broker context from this request. You do NOT have built-in web search in this app unless explicit web results are included below.",
+        "Never mention training-data cutoff dates or generic model limitations.",
+        "Never say 'I don't have live web access' unless the user explicitly asks about web search capability; if asked, say web search is not enabled in this app yet.",
+        "If a user asks non-trading general knowledge (e.g., politics/history) and no web results are provided, state it's outside this trading assistant's scope and redirect to trading/account context.",
         "",
         "SCOPE: The data below is a broker snapshot only. Recent closed trades are from roughly the last 30 days (capped in the prompt).",
         "TODAY / THIS WEEK / MONTH stats (if present) are computed from the full 30-day closed-trade fetch from the broker, not from the short trade sample lines below.",
         "THIS WEEK means Monday 00:00 UTC through now (UTC), not the user's local calendar week unless they ask.",
         "The Logs & Stats equity curve in the app may use a longer window (e.g. 365 days) — do not claim totals or win rates for the whole chart unless you only summarize the trades actually listed below.",
         "Do not invent weekly P/L or percentages; use the precomputed THIS WEEK / TODAY lines when present, else derive only from listed trades.",
+        "",
+        "DELIVERY (desk style): Target ~80 words for simple questions; ~150 max for multi-part. One tight paragraph or short bullets.",
+        "Never use numbered sections (1) 2)) or Roman numerals. No essay structure.",
+        "Never end with offers to recalculate, clarify, or do more — answer once and stop.",
+        "Never hedge with 'if your definition differs', 'assumption:', or 'say so and I'll recalc' — state facts using the definitions below.",
+        "",
+        "SIZING DEFAULTS (USDJPY desk math; use unless broker context clearly contradicts):",
+        "1 standard lot = 100,000 units. Use ~$3,000 margin per lot and ~$6.30 pip value per pip per lot at rates near 158–160.",
+        "Do not ask the user to confirm lot size or margin definition.",
+        "",
+        "PRICE: LIVE PRICE mid in context is authoritative. If the user quotes a different price, one short sentence that price moved, then compute from LIVE PRICE — do not silently substitute.",
+        "",
+        "Ignore automation/bot run state (ARMED/DISARMED/EXIT-ONLY/loop/preset/filters) — the trader is manual; do not mention it unless kill switch appears in ACTIVE GUARDRAILS.",
         "",
         "=== LIVE TRADING CONTEXT ===",
         f"Symbol: {ctx.get('symbol', 'USDJPY')}",
@@ -816,43 +879,6 @@ def system_prompt_from_context(ctx: dict[str, Any]) -> str:
         lines.append(f"  Equity: {acct.get('equity', '?')}")
         lines.append(f"  Margin Used: {acct.get('margin_used', '?')}")
         lines.append(f"  Margin Free: {acct.get('margin_free', '?')}")
-
-    # System state (from dashboard + runtime)
-    dash = ctx.get("dashboard")
-    if dash:
-        lines.append("")
-        lines.append("SYSTEM STATE:")
-        preset = dash.get("preset_name") or "unknown"
-        mode = dash.get("mode") or "unknown"
-        loop = "running" if dash.get("loop_running") else "stopped"
-        lines.append(f"  Preset: {preset} | Mode: {mode} | Loop: {loop}")
-        ks = "ON" if dash.get("kill_switch") else "OFF"
-        eo = "ON" if dash.get("exit_system_only") else "OFF"
-        lines.append(f"  Kill switch: {ks} | Exit-only: {eo}")
-        cand_side = dash.get("entry_candidate_side")
-        cand_trigger = dash.get("entry_candidate_trigger")
-        if cand_side:
-            trigger_str = f" ({cand_trigger} trigger)" if cand_trigger else ""
-            lines.append(f"  Entry signal: {cand_side.upper()}{trigger_str}")
-        clear = dash.get("clear_count", 0)
-        total = dash.get("total_count", 0)
-        blocking = dash.get("blocking_filters", [])
-        block_count = total - clear
-        lines.append(f"  Filters: {clear}/{total} clear | {block_count} blocking")
-        if blocking:
-            shown = blocking[:5]
-            parts = []
-            for bf in shown:
-                name = bf.get("name", "?")
-                reason = bf.get("reason", "")
-                if reason:
-                    parts.append(f"{name} ({reason})")
-                else:
-                    parts.append(name)
-            line = "  Blocking: " + ", ".join(parts)
-            if len(blocking) > 5:
-                line += f", ... and {len(blocking) - 5} more"
-            lines.append(line)
 
     positions = ctx.get("open_positions")
     if positions:
@@ -944,15 +970,6 @@ def system_prompt_from_context(ctx: dict[str, Any]) -> str:
             f"  Net P&L: ${month_s['net_pl']:+.2f} | Win Rate: {month_s['win_rate']}% "
             f"({month_s['trades']} trades)"
         )
-
-    # Dashboard daily summary (pips data not in derived stats)
-    dash_daily = (ctx.get("dashboard") or {}).get("daily_summary")
-    if dash_daily and dash_daily.get("trades_today", 0) > 0:
-        pips = dash_daily.get("total_pips", 0)
-        profit = dash_daily.get("total_profit", 0)
-        lines.append("")
-        lines.append("DASHBOARD DAILY (from run loop):")
-        lines.append(f"  Total pips today: {pips:+.1f} | Profit: ${profit:+.2f}")
 
     # Guardrail alerts (only if triggered)
     alerts = ctx.get("guardrail_alerts")
@@ -1051,6 +1068,23 @@ def system_prompt_from_context(ctx: dict[str, Any]) -> str:
             if res:
                 summary += f", nearest resistance {ob['nearest_resistance_distance_pips']}p above at {res:.3f}"
             lines.append(summary)
+
+    # OHLC candle history
+    ohlc = ctx.get("ohlc_history")
+    if ohlc:
+        lines.append("")
+        lines.append("OHLC CANDLE HISTORY (o=open, h=high, l=low, c=close, t=time):")
+        for tf in ("D", "H1", "M5", "M1"):
+            candles = ohlc.get(tf)
+            if not candles:
+                continue
+            lines.append(f"  {tf} ({len(candles)} bars, oldest→newest):")
+            for c in candles:
+                t_str = f" @{c['t']}" if "t" in c else ""
+                v_str = f" v={c['v']}" if "v" in c else ""
+                rng = round((c["h"] - c["l"]) / 0.01, 1)  # USDJPY pip = 0.01
+                rng_str = f" rng={rng}p"
+                lines.append(f"    {c['o']:.3f}/{c['h']:.3f}/{c['l']:.3f}/{c['c']:.3f}{rng_str}{v_str}{t_str}")
 
     return "\n".join(lines)
 

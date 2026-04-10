@@ -286,6 +286,19 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
               Stop
             </button>
           )}
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={sending || messages.length === 0}
+            onClick={() => {
+              setMessages([]);
+              saveChatToStorage(profile.path, []);
+              setError(null);
+            }}
+            style={{ marginLeft: 'auto' }}
+          >
+            Clear Chat
+          </button>
         </div>
       </div>
     </div>
