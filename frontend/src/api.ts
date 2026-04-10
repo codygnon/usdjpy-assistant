@@ -974,7 +974,7 @@ export async function streamAiChat(
 
   const reader = res.body?.getReader();
   if (!reader) {
-    throw new Error('No response body');
+    throw new Error('API fetch error: no response body');
   }
 
   const decoder = new TextDecoder();

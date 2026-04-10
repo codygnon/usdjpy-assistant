@@ -162,7 +162,7 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
         });
         return;
       }
-      const msg = (e as Error).message || 'Request failed';
+      const msg = (e as Error).message || 'API fetch error';
       const friendly =
         /OPENAI_API_KEY|not configured|503/i.test(msg) || /503/.test(msg)
           ? 'The API server needs an OpenAI key. Set OPENAI_API_KEY in the environment where uvicorn runs (e.g. Railway variables), then restart.'

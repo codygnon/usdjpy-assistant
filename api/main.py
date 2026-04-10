@@ -5478,7 +5478,7 @@ def ai_chat(profile_name: str, profile_path: str, req: AiChatRequest):
     try:
         profile = load_profile_v1(path)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to load profile: {e}")
+        raise HTTPException(status_code=400, detail=f"API fetch error (profile): {e}")
 
     # --- Build trading context (blocking broker call in thread pool) ---
     from api.ai_trading_chat import build_trading_context, system_prompt_from_context, stream_openai_chat
@@ -5493,9 +5493,9 @@ def ai_chat(profile_name: str, profile_path: str, req: AiChatRequest):
             fut = executor.submit(build_trading_context, profile, profile_name)
             ctx = fut.result(timeout=ctx_timeout)
     except FuturesTimeoutError:
-        raise HTTPException(status_code=502, detail="Broker context fetch timed out")
+        raise HTTPException(status_code=502, detail="API fetch error (broker context timed out)")
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch broker context: {e}")
+        raise HTTPException(status_code=502, detail=f"API fetch error (broker context): {e}")
 
     system = system_prompt_from_context(ctx)
 
