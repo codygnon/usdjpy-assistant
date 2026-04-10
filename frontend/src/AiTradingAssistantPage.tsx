@@ -142,6 +142,14 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
   const [modelsReady, setModelsReady] = useState(false);
   const [toolStatus, setToolStatus] = useState<string | null>(null);
   const [rail, setRail] = useState<api.AiRailPayload | null>(null);
+  // Trade suggestion state
+  const [suggestion, setSuggestion] = useState<api.AiTradeSuggestion | null>(null);
+  const [editDraft, setEditDraft] = useState<api.AiTradeSuggestion | null>(null);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+  const [suggestError, setSuggestError] = useState<string | null>(null);
+  const [placeLoading, setPlaceLoading] = useState(false);
+  const [placeResult, setPlaceResult] = useState<{ status: string; order_id?: number | null } | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -286,6 +294,73 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
       abortRef.current = null;
     }
   }, [chatModel, input, messages, profile.name, profile.path, sending]);
+
+  const handleSuggestTrade = useCallback(async () => {
+    setSuggestLoading(true);
+    setSuggestError(null);
+    setPlaceResult(null);
+    setSuggestion(null);
+    setEditDraft(null);
+    setIsEditing(false);
+    try {
+      const s = await api.aiSuggestTrade(profile.name, profile.path, chatModel || undefined);
+      setSuggestion(s);
+      setEditDraft(s);
+    } catch (e) {
+      setSuggestError((e as Error).message || 'Failed to get suggestion');
+    } finally {
+      setSuggestLoading(false);
+    }
+  }, [chatModel, profile.name, profile.path]);
+
+  const handlePlaceOrder = useCallback(async () => {
+    if (!editDraft) return;
+    setPlaceLoading(true);
+    setPlaceResult(null);
+    setSuggestError(null);
+    try {
+      const res = await api.placeLimitOrder(profile.name, profile.path, {
+        side: editDraft.side,
+        price: editDraft.price,
+        lots: editDraft.lots,
+        sl: editDraft.sl,
+        tp: editDraft.tp,
+        time_in_force: editDraft.time_in_force || 'GTC',
+        gtd_time_utc: editDraft.gtd_time_utc,
+        comment: `ai_suggest:${editDraft.confidence}`,
+      });
+      setPlaceResult({ status: res.status, order_id: res.order_id });
+      setSuggestion(null);
+      setEditDraft(null);
+      setIsEditing(false);
+    } catch (e) {
+      setSuggestError((e as Error).message || 'Failed to place order');
+    } finally {
+      setPlaceLoading(false);
+    }
+  }, [editDraft, profile.name, profile.path]);
+
+  const handleReject = useCallback(() => {
+    setSuggestion(null);
+    setEditDraft(null);
+    setIsEditing(false);
+    setPlaceResult(null);
+    setSuggestError(null);
+  }, []);
+
+  const updateDraft = useCallback((field: keyof api.AiTradeSuggestion, value: string) => {
+    setEditDraft((prev) => {
+      if (!prev) return prev;
+      const numFields = ['price', 'sl', 'tp', 'lots'] as const;
+      if ((numFields as readonly string[]).includes(field)) {
+        const n = parseFloat(value);
+        if (value === '' || value === '-' || value.endsWith('.')) return { ...prev, [field]: value as unknown as number };
+        if (!isNaN(n)) return { ...prev, [field]: n };
+        return prev;
+      }
+      return { ...prev, [field]: value };
+    });
+  }, []);
 
   const macroImplication = (() => {
     const b = (rail?.macro.combined_bias || '').toLowerCase();
@@ -519,6 +594,198 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
             </button>
           </div>
         </div>
+      </div>
+
+      {/* --- AI Trade Suggestion Panel --- */}
+      <div className="card" style={{ maxWidth: 720, marginTop: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <div style={{ fontWeight: 700 }}>AI Trade Suggestion</div>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={suggestLoading}
+            onClick={() => void handleSuggestTrade()}
+            style={{ fontSize: '0.8rem', padding: '4px 14px' }}
+          >
+            {suggestLoading ? 'Analyzing...' : editDraft ? 'New Suggestion' : 'Generate Suggestion'}
+          </button>
+        </div>
+
+        {suggestError && (
+          <div style={{ color: '#f87171', fontSize: '0.82rem', marginBottom: 8 }}>{suggestError}</div>
+        )}
+
+        {placeResult && (
+          <div style={{ color: '#4ade80', fontSize: '0.82rem', marginBottom: 8 }}>
+            Order {placeResult.status}{placeResult.order_id ? ` (ID: ${placeResult.order_id})` : ''}
+          </div>
+        )}
+
+        {suggestLoading && (
+          <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', padding: '16px 0', textAlign: 'center' }}>
+            Analyzing market context and generating trade suggestion...
+          </div>
+        )}
+
+        {editDraft && !suggestLoading && (
+          <div>
+            {/* Rationale */}
+            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 10, padding: '8px 10px', borderRadius: 6, background: 'rgba(255,255,255,0.04)' }}>
+              <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Rationale:</span> {suggestion?.rationale || editDraft.rationale}
+              <span style={{ marginLeft: 10, padding: '2px 8px', borderRadius: 10, fontSize: '0.75rem', fontWeight: 600, background: editDraft.confidence === 'high' ? 'rgba(74,222,128,0.15)' : editDraft.confidence === 'medium' ? 'rgba(250,204,21,0.15)' : 'rgba(248,113,113,0.15)', color: editDraft.confidence === 'high' ? '#4ade80' : editDraft.confidence === 'medium' ? '#facc15' : '#f87171' }}>
+                {editDraft.confidence.toUpperCase()}
+              </span>
+            </div>
+
+            {/* Order fields grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, fontSize: '0.82rem' }}>
+              {/* Side */}
+              <div>
+                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: 2 }}>Side</label>
+                {isEditing ? (
+                  <select
+                    value={editDraft.side}
+                    onChange={(e) => updateDraft('side', e.target.value)}
+                    style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.82rem' }}
+                  >
+                    <option value="buy">BUY</option>
+                    <option value="sell">SELL</option>
+                  </select>
+                ) : (
+                  <div style={{ fontWeight: 700, color: editDraft.side === 'buy' ? '#4ade80' : '#f87171', fontSize: '1rem' }}>
+                    {editDraft.side.toUpperCase()}
+                  </div>
+                )}
+              </div>
+              {/* Price */}
+              <div>
+                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: 2 }}>Limit Price</label>
+                {isEditing ? (
+                  <input type="text" value={String(editDraft.price)} onChange={(e) => updateDraft('price', e.target.value)} style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.82rem' }} />
+                ) : (
+                  <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{editDraft.price}</div>
+                )}
+              </div>
+              {/* Lots */}
+              <div>
+                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: 2 }}>Lots</label>
+                {isEditing ? (
+                  <input type="text" value={String(editDraft.lots)} onChange={(e) => updateDraft('lots', e.target.value)} style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.82rem' }} />
+                ) : (
+                  <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{editDraft.lots}</div>
+                )}
+              </div>
+              {/* SL */}
+              <div>
+                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: 2 }}>Stop Loss</label>
+                {isEditing ? (
+                  <input type="text" value={String(editDraft.sl)} onChange={(e) => updateDraft('sl', e.target.value)} style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.82rem' }} />
+                ) : (
+                  <div style={{ color: '#f87171' }}>{editDraft.sl}</div>
+                )}
+              </div>
+              {/* TP */}
+              <div>
+                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: 2 }}>Take Profit</label>
+                {isEditing ? (
+                  <input type="text" value={String(editDraft.tp)} onChange={(e) => updateDraft('tp', e.target.value)} style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.82rem' }} />
+                ) : (
+                  <div style={{ color: '#4ade80' }}>{editDraft.tp}</div>
+                )}
+              </div>
+              {/* Expiration */}
+              <div>
+                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: 2 }}>Expiration</label>
+                {isEditing ? (
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <select
+                      value={editDraft.time_in_force || 'GTC'}
+                      onChange={(e) => {
+                        updateDraft('time_in_force', e.target.value);
+                        if (e.target.value === 'GTC') updateDraft('gtd_time_utc', '');
+                      }}
+                      style={{ padding: '4px 4px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.78rem' }}
+                    >
+                      <option value="GTC">GTC</option>
+                      <option value="GTD">GTD</option>
+                    </select>
+                    {(editDraft.time_in_force || 'GTC') === 'GTD' && (
+                      <input
+                        type="datetime-local"
+                        value={(editDraft.gtd_time_utc || '').slice(0, 16)}
+                        onChange={(e) => updateDraft('gtd_time_utc', e.target.value ? e.target.value + ':00Z' : '')}
+                        style={{ flex: 1, padding: '4px 4px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.75rem' }}
+                      />
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ color: 'var(--text-secondary)' }}>
+                    {editDraft.time_in_force || 'GTC'}
+                    {editDraft.gtd_time_utc ? ` (${editDraft.gtd_time_utc.slice(0, 16)})` : ''}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Pip distance info row */}
+            {rail?.levels.mid && (
+              <div style={{ marginTop: 8, fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                Entry distance: {Math.abs(((editDraft.price - rail.levels.mid) / 0.01)).toFixed(1)}p from mid
+                {' | '}SL: {Math.abs(((editDraft.price - editDraft.sl) / 0.01)).toFixed(1)}p
+                {' | '}TP: {Math.abs(((editDraft.tp - editDraft.price) / 0.01)).toFixed(1)}p
+                {' | '}R:R {(Math.abs((editDraft.tp - editDraft.price) / (editDraft.price - editDraft.sl)) || 0).toFixed(2)}
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+              {isEditing ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => setIsEditing(false)}
+                  style={{ fontSize: '0.82rem', padding: '6px 16px' }}
+                >
+                  Done Editing
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => void handlePlaceOrder()}
+                    disabled={placeLoading}
+                    style={{ fontSize: '0.82rem', padding: '6px 16px', background: '#16a34a', borderColor: '#16a34a' }}
+                  >
+                    {placeLoading ? 'Placing...' : 'Place Order'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setIsEditing(true)}
+                    style={{ fontSize: '0.82rem', padding: '6px 16px' }}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleReject}
+                    style={{ fontSize: '0.82rem', padding: '6px 16px', color: '#f87171', borderColor: '#f87171' }}
+                  >
+                    Reject
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {!editDraft && !suggestLoading && !placeResult && (
+          <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
+            Click &ldquo;Generate Suggestion&rdquo; for an AI-suggested limit order based on current market conditions.
+          </div>
+        )}
       </div>
       </div>
 

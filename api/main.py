@@ -5469,6 +5469,202 @@ class AiChatRequest(BaseModel):
     chat_model: Optional[str] = None
 
 
+class PlaceLimitOrderRequest(BaseModel):
+    side: str  # "buy" or "sell"
+    price: float
+    lots: float
+    sl: Optional[float] = None
+    tp: Optional[float] = None
+    time_in_force: str = "GTC"  # "GTC" or "GTD"
+    gtd_time_utc: Optional[str] = None  # ISO datetime for GTD expiration
+    comment: str = ""
+
+
+class AiSuggestTradeRequest(BaseModel):
+    chat_model: Optional[str] = None
+
+
+@app.post("/api/data/{profile_name}/place-limit-order")
+def place_limit_order_endpoint(
+    profile_name: str, profile_path: str, req: PlaceLimitOrderRequest,
+) -> dict[str, Any]:
+    """Place a pending limit order via OANDA."""
+    path = _resolve_profile_path(profile_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Profile not found")
+    try:
+        profile = load_profile_v1(path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Profile load error: {e}")
+
+    if getattr(profile, "broker_type", None) != "oanda":
+        raise HTTPException(status_code=400, detail="Limit orders only supported for OANDA profiles")
+
+    side = req.side.lower().strip()
+    if side not in ("buy", "sell"):
+        raise HTTPException(status_code=400, detail=f"Invalid side: {req.side!r}. Must be 'buy' or 'sell'.")
+    if req.lots <= 0 or req.lots > 10:
+        raise HTTPException(status_code=400, detail=f"Invalid lot size: {req.lots}. Must be 0 < lots <= 10.")
+    if req.price <= 0:
+        raise HTTPException(status_code=400, detail="Price must be positive.")
+    tif = req.time_in_force.upper()
+    if tif not in ("GTC", "GTD"):
+        raise HTTPException(status_code=400, detail=f"Invalid time_in_force: {req.time_in_force!r}")
+    if tif == "GTD" and not req.gtd_time_utc:
+        raise HTTPException(status_code=400, detail="gtd_time_utc required when time_in_force is GTD")
+
+    from adapters.broker import get_adapter
+
+    adapter = get_adapter(profile)
+    try:
+        adapter.initialize()
+        result = adapter.order_send_pending_limit(
+            symbol=profile.symbol,
+            side=side,
+            price=req.price,
+            volume_lots=req.lots,
+            sl=req.sl,
+            tp=req.tp,
+            time_in_force=tif,
+            gtd_time_utc=req.gtd_time_utc,
+            comment=req.comment or f"ai_assist:{profile_name}",
+        )
+        if result.retcode != 0:
+            raise HTTPException(status_code=400, detail=f"Order rejected: {result.comment}")
+        return {
+            "status": "placed",
+            "order_id": result.order,
+            "side": side,
+            "price": req.price,
+            "lots": req.lots,
+            "sl": req.sl,
+            "tp": req.tp,
+            "time_in_force": tif,
+            "gtd_time_utc": req.gtd_time_utc,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error placing order: {e}")
+    finally:
+        try:
+            adapter.shutdown()
+        except Exception:
+            pass
+
+
+@app.post("/api/data/{profile_name}/ai-suggest-trade")
+def ai_suggest_trade(
+    profile_name: str, profile_path: str, req: AiSuggestTradeRequest,
+) -> dict[str, Any]:
+    """Ask the AI for a limit order suggestion based on current market context."""
+    path = _resolve_profile_path(profile_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured")
+
+    try:
+        profile = load_profile_v1(path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Profile load error: {e}")
+
+    from api.ai_trading_chat import (
+        build_trading_context,
+        resolve_ai_chat_model,
+        system_prompt_from_context,
+    )
+
+    try:
+        ctx_timeout = float(os.environ.get("API_AI_CHAT_CTX_TIMEOUT_SEC", "20"))
+    except ValueError:
+        ctx_timeout = 20.0
+
+    try:
+        ctx = _run_in_threadpool_with_timeout(build_trading_context, ctx_timeout, profile, profile_name)
+    except FuturesTimeoutError:
+        raise HTTPException(status_code=502, detail="Context build timed out")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Context build error: {e}")
+
+    try:
+        effective_model = resolve_ai_chat_model(req.chat_model)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    system = system_prompt_from_context(ctx, effective_model)
+
+    suggest_prompt = (
+        "Based on the current market context (technicals, macro bias, levels, session, volatility, and any recent news/events), "
+        "suggest ONE specific USDJPY limit order trade right now. "
+        "You MUST respond with ONLY a valid JSON object — no markdown, no code fences, no explanation outside the JSON. "
+        "Use this exact JSON schema:\n"
+        '{\n'
+        '  "side": "buy" or "sell",\n'
+        '  "price": <limit entry price as number>,\n'
+        '  "sl": <stop loss price as number>,\n'
+        '  "tp": <take profit price as number>,\n'
+        '  "lots": <position size as number, e.g. 0.05>,\n'
+        '  "time_in_force": "GTC" or "GTD",\n'
+        '  "gtd_time_utc": <ISO datetime string if GTD, else null>,\n'
+        '  "rationale": "<1-2 sentence explanation of the setup>",\n'
+        '  "confidence": "low" or "medium" or "high"\n'
+        '}\n'
+        "Rules:\n"
+        "- The limit price must be AWAY from current price (buy below current, sell above current).\n"
+        "- Use the nearest support/resistance levels and current technicals to set price, SL, and TP.\n"
+        "- SL should be 10-15 pips from entry, TP 4-10 pips from entry, consistent with a scalper's style.\n"
+        "- Lot size should be proportional to confidence (0.01-0.10 typical range).\n"
+        "- Default to GTC unless there is a clear time-based reason (event risk, session close).\n"
+        "- If you genuinely see no good setup, return the JSON with confidence 'low' and explain in rationale.\n"
+    )
+
+    import openai
+
+    client = openai.OpenAI()
+    try:
+        resp = client.chat.completions.create(
+            model=effective_model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": suggest_prompt},
+            ],
+            temperature=0.3,
+        )
+        raw = (resp.choices[0].message.content or "").strip()
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+        if raw.endswith("```"):
+            raw = raw[: raw.rfind("```")]
+        raw = raw.strip()
+        import json as _json
+
+        suggestion = _json.loads(raw)
+        # Validate required fields
+        required = ("side", "price", "sl", "tp", "lots", "rationale", "confidence")
+        missing = [f for f in required if f not in suggestion]
+        if missing:
+            raise HTTPException(status_code=502, detail=f"AI response missing fields: {missing}")
+        # Normalize
+        suggestion["side"] = str(suggestion["side"]).lower()
+        suggestion["price"] = float(suggestion["price"])
+        suggestion["sl"] = float(suggestion["sl"])
+        suggestion["tp"] = float(suggestion["tp"])
+        suggestion["lots"] = float(suggestion["lots"])
+        suggestion.setdefault("time_in_force", "GTC")
+        suggestion.setdefault("gtd_time_utc", None)
+        return suggestion
+    except HTTPException:
+        raise
+    except _json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {raw[:500]}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI suggestion error: {e}")
+
+
 @app.get("/api/ai-chat/models")
 def get_ai_chat_models_list() -> dict[str, Any]:
     """Models the assistant UI may select (allowlist; extend via AI_CHAT_ALLOWED_MODELS)."""
@@ -5534,31 +5730,33 @@ def get_ai_assistant_rail(profile_name: str, profile_path: str, days_ahead: int 
 
     bias = ctx.get("cross_asset_bias") or {}
     cross = ctx.get("cross_assets") or {}
-    oil = bias.get("oil") or {}
-    dxy = bias.get("dxy") or {}
+    oil_bias = bias.get("oil") or {}
+    dxy_bias = bias.get("dxy") or {}
+    gold_bias = bias.get("gold") or {}
+    us10y_data = cross.get("us10y_data") or {}
     macro = {
         "combined_bias": str(bias.get("combined_bias", "neutral")),
         "confidence": str(bias.get("confidence", "low")),
         "implication": str(bias.get("usdjpy_implication", "")),
         "dxy": {
-            "value": cross.get("dxy"),
-            "one_day": None,
-            "five_day": dxy.get("5d_return"),
+            "value": cross.get("dxy") or dxy_bias.get("value"),
+            "one_day": dxy_bias.get("1d_return"),
+            "five_day": dxy_bias.get("5d_return"),
         },
         "us10y": {
-            "value": cross.get("us10y_yield"),
-            "one_day": None,
-            "five_day": None,
+            "value": us10y_data.get("value") or cross.get("us10y_yield"),
+            "one_day": us10y_data.get("1d_change"),
+            "five_day": us10y_data.get("5d_change"),
         },
         "oil": {
-            "value": cross.get("bco_usd"),
-            "one_day": None,
-            "five_day": oil.get("5d_return"),
+            "value": cross.get("bco_usd") or oil_bias.get("price"),
+            "one_day": oil_bias.get("1d_return"),
+            "five_day": oil_bias.get("5d_return"),
         },
         "gold": {
-            "value": cross.get("xau_usd"),
-            "one_day": None,
-            "five_day": None,
+            "value": cross.get("xau_usd") or gold_bias.get("price"),
+            "one_day": gold_bias.get("1d_return"),
+            "five_day": gold_bias.get("5d_return"),
         },
     }
 

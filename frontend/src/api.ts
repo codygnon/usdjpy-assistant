@@ -969,6 +969,75 @@ export async function getAiRail(profileName: string, profilePath: string, daysAh
   return fetchJson<AiRailPayload>(`${API_BASE}/data/${encodeURIComponent(profileName)}/ai-rail?${params.toString()}`);
 }
 
+// --- AI Trade Suggestion & Limit Order Placement ---
+
+export interface AiTradeSuggestion {
+  side: string;
+  price: number;
+  sl: number;
+  tp: number;
+  lots: number;
+  time_in_force: string;
+  gtd_time_utc: string | null;
+  rationale: string;
+  confidence: string;
+}
+
+export interface PlaceLimitOrderRequest {
+  side: string;
+  price: number;
+  lots: number;
+  sl?: number | null;
+  tp?: number | null;
+  time_in_force?: string;
+  gtd_time_utc?: string | null;
+  comment?: string;
+}
+
+export interface PlaceLimitOrderResponse {
+  status: string;
+  order_id: number | null;
+  side: string;
+  price: number;
+  lots: number;
+  sl: number | null;
+  tp: number | null;
+  time_in_force: string;
+  gtd_time_utc: string | null;
+}
+
+export async function aiSuggestTrade(
+  profileName: string,
+  profilePath: string,
+  chatModel?: string,
+): Promise<AiTradeSuggestion> {
+  const params = new URLSearchParams({ profile_path: profilePath });
+  return fetchJson<AiTradeSuggestion>(
+    `${API_BASE}/data/${encodeURIComponent(profileName)}/ai-suggest-trade?${params.toString()}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_model: chatModel || null }),
+    },
+  );
+}
+
+export async function placeLimitOrder(
+  profileName: string,
+  profilePath: string,
+  order: PlaceLimitOrderRequest,
+): Promise<PlaceLimitOrderResponse> {
+  const params = new URLSearchParams({ profile_path: profilePath });
+  return fetchJson<PlaceLimitOrderResponse>(
+    `${API_BASE}/data/${encodeURIComponent(profileName)}/place-limit-order?${params.toString()}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(order),
+    },
+  );
+}
+
 async function readApiErrorDetail(res: Response): Promise<string> {
   const text = await res.text();
   try {

@@ -16,11 +16,43 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time as _cache_time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Generator
 
 from core.profile import ProfileV1
+
+
+# ---------------------------------------------------------------------------
+# TTL cache for slow-moving external data (cross-asset, FRED, books)
+# ---------------------------------------------------------------------------
+
+class _TTLCache:
+    """Thread-safe in-memory cache with per-key TTL."""
+
+    def __init__(self) -> None:
+        self._store: dict[str, tuple[float, Any]] = {}  # key -> (expires_at, value)
+        self._lock = threading.Lock()
+
+    def get(self, key: str) -> Any | None:
+        with self._lock:
+            entry = self._store.get(key)
+            if entry is None:
+                return None
+            expires_at, value = entry
+            if _cache_time.monotonic() > expires_at:
+                del self._store[key]
+                return None
+            return value
+
+    def set(self, key: str, value: Any, ttl_sec: float) -> None:
+        with self._lock:
+            self._store[key] = (_cache_time.monotonic() + ttl_sec, value)
+
+
+_ctx_cache = _TTLCache()
 
 # LOGS_DIR mirrors api/main.py — persistent volume on Railway, else repo root.
 _data_base_env = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") or os.environ.get("USDJPY_DATA_DIR")
@@ -178,26 +210,40 @@ def _fetch_cross_asset_prices(adapter: Any) -> dict[str, Any]:
     return result
 
 
-def _fetch_us10y_yield() -> float | None:
-    """Fetch latest US 10-Year Treasury yield from FRED (free, no API key).
+def _fetch_us10y_yield() -> dict[str, Any] | None:
+    """Fetch US 10-Year Treasury yield history from FRED (free, no API key).
 
     Uses the FRED observation endpoint for DGS10 series.
-    Returns the yield as a percentage (e.g. 4.32) or None on failure.
+    Returns dict with value, 1d_change, 5d_change (in percentage points) or None on failure.
     """
     from urllib.request import Request, urlopen
 
     try:
         url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10&cosd=2025-01-01"
         req = Request(url, headers={"User-Agent": "USDJPY-Assistant/1.0"})
-        with urlopen(req, timeout=5) as resp:
+        with urlopen(req, timeout=8) as resp:
             raw = resp.read().decode("utf-8")
         # CSV format: DATE,DGS10\n2025-01-02,4.32\n...
         lines = raw.strip().split("\n")
-        # Find last non-empty, non-"." value (FRED uses "." for missing)
-        for line in reversed(lines):
+        # Collect valid observations (most recent last)
+        values: list[float] = []
+        for line in lines:
             parts = line.split(",")
             if len(parts) >= 2 and parts[1].strip() not in ("", ".", "DGS10"):
-                return round(float(parts[1].strip()), 2)
+                try:
+                    values.append(float(parts[1].strip()))
+                except ValueError:
+                    continue
+        if not values:
+            return None
+        current = values[-1]
+        one_day_change = round(current - values[-2], 3) if len(values) >= 2 else None
+        five_day_change = round(current - values[-6], 3) if len(values) >= 6 else None
+        return {
+            "value": round(current, 2),
+            "1d_change": one_day_change,
+            "5d_change": five_day_change,
+        }
     except Exception:
         pass
     return None
@@ -745,18 +791,25 @@ def _compute_cross_asset_bias(adapter: Any) -> dict[str, Any] | None:
     # Oil (Brent)
     try:
         oil_df = adapter.get_bars("BCO_USD", "D", count=25)
-        if oil_df is not None and len(oil_df) >= 6:
+        if oil_df is not None and len(oil_df) >= 2:
             closes = oil_df["close"].values.astype(float)
             current = closes[-1]
-            five_ago = closes[-6]
-            ret_5d = (current - five_ago) / five_ago
-            twenty_ago = closes[-21] if len(closes) >= 21 else closes[0]
-            ret_20d = (current - twenty_ago) / twenty_ago
-            oil_dir = _direction(ret_5d, 0.005)
+            one_ago = closes[-2]
+            ret_1d = (current - one_ago) / one_ago
+            ret_5d = None
+            ret_20d = None
+            if len(closes) >= 6:
+                five_ago = closes[-6]
+                ret_5d = (current - five_ago) / five_ago
+            if len(closes) >= 21:
+                twenty_ago = closes[-21]
+                ret_20d = (current - twenty_ago) / twenty_ago
+            oil_dir = _direction(ret_5d or 0.0, 0.005)
             result["oil"] = {
                 "direction": oil_dir,
-                "5d_return": round(ret_5d * 100, 2),
-                "20d_return": round(ret_20d * 100, 2),
+                "1d_return": round(ret_1d * 100, 2),
+                "5d_return": round(ret_5d * 100, 2) if ret_5d is not None else None,
+                "20d_return": round(ret_20d * 100, 2) if ret_20d is not None else None,
                 "price": round(current, 2),
             }
     except Exception:
@@ -777,8 +830,8 @@ def _compute_cross_asset_bias(adapter: Any) -> dict[str, Any] | None:
             except Exception:
                 pass
 
-        # Compute DXY for current and 5-day-ago if all pairs available
-        if all(v is not None and len(v) >= 6 for v in dxy_pairs.values()):
+        # Compute DXY for current, 1-day-ago, and 5-day-ago if all pairs available
+        if all(v is not None and len(v) >= 2 for v in dxy_pairs.values()):
             def _calc_dxy(idx: int) -> float:
                 return (50.14348112
                         * (dxy_pairs["EUR_USD"][idx] ** -0.576)
@@ -789,17 +842,43 @@ def _compute_cross_asset_bias(adapter: Any) -> dict[str, Any] | None:
                         * (dxy_pairs["USD_CHF"][idx] ** 0.036))
 
             dxy_now = _calc_dxy(-1)
-            dxy_5ago = _calc_dxy(-6)
-            dxy_20ago = _calc_dxy(-21) if all(len(v) >= 21 for v in dxy_pairs.values()) else _calc_dxy(0)
-            dxy_ret_5d = (dxy_now - dxy_5ago) / dxy_5ago
-            dxy_ret_20d = (dxy_now - dxy_20ago) / dxy_20ago
+            dxy_1ago = _calc_dxy(-2)
+            dxy_ret_1d = (dxy_now - dxy_1ago) / dxy_1ago
+            dxy_ret_5d = None
+            dxy_ret_20d = None
+            if all(len(v) >= 6 for v in dxy_pairs.values()):
+                dxy_5ago = _calc_dxy(-6)
+                dxy_ret_5d = (dxy_now - dxy_5ago) / dxy_5ago
+            if all(len(v) >= 21 for v in dxy_pairs.values()):
+                dxy_20ago = _calc_dxy(-21)
+                dxy_ret_20d = (dxy_now - dxy_20ago) / dxy_20ago
             # DXY up = USD strong = bullish for USDJPY
-            dxy_dir = _direction(dxy_ret_5d, 0.003)
+            dxy_dir = _direction(dxy_ret_5d or 0.0, 0.003)
             result["dxy"] = {
                 "direction": dxy_dir,
-                "5d_return": round(dxy_ret_5d * 100, 2),
-                "20d_return": round(dxy_ret_20d * 100, 2),
+                "1d_return": round(dxy_ret_1d * 100, 2),
+                "5d_return": round(dxy_ret_5d * 100, 2) if dxy_ret_5d is not None else None,
+                "20d_return": round(dxy_ret_20d * 100, 2) if dxy_ret_20d is not None else None,
                 "value": round(dxy_now, 2),
+            }
+    except Exception:
+        pass
+
+    # Gold (XAU/USD)
+    try:
+        gold_df = adapter.get_bars("XAU_USD", "D", count=25)
+        if gold_df is not None and len(gold_df) >= 2:
+            closes = gold_df["close"].values.astype(float)
+            current = closes[-1]
+            one_ago = closes[-2]
+            ret_1d = (current - one_ago) / one_ago
+            ret_5d = None
+            if len(closes) >= 6:
+                ret_5d = (current - closes[-6]) / closes[-6]
+            result["gold"] = {
+                "1d_return": round(ret_1d * 100, 2),
+                "5d_return": round(ret_5d * 100, 2) if ret_5d is not None else None,
+                "price": round(current, 2),
             }
     except Exception:
         pass
@@ -883,8 +962,10 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
     """Fetch live account state from the broker and return a plain dict.
 
     Runs synchronously (caller wraps in ThreadPoolExecutor).
+    Uses internal thread pool to parallelize independent broker calls.
     Never includes raw tokens/secrets.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     from adapters.broker import get_adapter
 
     adapter = get_adapter(profile)
@@ -893,69 +974,179 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
         "broker_type": getattr(profile, "broker_type", "mt5"),
         "as_of": datetime.now(timezone.utc).isoformat(),
     }
+    is_oanda = getattr(profile, "broker_type", None) == "oanda"
+
+    # --- Helper closures for parallel dispatch ---
+
+    def _fetch_account() -> tuple[str, Any]:
+        acct = adapter.get_account_info()
+        return ("account", {
+            "balance": float(getattr(acct, "balance", 0)),
+            "equity": float(getattr(acct, "equity", 0)),
+            "margin_used": float(getattr(acct, "margin", 0)),
+            "margin_free": float(getattr(acct, "margin_free", 0)),
+        })
+
+    def _fetch_tick() -> tuple[str, Any]:
+        tick = adapter.get_tick(profile.symbol)
+        bid = float(getattr(tick, "bid", 0) or 0)
+        ask = float(getattr(tick, "ask", 0) or 0)
+        if bid > 0 and ask > 0:
+            pip_size = float(getattr(profile, "pip_size", 0.01) or 0.01)
+            spread_pips = ((ask - bid) / pip_size) if pip_size > 0 else None
+            return ("spot_price", {
+                "bid": round(bid, 3),
+                "ask": round(ask, 3),
+                "mid": round((bid + ask) / 2.0, 3),
+                "spread_pips": round(spread_pips, 1) if spread_pips is not None else None,
+            })
+        return ("spot_price", None)
+
+    def _fetch_positions() -> tuple[str, Any]:
+        positions = adapter.get_open_positions(profile.symbol)
+        open_list = []
+        if positions:
+            for pos in positions[:50]:
+                if isinstance(pos, dict):
+                    open_list.append({
+                        "id": pos.get("id"),
+                        "instrument": pos.get("instrument"),
+                        "side": "BUY" if float(pos.get("currentUnits", pos.get("units", 0))) > 0 else "SELL",
+                        "units": abs(float(pos.get("currentUnits", pos.get("units", 0)))),
+                        "entry_price": pos.get("price"),
+                        "unrealized_pl": pos.get("unrealizedPL"),
+                    })
+                else:
+                    open_list.append({
+                        "id": getattr(pos, "ticket", None),
+                        "instrument": getattr(pos, "symbol", profile.symbol),
+                        "side": "BUY" if getattr(pos, "type", 0) == 0 else "SELL",
+                        "units": getattr(pos, "volume", 0),
+                        "entry_price": getattr(pos, "price_open", None),
+                        "unrealized_pl": getattr(pos, "profit", None),
+                    })
+        return ("open_positions", open_list)
+
+    def _fetch_closed_trades() -> tuple[str, Any]:
+        if is_oanda:
+            closed = adapter.get_closed_trade_summaries(
+                days_back=30, symbol=profile.symbol, pip_size=profile.pip_size,
+            ) or []
+            tagged_closed: list[str] = []
+            for row in closed[:10]:
+                if isinstance(row, dict):
+                    src = _source_label_for_trade(row.get("entry_type"))
+                    base = str(row.get("summary") or row.get("text") or row)
+                    tagged_closed.append(f"{base} | [{src}]")
+                else:
+                    txt = str(row)
+                    src = "bot" if classify_trade_source(txt) == "bot" else "manual"
+                    tagged_closed.append(f"{txt} | [{src}]")
+            result: dict[str, Any] = {"recent_closed_trades": tagged_closed}
+            if closed:
+                result["derived_stats"] = _compute_derived_stats(closed)
+            return ("closed_trades", result)
+        else:
+            report = adapter.get_mt5_report_stats(
+                symbol=profile.symbol, pip_size=profile.pip_size, days_back=30,
+            )
+            return ("closed_trades", {"recent_trade_stats": {
+                "closed_trades": getattr(report, "closed_trades", 0),
+                "wins": getattr(report, "wins", 0),
+                "losses": getattr(report, "losses", 0),
+                "win_rate": getattr(report, "win_rate", 0),
+                "total_profit": getattr(report, "total_profit", 0),
+            }})
+
+    def _fetch_cross_assets() -> tuple[str, Any]:
+        cached = _ctx_cache.get("cross_assets")
+        if cached is not None:
+            return ("cross_assets", cached)
+        result = _fetch_cross_asset_prices(adapter)
+        # Also fetch US10Y from FRED (no adapter needed)
+        try:
+            us10y_data = _fetch_us10y_yield()
+            if us10y_data is not None:
+                result["us10y_yield"] = us10y_data["value"]
+                result["us10y_data"] = us10y_data
+        except Exception:
+            pass
+        _ctx_cache.set("cross_assets", result, 120)  # 2 min
+        return ("cross_assets", result)
+
+    def _fetch_macro_bias() -> tuple[str, Any]:
+        cached = _ctx_cache.get("cross_asset_bias")
+        if cached is not None:
+            return ("cross_asset_bias", cached)
+        bias = _compute_cross_asset_bias(adapter)
+        if bias:
+            _ctx_cache.set("cross_asset_bias", bias, 300)  # 5 min
+        return ("cross_asset_bias", bias)
+
+    def _fetch_order_book() -> tuple[str, Any]:
+        cached = _ctx_cache.get("order_book")
+        if cached is not None:
+            return ("order_book", cached)
+        book = adapter.get_order_book(profile.symbol)
+        ob = book.get("orderBook", {})
+        buckets = ob.get("buckets", [])
+        book_price = float(ob.get("price", 0))
+        if buckets and book_price > 0:
+            result = _extract_order_book_clusters(
+                buckets, book_price, range_pips=100, top_n=5,
+            )
+            _ctx_cache.set("order_book", result, 180)  # 3 min
+            return ("order_book", result)
+        return ("order_book", None)
+
+    def _fetch_pos_book() -> tuple[str, Any]:
+        cached = _ctx_cache.get("position_book")
+        if cached is not None:
+            return ("position_book", cached)
+        sentiment = _fetch_position_book_sentiment(adapter, profile.symbol)
+        if sentiment:
+            _ctx_cache.set("position_book", sentiment, 180)  # 3 min
+        return ("position_book", sentiment)
+
+    def _fetch_vol() -> tuple[str, Any]:
+        return ("volatility", _compute_volatility(adapter, profile.symbol))
+
+    def _fetch_ta() -> tuple[str, Any]:
+        return ("ta_snapshot", _compute_ta_snapshot(adapter, profile))
+
+    def _fetch_ohlc() -> tuple[str, Any]:
+        return ("ohlc_history", _fetch_ohlc_history(adapter, profile))
+
+    # --- Dispatch all calls in parallel ---
 
     try:
         adapter.initialize()
         if hasattr(adapter, "ensure_symbol"):
             adapter.ensure_symbol(profile.symbol)
 
-        # Account info
-        try:
-            acct = adapter.get_account_info()
-            ctx["account"] = {
-                "balance": float(getattr(acct, "balance", 0)),
-                "equity": float(getattr(acct, "equity", 0)),
-                "margin_used": float(getattr(acct, "margin", 0)),
-                "margin_free": float(getattr(acct, "margin_free", 0)),
-            }
-        except Exception as e:
-            ctx["account_error"] = str(e)
+        tasks = [_fetch_account, _fetch_tick, _fetch_positions, _fetch_closed_trades,
+                 _fetch_vol, _fetch_ta, _fetch_ohlc]
 
-        # Live spot price (bid/ask) for the traded symbol.
-        # Prefer this for "current price"; order-book price is a slower snapshot.
-        try:
-            tick = adapter.get_tick(profile.symbol)
-            bid = float(getattr(tick, "bid", 0) or 0)
-            ask = float(getattr(tick, "ask", 0) or 0)
-            if bid > 0 and ask > 0:
-                pip_size = float(getattr(profile, "pip_size", 0.01) or 0.01)
-                spread_pips = ((ask - bid) / pip_size) if pip_size > 0 else None
-                ctx["spot_price"] = {
-                    "bid": round(bid, 3),
-                    "ask": round(ask, 3),
-                    "mid": round((bid + ask) / 2.0, 3),
-                    "spread_pips": round(spread_pips, 1) if spread_pips is not None else None,
-                }
-        except Exception:
-            pass
+        if is_oanda:
+            tasks.extend([_fetch_cross_assets, _fetch_macro_bias, _fetch_order_book, _fetch_pos_book])
 
-        # Open positions
-        try:
-            positions = adapter.get_open_positions(profile.symbol)
-            open_list = []
-            if positions:
-                for pos in positions[:50]:  # cap for prompt size
-                    if isinstance(pos, dict):
-                        open_list.append({
-                            "id": pos.get("id"),
-                            "instrument": pos.get("instrument"),
-                            "side": "BUY" if float(pos.get("currentUnits", pos.get("units", 0))) > 0 else "SELL",
-                            "units": abs(float(pos.get("currentUnits", pos.get("units", 0)))),
-                            "entry_price": pos.get("price"),
-                            "unrealized_pl": pos.get("unrealizedPL"),
-                        })
-                    else:
-                        # MT5 position object
-                        open_list.append({
-                            "id": getattr(pos, "ticket", None),
-                            "instrument": getattr(pos, "symbol", profile.symbol),
-                            "side": "BUY" if getattr(pos, "type", 0) == 0 else "SELL",
-                            "units": getattr(pos, "volume", 0),
-                            "entry_price": getattr(pos, "price_open", None),
-                            "unrealized_pl": getattr(pos, "profit", None),
-                        })
-            ctx["open_positions"] = open_list
-            # Aggregate position stats per side so the assistant can reason about adding/scaling.
+        with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+            futures = {pool.submit(fn): fn.__name__ for fn in tasks}
+            for fut in as_completed(futures):
+                try:
+                    key, value = fut.result()
+                    if value is not None:
+                        if key == "closed_trades":
+                            # Unpack multi-key result
+                            ctx.update(value)
+                        else:
+                            ctx[key] = value
+                except Exception:
+                    pass
+
+        # Post-process: position summary (needs open_positions)
+        open_list = ctx.get("open_positions", [])
+        if open_list:
             side_summary: dict[str, dict[str, Any]] = {}
             for side, side_key in (("BUY", "long"), ("SELL", "short")):
                 side_rows = [p for p in open_list if str(p.get("side", "")).upper() == side]
@@ -993,119 +1184,6 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
                 }
             if side_summary:
                 ctx["position_summary"] = side_summary
-        except Exception as e:
-            ctx["open_positions_error"] = str(e)
-
-        # Closed trades (recent)
-        try:
-            broker_type = getattr(profile, "broker_type", None)
-            if broker_type == "oanda":
-                closed = adapter.get_closed_trade_summaries(
-                    days_back=30,
-                    symbol=profile.symbol,
-                    pip_size=profile.pip_size,
-                ) or []
-                # Prompt shows only a sample; today/week/month stats must use the FULL 30d list.
-                tagged_closed: list[str] = []
-                for row in closed[:10]:
-                    if isinstance(row, dict):
-                        src = _source_label_for_trade(row.get("entry_type"))
-                        base = str(row.get("summary") or row.get("text") or row)
-                        tagged_closed.append(f"{base} | [{src}]")
-                    else:
-                        txt = str(row)
-                        src = "bot" if classify_trade_source(txt) == "bot" else "manual"
-                        tagged_closed.append(f"{txt} | [{src}]")
-                ctx["recent_closed_trades"] = tagged_closed
-                if closed:
-                    ctx["derived_stats"] = _compute_derived_stats(closed)
-            else:
-                # MT5
-                try:
-                    report = adapter.get_mt5_report_stats(
-                        symbol=profile.symbol,
-                        pip_size=profile.pip_size,
-                        days_back=30,
-                    )
-                    ctx["recent_trade_stats"] = {
-                        "closed_trades": getattr(report, "closed_trades", 0),
-                        "wins": getattr(report, "wins", 0),
-                        "losses": getattr(report, "losses", 0),
-                        "win_rate": getattr(report, "win_rate", 0),
-                        "total_profit": getattr(report, "total_profit", 0),
-                    }
-                except Exception:
-                    pass
-        except Exception as e:
-            ctx["closed_trades_error"] = str(e)
-
-        # Cross-asset snapshot (OANDA only): DXY, Oil, Gold, Silver
-        if getattr(profile, "broker_type", None) == "oanda":
-            try:
-                ctx["cross_assets"] = _fetch_cross_asset_prices(adapter)
-            except Exception:
-                pass
-            # US 10Y Treasury yield from FRED (no API key needed)
-            try:
-                us10y = _fetch_us10y_yield()
-                if us10y is not None:
-                    ctx.setdefault("cross_assets", {})["us10y_yield"] = us10y
-            except Exception:
-                pass
-            # Macro bias from daily candle returns
-            try:
-                bias = _compute_cross_asset_bias(adapter)
-                if bias:
-                    ctx["cross_asset_bias"] = bias
-            except Exception:
-                pass
-
-        # OANDA order book — extract buy/sell clusters near current price
-        if getattr(profile, "broker_type", None) == "oanda" and hasattr(adapter, "get_order_book"):
-            try:
-                book = adapter.get_order_book(profile.symbol)
-                ob = book.get("orderBook", {})
-                buckets = ob.get("buckets", [])
-                book_price = float(ob.get("price", 0))
-                if buckets and book_price > 0:
-                    ctx["order_book"] = _extract_order_book_clusters(
-                        buckets, book_price, range_pips=100, top_n=5,
-                    )
-            except Exception:
-                pass
-
-        # OANDA position book — trader sentiment / volume proxy
-        if getattr(profile, "broker_type", None) == "oanda" and hasattr(adapter, "get_position_book"):
-            try:
-                sentiment = _fetch_position_book_sentiment(adapter, profile.symbol)
-                if sentiment:
-                    ctx["position_book"] = sentiment
-            except Exception:
-                pass
-
-        # Volatility indicator (M1 candle range comparison)
-        try:
-            vol = _compute_volatility(adapter, profile.symbol)
-            if vol:
-                ctx["volatility"] = vol
-        except Exception:
-            pass
-
-        # Technical analysis snapshot (H1, M5, M1 only)
-        try:
-            ta = _compute_ta_snapshot(adapter, profile)
-            if ta:
-                ctx["ta_snapshot"] = ta
-        except Exception:
-            pass
-
-        # OHLC candle history for chart context
-        try:
-            ohlc = _fetch_ohlc_history(adapter, profile)
-            if ohlc:
-                ctx["ohlc_history"] = ohlc
-        except Exception:
-            pass
 
     finally:
         try:
@@ -1747,10 +1825,26 @@ def _exec_get_cross_asset_bias(profile: ProfileV1, **_: Any) -> str:
         lines = ["Cross-Asset Macro Bias:"]
         oil = bias.get("oil")
         if oil:
-            lines.append(f"  Oil (Brent): {oil['direction'].upper()} — 5D: {oil['5d_return']:+.1f}%, 20D: {oil['20d_return']:+.1f}%, price: {oil['price']}")
+            parts = [f"  Oil (Brent): {oil['direction'].upper()}"]
+            if oil.get("1d_return") is not None:
+                parts.append(f"1D: {oil['1d_return']:+.1f}%")
+            if oil.get("5d_return") is not None:
+                parts.append(f"5D: {oil['5d_return']:+.1f}%")
+            if oil.get("20d_return") is not None:
+                parts.append(f"20D: {oil['20d_return']:+.1f}%")
+            parts.append(f"price: {oil['price']}")
+            lines.append(" — ".join(parts[:1]) + " — " + ", ".join(parts[1:]))
         dxy = bias.get("dxy")
         if dxy:
-            lines.append(f"  DXY: {dxy['direction'].upper()} — 5D: {dxy['5d_return']:+.1f}%, 20D: {dxy['20d_return']:+.1f}%, value: {dxy.get('value', '?')}")
+            parts = [f"  DXY: {dxy['direction'].upper()}"]
+            if dxy.get("1d_return") is not None:
+                parts.append(f"1D: {dxy['1d_return']:+.1f}%")
+            if dxy.get("5d_return") is not None:
+                parts.append(f"5D: {dxy['5d_return']:+.1f}%")
+            if dxy.get("20d_return") is not None:
+                parts.append(f"20D: {dxy['20d_return']:+.1f}%")
+            parts.append(f"value: {dxy.get('value', '?')}")
+            lines.append(" — ".join(parts[:1]) + " — " + ", ".join(parts[1:]))
         lines.append(f"  Combined: {bias.get('combined_bias', '?').upper()} ({bias.get('confidence', '?')} confidence)")
         lines.append(f"  Implication: {bias.get('usdjpy_implication', '?')}")
         return "\n".join(lines)
@@ -2214,21 +2308,39 @@ def stream_openai_chat(
 
         messages.append({"role": "assistant", "tool_calls": assistant_tool_calls})
 
-        # Execute each tool and append result
+        # Execute tool calls in parallel when multiple are requested
+        # Notify frontend of all tools first
         for tc_msg in assistant_tool_calls:
-            tool_name = tc_msg["function"]["name"]
-            tool_args = tc_msg["function"]["arguments"]
-            tool_id = tc_msg["id"]
+            yield f"data: {json.dumps({'type': 'tool_status', 'name': tc_msg['function']['name']})}\n\n"
 
-            # Notify frontend
-            yield f"data: {json.dumps({'type': 'tool_status', 'name': tool_name})}\n\n"
+        if len(assistant_tool_calls) == 1:
+            tc_msg = assistant_tool_calls[0]
+            result = _execute_tool(tc_msg["function"]["name"], tc_msg["function"]["arguments"], profile, profile_name)  # type: ignore[arg-type]
+            messages.append({"role": "tool", "tool_call_id": tc_msg["id"], "content": result})
+        else:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
 
-            result = _execute_tool(tool_name, tool_args, profile, profile_name)  # type: ignore[arg-type]
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_id,
-                "content": result,
-            })
+            def _run_tool(tc_msg: dict) -> tuple[str, str]:
+                res = _execute_tool(tc_msg["function"]["name"], tc_msg["function"]["arguments"], profile, profile_name)  # type: ignore[arg-type]
+                return (tc_msg["id"], res)
+
+            tool_results: dict[str, str] = {}
+            with ThreadPoolExecutor(max_workers=len(assistant_tool_calls)) as pool:
+                futs = {pool.submit(_run_tool, tc): tc["id"] for tc in assistant_tool_calls}
+                for fut in as_completed(futs):
+                    try:
+                        tool_id, res = fut.result()
+                        tool_results[tool_id] = res
+                    except Exception as e:
+                        tool_results[futs[fut]] = f"Tool error: {e}"
+
+            # Append in original order to keep message sequence deterministic
+            for tc_msg in assistant_tool_calls:
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc_msg["id"],
+                    "content": tool_results.get(tc_msg["id"], "Tool execution failed."),
+                })
 
         # Loop back to get the model's response after tool results
 
