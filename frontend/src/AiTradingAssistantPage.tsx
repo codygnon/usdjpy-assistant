@@ -388,7 +388,7 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
         </div>
       )}
 
-      <div className="card" style={{ display: 'flex', flexDirection: 'column', maxWidth: 720, height: 'calc(100vh - 280px)', minHeight: 420 }}>
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', maxWidth: 720, height: 'calc(100vh - 180px)', minHeight: 560 }}>
         <div
           ref={scrollRef}
           style={{

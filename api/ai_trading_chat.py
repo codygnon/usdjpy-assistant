@@ -1883,16 +1883,14 @@ def _fetch_forexfactory_calendar() -> list[dict[str, str]]:
     return events
 
 
-def _exec_get_economic_calendar(args: dict, **_: Any) -> str:
-    """Get upcoming economic events for USD/JPY."""
-    days_ahead = min(int(args.get("days_ahead", 7)), 30)
+def _get_upcoming_economic_events(days_ahead: int) -> list[dict[str, str]]:
+    """Canonical merged event list used by both chat output and UI rail."""
+    days_ahead = max(1, min(int(days_ahead), 30))
     events = _get_static_calendar_events(days_ahead)
-
-    # Try ForexFactory supplement
     try:
         ff = _fetch_forexfactory_calendar()
         if ff:
-            # Deduplicate by date + event name similarity
+            # Keep the same dedupe behavior used by chat to preserve parity.
             existing = {(e["date"], e["event"][:20]) for e in events}
             for f in ff:
                 key = (f["date"], f["event"][:20])
@@ -1900,8 +1898,14 @@ def _exec_get_economic_calendar(args: dict, **_: Any) -> str:
                     events.append(f)
     except Exception:
         pass
+    events.sort(key=lambda e: e.get("date", ""))
+    return events
 
-    events.sort(key=lambda e: e["date"])
+
+def _exec_get_economic_calendar(args: dict, **_: Any) -> str:
+    """Get upcoming economic events for USD/JPY."""
+    days_ahead = min(int(args.get("days_ahead", 7)), 30)
+    events = _get_upcoming_economic_events(days_ahead)
 
     if not events:
         return f"No high-impact USD/JPY events found in the next {days_ahead} days."
@@ -1914,19 +1918,35 @@ def _exec_get_economic_calendar(args: dict, **_: Any) -> str:
 
 def _parse_event_datetime_utc(event: dict[str, str]) -> datetime | None:
     """Best-effort parser for calendar event date/time into UTC datetime."""
-    try:
-        d = str(event.get("date") or "").strip()
-        if not d:
-            return None
-        base = datetime.strptime(d[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    except Exception:
+    d = str(event.get("date") or "").strip()
+    if not d:
+        return None
+    base: datetime | None = None
+    # Support static format plus common ForexFactory variants.
+    date_formats = ("%Y-%m-%d", "%m-%d-%Y", "%b %d", "%a%b %d", "%a %b %d")
+    for fmt in date_formats:
+        try:
+            parsed = datetime.strptime(d, fmt)
+            if "%Y" in fmt:
+                base = parsed.replace(tzinfo=timezone.utc)
+            else:
+                now_utc = datetime.now(timezone.utc)
+                base = parsed.replace(year=now_utc.year, tzinfo=timezone.utc)
+                # If month/day already passed in current year, treat as next year.
+                if base.date() < now_utc.date() - timedelta(days=2):
+                    base = base.replace(year=now_utc.year + 1)
+            break
+        except Exception:
+            continue
+    if base is None:
         return None
     t = str(event.get("time") or "").strip().upper()
     # Expected formats: "18:00 UTC", "~03:00 UTC", "12:30 UTC (approx)"
     import re as _re
     m = _re.search(r"(\d{1,2}):(\d{2})", t)
     if not m:
-        return base.replace(hour=0, minute=0, second=0, microsecond=0)
+        # Keep event on that date even when time is "All Day"/"Tentative".
+        return base.replace(hour=12, minute=0, second=0, microsecond=0)
     hh = int(m.group(1))
     mm = int(m.group(2))
     return base.replace(hour=hh, minute=mm, second=0, microsecond=0)
@@ -1935,17 +1955,7 @@ def _parse_event_datetime_utc(event: dict[str, str]) -> datetime | None:
 def get_economic_calendar_events(days_ahead: int = 7, limit: int = 3) -> list[dict[str, Any]]:
     """Structured upcoming USD/JPY events for UI tiles."""
     days_ahead = max(1, min(int(days_ahead), 30))
-    events = _get_static_calendar_events(days_ahead)
-    try:
-        ff = _fetch_forexfactory_calendar()
-        if ff:
-            existing = {(str(e.get("date", "")), str(e.get("event", ""))[:24]) for e in events}
-            for f in ff:
-                key = (str(f.get("date", "")), str(f.get("event", ""))[:24])
-                if key not in existing:
-                    events.append(f)
-    except Exception:
-        pass
+    events = _get_upcoming_economic_events(days_ahead)
     now_utc = datetime.now(timezone.utc)
     structured: list[dict[str, Any]] = []
     for e in events:
