@@ -60,8 +60,10 @@ _DATA_BASE = Path(_data_base_env) if _data_base_env else Path(__file__).resolve(
 LOGS_DIR = _DATA_BASE / "logs"
 
 # Chat models: optional UI + request body must pick from this allowlist (override with AI_CHAT_ALLOWED_MODELS).
-_DEFAULT_CHAT_MODEL = "gpt-5-mini"
+_DEFAULT_CHAT_MODEL = "gpt-5.4-mini"
 _DEFAULT_ALLOWED_CHAT_MODELS: tuple[str, ...] = (
+    "gpt-5.4-mini",
+    "gpt-5.4",
     "gpt-5-mini",
     "gpt-4o-mini",
     "gpt-4o",
@@ -71,8 +73,10 @@ _DEFAULT_ALLOWED_CHAT_MODELS: tuple[str, ...] = (
 # because the suggestion endpoint asks the model to pick an entry + exit strategy
 # from a catalog and justify it. Defaults to gpt-4o (override with
 # AI_SUGGEST_ALLOWED_MODELS / OPENAI_SUGGEST_MODEL).
-_DEFAULT_SUGGEST_MODEL = "gpt-4o"
+_DEFAULT_SUGGEST_MODEL = "gpt-5.4-mini"
 _DEFAULT_ALLOWED_SUGGEST_MODELS: tuple[str, ...] = (
+    "gpt-5.4-mini",
+    "gpt-5.4",
     "gpt-4o",
     "gpt-5-mini",
     "gpt-4o-mini",
