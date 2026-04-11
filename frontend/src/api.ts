@@ -909,6 +909,8 @@ export interface AiChatRequestBody {
 export interface AiChatModelsResponse {
   models: string[];
   default_model: string;
+  suggest_models?: string[];
+  default_suggest_model?: string;
 }
 
 export async function getAiChatModels(): Promise<AiChatModelsResponse> {
@@ -992,6 +994,7 @@ export interface AiTradeSuggestion {
   exit_strategy?: string;
   exit_params?: Record<string, number> | null;
   available_exit_strategies?: Record<string, AiExitStrategyInfo>;
+  model_used?: string;
 }
 
 export interface PlaceLimitOrderRequest {
@@ -1024,7 +1027,7 @@ export interface PlaceLimitOrderResponse {
 export async function aiSuggestTrade(
   profileName: string,
   profilePath: string,
-  chatModel?: string,
+  suggestModel?: string,
 ): Promise<AiTradeSuggestion> {
   const params = new URLSearchParams({ profile_path: profilePath });
   return fetchJson<AiTradeSuggestion>(
@@ -1032,7 +1035,7 @@ export async function aiSuggestTrade(
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_model: chatModel || null }),
+      body: JSON.stringify({ suggest_model: suggestModel || null }),
     },
   );
 }

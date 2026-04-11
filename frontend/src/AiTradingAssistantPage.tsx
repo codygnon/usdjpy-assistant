@@ -13,6 +13,7 @@ type ChatLine = { role: 'user' | 'assistant'; content: string };
 
 const CHAT_STORAGE_PREFIX = 'usdjpy_ai_chat:';
 const MODEL_STORAGE_PREFIX = 'usdjpy_ai_chat_model:';
+const SUGGEST_MODEL_STORAGE_PREFIX = 'usdjpy_ai_suggest_model:';
 
 function chatStorageKey(profilePath: string): string {
   return `${CHAT_STORAGE_PREFIX}${profilePath}`;
@@ -20,6 +21,29 @@ function chatStorageKey(profilePath: string): string {
 
 function modelStorageKey(profilePath: string): string {
   return `${MODEL_STORAGE_PREFIX}${profilePath}`;
+}
+
+function suggestModelStorageKey(profilePath: string): string {
+  return `${SUGGEST_MODEL_STORAGE_PREFIX}${profilePath}`;
+}
+
+function loadSuggestModelFromStorage(profilePath: string): string | null {
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    const v = sessionStorage.getItem(suggestModelStorageKey(profilePath));
+    return v && v.trim() ? v.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveSuggestModelToStorage(profilePath: string, model: string): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.setItem(suggestModelStorageKey(profilePath), model);
+  } catch {
+    // ignore
+  }
 }
 
 function loadModelFromStorage(profilePath: string): string | null {
@@ -140,6 +164,8 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
   const [modelList, setModelList] = useState<string[]>([]);
   const [chatModel, setChatModel] = useState<string>('');
   const [modelsReady, setModelsReady] = useState(false);
+  const [suggestModelList, setSuggestModelList] = useState<string[]>([]);
+  const [suggestModel, setSuggestModel] = useState<string>('');
   const [toolStatus, setToolStatus] = useState<string | null>(null);
   const [rail, setRail] = useState<api.AiRailPayload | null>(null);
   // Trade suggestion state
@@ -168,6 +194,18 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
         const stored = loadModelFromStorage(profile.path);
         const def = list.includes(res.default_model) ? res.default_model : list[0];
         setChatModel(stored && list.includes(stored) ? stored : def);
+
+        // Suggest-model pool is separate (higher reasoning models).
+        const sList = (res.suggest_models && res.suggest_models.length > 0)
+          ? res.suggest_models
+          : ['gpt-4o', ...list];
+        setSuggestModelList(sList);
+        const sStored = loadSuggestModelFromStorage(profile.path);
+        const sDef = res.default_suggest_model && sList.includes(res.default_suggest_model)
+          ? res.default_suggest_model
+          : sList[0];
+        setSuggestModel(sStored && sList.includes(sStored) ? sStored : sDef);
+
         setModelsReady(true);
       })
       .catch(() => {
@@ -176,6 +214,10 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
         setModelList(list);
         const stored = loadModelFromStorage(profile.path);
         setChatModel(stored && list.includes(stored) ? stored : list[0]);
+        const sList = ['gpt-4o', ...list.filter((m) => m !== 'gpt-4o')];
+        setSuggestModelList(sList);
+        const sStored = loadSuggestModelFromStorage(profile.path);
+        setSuggestModel(sStored && sList.includes(sStored) ? sStored : sList[0]);
         setModelsReady(true);
       });
     return () => {
@@ -303,7 +345,7 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
     setEditDraft(null);
     setIsEditing(false);
     try {
-      const s = await api.aiSuggestTrade(profile.name, profile.path, chatModel || undefined);
+      const s = await api.aiSuggestTrade(profile.name, profile.path, suggestModel || undefined);
       setSuggestion(s);
       setEditDraft(s);
     } catch (e) {
@@ -311,7 +353,7 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
     } finally {
       setSuggestLoading(false);
     }
-  }, [chatModel, profile.name, profile.path]);
+  }, [suggestModel, profile.name, profile.path]);
 
   const handlePlaceOrder = useCallback(async () => {
     if (!editDraft) return;
@@ -600,17 +642,38 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
 
       {/* --- AI Trade Suggestion Panel --- */}
       <div className="card" style={{ maxWidth: 720, marginTop: 12 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 8, flexWrap: 'wrap' }}>
           <div style={{ fontWeight: 700 }}>AI Trade Suggestion</div>
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={suggestLoading}
-            onClick={() => void handleSuggestTrade()}
-            style={{ fontSize: '0.8rem', padding: '4px 14px' }}
-          >
-            {suggestLoading ? 'Analyzing...' : editDraft ? 'New Suggestion' : 'Generate Suggestion'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {suggestModelList.length > 0 && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                Model:
+                <select
+                  value={suggestModel}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setSuggestModel(v);
+                    saveSuggestModelToStorage(profile.path, v);
+                  }}
+                  disabled={suggestLoading}
+                  style={{ padding: '3px 6px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.76rem' }}
+                >
+                  {suggestModelList.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={suggestLoading}
+              onClick={() => void handleSuggestTrade()}
+              style={{ fontSize: '0.8rem', padding: '4px 14px' }}
+            >
+              {suggestLoading ? 'Analyzing...' : editDraft ? 'New Suggestion' : 'Generate Suggestion'}
+            </button>
+          </div>
         </div>
 
         {suggestError && (
@@ -637,6 +700,11 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
               <span style={{ marginLeft: 10, padding: '2px 8px', borderRadius: 10, fontSize: '0.75rem', fontWeight: 600, background: editDraft.confidence === 'high' ? 'rgba(74,222,128,0.15)' : editDraft.confidence === 'medium' ? 'rgba(250,204,21,0.15)' : 'rgba(248,113,113,0.15)', color: editDraft.confidence === 'high' ? '#4ade80' : editDraft.confidence === 'medium' ? '#facc15' : '#f87171' }}>
                 {editDraft.confidence.toUpperCase()}
               </span>
+              {(suggestion?.model_used || editDraft.model_used) && (
+                <span style={{ marginLeft: 8, padding: '2px 8px', borderRadius: 10, fontSize: '0.7rem', fontWeight: 600, background: 'rgba(96,165,250,0.12)', color: '#60a5fa' }}>
+                  {suggestion?.model_used || editDraft.model_used}
+                </span>
+              )}
             </div>
 
             {/* Order fields grid */}

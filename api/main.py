@@ -5485,7 +5485,10 @@ class PlaceLimitOrderRequest(BaseModel):
 
 
 class AiSuggestTradeRequest(BaseModel):
+    # Back-compat: older clients send chat_model. Newer clients should send
+    # suggest_model. If both are provided, suggest_model wins.
     chat_model: Optional[str] = None
+    suggest_model: Optional[str] = None
 
 
 @app.post("/api/data/{profile_name}/place-limit-order")
@@ -5629,7 +5632,7 @@ def ai_suggest_trade(
 
     from api.ai_trading_chat import (
         build_trading_context,
-        resolve_ai_chat_model,
+        resolve_ai_suggest_model,
         system_prompt_from_context,
     )
 
@@ -5648,8 +5651,12 @@ def ai_suggest_trade(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Context build error: {e}")
 
+    # Suggest endpoint uses its own (higher-reasoning) model pool, independent of
+    # the chat model. `suggest_model` wins when provided; fall back to legacy
+    # `chat_model` field for backward compat, else server default (gpt-4o).
     try:
-        effective_model = resolve_ai_chat_model(req.chat_model)
+        requested_suggest = req.suggest_model or req.chat_model
+        effective_model = resolve_ai_suggest_model(requested_suggest)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -5746,6 +5753,8 @@ def ai_suggest_trade(
             suggestion["exit_strategy"] = normalize_exit_strategy(str(raw_exit))
             raw_params = suggestion.get("exit_params") if isinstance(suggestion.get("exit_params"), dict) else None
             suggestion["exit_params"] = merge_exit_params(suggestion["exit_strategy"], raw_params)
+        # Echo the chosen model so the UI can display which brain picked the trade.
+        suggestion["model_used"] = effective_model
         # Expose catalog so the UI can render dropdown options + descriptions.
         suggestion["available_exit_strategies"] = {
             sid: {
@@ -5770,11 +5779,18 @@ def ai_suggest_trade(
 @app.get("/api/ai-chat/models")
 def get_ai_chat_models_list() -> dict[str, Any]:
     """Models the assistant UI may select (allowlist; extend via AI_CHAT_ALLOWED_MODELS)."""
-    from api.ai_trading_chat import allowed_ai_chat_models, default_ai_chat_model
+    from api.ai_trading_chat import (
+        allowed_ai_chat_models,
+        allowed_ai_suggest_models,
+        default_ai_chat_model,
+        default_ai_suggest_model,
+    )
 
     return {
         "models": allowed_ai_chat_models(),
         "default_model": default_ai_chat_model(),
+        "suggest_models": allowed_ai_suggest_models(),
+        "default_suggest_model": default_ai_suggest_model(),
     }
 
 

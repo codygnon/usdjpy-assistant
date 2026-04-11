@@ -67,6 +67,17 @@ _DEFAULT_ALLOWED_CHAT_MODELS: tuple[str, ...] = (
     "gpt-4o",
 )
 
+# Trade-suggestion models: intentionally biased toward higher-reasoning models
+# because the suggestion endpoint asks the model to pick an entry + exit strategy
+# from a catalog and justify it. Defaults to gpt-4o (override with
+# AI_SUGGEST_ALLOWED_MODELS / OPENAI_SUGGEST_MODEL).
+_DEFAULT_SUGGEST_MODEL = "gpt-4o"
+_DEFAULT_ALLOWED_SUGGEST_MODELS: tuple[str, ...] = (
+    "gpt-4o",
+    "gpt-5-mini",
+    "gpt-4o-mini",
+)
+
 
 def allowed_ai_chat_models() -> list[str]:
     """Ordered list of model ids the UI may offer and the API will accept."""
@@ -95,6 +106,38 @@ def resolve_ai_chat_model(requested: str | None) -> str:
     rid = str(requested).strip()
     if rid not in allowed_set:
         raise ValueError(f"chat_model not allowed: {rid!r} (allowed: {', '.join(sorted(allowed_set))})")
+    return rid
+
+
+def allowed_ai_suggest_models() -> list[str]:
+    """Ordered list of model ids the suggest endpoint will accept."""
+    raw = os.environ.get("AI_SUGGEST_ALLOWED_MODELS", "").strip()
+    if raw:
+        out = [m.strip() for m in raw.split(",") if m.strip()]
+        return out if out else list(_DEFAULT_ALLOWED_SUGGEST_MODELS)
+    return list(_DEFAULT_ALLOWED_SUGGEST_MODELS)
+
+
+def default_ai_suggest_model() -> str:
+    """Server default model for trade-suggestion generation."""
+    allowed = allowed_ai_suggest_models()
+    allowed_set = frozenset(allowed)
+    env = os.environ.get("OPENAI_SUGGEST_MODEL", _DEFAULT_SUGGEST_MODEL).strip() or _DEFAULT_SUGGEST_MODEL
+    if env in allowed_set:
+        return env
+    return allowed[0] if allowed else _DEFAULT_SUGGEST_MODEL
+
+
+def resolve_ai_suggest_model(requested: str | None) -> str:
+    """Return the suggest model id, or raise ValueError if not allowed."""
+    allowed_set = frozenset(allowed_ai_suggest_models())
+    if not requested or not str(requested).strip():
+        return default_ai_suggest_model()
+    rid = str(requested).strip()
+    if rid not in allowed_set:
+        raise ValueError(
+            f"suggest_model not allowed: {rid!r} (allowed: {', '.join(sorted(allowed_set))})"
+        )
     return rid
 
 
