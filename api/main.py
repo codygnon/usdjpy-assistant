@@ -5478,6 +5478,10 @@ class PlaceLimitOrderRequest(BaseModel):
     time_in_force: str = "GTC"  # "GTC" or "GTD"
     gtd_time_utc: Optional[str] = None  # ISO datetime for GTD expiration
     comment: str = ""
+    # Managed-exit strategy picked by the AI (or the operator after editing).
+    # None / "none" -> broker SL/TP only (no runtime management).
+    exit_strategy: Optional[str] = None
+    exit_params: Optional[dict[str, Any]] = None
 
 
 class AiSuggestTradeRequest(BaseModel):
@@ -5514,6 +5518,21 @@ def place_limit_order_endpoint(
         raise HTTPException(status_code=400, detail="gtd_time_utc required when time_in_force is GTD")
 
     from adapters.broker import get_adapter
+    from api.ai_exit_strategies import (
+        AI_EXIT_STRATEGIES,
+        DEFAULT_AI_EXIT_STRATEGY,
+        merge_exit_params,
+        normalize_exit_strategy,
+        trail_mode_for_strategy,
+    )
+
+    # Resolve exit strategy + params (None or "none" means broker-only).
+    exit_strategy_raw = (req.exit_strategy or "").strip().lower()
+    managed_exit_strategy: Optional[str] = None
+    managed_exit_params: dict[str, Any] = {}
+    if exit_strategy_raw and exit_strategy_raw != "none":
+        managed_exit_strategy = normalize_exit_strategy(exit_strategy_raw)
+        managed_exit_params = merge_exit_params(managed_exit_strategy, req.exit_params)
 
     adapter = get_adapter(profile)
     try:
@@ -5531,6 +5550,41 @@ def place_limit_order_endpoint(
         )
         if result.retcode != 0:
             raise HTTPException(status_code=400, detail=f"Order rejected: {result.comment}")
+
+        # If the operator chose a managed exit strategy, register the pending order
+        # so the run loop's watchdog can promote it to a managed trade once it fills.
+        if managed_exit_strategy and result.order is not None:
+            try:
+                _state_dir = LOGS_DIR / profile_name
+                _state_dir.mkdir(parents=True, exist_ok=True)
+                _state_path = _state_dir / "runtime_state.json"
+                _state_data: dict[str, Any] = {}
+                if _state_path.exists():
+                    try:
+                        _state_data = json.loads(_state_path.read_text(encoding="utf-8")) or {}
+                    except Exception:
+                        _state_data = {}
+                _pending_list = list(_state_data.get("managed_pending_orders") or [])
+                _pending_list = [p for p in _pending_list if str(p.get("order_id")) != str(result.order)]
+                _pending_list.append({
+                    "order_id": int(result.order),
+                    "side": side,
+                    "price": float(req.price),
+                    "lots": float(req.lots),
+                    "sl": float(req.sl) if req.sl is not None else None,
+                    "tp": float(req.tp) if req.tp is not None else None,
+                    "exit_strategy": managed_exit_strategy,
+                    "trail_mode": trail_mode_for_strategy(managed_exit_strategy),
+                    "exit_params": managed_exit_params,
+                    "source": "ai_manual",
+                    "created_utc": datetime.now(timezone.utc).isoformat(),
+                })
+                _state_data["managed_pending_orders"] = _pending_list
+                _state_path.write_text(json.dumps(_state_data, indent=2) + "\n", encoding="utf-8")
+            except Exception as _reg_exc:
+                # Non-fatal — the order is placed; runtime management is best-effort.
+                print(f"[ai_suggest_trade] failed to register managed pending order: {_reg_exc}")
+
         return {
             "status": "placed",
             "order_id": result.order,
@@ -5541,6 +5595,8 @@ def place_limit_order_endpoint(
             "tp": req.tp,
             "time_in_force": tif,
             "gtd_time_utc": req.gtd_time_utc,
+            "exit_strategy": managed_exit_strategy,
+            "exit_params": managed_exit_params if managed_exit_strategy else None,
         }
     except HTTPException:
         raise
@@ -5602,6 +5658,17 @@ def ai_suggest_trade(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"System prompt build error: {e}")
 
+    from api.ai_exit_strategies import (
+        AI_EXIT_STRATEGIES,
+        DEFAULT_AI_EXIT_STRATEGY,
+        exit_strategies_prompt_block,
+        merge_exit_params,
+        normalize_exit_strategy,
+    )
+
+    _strategy_ids = ", ".join(f'"{sid}"' for sid in AI_EXIT_STRATEGIES.keys())
+    _exit_catalog_text = exit_strategies_prompt_block()
+
     suggest_prompt = (
         "Based on the current market context (technicals, macro bias, levels, session, volatility, and any recent news/events), "
         "suggest ONE specific USDJPY limit order trade right now. "
@@ -5615,15 +5682,23 @@ def ai_suggest_trade(
         '  "lots": <position size as number, e.g. 0.05>,\n'
         '  "time_in_force": "GTC" or "GTD",\n'
         '  "gtd_time_utc": <ISO datetime string if GTD, else null>,\n'
-        '  "rationale": "<1-2 sentence explanation of the setup>",\n'
+        '  "exit_strategy": one of [' + _strategy_ids + '],\n'
+        '  "exit_params": {<optional numeric overrides, e.g. "tp1_pips": 5.0, "hwm_trail_pips": 4.0>} or null,\n'
+        '  "rationale": "<2-4 sentence explanation of the SETUP and the EXIT STRATEGY choice>",\n'
         '  "confidence": "low" or "medium" or "high"\n'
         '}\n'
+        "\n"
+        + _exit_catalog_text
+        + "\n\n"
         "Rules:\n"
         "- The limit price must be AWAY from current price (buy below current, sell above current).\n"
         "- Use the nearest support/resistance levels and current technicals to set price, SL, and TP.\n"
         "- SL should be 10-15 pips from entry, TP 4-10 pips from entry, consistent with a scalper's style.\n"
         "- Lot size should be proportional to confidence (0.01-0.10 typical range).\n"
         "- Default to GTC unless there is a clear time-based reason (event risk, session close).\n"
+        f'- For exit_strategy, default to "{DEFAULT_AI_EXIT_STRATEGY}" UNLESS the setup clearly favors another option (or none). '
+        "Your rationale MUST explicitly justify the exit_strategy choice (why the default fits, or why you picked an alternative, "
+        'or why "none" is better here).\n'
         "- If you genuinely see no good setup, return the JSON with confidence 'low' and explain in rationale.\n"
         "- If market is closed or data is stale, still provide a suggestion based on last known levels and context.\n"
     )
@@ -5662,6 +5737,26 @@ def ai_suggest_trade(
         suggestion["lots"] = float(suggestion["lots"])
         suggestion.setdefault("time_in_force", "GTC")
         suggestion.setdefault("gtd_time_utc", None)
+        # Normalize exit strategy + params (fall back to default if missing/invalid).
+        raw_exit = suggestion.get("exit_strategy")
+        if raw_exit is None or str(raw_exit).strip().lower() == "none":
+            suggestion["exit_strategy"] = "none"
+            suggestion["exit_params"] = {}
+        else:
+            suggestion["exit_strategy"] = normalize_exit_strategy(str(raw_exit))
+            raw_params = suggestion.get("exit_params") if isinstance(suggestion.get("exit_params"), dict) else None
+            suggestion["exit_params"] = merge_exit_params(suggestion["exit_strategy"], raw_params)
+        # Expose catalog so the UI can render dropdown options + descriptions.
+        suggestion["available_exit_strategies"] = {
+            sid: {
+                "id": cfg["id"],
+                "label": cfg["label"],
+                "description": cfg["description"],
+                "defaults": cfg.get("defaults") or {},
+                "trail_mode": cfg.get("trail_mode"),
+            }
+            for sid, cfg in AI_EXIT_STRATEGIES.items()
+        }
         return suggestion
     except HTTPException:
         raise

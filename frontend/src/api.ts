@@ -971,6 +971,14 @@ export async function getAiRail(profileName: string, profilePath: string, daysAh
 
 // --- AI Trade Suggestion & Limit Order Placement ---
 
+export interface AiExitStrategyInfo {
+  id: string;
+  label: string;
+  description: string;
+  defaults: Record<string, number>;
+  trail_mode: string | null;
+}
+
 export interface AiTradeSuggestion {
   side: string;
   price: number;
@@ -981,6 +989,9 @@ export interface AiTradeSuggestion {
   gtd_time_utc: string | null;
   rationale: string;
   confidence: string;
+  exit_strategy?: string;
+  exit_params?: Record<string, number> | null;
+  available_exit_strategies?: Record<string, AiExitStrategyInfo>;
 }
 
 export interface PlaceLimitOrderRequest {
@@ -992,6 +1003,8 @@ export interface PlaceLimitOrderRequest {
   time_in_force?: string;
   gtd_time_utc?: string | null;
   comment?: string;
+  exit_strategy?: string | null;
+  exit_params?: Record<string, number> | null;
 }
 
 export interface PlaceLimitOrderResponse {
@@ -1004,6 +1017,8 @@ export interface PlaceLimitOrderResponse {
   tp: number | null;
   time_in_force: string;
   gtd_time_utc: string | null;
+  exit_strategy?: string | null;
+  exit_params?: Record<string, number> | null;
 }
 
 export async function aiSuggestTrade(

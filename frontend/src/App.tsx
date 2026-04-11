@@ -72,6 +72,15 @@ function useDocumentVisible(): boolean {
 
 export default function App() {
   const [page, setPage] = useState<Page>('dashboard');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('sidebarCollapsed') === 'true';
+  });
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('sidebarCollapsed', String(sidebarCollapsed));
+    }
+  }, [sidebarCollapsed]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<Profile | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -223,10 +232,25 @@ export default function App() {
 
   return (
     <div className="app">
-      <aside className="sidebar">
-        <h1>USDJPY Assistant</h1>
-        <p className="subtitle">Trading Bot Dashboard</p>
+      <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
+        <button
+          type="button"
+          className="sidebar-toggle"
+          onClick={() => setSidebarCollapsed((v) => !v)}
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {sidebarCollapsed ? '»' : '«'}
+        </button>
 
+        {!sidebarCollapsed && (
+          <>
+            <h1>USDJPY Assistant</h1>
+            <p className="subtitle">Trading Bot Dashboard</p>
+          </>
+        )}
+
+        {!sidebarCollapsed && (
         <div className="form-group">
           <label>Account</label>
           <select
@@ -274,8 +298,9 @@ export default function App() {
             )}
           </div>
         </div>
+        )}
 
-        {showAddAccount && (
+        {!sidebarCollapsed && showAddAccount && (
           <div className="card" style={{ marginTop: 12, padding: 12 }}>
             <div className="form-group" style={{ marginBottom: 8 }}>
               <label>New account name</label>
@@ -389,48 +414,55 @@ export default function App() {
           </div>
         )}
 
-        <nav style={{ marginTop: 24 }}>
+        <nav style={{ marginTop: sidebarCollapsed ? 12 : 24 }}>
           <button
             className={`nav-item ${page === 'ai-assistant' ? 'active' : ''}`}
             onClick={() => setPage('ai-assistant')}
+            title="AI Trading Assistant"
           >
-            AI Trading Assistant
+            {sidebarCollapsed ? 'AI' : 'AI Trading Assistant'}
           </button>
           <button
             className={`nav-item ${page === 'dashboard' ? 'active' : ''}`}
             onClick={() => setPage('dashboard')}
+            title="Dashboard"
           >
-            Dashboard
+            {sidebarCollapsed ? 'DB' : 'Dashboard'}
           </button>
           <button
             className={`nav-item ${page === 'analysis' ? 'active' : ''}`}
             onClick={() => setPage('analysis')}
+            title="Analysis"
           >
-            Analysis
+            {sidebarCollapsed ? 'AN' : 'Analysis'}
           </button>
           <button
             className={`nav-item ${page === 'presets' ? 'active' : ''}`}
             onClick={() => setPage('presets')}
+            title="Presets"
           >
-            Presets
+            {sidebarCollapsed ? 'PS' : 'Presets'}
           </button>
           <button
             className={`nav-item ${page === 'profile' ? 'active' : ''}`}
             onClick={() => setPage('profile')}
+            title="Profile Editor"
           >
-            Profile Editor
+            {sidebarCollapsed ? 'PE' : 'Profile Editor'}
           </button>
           <button
             className={`nav-item ${page === 'logs' ? 'active' : ''}`}
             onClick={() => setPage('logs')}
+            title="Logs & Stats"
           >
-            Logs & Stats
+            {sidebarCollapsed ? 'LG' : 'Logs & Stats'}
           </button>
           <button
             className={`nav-item ${page === 'guide' ? 'active' : ''}`}
             onClick={() => setPage('guide')}
+            title="Help / Guide"
           >
-            Help / Guide
+            {sidebarCollapsed ? 'HP' : 'Help / Guide'}
           </button>
         </nav>
       </aside>

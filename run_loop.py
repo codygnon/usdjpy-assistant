@@ -506,6 +506,485 @@ MIN_CLOSE_LOTS = 0.01
 _tp1_retry_last: dict[int, float] = {}  # position_id -> last retry timestamp
 _TP1_RETRY_INTERVAL = 3.0  # seconds between retry attempts
 
+# ---------------------------------------------------------------------------
+# AI-suggested manual trades: fill detection + managed exit watchdog.
+#
+# When the /api/data/{profile}/place-limit-order endpoint is called with a
+# managed exit strategy, it appends a descriptor to runtime_state.json under
+# "managed_pending_orders". The run loop then:
+#   1. `_watch_ai_managed_pending_orders` — polls for fills, inserts a trade
+#      row with entry_type="ai_manual" + managed_trail_mode, then removes the
+#      pending descriptor.
+#   2. `_manage_ai_manual_trades` — applies TP1 + BE + HWM/M1/M5/BE-only trail
+#      logic to open ai_manual trades, mirroring the T9 managed-exit behavior.
+# ---------------------------------------------------------------------------
+
+
+def _load_state_json(state_path) -> dict[str, Any]:
+    try:
+        if state_path is not None and Path(state_path).exists():
+            return json.loads(Path(state_path).read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    return {}
+
+
+def _save_state_json(state_path, data: dict[str, Any]) -> None:
+    try:
+        if state_path is None:
+            return
+        Path(state_path).write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except Exception as e:
+        print(f"[run_loop] failed to persist state {state_path}: {e}")
+
+
+def _watch_ai_managed_pending_orders(profile, adapter, store, state_path) -> None:
+    """Promote filled AI-suggested limit orders to managed trade rows."""
+    state_data = _load_state_json(state_path)
+    pending_list = list(state_data.get("managed_pending_orders") or [])
+    if not pending_list:
+        return
+
+    # Fetch current pending orders once; anything NOT in this set has either
+    # filled, been cancelled, or expired.
+    try:
+        raw_pending = adapter.list_pending_orders(profile.symbol)
+    except Exception as e:
+        print(f"[{profile.profile_name}] ai_manual watchdog: list_pending_orders error: {e}")
+        return
+    still_pending_ids = set()
+    for o in raw_pending or []:
+        oid = o.get("id") if isinstance(o, dict) else None
+        if oid is not None:
+            try:
+                still_pending_ids.add(int(oid))
+            except (TypeError, ValueError):
+                continue
+
+    kept: list[dict[str, Any]] = []
+    changed = False
+    for entry in pending_list:
+        try:
+            order_id = int(entry.get("order_id"))
+        except (TypeError, ValueError):
+            changed = True
+            continue
+        if order_id in still_pending_ids:
+            kept.append(entry)
+            continue
+
+        # Order is no longer pending — figure out if it filled or was cancelled.
+        position_id = None
+        try:
+            position_id = adapter.get_position_id_from_order(order_id)
+        except Exception as e:
+            print(f"[{profile.profile_name}] ai_manual watchdog: position lookup error order {order_id}: {e}")
+            # Keep the entry so we retry next loop rather than losing it.
+            kept.append(entry)
+            continue
+
+        if position_id is None:
+            # Cancelled / expired / rejected — drop it quietly.
+            print(f"[{profile.profile_name}] ai_manual watchdog: order {order_id} not filled (cancelled/expired), dropping")
+            changed = True
+            continue
+
+        # Filled — insert a trade row with managed fields so `_manage_ai_manual_trades` picks it up.
+        try:
+            trail_mode = str(entry.get("trail_mode") or "").lower() or "none"
+            exit_params = entry.get("exit_params") or {}
+            side = str(entry.get("side") or "buy").lower()
+            trade_id = f"ai_manual:{order_id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}"
+            row: dict[str, Any] = {
+                "trade_id": trade_id,
+                "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                "profile": profile.profile_name,
+                "symbol": profile.symbol,
+                "side": side,
+                "policy_type": "ai_manual",
+                "config_json": json.dumps({"source": "ai_manual", "order_id": order_id}),
+                "entry_price": float(entry.get("price") or 0.0),
+                "stop_price": entry.get("sl"),
+                "target_price": entry.get("tp"),
+                "size_lots": float(entry.get("lots") or 0.0),
+                "notes": f"ai_manual:{entry.get('exit_strategy') or 'none'}:order_{order_id}",
+                "snapshot_id": None,
+                "mt5_order_id": int(order_id),
+                "mt5_deal_id": None,
+                "mt5_retcode": 0,
+                "mt5_position_id": int(position_id),
+                "opened_by": "ai_manual",
+                "preset_name": profile.active_preset_name or "AI Manual",
+                "entry_type": "ai_manual",
+                "breakeven_applied": 0,
+                "tp1_partial_done": 0,
+                "managed_trail_mode": trail_mode,
+            }
+            # Map exit_params to the managed_* DB columns used by the exit handler.
+            if exit_params.get("tp1_pips") is not None:
+                row["managed_tp1_pips"] = float(exit_params["tp1_pips"])
+            if exit_params.get("tp1_close_pct") is not None:
+                row["managed_tp1_close_pct"] = float(exit_params["tp1_close_pct"])
+            if exit_params.get("be_plus_pips") is not None:
+                row["managed_be_plus_pips"] = float(exit_params["be_plus_pips"])
+            store.insert_trade(row)
+            print(
+                f"[{profile.profile_name}] ai_manual watchdog: order {order_id} filled -> trade {trade_id} "
+                f"(pos {position_id}, strategy={entry.get('exit_strategy')}, trail={trail_mode})"
+            )
+            changed = True
+        except Exception as e:
+            print(f"[{profile.profile_name}] ai_manual watchdog: insert_trade error order {order_id}: {e}")
+            kept.append(entry)  # retry next loop
+
+    if changed:
+        state_data["managed_pending_orders"] = kept
+        _save_state_json(state_path, state_data)
+
+
+def _manage_ai_manual_trades(
+    profile,
+    adapter,
+    store,
+    tick,
+    open_positions: list | None = None,
+    data_by_tf: dict | None = None,
+) -> None:
+    """Apply TP1 + BE + HWM/M1/M5/BE-only trail to open entry_type='ai_manual' trades."""
+    try:
+        if open_positions is None:
+            try:
+                open_positions = adapter.get_open_positions(profile.symbol)
+            except Exception:
+                return
+        if not open_positions:
+            return
+
+        # Pull open ai_manual trades; skip if none.
+        our_trades = [dict(r) for r in store.list_open_trades(profile.profile_name)]
+        ai_trades = [r for r in our_trades if str(r.get("entry_type") or "").lower() == "ai_manual"]
+        if not ai_trades:
+            return
+
+        pos_by_id: dict[int, Any] = {}
+        for pos in open_positions:
+            try:
+                pid = int(pos.get("id")) if isinstance(pos, dict) else int(getattr(pos, "id", 0))
+                pos_by_id[pid] = pos
+            except (TypeError, ValueError):
+                continue
+
+        pip = float(profile.pip_size)
+        mid = (tick.bid + tick.ask) / 2.0
+        current_spread = tick.ask - tick.bid
+
+        # EMA helpers for M1/M5 trails (lazy-built).
+        try:
+            from core.indicators import ema as _ema_fn
+        except Exception:
+            _ema_fn = None
+        m1_df = None
+        m5_df = None
+        if data_by_tf is not None:
+            m1_df = data_by_tf.get("M1")
+            m5_df = data_by_tf.get("M5")
+        # Fall back to adapter fetch only when needed (M1/M5 trail modes).
+        needs_m1 = any(str(r.get("managed_trail_mode") or "").lower() == "m1" for r in ai_trades)
+        needs_m5 = any(str(r.get("managed_trail_mode") or "").lower() == "m5" for r in ai_trades)
+        if needs_m1 and (m1_df is None or m1_df.empty):
+            try:
+                m1_df = adapter.get_bars(profile.symbol, "M1", 100)
+            except Exception:
+                m1_df = None
+        if needs_m5 and (m5_df is None or m5_df.empty):
+            try:
+                m5_df = adapter.get_bars(profile.symbol, "M5", 100)
+            except Exception:
+                m5_df = None
+
+        def _last_completed_ema(df, period: int) -> float | None:
+            if df is None or df.empty or _ema_fn is None or len(df) < period + 2:
+                return None
+            try:
+                closes = df["close"].astype(float).iloc[:-1]  # drop incomplete bar
+                series = _ema_fn(closes, period)
+                return float(series.iloc[-1])
+            except Exception:
+                return None
+
+        def _last_completed_close(df) -> float | None:
+            if df is None or df.empty or len(df) < 2:
+                return None
+            try:
+                return float(df["close"].astype(float).iloc[-2])
+            except Exception:
+                return None
+
+        for trade_row in ai_trades:
+            try:
+                position_id = trade_row.get("mt5_position_id")
+                if position_id is None:
+                    continue
+                try:
+                    position_id = int(position_id)
+                except (TypeError, ValueError):
+                    continue
+                pos = pos_by_id.get(position_id)
+                if pos is None:
+                    continue
+
+                trade_id = str(trade_row["trade_id"])
+                side = str(trade_row.get("side") or "buy").lower()
+                entry = float(trade_row.get("entry_price") or 0.0)
+                if entry <= 0:
+                    continue
+                trail_mode = str(trade_row.get("managed_trail_mode") or "none").lower()
+                tp1_pips = float(trade_row.get("managed_tp1_pips") or 6.0)
+                tp1_pct = float(trade_row.get("managed_tp1_close_pct") or 70.0)
+                be_plus = float(trade_row.get("managed_be_plus_pips") or 0.5)
+                tp1_done = bool(trade_row.get("tp1_partial_done") or 0)
+                tp1_triggered = bool(trade_row.get("tp1_triggered") or 0)
+                be_applied = bool(trade_row.get("breakeven_applied") or 0)
+
+                if trail_mode == "none":
+                    continue  # broker-side SL/TP only
+
+                # -------- Phase A: TP1 partial close --------
+                if not tp1_done:
+                    reached = (side == "buy" and mid >= entry + tp1_pips * pip) or (
+                        side == "sell" and mid <= entry - tp1_pips * pip
+                    )
+                    if reached and not tp1_triggered:
+                        store.update_trade(trade_id, {"tp1_triggered": 1})
+                        tp1_triggered = True
+
+                    _should_try = tp1_triggered
+                    if tp1_triggered and not reached:
+                        _last = _tp1_retry_last.get(position_id, 0.0)
+                        if time.time() - _last < _TP1_RETRY_INTERVAL:
+                            _should_try = False
+
+                    if _should_try:
+                        if isinstance(pos, dict):
+                            current_units = pos.get("currentUnits") or 0
+                            current_lots = abs(int(current_units)) / 100_000.0
+                        else:
+                            current_lots = float(getattr(pos, "volume", 0) or 0)
+                        close_lots = round(current_lots * (tp1_pct / 100.0), 2)
+                        close_lots = max(MIN_CLOSE_LOTS, min(close_lots, current_lots))
+                        if close_lots < 1e-6:
+                            close_lots = min(MIN_CLOSE_LOTS, current_lots)
+                        position_type = 1 if side == "sell" else 0
+                        ok = False
+                        try:
+                            adapter.close_position(
+                                ticket=position_id,
+                                symbol=profile.symbol,
+                                volume=close_lots,
+                                position_type=position_type,
+                            )
+                            ok = True
+                            print(
+                                f"[{profile.profile_name}] ai_manual TP1 partial: pos {position_id} "
+                                f"{close_lots:.3f} lots ({tp1_pct}%)"
+                            )
+                        except Exception as e:
+                            _tp1_retry_last[position_id] = time.time()
+                            print(f"[{profile.profile_name}] ai_manual TP1 error pos {position_id}: {e}")
+                        if ok:
+                            _tp1_retry_last.pop(position_id, None)
+                            store.update_trade(
+                                trade_id,
+                                {
+                                    "tp1_partial_done": 1,
+                                    "tp1_time_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                                },
+                            )
+                            # --- Phase B: BE on TP1 ---
+                            be_offset = current_spread + be_plus * pip
+                            if side == "buy":
+                                be_sl = entry + be_offset
+                                be_sl = min(be_sl, tick.bid - pip * 0.5)
+                            else:
+                                be_sl = entry - be_offset
+                                be_sl = max(be_sl, tick.ask + pip * 0.5)
+                            try:
+                                adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))
+                                store.update_trade(
+                                    trade_id,
+                                    {"breakeven_applied": 1, "breakeven_sl_price": round(be_sl, 3)},
+                                )
+                                be_applied = True
+                                print(
+                                    f"[{profile.profile_name}] ai_manual BE: pos {position_id} SL->{be_sl:.3f}"
+                                )
+                            except Exception as e:
+                                print(f"[{profile.profile_name}] ai_manual BE error pos {position_id}: {e}")
+                    continue  # skip trail phase on the same loop as TP1
+
+                # -------- Phase C: Runner trail (only after TP1) --------
+                prev_be_sl = trade_row.get("breakeven_sl_price")
+                if prev_be_sl is not None:
+                    try:
+                        prev_be_sl = float(prev_be_sl)
+                    except (TypeError, ValueError):
+                        prev_be_sl = None
+
+                if trail_mode == "be":
+                    continue  # TP1 + BE only, no further trailing
+
+                if trail_mode == "hwm":
+                    hwm_pips = 3.0
+                    stored_peak = trade_row.get("peak_price")
+                    if side == "buy":
+                        current_peak = max(float(stored_peak) if stored_peak is not None else entry, mid)
+                        new_sl = max(
+                            prev_be_sl if prev_be_sl is not None else (entry + pip),
+                            current_peak - hwm_pips * pip,
+                        )
+                        if _safe_update_trail_sl(
+                            adapter, store, position_id, trade_id, profile.symbol,
+                            new_sl, prev_be_sl, side, tick, pip,
+                            profile.profile_name, label="ai_manual HWM trail (BUY)",
+                        ):
+                            print(
+                                f"[{profile.profile_name}] ai_manual HWM trail BUY: pos {position_id} "
+                                f"SL->{new_sl:.3f} peak->{current_peak:.3f}"
+                            )
+                    else:
+                        current_peak = min(float(stored_peak) if stored_peak is not None else entry, mid)
+                        new_sl = min(
+                            prev_be_sl if prev_be_sl is not None else (entry - pip),
+                            current_peak + hwm_pips * pip,
+                        )
+                        if _safe_update_trail_sl(
+                            adapter, store, position_id, trade_id, profile.symbol,
+                            new_sl, prev_be_sl, side, tick, pip,
+                            profile.profile_name, label="ai_manual HWM trail (SELL)",
+                        ):
+                            print(
+                                f"[{profile.profile_name}] ai_manual HWM trail SELL: pos {position_id} "
+                                f"SL->{new_sl:.3f} peak->{current_peak:.3f}"
+                            )
+                    if stored_peak is None or current_peak != float(stored_peak):
+                        store.update_trade(trade_id, {"peak_price": round(current_peak, 5)})
+
+                elif trail_mode == "m1":
+                    ema_val = _last_completed_ema(m1_df, 21)
+                    last_close = _last_completed_close(m1_df)
+                    if ema_val is None or last_close is None:
+                        continue
+                    if side == "buy":
+                        new_sl = ema_val - pip
+                        if prev_be_sl is not None:
+                            new_sl = max(new_sl, prev_be_sl)
+                        _safe_update_trail_sl(
+                            adapter, store, position_id, trade_id, profile.symbol,
+                            new_sl, prev_be_sl, side, tick, pip,
+                            profile.profile_name, label="ai_manual M1 trail",
+                        )
+                        if last_close < ema_val:
+                            if isinstance(pos, dict):
+                                vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                            else:
+                                vol = float(getattr(pos, "volume", 0) or 0)
+                            if vol > 0:
+                                try:
+                                    adapter.close_position(
+                                        ticket=position_id, symbol=profile.symbol,
+                                        volume=vol, position_type=0,
+                                    )
+                                    print(
+                                        f"[{profile.profile_name}] ai_manual M1 runner close BUY: pos {position_id}"
+                                    )
+                                except Exception as e:
+                                    print(f"[{profile.profile_name}] ai_manual M1 close error: {e}")
+                    else:
+                        new_sl = ema_val + pip
+                        if prev_be_sl is not None:
+                            new_sl = min(new_sl, prev_be_sl)
+                        _safe_update_trail_sl(
+                            adapter, store, position_id, trade_id, profile.symbol,
+                            new_sl, prev_be_sl, side, tick, pip,
+                            profile.profile_name, label="ai_manual M1 trail",
+                        )
+                        if last_close > ema_val:
+                            if isinstance(pos, dict):
+                                vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                            else:
+                                vol = float(getattr(pos, "volume", 0) or 0)
+                            if vol > 0:
+                                try:
+                                    adapter.close_position(
+                                        ticket=position_id, symbol=profile.symbol,
+                                        volume=vol, position_type=1,
+                                    )
+                                    print(
+                                        f"[{profile.profile_name}] ai_manual M1 runner close SELL: pos {position_id}"
+                                    )
+                                except Exception as e:
+                                    print(f"[{profile.profile_name}] ai_manual M1 close error: {e}")
+
+                elif trail_mode == "m5":
+                    ema_val = _last_completed_ema(m5_df, 20)
+                    last_close = _last_completed_close(m5_df)
+                    if ema_val is None or last_close is None:
+                        continue
+                    if side == "buy":
+                        new_sl = ema_val - pip
+                        if prev_be_sl is not None:
+                            new_sl = max(new_sl, prev_be_sl)
+                        _safe_update_trail_sl(
+                            adapter, store, position_id, trade_id, profile.symbol,
+                            new_sl, prev_be_sl, side, tick, pip,
+                            profile.profile_name, label="ai_manual M5 trail",
+                        )
+                        if last_close < ema_val:
+                            if isinstance(pos, dict):
+                                vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                            else:
+                                vol = float(getattr(pos, "volume", 0) or 0)
+                            if vol > 0:
+                                try:
+                                    adapter.close_position(
+                                        ticket=position_id, symbol=profile.symbol,
+                                        volume=vol, position_type=0,
+                                    )
+                                    print(
+                                        f"[{profile.profile_name}] ai_manual M5 runner close BUY: pos {position_id}"
+                                    )
+                                except Exception as e:
+                                    print(f"[{profile.profile_name}] ai_manual M5 close error: {e}")
+                    else:
+                        new_sl = ema_val + pip
+                        if prev_be_sl is not None:
+                            new_sl = min(new_sl, prev_be_sl)
+                        _safe_update_trail_sl(
+                            adapter, store, position_id, trade_id, profile.symbol,
+                            new_sl, prev_be_sl, side, tick, pip,
+                            profile.profile_name, label="ai_manual M5 trail",
+                        )
+                        if last_close > ema_val:
+                            if isinstance(pos, dict):
+                                vol = abs(int(pos.get("currentUnits") or 0)) / 100_000.0
+                            else:
+                                vol = float(getattr(pos, "volume", 0) or 0)
+                            if vol > 0:
+                                try:
+                                    adapter.close_position(
+                                        ticket=position_id, symbol=profile.symbol,
+                                        volume=vol, position_type=1,
+                                    )
+                                    print(
+                                        f"[{profile.profile_name}] ai_manual M5 runner close SELL: pos {position_id}"
+                                    )
+                                except Exception as e:
+                                    print(f"[{profile.profile_name}] ai_manual M5 close error: {e}")
+            except Exception as e:
+                print(f"[{profile.profile_name}] ai_manual trade management error: {e}")
+    except Exception as e:
+        print(f"[{profile.profile_name}] ai_manual watchdog outer error: {e}")
+
 
 def _run_trade_management(
     profile,
@@ -3785,6 +4264,11 @@ def main() -> None:
             dashboard_daily_snapshot = _collect_dashboard_daily_summary(profile, store, adapter=adapter)
             _phase_done("snapshot_build", _snapshot_started)
             _tm_started = time.perf_counter()
+            # AI-suggested manual trades: detect fills and manage their exits.
+            try:
+                _watch_ai_managed_pending_orders(profile, adapter, store, state_path)
+            except Exception as _aim_e:
+                print(f"[{profile.profile_name}] ai_manual pending watchdog error: {_aim_e}")
             _run_trade_management(
                 profile,
                 adapter,
@@ -3796,6 +4280,17 @@ def main() -> None:
                 tier_state=locals().get("tier_state"),
                 state_path=state_path,
             )
+            try:
+                _manage_ai_manual_trades(
+                    profile,
+                    adapter,
+                    store,
+                    tick,
+                    open_positions=open_positions_snapshot,
+                    data_by_tf=data_by_tf,
+                )
+            except Exception as _aim_e2:
+                print(f"[{profile.profile_name}] ai_manual trade management error: {_aim_e2}")
             _invalidate_trades_df_cache()
             _phase_done("trade_management", _tm_started)
             if has_phase3_integrated:

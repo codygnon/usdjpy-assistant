@@ -328,6 +328,8 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
         time_in_force: editDraft.time_in_force || 'GTC',
         gtd_time_utc: editDraft.gtd_time_utc,
         comment: `ai_suggest:${editDraft.confidence}`,
+        exit_strategy: editDraft.exit_strategy || 'none',
+        exit_params: editDraft.exit_params || null,
       });
       setPlaceResult({ status: res.status, order_id: res.order_id });
       setSuggestion(null);
@@ -736,6 +738,91 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
                 {' | '}R:R {(Math.abs((editDraft.tp - editDraft.price) / (editDraft.price - editDraft.sl)) || 0).toFixed(2)}
               </div>
             )}
+
+            {/* Managed exit strategy */}
+            {(() => {
+              const strategies = (suggestion?.available_exit_strategies || editDraft.available_exit_strategies || {}) as Record<string, api.AiExitStrategyInfo>;
+              const currentId = editDraft.exit_strategy || 'none';
+              const currentInfo = strategies[currentId];
+              const strategyIds = Object.keys(strategies);
+              const params = editDraft.exit_params || {};
+              return (
+                <div style={{ marginTop: 10, padding: 8, borderRadius: 6, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+                    <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      Managed Exit Strategy
+                    </div>
+                    {currentId !== 'none' && (
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                        applied by run loop once filled
+                      </div>
+                    )}
+                  </div>
+                  {isEditing && strategyIds.length > 0 ? (
+                    <select
+                      value={currentId}
+                      onChange={(e) => {
+                        const newId = e.target.value;
+                        setEditDraft((prev) => {
+                          if (!prev) return prev;
+                          const info = strategies[newId];
+                          const defaults = (info && info.defaults) || {};
+                          return { ...prev, exit_strategy: newId, exit_params: { ...defaults } };
+                        });
+                      }}
+                      style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.8rem' }}
+                    >
+                      {strategyIds.map((sid) => (
+                        <option key={sid} value={sid}>
+                          {strategies[sid]?.label || sid}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div style={{ fontSize: '0.82rem', fontWeight: 600, color: currentId === 'none' ? '#facc15' : '#4ade80' }}>
+                      {currentInfo?.label || (currentId === 'none' ? 'No managed exit (broker SL/TP only)' : currentId)}
+                    </div>
+                  )}
+                  {currentInfo?.description && (
+                    <div style={{ marginTop: 4, fontSize: '0.72rem', color: 'var(--text-secondary)', lineHeight: 1.35 }}>
+                      {currentInfo.description}
+                    </div>
+                  )}
+                  {currentId !== 'none' && Object.keys(params).length > 0 && (
+                    <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 6 }}>
+                      {Object.entries(params).map(([k, v]) => (
+                        <div key={k}>
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }}>{k}</div>
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              value={String(v)}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                setEditDraft((prev) => {
+                                  if (!prev) return prev;
+                                  const nextParams = { ...(prev.exit_params || {}) };
+                                  const n = parseFloat(raw);
+                                  if (raw === '' || raw === '-' || raw.endsWith('.')) {
+                                    nextParams[k] = raw as unknown as number;
+                                  } else if (!isNaN(n)) {
+                                    nextParams[k] = n;
+                                  }
+                                  return { ...prev, exit_params: nextParams };
+                                });
+                              }}
+                              style={{ width: '100%', padding: '3px 5px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.78rem' }}
+                            />
+                          ) : (
+                            <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{String(v)}</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Action buttons */}
             <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
