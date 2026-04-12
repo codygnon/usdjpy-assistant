@@ -425,7 +425,7 @@ tr:hover td {
 
 .fillmore-page {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
   grid-template-rows: 1fr;
   gap: 20px;
   align-items: start;
@@ -786,6 +786,10 @@ tr:hover td {
   margin-top: 16px;
 }
 
+.fillmore-suggest-panel--rail {
+  margin-top: 0;
+}
+
 .fillmore-suggest-header {
   display: flex;
   align-items: center;
@@ -999,12 +1003,86 @@ tr:hover td {
   margin-bottom: 12px;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1320px) {
   .fillmore-page {
     grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+    height: auto;
+    min-height: calc(100vh - 48px);
+    gap: 18px;
   }
+
+  .fillmore-main {
+    height: auto;
+    min-height: clamp(460px, 68vh, 880px);
+  }
+
   .fillmore-sidebar {
     position: static;
     max-height: none;
+    overflow: visible;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    align-items: start;
+  }
+
+  .fillmore-sidebar > * {
+    min-width: 0;
+  }
+
+  .fillmore-sidebar > .fillmore-suggest-panel,
+  .fillmore-sidebar > .card:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .fillmore-order-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .fillmore-suggest-actions {
+    flex-wrap: wrap;
+  }
+
+  .fillmore-suggest-actions .btn {
+    flex: 1 1 180px;
+  }
+}
+
+@media (max-width: 900px) {
+  .fillmore-page {
+    gap: 16px;
+  }
+
+  .fillmore-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .fillmore-header-controls {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .fillmore-model-select {
+    min-width: 0;
+    flex: 1 1 220px;
+  }
+
+  .fillmore-chat-scroll {
+    padding: 18px 4px 14px;
+  }
+
+  .fillmore-sidebar {
+    grid-template-columns: 1fr;
+  }
+
+  .fillmore-order-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fillmore-exit-card .exit-header {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

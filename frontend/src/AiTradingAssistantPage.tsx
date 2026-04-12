@@ -479,6 +479,233 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
     return 'Use nearest support/resistance distances to gauge immediate room before adding.';
   })();
 
+  const suggestionPanel = (editDraft || suggestLoading) ? (
+    <div className="fillmore-suggest-panel fillmore-suggest-panel--rail" ref={suggestPanelRef}>
+      <div className="fillmore-suggest-header">
+        <div className="fillmore-suggest-title">Trade Suggestion</div>
+        {editDraft && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className={`fillmore-badge ${editDraft.confidence}`}>
+              {editDraft.confidence.toUpperCase()}
+            </span>
+            {(suggestion?.model_used || editDraft.model_used) && (
+              <span className="fillmore-badge model">
+                {suggestion?.model_used || editDraft.model_used}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {suggestLoading && (
+        <div className="fillmore-tool-status" style={{ justifyContent: 'center', padding: '24px 0' }}>
+          Analyzing market context and generating trade suggestion...
+        </div>
+      )}
+
+      {editDraft && !suggestLoading && (
+        <div>
+          <div className="fillmore-rationale">
+            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Rationale:</span>{' '}
+            {suggestion?.rationale || editDraft.rationale}
+          </div>
+
+          <div className="fillmore-order-grid">
+            <div>
+              <label>Side</label>
+              {isEditing ? (
+                <select value={editDraft.side} onChange={(e) => updateDraft('side', e.target.value)}>
+                  <option value="buy">BUY</option>
+                  <option value="sell">SELL</option>
+                </select>
+              ) : (
+                <div className="field-value" style={{ color: editDraft.side === 'buy' ? '#4ade80' : '#f87171' }}>
+                  {editDraft.side.toUpperCase()}
+                </div>
+              )}
+            </div>
+            <div>
+              <label>Limit Price</label>
+              {isEditing ? (
+                <input type="text" value={String(editDraft.price)} onChange={(e) => updateDraft('price', e.target.value)} />
+              ) : (
+                <div className="field-value">{editDraft.price}</div>
+              )}
+            </div>
+            <div>
+              <label>Lots</label>
+              {isEditing ? (
+                <input type="text" value={String(editDraft.lots)} onChange={(e) => updateDraft('lots', e.target.value)} />
+              ) : (
+                <div className="field-value">{editDraft.lots}</div>
+              )}
+            </div>
+            <div>
+              <label>Stop Loss</label>
+              {isEditing ? (
+                <input type="text" value={String(editDraft.sl)} onChange={(e) => updateDraft('sl', e.target.value)} />
+              ) : (
+                <div className="field-value" style={{ color: '#f87171' }}>{editDraft.sl}</div>
+              )}
+            </div>
+            <div>
+              <label>Take Profit</label>
+              {isEditing ? (
+                <input type="text" value={String(editDraft.tp)} onChange={(e) => updateDraft('tp', e.target.value)} />
+              ) : (
+                <div className="field-value" style={{ color: '#4ade80' }}>{editDraft.tp}</div>
+              )}
+            </div>
+            <div>
+              <label>Expiration</label>
+              {isEditing ? (
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <select
+                    value={editDraft.time_in_force || 'GTC'}
+                    onChange={(e) => {
+                      updateDraft('time_in_force', e.target.value);
+                      if (e.target.value === 'GTC') updateDraft('gtd_time_utc', '');
+                    }}
+                  >
+                    <option value="GTC">GTC</option>
+                    <option value="GTD">GTD</option>
+                  </select>
+                  {(editDraft.time_in_force || 'GTC') === 'GTD' && (
+                    <input
+                      type="datetime-local"
+                      value={(editDraft.gtd_time_utc || '').slice(0, 16)}
+                      onChange={(e) => updateDraft('gtd_time_utc', e.target.value ? e.target.value + ':00Z' : '')}
+                      style={{ flex: 1 }}
+                    />
+                  )}
+                </div>
+              ) : (
+                <div className="field-value" style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>
+                  {editDraft.time_in_force || 'GTC'}
+                  {editDraft.gtd_time_utc ? ` (${editDraft.gtd_time_utc.slice(0, 16)})` : ''}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {rail?.levels.mid && (
+            <div className="fillmore-pip-row">
+              Entry: {Math.abs(((editDraft.price - rail.levels.mid) / 0.01)).toFixed(1)}p from mid
+              {' | '}SL: {Math.abs(((editDraft.price - editDraft.sl) / 0.01)).toFixed(1)}p
+              {' | '}TP: {Math.abs(((editDraft.tp - editDraft.price) / 0.01)).toFixed(1)}p
+              {' | '}R:R {(Math.abs((editDraft.tp - editDraft.price) / (editDraft.price - editDraft.sl)) || 0).toFixed(2)}
+            </div>
+          )}
+
+          {(() => {
+            const strategies = (suggestion?.available_exit_strategies || editDraft.available_exit_strategies || {}) as Record<string, api.AiExitStrategyInfo>;
+            const currentId = editDraft.exit_strategy || 'none';
+            const currentInfo = strategies[currentId];
+            const strategyIds = Object.keys(strategies);
+            const params = editDraft.exit_params || {};
+            return (
+              <div className="fillmore-exit-card">
+                <div className="exit-header">
+                  <div className="exit-label">Managed Exit Strategy</div>
+                  {currentId !== 'none' && (
+                    <div className="exit-sublabel">applied by run loop once filled</div>
+                  )}
+                </div>
+                {isEditing && strategyIds.length > 0 ? (
+                  <select
+                    value={currentId}
+                    onChange={(e) => {
+                      const newId = e.target.value;
+                      setEditDraft((prev) => {
+                        if (!prev) return prev;
+                        const info = strategies[newId];
+                        const defaults = (info && info.defaults) || {};
+                        return { ...prev, exit_strategy: newId, exit_params: { ...defaults } };
+                      });
+                    }}
+                  >
+                    {strategyIds.map((sid) => (
+                      <option key={sid} value={sid}>{strategies[sid]?.label || sid}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <div style={{ fontSize: '0.95rem', fontWeight: 600, color: currentId === 'none' ? '#facc15' : '#4ade80' }}>
+                    {currentInfo?.label || (currentId === 'none' ? 'No managed exit (broker SL/TP only)' : currentId)}
+                  </div>
+                )}
+                {currentInfo?.description && (
+                  <div className="exit-desc">{currentInfo.description}</div>
+                )}
+                {currentId !== 'none' && Object.keys(params).length > 0 && (
+                  <div className="exit-params-grid">
+                    {Object.entries(params).map(([k, v]) => (
+                      <div key={k}>
+                        <div className="param-label">{k}</div>
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            value={String(v)}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              setEditDraft((prev) => {
+                                if (!prev) return prev;
+                                const nextParams = { ...(prev.exit_params || {}) };
+                                const n = parseFloat(raw);
+                                if (raw === '' || raw === '-' || raw.endsWith('.')) {
+                                  nextParams[k] = raw as unknown as number;
+                                } else if (!isNaN(n)) {
+                                  nextParams[k] = n;
+                                }
+                                return { ...prev, exit_params: nextParams };
+                              });
+                            }}
+                          />
+                        ) : (
+                          <div className="param-value">{String(v)}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          <div className="fillmore-suggest-actions">
+            {isEditing ? (
+              <button type="button" className="btn btn-primary" onClick={() => setIsEditing(false)}>
+                Done Editing
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => void handlePlaceOrder()}
+                  disabled={placeLoading}
+                  style={{ background: '#16a34a', borderColor: '#16a34a' }}
+                >
+                  {placeLoading ? 'Placing...' : 'Place Order'}
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={() => setIsEditing(true)}>
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleReject}
+                  style={{ color: '#f87171', borderColor: '#f87171' }}
+                >
+                  Reject
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  ) : null;
+
   return (
     <div className="fillmore-page">
       {/* ===== LEFT: Chat + Suggest ===== */}
@@ -593,239 +820,6 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
           {toolStatus && (
             <div className="fillmore-tool-status">{toolStatus}</div>
           )}
-
-          {/* ===== Suggestion Panel — inside chat scroll so user scrolls down to see it ===== */}
-          {(editDraft || suggestLoading) && (
-            <div className="fillmore-suggest-panel" ref={suggestPanelRef}>
-              <div className="fillmore-suggest-header">
-                <div className="fillmore-suggest-title">Trade Suggestion</div>
-                {editDraft && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span className={`fillmore-badge ${editDraft.confidence}`}>
-                      {editDraft.confidence.toUpperCase()}
-                    </span>
-                    {(suggestion?.model_used || editDraft.model_used) && (
-                      <span className="fillmore-badge model">
-                        {suggestion?.model_used || editDraft.model_used}
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {suggestLoading && (
-                <div className="fillmore-tool-status" style={{ justifyContent: 'center', padding: '24px 0' }}>
-                  Analyzing market context and generating trade suggestion...
-                </div>
-              )}
-
-              {editDraft && !suggestLoading && (
-                <div>
-                  {/* Rationale */}
-                  <div className="fillmore-rationale">
-                    <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Rationale:</span>{' '}
-                    {suggestion?.rationale || editDraft.rationale}
-                  </div>
-
-                  {/* Order grid */}
-                  <div className="fillmore-order-grid">
-                    <div>
-                      <label>Side</label>
-                      {isEditing ? (
-                        <select value={editDraft.side} onChange={(e) => updateDraft('side', e.target.value)}>
-                          <option value="buy">BUY</option>
-                          <option value="sell">SELL</option>
-                        </select>
-                      ) : (
-                        <div className="field-value" style={{ color: editDraft.side === 'buy' ? '#4ade80' : '#f87171' }}>
-                          {editDraft.side.toUpperCase()}
-                        </div>
-                      )}
-                    </div>
-                    <div>
-                      <label>Limit Price</label>
-                      {isEditing ? (
-                        <input type="text" value={String(editDraft.price)} onChange={(e) => updateDraft('price', e.target.value)} />
-                      ) : (
-                        <div className="field-value">{editDraft.price}</div>
-                      )}
-                    </div>
-                    <div>
-                      <label>Lots</label>
-                      {isEditing ? (
-                        <input type="text" value={String(editDraft.lots)} onChange={(e) => updateDraft('lots', e.target.value)} />
-                      ) : (
-                        <div className="field-value">{editDraft.lots}</div>
-                      )}
-                    </div>
-                    <div>
-                      <label>Stop Loss</label>
-                      {isEditing ? (
-                        <input type="text" value={String(editDraft.sl)} onChange={(e) => updateDraft('sl', e.target.value)} />
-                      ) : (
-                        <div className="field-value" style={{ color: '#f87171' }}>{editDraft.sl}</div>
-                      )}
-                    </div>
-                    <div>
-                      <label>Take Profit</label>
-                      {isEditing ? (
-                        <input type="text" value={String(editDraft.tp)} onChange={(e) => updateDraft('tp', e.target.value)} />
-                      ) : (
-                        <div className="field-value" style={{ color: '#4ade80' }}>{editDraft.tp}</div>
-                      )}
-                    </div>
-                    <div>
-                      <label>Expiration</label>
-                      {isEditing ? (
-                        <div style={{ display: 'flex', gap: 4 }}>
-                          <select
-                            value={editDraft.time_in_force || 'GTC'}
-                            onChange={(e) => {
-                              updateDraft('time_in_force', e.target.value);
-                              if (e.target.value === 'GTC') updateDraft('gtd_time_utc', '');
-                            }}
-                          >
-                            <option value="GTC">GTC</option>
-                            <option value="GTD">GTD</option>
-                          </select>
-                          {(editDraft.time_in_force || 'GTC') === 'GTD' && (
-                            <input
-                              type="datetime-local"
-                              value={(editDraft.gtd_time_utc || '').slice(0, 16)}
-                              onChange={(e) => updateDraft('gtd_time_utc', e.target.value ? e.target.value + ':00Z' : '')}
-                              style={{ flex: 1 }}
-                            />
-                          )}
-                        </div>
-                      ) : (
-                        <div className="field-value" style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>
-                          {editDraft.time_in_force || 'GTC'}
-                          {editDraft.gtd_time_utc ? ` (${editDraft.gtd_time_utc.slice(0, 16)})` : ''}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Pip row */}
-                  {rail?.levels.mid && (
-                    <div className="fillmore-pip-row">
-                      Entry: {Math.abs(((editDraft.price - rail.levels.mid) / 0.01)).toFixed(1)}p from mid
-                      {' | '}SL: {Math.abs(((editDraft.price - editDraft.sl) / 0.01)).toFixed(1)}p
-                      {' | '}TP: {Math.abs(((editDraft.tp - editDraft.price) / 0.01)).toFixed(1)}p
-                      {' | '}R:R {(Math.abs((editDraft.tp - editDraft.price) / (editDraft.price - editDraft.sl)) || 0).toFixed(2)}
-                    </div>
-                  )}
-
-                  {/* Exit strategy card */}
-                  {(() => {
-                    const strategies = (suggestion?.available_exit_strategies || editDraft.available_exit_strategies || {}) as Record<string, api.AiExitStrategyInfo>;
-                    const currentId = editDraft.exit_strategy || 'none';
-                    const currentInfo = strategies[currentId];
-                    const strategyIds = Object.keys(strategies);
-                    const params = editDraft.exit_params || {};
-                    return (
-                      <div className="fillmore-exit-card">
-                        <div className="exit-header">
-                          <div className="exit-label">Managed Exit Strategy</div>
-                          {currentId !== 'none' && (
-                            <div className="exit-sublabel">applied by run loop once filled</div>
-                          )}
-                        </div>
-                        {isEditing && strategyIds.length > 0 ? (
-                          <select
-                            value={currentId}
-                            onChange={(e) => {
-                              const newId = e.target.value;
-                              setEditDraft((prev) => {
-                                if (!prev) return prev;
-                                const info = strategies[newId];
-                                const defaults = (info && info.defaults) || {};
-                                return { ...prev, exit_strategy: newId, exit_params: { ...defaults } };
-                              });
-                            }}
-                          >
-                            {strategyIds.map((sid) => (
-                              <option key={sid} value={sid}>{strategies[sid]?.label || sid}</option>
-                            ))}
-                          </select>
-                        ) : (
-                          <div style={{ fontSize: '0.95rem', fontWeight: 600, color: currentId === 'none' ? '#facc15' : '#4ade80' }}>
-                            {currentInfo?.label || (currentId === 'none' ? 'No managed exit (broker SL/TP only)' : currentId)}
-                          </div>
-                        )}
-                        {currentInfo?.description && (
-                          <div className="exit-desc">{currentInfo.description}</div>
-                        )}
-                        {currentId !== 'none' && Object.keys(params).length > 0 && (
-                          <div className="exit-params-grid">
-                            {Object.entries(params).map(([k, v]) => (
-                              <div key={k}>
-                                <div className="param-label">{k}</div>
-                                {isEditing ? (
-                                  <input
-                                    type="text"
-                                    value={String(v)}
-                                    onChange={(e) => {
-                                      const raw = e.target.value;
-                                      setEditDraft((prev) => {
-                                        if (!prev) return prev;
-                                        const nextParams = { ...(prev.exit_params || {}) };
-                                        const n = parseFloat(raw);
-                                        if (raw === '' || raw === '-' || raw.endsWith('.')) {
-                                          nextParams[k] = raw as unknown as number;
-                                        } else if (!isNaN(n)) {
-                                          nextParams[k] = n;
-                                        }
-                                        return { ...prev, exit_params: nextParams };
-                                      });
-                                    }}
-                                  />
-                                ) : (
-                                  <div className="param-value">{String(v)}</div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-
-                  {/* Action buttons */}
-                  <div className="fillmore-suggest-actions">
-                    {isEditing ? (
-                      <button type="button" className="btn btn-primary" onClick={() => setIsEditing(false)}>
-                        Done Editing
-                      </button>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          className="btn btn-primary"
-                          onClick={() => void handlePlaceOrder()}
-                          disabled={placeLoading}
-                          style={{ background: '#16a34a', borderColor: '#16a34a' }}
-                        >
-                          {placeLoading ? 'Placing...' : 'Place Order'}
-                        </button>
-                        <button type="button" className="btn btn-secondary" onClick={() => setIsEditing(true)}>
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          onClick={handleReject}
-                          style={{ color: '#f87171', borderColor: '#f87171' }}
-                        >
-                          Reject
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
         </div>
 
         {/* Input area */}
@@ -934,6 +928,8 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
             )}
           </div>
         </div>
+
+        {suggestionPanel}
 
         <div className="card">
           <div className="card-heading">Macro Confirmation</div>
