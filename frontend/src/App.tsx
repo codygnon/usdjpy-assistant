@@ -418,9 +418,9 @@ export default function App() {
           <button
             className={`nav-item ${page === 'ai-assistant' ? 'active' : ''}`}
             onClick={() => setPage('ai-assistant')}
-            title="AI Trading Assistant"
+            title="Fillmore"
           >
-            {sidebarCollapsed ? 'AI' : 'AI Trading Assistant'}
+            {sidebarCollapsed ? 'F' : 'Fillmore'}
           </button>
           <button
             className={`nav-item ${page === 'dashboard' ? 'active' : ''}`}

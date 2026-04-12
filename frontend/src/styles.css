@@ -418,3 +418,592 @@ tr:hover td {
   font-size: 0.7rem;
   font-weight: 600;
 }
+
+/* ================================================================
+   AI Trading Assistant (Fillmore) — Playground-inspired styles
+   ================================================================ */
+
+.fillmore-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 20px;
+  align-items: start;
+  height: calc(100vh - 48px);
+}
+
+.fillmore-main {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Header bar */
+.fillmore-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0 16px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+
+.fillmore-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.fillmore-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #4a90d9, #7c3aed);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.fillmore-title {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.fillmore-subtitle {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  margin-top: 1px;
+}
+
+.fillmore-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fillmore-model-select {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  min-width: 140px;
+}
+
+.fillmore-model-select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* Chat area */
+.fillmore-chat-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 8px 16px;
+  min-height: 0;
+}
+
+.fillmore-chat-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.fillmore-chat-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.fillmore-chat-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+/* Welcome state */
+.fillmore-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 60px 20px 40px;
+  gap: 16px;
+}
+
+.fillmore-welcome-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #4a90d9, #7c3aed);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 4px;
+}
+
+.fillmore-welcome h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.fillmore-welcome p {
+  font-size: 1rem;
+  color: var(--text-secondary);
+  margin: 0;
+  max-width: 440px;
+  line-height: 1.5;
+}
+
+.fillmore-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 8px;
+  max-width: 540px;
+}
+
+.fillmore-chip {
+  padding: 10px 18px;
+  border-radius: 24px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1.3;
+}
+
+.fillmore-chip:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+/* Message rows */
+.fillmore-msg {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 24px;
+  max-width: 780px;
+}
+
+.fillmore-msg.user {
+  flex-direction: row-reverse;
+  margin-left: auto;
+}
+
+.fillmore-msg-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.fillmore-msg.assistant .fillmore-msg-avatar {
+  background: linear-gradient(135deg, #4a90d9, #7c3aed);
+  color: #fff;
+}
+
+.fillmore-msg.user .fillmore-msg-avatar {
+  background: var(--accent);
+  color: #fff;
+}
+
+.fillmore-msg-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.fillmore-msg-name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.fillmore-msg-bubble {
+  font-size: 0.95rem;
+  line-height: 1.65;
+  word-break: break-word;
+  color: var(--text-primary);
+}
+
+.fillmore-msg.user .fillmore-msg-bubble {
+  background: var(--accent);
+  color: #fff;
+  padding: 12px 16px;
+  border-radius: 16px 16px 4px 16px;
+  display: inline-block;
+}
+
+.fillmore-msg.assistant .fillmore-msg-bubble {
+  padding: 4px 0;
+}
+
+.fillmore-msg.assistant .fillmore-msg-bubble.streaming {
+  opacity: 0.7;
+}
+
+.fillmore-tool-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 16px;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.fillmore-tool-status::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: fillmore-pulse 1.2s infinite;
+}
+
+@keyframes fillmore-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+/* Input area */
+.fillmore-input-area {
+  flex-shrink: 0;
+  padding: 16px 0 4px;
+  border-top: 1px solid var(--border);
+}
+
+.fillmore-input-wrap {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 14px;
+  transition: border-color 0.15s;
+}
+
+.fillmore-input-wrap:focus-within {
+  border-color: var(--accent);
+}
+
+.fillmore-textarea {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  resize: none;
+  min-height: 24px;
+  max-height: 160px;
+  padding: 2px 0;
+  font-family: inherit;
+}
+
+.fillmore-textarea::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+
+.fillmore-textarea:focus {
+  outline: none;
+  border: none;
+}
+
+.fillmore-send-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.fillmore-send-btn:hover {
+  background: var(--accent-hover);
+}
+
+.fillmore-send-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.fillmore-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 0 4px;
+}
+
+.fillmore-actions .btn {
+  font-size: 0.82rem;
+  padding: 5px 12px;
+  border-radius: 8px;
+}
+
+/* Suggestion panel */
+.fillmore-suggest-panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+  margin-top: 16px;
+}
+
+.fillmore-suggest-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.fillmore-suggest-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.fillmore-rationale {
+  font-size: 0.92rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 14px;
+}
+
+.fillmore-badge {
+  display: inline-flex;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.fillmore-badge.high { background: rgba(74, 222, 128, 0.15); color: #4ade80; }
+.fillmore-badge.medium { background: rgba(250, 204, 21, 0.15); color: #facc15; }
+.fillmore-badge.low { background: rgba(248, 113, 113, 0.15); color: #f87171; }
+.fillmore-badge.model { background: rgba(96, 165, 250, 0.12); color: #60a5fa; }
+
+.fillmore-order-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  font-size: 0.92rem;
+}
+
+.fillmore-order-grid label {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+
+.fillmore-order-grid .field-value {
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+
+.fillmore-order-grid input,
+.fillmore-order-grid select {
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.fillmore-pip-row {
+  margin-top: 10px;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.fillmore-exit-card {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.fillmore-exit-card .exit-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.fillmore-exit-card .exit-label {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.fillmore-exit-card .exit-sublabel {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.fillmore-exit-card .exit-desc {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  margin-top: 6px;
+}
+
+.fillmore-exit-card .exit-params-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+}
+
+.fillmore-exit-card .param-label {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  margin-bottom: 2px;
+}
+
+.fillmore-exit-card .param-value {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.fillmore-suggest-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.fillmore-suggest-actions .btn {
+  font-size: 0.9rem;
+  padding: 8px 20px;
+  border-radius: 10px;
+}
+
+.fillmore-suggest-empty {
+  text-align: center;
+  padding: 20px;
+  color: var(--text-secondary);
+  font-size: 0.92rem;
+}
+
+/* Right sidebar cards */
+.fillmore-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  padding-bottom: 12px;
+}
+
+.fillmore-sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.fillmore-sidebar::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.fillmore-sidebar .card {
+  border-radius: 12px;
+  padding: 18px;
+}
+
+.fillmore-sidebar .card-heading {
+  font-size: 0.92rem;
+  font-weight: 700;
+  margin-bottom: 10px;
+  color: var(--text-primary);
+}
+
+.fillmore-sidebar .card-row {
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--text-primary);
+}
+
+.fillmore-sidebar .card-hint {
+  margin-top: 10px;
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.fillmore-error {
+  background: rgba(220, 53, 69, 0.1);
+  border: 1px solid rgba(220, 53, 69, 0.3);
+  border-radius: 10px;
+  padding: 12px 16px;
+  color: #f87171;
+  font-size: 0.9rem;
+  margin-bottom: 12px;
+}
+
+.fillmore-success {
+  background: rgba(74, 222, 128, 0.1);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  border-radius: 10px;
+  padding: 12px 16px;
+  color: #4ade80;
+  font-size: 0.9rem;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 1100px) {
+  .fillmore-page {
+    grid-template-columns: 1fr;
+  }
+  .fillmore-sidebar {
+    position: static;
+    max-height: none;
+  }
+}

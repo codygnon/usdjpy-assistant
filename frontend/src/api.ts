@@ -995,6 +995,7 @@ export interface AiTradeSuggestion {
   exit_params?: Record<string, number> | null;
   available_exit_strategies?: Record<string, AiExitStrategyInfo>;
   model_used?: string;
+  suggestion_id?: string | null;
 }
 
 export interface PlaceLimitOrderRequest {
@@ -1008,6 +1009,8 @@ export interface PlaceLimitOrderRequest {
   comment?: string;
   exit_strategy?: string | null;
   exit_params?: Record<string, number> | null;
+  suggestion_id?: string | null;
+  edited_fields?: Record<string, { before: unknown; after: unknown }> | null;
 }
 
 export interface PlaceLimitOrderResponse {
@@ -1022,6 +1025,7 @@ export interface PlaceLimitOrderResponse {
   gtd_time_utc: string | null;
   exit_strategy?: string | null;
   exit_params?: Record<string, number> | null;
+  suggestion_id?: string | null;
 }
 
 export async function aiSuggestTrade(
@@ -1052,6 +1056,28 @@ export async function placeLimitOrder(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(order),
+    },
+  );
+}
+
+export async function logSuggestionAction(
+  profileName: string,
+  suggestionId: string,
+  action: 'placed' | 'rejected',
+  editedFields?: Record<string, { before: unknown; after: unknown }> | null,
+  oandaOrderId?: string | null,
+): Promise<void> {
+  await fetchJson<unknown>(
+    `${API_BASE}/data/${encodeURIComponent(profileName)}/ai-suggestions/action`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        suggestion_id: suggestionId,
+        action,
+        edited_fields: editedFields || null,
+        oanda_order_id: oandaOrderId || null,
+      }),
     },
   );
 }

@@ -586,6 +586,14 @@ def _watch_ai_managed_pending_orders(profile, adapter, store, state_path) -> Non
         if position_id is None:
             # Cancelled / expired / rejected — drop it quietly.
             print(f"[{profile.profile_name}] ai_manual watchdog: order {order_id} not filled (cancelled/expired), dropping")
+            # Stamp outcome on suggestion tracker if linked.
+            try:
+                from api.suggestion_tracker import mark_cancelled_or_expired as _st_cancel
+
+                _st_db = Path(state_path).parent / "ai_suggestions.sqlite"
+                _st_cancel(_st_db, oanda_order_id=str(order_id), status="cancelled")
+            except Exception as _st_e:
+                print(f"[{profile.profile_name}] suggestion_tracker cancel error: {_st_e}")
             changed = True
             continue
 
@@ -632,6 +640,19 @@ def _watch_ai_managed_pending_orders(profile, adapter, store, state_path) -> Non
                 f"[{profile.profile_name}] ai_manual watchdog: order {order_id} filled -> trade {trade_id} "
                 f"(pos {position_id}, strategy={entry.get('exit_strategy')}, trail={trail_mode})"
             )
+            # Stamp fill on the suggestion tracker.
+            try:
+                from api.suggestion_tracker import mark_filled as _st_fill
+
+                _st_db = Path(state_path).parent / "ai_suggestions.sqlite"
+                _st_fill(
+                    _st_db,
+                    oanda_order_id=str(order_id),
+                    fill_price=float(entry.get("price") or 0.0),
+                    filled_at=pd.Timestamp.now(tz="UTC").isoformat(),
+                )
+            except Exception as _st_e:
+                print(f"[{profile.profile_name}] suggestion_tracker fill error: {_st_e}")
             changed = True
         except Exception as e:
             print(f"[{profile.profile_name}] ai_manual watchdog: insert_trade error order {order_id}: {e}")

@@ -2232,6 +2232,81 @@ def _exec_web_search(args: dict, **_: Any) -> str:
     return "\n".join(lines)
 
 
+def _search_pair_from_symbol(symbol: str) -> str:
+    """Turn broker symbols like USD_JPY / USDJPY into 'USD JPY' for search queries."""
+    raw = (symbol or "USD_JPY").strip().upper().replace("/", "_")
+    if "_" in raw:
+        a, b = raw.split("_", 1)
+        return f"{a} {b}".strip()
+    if len(raw) == 6 and raw.isalpha():
+        return f"{raw[:3]} {raw[3:]}"
+    return raw.replace("_", " ").strip() or "USD JPY"
+
+
+def build_trade_suggestion_news_block(
+    *,
+    symbol: str = "USD_JPY",
+    rss_headline_count: int = 12,
+    web_result_count: int = 5,
+    parallel_timeout_sec: float = 14.0,
+) -> str:
+    """Prefetch RSS headlines + Brave web results for ai-suggest-trade only.
+
+    Runs RSS and web search in parallel. Web search is a no-op message if
+    BRAVE_SEARCH_API_KEY is unset (same behavior as the chat tool).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    pair = _search_pair_from_symbol(symbol)
+    web_query = f"{pair} forex yen dollar news price movement market drivers"
+    rss_n = max(1, min(int(rss_headline_count), 20))
+    web_n = max(1, min(int(web_result_count), 10))
+
+    rss_text = ""
+    web_text = ""
+
+    def _rss() -> str:
+        return _exec_get_news_headlines({"count": rss_n})
+
+    def _web() -> str:
+        return _exec_web_search({"query": web_query, "count": web_n})
+
+    f_rss = None
+    f_web = None
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f_rss = pool.submit(_rss)
+            f_web = pool.submit(_web)
+            for fut in as_completed([f_rss, f_web], timeout=parallel_timeout_sec):
+                try:
+                    out = fut.result()
+                    if fut is f_rss:
+                        rss_text = out
+                    else:
+                        web_text = out
+                except Exception as e:
+                    if fut is f_rss:
+                        rss_text = f"RSS headlines unavailable: {e}"
+                    else:
+                        web_text = f"Web search unavailable: {e}"
+    except TimeoutError:
+        pass
+    if not rss_text:
+        rss_text = "RSS headlines unavailable: timed out"
+    if not web_text:
+        web_text = "Web search unavailable: timed out"
+
+    return (
+        "=== TRADE SUGGESTION — EXTERNAL MARKET NEWS (prefetched for this request only) ===\n"
+        "Use for catalysts and narratives only; live price, spread, and levels in "
+        "LIVE TRADING CONTEXT above are authoritative.\n\n"
+        "[RSS HEADLINES]\n"
+        + rss_text
+        + "\n\n[WEB SEARCH]\n"
+        + web_text
+    )
+
+
 # ---------------------------------------------------------------------------
 # 3e. Tool dispatch
 # ---------------------------------------------------------------------------

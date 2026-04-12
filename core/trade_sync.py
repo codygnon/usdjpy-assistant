@@ -297,6 +297,26 @@ def sync_closed_trades(profile: "ProfileV1", store: "SqliteStore", log_dir=None)
         
         print(f"[trade_sync] Synced closed trade {trade_id}: exit={exit_price}, pips={pips:.2f}, reason={exit_reason}")
 
+        # Stamp outcome onto the AI suggestion row (if this trade came from one).
+        if str(_safe_get(trade_row, "entry_type") or "").lower() == "ai_manual" and mt5_order_id:
+            try:
+                from api.suggestion_tracker import mark_closed as _st_mark_closed
+                from pathlib import Path as _stPath
+
+                _data_env = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") or os.environ.get("USDJPY_DATA_DIR")
+                _st_base = _stPath(_data_env) if _data_env else _stPath(__file__).resolve().parent.parent
+                _st_db = _st_base / "logs" / profile.profile_name / "ai_suggestions.sqlite"
+                _st_mark_closed(
+                    _st_db,
+                    oanda_order_id=str(int(mt5_order_id)),
+                    exit_price=float(exit_price),
+                    pnl=float(close_info.profit),
+                    pips=float(pips),
+                    closed_at=exit_ts or None,
+                )
+            except Exception as _st_e:
+                print(f"[trade_sync] suggestion_tracker.mark_closed failed: {_st_e}")
+
         # Append trade close event for dashboard
         if log_dir is not None:
             try:

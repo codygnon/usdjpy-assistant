@@ -355,12 +355,40 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
     }
   }, [suggestModel, profile.name, profile.path]);
 
+  // Build a diff of fields the user changed between the original suggestion and the edit draft.
+  const buildEditedFields = useCallback((): Record<string, { before: unknown; after: unknown }> | null => {
+    if (!suggestion || !editDraft) return null;
+    const diff: Record<string, { before: unknown; after: unknown }> = {};
+    const tracked: (keyof api.AiTradeSuggestion)[] = ['side', 'price', 'sl', 'tp', 'lots', 'time_in_force', 'exit_strategy'];
+    for (const key of tracked) {
+      const before = suggestion[key];
+      const after = editDraft[key];
+      if (before !== after) {
+        diff[key] = { before, after };
+      }
+    }
+    // Check exit_params numeric overrides
+    const origParams = suggestion.exit_params || {};
+    const draftParams = editDraft.exit_params || {};
+    const allParamKeys = new Set([...Object.keys(origParams), ...Object.keys(draftParams)]);
+    for (const pk of allParamKeys) {
+      if ((origParams as Record<string, number>)[pk] !== (draftParams as Record<string, number>)[pk]) {
+        diff[`exit_params.${pk}`] = {
+          before: (origParams as Record<string, number>)[pk] ?? null,
+          after: (draftParams as Record<string, number>)[pk] ?? null,
+        };
+      }
+    }
+    return Object.keys(diff).length > 0 ? diff : null;
+  }, [suggestion, editDraft]);
+
   const handlePlaceOrder = useCallback(async () => {
     if (!editDraft) return;
     setPlaceLoading(true);
     setPlaceResult(null);
     setSuggestError(null);
     try {
+      const editedFields = buildEditedFields();
       const res = await api.placeLimitOrder(profile.name, profile.path, {
         side: editDraft.side,
         price: editDraft.price,
@@ -372,6 +400,8 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
         comment: `ai_suggest:${editDraft.confidence}`,
         exit_strategy: editDraft.exit_strategy || 'none',
         exit_params: editDraft.exit_params || null,
+        suggestion_id: suggestion?.suggestion_id || null,
+        edited_fields: editedFields,
       });
       setPlaceResult({ status: res.status, order_id: res.order_id });
       setSuggestion(null);
@@ -382,15 +412,22 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
     } finally {
       setPlaceLoading(false);
     }
-  }, [editDraft, profile.name, profile.path]);
+  }, [buildEditedFields, editDraft, profile.name, profile.path, suggestion]);
 
   const handleReject = useCallback(() => {
+    // Log the rejection to the suggestion tracker (fire-and-forget).
+    if (suggestion?.suggestion_id) {
+      const editedFields = buildEditedFields();
+      api.logSuggestionAction(
+        profile.name, suggestion.suggestion_id, 'rejected', editedFields,
+      ).catch(() => {});  // best-effort
+    }
     setSuggestion(null);
     setEditDraft(null);
     setIsEditing(false);
     setPlaceResult(null);
     setSuggestError(null);
-  }, []);
+  }, [buildEditedFields, profile.name, suggestion]);
 
   const updateDraft = useCallback((field: keyof api.AiTradeSuggestion, value: string) => {
     setEditDraft((prev) => {
@@ -435,122 +472,102 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
   })();
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 360px', gap: 16, alignItems: 'start' }}>
-      <div>
-      <h2 className="page-title">AI Trading Assistant</h2>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: 16, maxWidth: 720 }}>
-        Context-aware help using your profile&apos;s broker connection on the server. Not financial advice.
-      </p>
-
-      <div className="form-group" style={{ marginBottom: 16, maxWidth: 360 }}>
-        <label htmlFor="ai-chat-model">Model</label>
-        <select
-          id="ai-chat-model"
-          value={chatModel}
-          disabled={!modelsReady || sending || modelList.length === 0}
-          onChange={(e) => {
-            const v = e.target.value;
-            setChatModel(v);
-            saveModelToStorage(profile.path, v);
-          }}
-          style={{ width: '100%', padding: '8px 10px', borderRadius: 8 }}
-        >
-          {!modelsReady ? (
-            <option value="">Loading…</option>
-          ) : (
-            modelList.map((id) => (
-              <option key={id} value={id}>
-                {id}
-              </option>
-            ))
-          )}
-        </select>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', margin: '6px 0 0' }}>
-          Choices come from the server allowlist. Admins can set{' '}
-          <code style={{ fontSize: '0.7rem' }}>AI_CHAT_ALLOWED_MODELS</code> (comma-separated).
-        </p>
-      </div>
-
-      {error && (
-        <div className="card mb-4" style={{ borderColor: 'var(--danger)' }}>
-          <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p>
-        </div>
-      )}
-
-      {messages.length === 0 && !sending && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, maxWidth: 720 }}>
-          {[
-            "How's my P&L today?",
-            "What's the current setup?",
-            "Position sizing help",
-            "Analyze recent losses",
-            "Any upcoming events?",
-            "What's the latest USDJPY news?",
-          ].map((chip) => (
-            <button
-              key={chip}
-              type="button"
-              onClick={() => void send(chip)}
-              style={{
-                padding: '6px 14px',
-                borderRadius: 20,
-                border: '1px solid var(--card-border, rgba(255,255,255,0.12))',
-                background: 'var(--bg-secondary, rgba(0,0,0,0.2))',
-                color: 'var(--text-secondary)',
-                fontSize: '0.8rem',
-                cursor: 'pointer',
+    <div className="fillmore-page">
+      {/* ===== LEFT: Chat + Suggest ===== */}
+      <div className="fillmore-main">
+        {/* Header */}
+        <div className="fillmore-header">
+          <div className="fillmore-brand">
+            <div className="fillmore-avatar">F</div>
+            <div>
+              <div className="fillmore-title">Fillmore</div>
+              <div className="fillmore-subtitle">USDJPY Trading Assistant</div>
+            </div>
+          </div>
+          <div className="fillmore-header-controls">
+            <select
+              className="fillmore-model-select"
+              value={chatModel}
+              disabled={!modelsReady || sending || modelList.length === 0}
+              onChange={(e) => {
+                const v = e.target.value;
+                setChatModel(v);
+                saveModelToStorage(profile.path, v);
               }}
             >
-              {chip}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="card" style={{ display: 'flex', flexDirection: 'column', maxWidth: 720, height: 'calc(100vh - 180px)', minHeight: 560 }}>
-        <div
-          ref={scrollRef}
-          style={{
-            flex: 1,
-            overflowY: 'auto',
-            padding: 12,
-            marginBottom: 12,
-            background: 'var(--bg-secondary, rgba(0,0,0,0.2))',
-            borderRadius: 8,
-            minHeight: 0,
-          }}
-        >
-          {messages.length === 0 && (
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', margin: 0 }}>
-              Ask about open positions, recent performance, or session context. Replies stream from the model.
-            </p>
-          )}
-          {messages.map((line, i) => (
-            <div
-              key={i}
-              style={{
-                marginBottom: 12,
-                textAlign: line.role === 'user' ? 'right' : 'left',
-              }}
-            >
-              <div
-                style={{
-                  display: 'inline-block',
-                  maxWidth: '92%',
-                  padding: '10px 14px',
-                  borderRadius: 10,
-                  fontSize: '0.9rem',
-                  lineHeight: 1.45,
-                  whiteSpace: line.role === 'user' ? 'pre-wrap' : 'normal',
-                  wordBreak: 'break-word',
-                  background:
-                    line.role === 'user' ? 'var(--accent, #3b82f6)' : 'var(--card-border, rgba(255,255,255,0.08))',
-                  color: line.role === 'user' ? '#fff' : 'var(--text-primary)',
-                  opacity: line.role === 'assistant' && sending && i === messages.length - 1 && !line.content ? 0.6 : 1,
+              {!modelsReady ? (
+                <option value="">Loading…</option>
+              ) : (
+                modelList.map((id) => (
+                  <option key={id} value={id}>{id}</option>
+                ))
+              )}
+            </select>
+            {messages.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ fontSize: '0.82rem', padding: '6px 14px', borderRadius: 8 }}
+                disabled={sending || messages.length === 0}
+                onClick={() => {
+                  setMessages([]);
+                  saveChatToStorage(profile.path, []);
+                  setError(null);
                 }}
               >
-                {line.role === 'user' ? <strong>You</strong> : <strong>Assistant</strong>}
-                <div style={{ marginTop: 4, fontWeight: 400 }}>
+                New Chat
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Error banner */}
+        {error && <div className="fillmore-error">{error}</div>}
+
+        {/* Chat scroll area */}
+        <div className="fillmore-chat-scroll" ref={scrollRef}>
+          {/* Welcome state */}
+          {messages.length === 0 && !sending && (
+            <div className="fillmore-welcome">
+              <div className="fillmore-welcome-avatar">F</div>
+              <h2>Hey, I&apos;m Fillmore</h2>
+              <p>
+                Your context-aware USDJPY trading assistant. I can see your broker positions,
+                recent trades, macro data, and technicals in real time. Ask me anything.
+              </p>
+              <div className="fillmore-chips">
+                {[
+                  "How's my P&L today?",
+                  "What's the current setup?",
+                  "Position sizing help",
+                  "Analyze recent losses",
+                  "Any upcoming events?",
+                  "What's the latest news?",
+                ].map((chip) => (
+                  <button
+                    key={chip}
+                    type="button"
+                    className="fillmore-chip"
+                    onClick={() => void send(chip)}
+                  >
+                    {chip}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Message list */}
+          {messages.map((line, i) => (
+            <div key={i} className={`fillmore-msg ${line.role}`}>
+              <div className="fillmore-msg-avatar">
+                {line.role === 'user' ? 'Y' : 'F'}
+              </div>
+              <div className="fillmore-msg-body">
+                <div className="fillmore-msg-name">
+                  {line.role === 'user' ? 'You' : 'Fillmore'}
+                </div>
+                <div className={`fillmore-msg-bubble${line.role === 'assistant' && sending && i === messages.length - 1 && !line.content ? ' streaming' : ''}`}>
                   {line.role === 'assistant' ? (
                     <>
                       <AssistantFormattedBody content={line.content} />
@@ -563,53 +580,60 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
               </div>
             </div>
           ))}
+
+          {/* Tool status */}
           {toolStatus && (
-            <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', fontStyle: 'italic', padding: '4px 0' }}>
-              {toolStatus}
-            </div>
+            <div className="fillmore-tool-status">{toolStatus}</div>
           )}
         </div>
 
-        <div className="form-group" style={{ marginBottom: 8 }}>
-          <label>Message</label>
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            placeholder="Type a message… (Enter to send, Shift+Enter for newline)"
-            rows={3}
-            disabled={sending}
-            style={{ width: '100%', resize: 'vertical' }}
-          />
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <button type="button" className="btn btn-primary" onClick={() => void send()} disabled={sending || !input.trim()}>
-            {sending ? 'Sending…' : 'Send'}
-          </button>
-          {sending && (
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => {
-                abortRef.current?.abort();
+        {/* Input area */}
+        <div className="fillmore-input-area">
+          <div className="fillmore-input-wrap">
+            <textarea
+              className="fillmore-textarea"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  void send();
+                }
               }}
-            >
-              Stop
-            </button>
-          )}
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+              placeholder="Ask Fillmore anything..."
+              rows={1}
+              disabled={sending}
+            />
+            {sending ? (
+              <button
+                type="button"
+                className="fillmore-send-btn"
+                onClick={() => abortRef.current?.abort()}
+                title="Stop"
+                style={{ background: 'var(--danger)' }}
+              >
+                &#9632;
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="fillmore-send-btn"
+                onClick={() => void send()}
+                disabled={!input.trim()}
+                title="Send"
+              >
+                &#8593;
+              </button>
+            )}
+          </div>
+          <div className="fillmore-actions">
             <button
               type="button"
               className="btn btn-secondary"
               disabled={sending || messages.length === 0}
               onClick={() => {
                 const lines = messages.map((m) => {
-                  const label = m.role === 'user' ? 'You' : 'Assistant';
+                  const label = m.role === 'user' ? 'You' : 'Fillmore';
                   return `### ${label}\n${m.content}\n`;
                 });
                 const header = `# USDJPY AI Chat Export\n# Profile: ${profile.name}\n# Date: ${new Date().toISOString()}\n\n`;
@@ -624,31 +648,18 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
             >
               Export
             </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={sending || messages.length === 0}
-              onClick={() => {
-                setMessages([]);
-                saveChatToStorage(profile.path, []);
-                setError(null);
-              }}
-            >
-              Clear Chat
-            </button>
           </div>
         </div>
-      </div>
 
-      {/* --- AI Trade Suggestion Panel --- */}
-      <div className="card" style={{ maxWidth: 720, marginTop: 12 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 8, flexWrap: 'wrap' }}>
-          <div style={{ fontWeight: 700 }}>AI Trade Suggestion</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {suggestModelList.length > 0 && (
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                Model:
+        {/* ===== Suggestion Panel ===== */}
+        <div className="fillmore-suggest-panel">
+          <div className="fillmore-suggest-header">
+            <div className="fillmore-suggest-title">Trade Suggestion</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {suggestModelList.length > 0 && (
                 <select
+                  className="fillmore-model-select"
+                  style={{ minWidth: 120, fontSize: '0.82rem' }}
                   value={suggestModel}
                   onChange={(e) => {
                     const v = e.target.value;
@@ -656,324 +667,290 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
                     saveSuggestModelToStorage(profile.path, v);
                   }}
                   disabled={suggestLoading}
-                  style={{ padding: '3px 6px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.76rem' }}
                 >
                   {suggestModelList.map((m) => (
                     <option key={m} value={m}>{m}</option>
                   ))}
                 </select>
-              </label>
-            )}
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={suggestLoading}
-              onClick={() => void handleSuggestTrade()}
-              style={{ fontSize: '0.8rem', padding: '4px 14px' }}
-            >
-              {suggestLoading ? 'Analyzing...' : editDraft ? 'New Suggestion' : 'Generate Suggestion'}
-            </button>
-          </div>
-        </div>
-
-        {suggestError && (
-          <div style={{ color: '#f87171', fontSize: '0.82rem', marginBottom: 8 }}>{suggestError}</div>
-        )}
-
-        {placeResult && (
-          <div style={{ color: '#4ade80', fontSize: '0.82rem', marginBottom: 8 }}>
-            Order {placeResult.status}{placeResult.order_id ? ` (ID: ${placeResult.order_id})` : ''}
-          </div>
-        )}
-
-        {suggestLoading && (
-          <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', padding: '16px 0', textAlign: 'center' }}>
-            Analyzing market context and generating trade suggestion...
-          </div>
-        )}
-
-        {editDraft && !suggestLoading && (
-          <div>
-            {/* Rationale */}
-            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 10, padding: '8px 10px', borderRadius: 6, background: 'rgba(255,255,255,0.04)' }}>
-              <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Rationale:</span> {suggestion?.rationale || editDraft.rationale}
-              <span style={{ marginLeft: 10, padding: '2px 8px', borderRadius: 10, fontSize: '0.75rem', fontWeight: 600, background: editDraft.confidence === 'high' ? 'rgba(74,222,128,0.15)' : editDraft.confidence === 'medium' ? 'rgba(250,204,21,0.15)' : 'rgba(248,113,113,0.15)', color: editDraft.confidence === 'high' ? '#4ade80' : editDraft.confidence === 'medium' ? '#facc15' : '#f87171' }}>
-                {editDraft.confidence.toUpperCase()}
-              </span>
-              {(suggestion?.model_used || editDraft.model_used) && (
-                <span style={{ marginLeft: 8, padding: '2px 8px', borderRadius: 10, fontSize: '0.7rem', fontWeight: 600, background: 'rgba(96,165,250,0.12)', color: '#60a5fa' }}>
-                  {suggestion?.model_used || editDraft.model_used}
-                </span>
               )}
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={suggestLoading}
+                onClick={() => void handleSuggestTrade()}
+                style={{ borderRadius: 10, padding: '7px 18px', fontSize: '0.88rem' }}
+              >
+                {suggestLoading ? 'Analyzing...' : editDraft ? 'New Suggestion' : 'Generate'}
+              </button>
             </div>
+          </div>
 
-            {/* Order fields grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, fontSize: '0.82rem' }}>
-              {/* Side */}
-              <div>
-                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: 2 }}>Side</label>
-                {isEditing ? (
-                  <select
-                    value={editDraft.side}
-                    onChange={(e) => updateDraft('side', e.target.value)}
-                    style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.82rem' }}
-                  >
-                    <option value="buy">BUY</option>
-                    <option value="sell">SELL</option>
-                  </select>
-                ) : (
-                  <div style={{ fontWeight: 700, color: editDraft.side === 'buy' ? '#4ade80' : '#f87171', fontSize: '1rem' }}>
-                    {editDraft.side.toUpperCase()}
-                  </div>
-                )}
-              </div>
-              {/* Price */}
-              <div>
-                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: 2 }}>Limit Price</label>
-                {isEditing ? (
-                  <input type="text" value={String(editDraft.price)} onChange={(e) => updateDraft('price', e.target.value)} style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.82rem' }} />
-                ) : (
-                  <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{editDraft.price}</div>
-                )}
-              </div>
-              {/* Lots */}
-              <div>
-                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: 2 }}>Lots</label>
-                {isEditing ? (
-                  <input type="text" value={String(editDraft.lots)} onChange={(e) => updateDraft('lots', e.target.value)} style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.82rem' }} />
-                ) : (
-                  <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{editDraft.lots}</div>
-                )}
-              </div>
-              {/* SL */}
-              <div>
-                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: 2 }}>Stop Loss</label>
-                {isEditing ? (
-                  <input type="text" value={String(editDraft.sl)} onChange={(e) => updateDraft('sl', e.target.value)} style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.82rem' }} />
-                ) : (
-                  <div style={{ color: '#f87171' }}>{editDraft.sl}</div>
-                )}
-              </div>
-              {/* TP */}
-              <div>
-                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: 2 }}>Take Profit</label>
-                {isEditing ? (
-                  <input type="text" value={String(editDraft.tp)} onChange={(e) => updateDraft('tp', e.target.value)} style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.82rem' }} />
-                ) : (
-                  <div style={{ color: '#4ade80' }}>{editDraft.tp}</div>
-                )}
-              </div>
-              {/* Expiration */}
-              <div>
-                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: 2 }}>Expiration</label>
-                {isEditing ? (
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    <select
-                      value={editDraft.time_in_force || 'GTC'}
-                      onChange={(e) => {
-                        updateDraft('time_in_force', e.target.value);
-                        if (e.target.value === 'GTC') updateDraft('gtd_time_utc', '');
-                      }}
-                      style={{ padding: '4px 4px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.78rem' }}
-                    >
-                      <option value="GTC">GTC</option>
-                      <option value="GTD">GTD</option>
-                    </select>
-                    {(editDraft.time_in_force || 'GTC') === 'GTD' && (
-                      <input
-                        type="datetime-local"
-                        value={(editDraft.gtd_time_utc || '').slice(0, 16)}
-                        onChange={(e) => updateDraft('gtd_time_utc', e.target.value ? e.target.value + ':00Z' : '')}
-                        style={{ flex: 1, padding: '4px 4px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.75rem' }}
-                      />
-                    )}
-                  </div>
-                ) : (
-                  <div style={{ color: 'var(--text-secondary)' }}>
-                    {editDraft.time_in_force || 'GTC'}
-                    {editDraft.gtd_time_utc ? ` (${editDraft.gtd_time_utc.slice(0, 16)})` : ''}
-                  </div>
-                )}
-              </div>
+          {suggestError && <div className="fillmore-error">{suggestError}</div>}
+          {placeResult && (
+            <div className="fillmore-success">
+              Order {placeResult.status}{placeResult.order_id ? ` (ID: ${placeResult.order_id})` : ''}
             </div>
+          )}
 
-            {/* Pip distance info row */}
-            {rail?.levels.mid && (
-              <div style={{ marginTop: 8, fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                Entry distance: {Math.abs(((editDraft.price - rail.levels.mid) / 0.01)).toFixed(1)}p from mid
-                {' | '}SL: {Math.abs(((editDraft.price - editDraft.sl) / 0.01)).toFixed(1)}p
-                {' | '}TP: {Math.abs(((editDraft.tp - editDraft.price) / 0.01)).toFixed(1)}p
-                {' | '}R:R {(Math.abs((editDraft.tp - editDraft.price) / (editDraft.price - editDraft.sl)) || 0).toFixed(2)}
+          {suggestLoading && (
+            <div className="fillmore-tool-status" style={{ justifyContent: 'center', padding: '24px 0' }}>
+              Analyzing market context and generating trade suggestion...
+            </div>
+          )}
+
+          {editDraft && !suggestLoading && (
+            <div>
+              {/* Rationale */}
+              <div className="fillmore-rationale">
+                <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Rationale:</span>{' '}
+                {suggestion?.rationale || editDraft.rationale}
+                <span className={`fillmore-badge ${editDraft.confidence}`}>
+                  {editDraft.confidence.toUpperCase()}
+                </span>
+                {(suggestion?.model_used || editDraft.model_used) && (
+                  <span className="fillmore-badge model">
+                    {suggestion?.model_used || editDraft.model_used}
+                  </span>
+                )}
               </div>
-            )}
 
-            {/* Managed exit strategy */}
-            {(() => {
-              const strategies = (suggestion?.available_exit_strategies || editDraft.available_exit_strategies || {}) as Record<string, api.AiExitStrategyInfo>;
-              const currentId = editDraft.exit_strategy || 'none';
-              const currentInfo = strategies[currentId];
-              const strategyIds = Object.keys(strategies);
-              const params = editDraft.exit_params || {};
-              return (
-                <div style={{ marginTop: 10, padding: 8, borderRadius: 6, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
-                    <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                      Managed Exit Strategy
-                    </div>
-                    {currentId !== 'none' && (
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                        applied by run loop once filled
-                      </div>
-                    )}
-                  </div>
-                  {isEditing && strategyIds.length > 0 ? (
-                    <select
-                      value={currentId}
-                      onChange={(e) => {
-                        const newId = e.target.value;
-                        setEditDraft((prev) => {
-                          if (!prev) return prev;
-                          const info = strategies[newId];
-                          const defaults = (info && info.defaults) || {};
-                          return { ...prev, exit_strategy: newId, exit_params: { ...defaults } };
-                        });
-                      }}
-                      style={{ width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.8rem' }}
-                    >
-                      {strategyIds.map((sid) => (
-                        <option key={sid} value={sid}>
-                          {strategies[sid]?.label || sid}
-                        </option>
-                      ))}
+              {/* Order grid */}
+              <div className="fillmore-order-grid">
+                <div>
+                  <label>Side</label>
+                  {isEditing ? (
+                    <select value={editDraft.side} onChange={(e) => updateDraft('side', e.target.value)}>
+                      <option value="buy">BUY</option>
+                      <option value="sell">SELL</option>
                     </select>
                   ) : (
-                    <div style={{ fontSize: '0.82rem', fontWeight: 600, color: currentId === 'none' ? '#facc15' : '#4ade80' }}>
-                      {currentInfo?.label || (currentId === 'none' ? 'No managed exit (broker SL/TP only)' : currentId)}
-                    </div>
-                  )}
-                  {currentInfo?.description && (
-                    <div style={{ marginTop: 4, fontSize: '0.72rem', color: 'var(--text-secondary)', lineHeight: 1.35 }}>
-                      {currentInfo.description}
-                    </div>
-                  )}
-                  {currentId !== 'none' && Object.keys(params).length > 0 && (
-                    <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 6 }}>
-                      {Object.entries(params).map(([k, v]) => (
-                        <div key={k}>
-                          <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }}>{k}</div>
-                          {isEditing ? (
-                            <input
-                              type="text"
-                              value={String(v)}
-                              onChange={(e) => {
-                                const raw = e.target.value;
-                                setEditDraft((prev) => {
-                                  if (!prev) return prev;
-                                  const nextParams = { ...(prev.exit_params || {}) };
-                                  const n = parseFloat(raw);
-                                  if (raw === '' || raw === '-' || raw.endsWith('.')) {
-                                    nextParams[k] = raw as unknown as number;
-                                  } else if (!isNaN(n)) {
-                                    nextParams[k] = n;
-                                  }
-                                  return { ...prev, exit_params: nextParams };
-                                });
-                              }}
-                              style={{ width: '100%', padding: '3px 5px', borderRadius: 4, border: '1px solid var(--card-border, rgba(255,255,255,0.12))', background: 'var(--bg-secondary, rgba(0,0,0,0.2))', color: 'var(--text-primary)', fontSize: '0.78rem' }}
-                            />
-                          ) : (
-                            <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{String(v)}</div>
-                          )}
-                        </div>
-                      ))}
+                    <div className="field-value" style={{ color: editDraft.side === 'buy' ? '#4ade80' : '#f87171' }}>
+                      {editDraft.side.toUpperCase()}
                     </div>
                   )}
                 </div>
-              );
-            })()}
+                <div>
+                  <label>Limit Price</label>
+                  {isEditing ? (
+                    <input type="text" value={String(editDraft.price)} onChange={(e) => updateDraft('price', e.target.value)} />
+                  ) : (
+                    <div className="field-value">{editDraft.price}</div>
+                  )}
+                </div>
+                <div>
+                  <label>Lots</label>
+                  {isEditing ? (
+                    <input type="text" value={String(editDraft.lots)} onChange={(e) => updateDraft('lots', e.target.value)} />
+                  ) : (
+                    <div className="field-value">{editDraft.lots}</div>
+                  )}
+                </div>
+                <div>
+                  <label>Stop Loss</label>
+                  {isEditing ? (
+                    <input type="text" value={String(editDraft.sl)} onChange={(e) => updateDraft('sl', e.target.value)} />
+                  ) : (
+                    <div className="field-value" style={{ color: '#f87171' }}>{editDraft.sl}</div>
+                  )}
+                </div>
+                <div>
+                  <label>Take Profit</label>
+                  {isEditing ? (
+                    <input type="text" value={String(editDraft.tp)} onChange={(e) => updateDraft('tp', e.target.value)} />
+                  ) : (
+                    <div className="field-value" style={{ color: '#4ade80' }}>{editDraft.tp}</div>
+                  )}
+                </div>
+                <div>
+                  <label>Expiration</label>
+                  {isEditing ? (
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <select
+                        value={editDraft.time_in_force || 'GTC'}
+                        onChange={(e) => {
+                          updateDraft('time_in_force', e.target.value);
+                          if (e.target.value === 'GTC') updateDraft('gtd_time_utc', '');
+                        }}
+                      >
+                        <option value="GTC">GTC</option>
+                        <option value="GTD">GTD</option>
+                      </select>
+                      {(editDraft.time_in_force || 'GTC') === 'GTD' && (
+                        <input
+                          type="datetime-local"
+                          value={(editDraft.gtd_time_utc || '').slice(0, 16)}
+                          onChange={(e) => updateDraft('gtd_time_utc', e.target.value ? e.target.value + ':00Z' : '')}
+                          style={{ flex: 1 }}
+                        />
+                      )}
+                    </div>
+                  ) : (
+                    <div className="field-value" style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>
+                      {editDraft.time_in_force || 'GTC'}
+                      {editDraft.gtd_time_utc ? ` (${editDraft.gtd_time_utc.slice(0, 16)})` : ''}
+                    </div>
+                  )}
+                </div>
+              </div>
 
-            {/* Action buttons */}
-            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-              {isEditing ? (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={() => setIsEditing(false)}
-                  style={{ fontSize: '0.82rem', padding: '6px 16px' }}
-                >
-                  Done Editing
-                </button>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={() => void handlePlaceOrder()}
-                    disabled={placeLoading}
-                    style={{ fontSize: '0.82rem', padding: '6px 16px', background: '#16a34a', borderColor: '#16a34a' }}
-                  >
-                    {placeLoading ? 'Placing...' : 'Place Order'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => setIsEditing(true)}
-                    style={{ fontSize: '0.82rem', padding: '6px 16px' }}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={handleReject}
-                    style={{ fontSize: '0.82rem', padding: '6px 16px', color: '#f87171', borderColor: '#f87171' }}
-                  >
-                    Reject
-                  </button>
-                </>
+              {/* Pip row */}
+              {rail?.levels.mid && (
+                <div className="fillmore-pip-row">
+                  Entry: {Math.abs(((editDraft.price - rail.levels.mid) / 0.01)).toFixed(1)}p from mid
+                  {' | '}SL: {Math.abs(((editDraft.price - editDraft.sl) / 0.01)).toFixed(1)}p
+                  {' | '}TP: {Math.abs(((editDraft.tp - editDraft.price) / 0.01)).toFixed(1)}p
+                  {' | '}R:R {(Math.abs((editDraft.tp - editDraft.price) / (editDraft.price - editDraft.sl)) || 0).toFixed(2)}
+                </div>
               )}
+
+              {/* Exit strategy card */}
+              {(() => {
+                const strategies = (suggestion?.available_exit_strategies || editDraft.available_exit_strategies || {}) as Record<string, api.AiExitStrategyInfo>;
+                const currentId = editDraft.exit_strategy || 'none';
+                const currentInfo = strategies[currentId];
+                const strategyIds = Object.keys(strategies);
+                const params = editDraft.exit_params || {};
+                return (
+                  <div className="fillmore-exit-card">
+                    <div className="exit-header">
+                      <div className="exit-label">Managed Exit Strategy</div>
+                      {currentId !== 'none' && (
+                        <div className="exit-sublabel">applied by run loop once filled</div>
+                      )}
+                    </div>
+                    {isEditing && strategyIds.length > 0 ? (
+                      <select
+                        value={currentId}
+                        onChange={(e) => {
+                          const newId = e.target.value;
+                          setEditDraft((prev) => {
+                            if (!prev) return prev;
+                            const info = strategies[newId];
+                            const defaults = (info && info.defaults) || {};
+                            return { ...prev, exit_strategy: newId, exit_params: { ...defaults } };
+                          });
+                        }}
+                      >
+                        {strategyIds.map((sid) => (
+                          <option key={sid} value={sid}>{strategies[sid]?.label || sid}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div style={{ fontSize: '0.95rem', fontWeight: 600, color: currentId === 'none' ? '#facc15' : '#4ade80' }}>
+                        {currentInfo?.label || (currentId === 'none' ? 'No managed exit (broker SL/TP only)' : currentId)}
+                      </div>
+                    )}
+                    {currentInfo?.description && (
+                      <div className="exit-desc">{currentInfo.description}</div>
+                    )}
+                    {currentId !== 'none' && Object.keys(params).length > 0 && (
+                      <div className="exit-params-grid">
+                        {Object.entries(params).map(([k, v]) => (
+                          <div key={k}>
+                            <div className="param-label">{k}</div>
+                            {isEditing ? (
+                              <input
+                                type="text"
+                                value={String(v)}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  setEditDraft((prev) => {
+                                    if (!prev) return prev;
+                                    const nextParams = { ...(prev.exit_params || {}) };
+                                    const n = parseFloat(raw);
+                                    if (raw === '' || raw === '-' || raw.endsWith('.')) {
+                                      nextParams[k] = raw as unknown as number;
+                                    } else if (!isNaN(n)) {
+                                      nextParams[k] = n;
+                                    }
+                                    return { ...prev, exit_params: nextParams };
+                                  });
+                                }}
+                              />
+                            ) : (
+                              <div className="param-value">{String(v)}</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Action buttons */}
+              <div className="fillmore-suggest-actions">
+                {isEditing ? (
+                  <button type="button" className="btn btn-primary" onClick={() => setIsEditing(false)}>
+                    Done Editing
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => void handlePlaceOrder()}
+                      disabled={placeLoading}
+                      style={{ background: '#16a34a', borderColor: '#16a34a' }}
+                    >
+                      {placeLoading ? 'Placing...' : 'Place Order'}
+                    </button>
+                    <button type="button" className="btn btn-secondary" onClick={() => setIsEditing(true)}>
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={handleReject}
+                      style={{ color: '#f87171', borderColor: '#f87171' }}
+                    >
+                      Reject
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {!editDraft && !suggestLoading && !placeResult && (
-          <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
-            Click &ldquo;Generate Suggestion&rdquo; for an AI-suggested limit order based on current market conditions.
-          </div>
-        )}
-      </div>
+          {!editDraft && !suggestLoading && !placeResult && (
+            <div className="fillmore-suggest-empty">
+              Click <strong>Generate</strong> for an AI-suggested limit order based on current market conditions.
+            </div>
+          )}
+        </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, position: 'sticky', top: 12 }}>
+      {/* ===== RIGHT: Context sidebar ===== */}
+      <div className="fillmore-sidebar">
         <div className="card">
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Macro Confirmation</div>
-          <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginBottom: 8 }}>
-            Bias: <strong style={{ color: 'var(--text-primary)' }}>{rail?.macro.combined_bias || 'n/a'}</strong> ({rail?.macro.confidence || 'n/a'})
+          <div className="card-heading">Macro Confirmation</div>
+          <div className="card-row" style={{ marginBottom: 8 }}>
+            Bias: <strong>{rail?.macro.combined_bias || 'n/a'}</strong> ({rail?.macro.confidence || 'n/a'})
           </div>
-          <div style={{ fontSize: '0.8rem', display: 'grid', gap: 4 }}>
-            <div>DXY: {rail?.macro.dxy.value ?? '-'} | 1D {moveArrow(rail?.macro.dxy.one_day)} | 5D {moveArrow(rail?.macro.dxy.five_day)} ({signedPct(rail?.macro.dxy.five_day)})</div>
-            <div>US10Y: {rail?.macro.us10y.value ?? '-'}% | 1D {moveArrow(rail?.macro.us10y.one_day)} | 5D {moveArrow(rail?.macro.us10y.five_day)}</div>
-            <div>Oil: {rail?.macro.oil.value ?? '-'} | 1D {moveArrow(rail?.macro.oil.one_day)} | 5D {moveArrow(rail?.macro.oil.five_day)} ({signedPct(rail?.macro.oil.five_day)})</div>
-            <div>Gold: {rail?.macro.gold.value ?? '-'} | 1D {moveArrow(rail?.macro.gold.one_day)} | 5D {moveArrow(rail?.macro.gold.five_day)}</div>
+          <div style={{ display: 'grid', gap: 6 }}>
+            <div className="card-row">DXY: {rail?.macro.dxy.value ?? '-'} | 1D {moveArrow(rail?.macro.dxy.one_day)} | 5D {moveArrow(rail?.macro.dxy.five_day)} ({signedPct(rail?.macro.dxy.five_day)})</div>
+            <div className="card-row">US10Y: {rail?.macro.us10y.value ?? '-'}% | 1D {moveArrow(rail?.macro.us10y.one_day)} | 5D {moveArrow(rail?.macro.us10y.five_day)}</div>
+            <div className="card-row">Oil: {rail?.macro.oil.value ?? '-'} | 1D {moveArrow(rail?.macro.oil.one_day)} | 5D {moveArrow(rail?.macro.oil.five_day)} ({signedPct(rail?.macro.oil.five_day)})</div>
+            <div className="card-row">Gold: {rail?.macro.gold.value ?? '-'} | 1D {moveArrow(rail?.macro.gold.one_day)} | 5D {moveArrow(rail?.macro.gold.five_day)}</div>
           </div>
-          <div style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: '0.78rem' }}>{macroImplication}</div>
+          <div className="card-hint">{macroImplication}</div>
         </div>
 
         <div className="card">
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Event Risk Countdown</div>
+          <div className="card-heading">Event Risk Countdown</div>
           {(rail?.events || []).length === 0 ? (
-            <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>No upcoming high-impact USD/JPY events.</div>
+            <div className="card-row" style={{ color: 'var(--text-secondary)' }}>No upcoming high-impact USD/JPY events.</div>
           ) : (
-            <div style={{ display: 'grid', gap: 6 }}>
+            <div style={{ display: 'grid', gap: 8 }}>
               {(rail?.events || []).slice(0, 3).map((ev, idx) => {
                 const mins = Number(ev.minutes_to_event || 0);
                 const urgent = mins <= 60;
                 const soon = mins > 60 && mins <= 180;
                 const tone = urgent ? 'var(--danger)' : soon ? 'var(--warning, #d4a017)' : 'var(--text-secondary)';
                 return (
-                  <div key={`${ev.timestamp_utc}-${idx}`} style={{ fontSize: '0.8rem' }}>
-                    <div style={{ color: 'var(--text-primary)' }}>{ev.currency} {ev.event}</div>
-                    <div style={{ color: tone }}>
+                  <div key={`${ev.timestamp_utc}-${idx}`}>
+                    <div className="card-row">{ev.currency} {ev.event}</div>
+                    <div style={{ color: tone, fontSize: '0.84rem' }}>
                       {countdownLabel(mins)} ({ev.time || ev.date})
                     </div>
                   </div>
@@ -981,7 +958,7 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
               })}
             </div>
           )}
-          <div style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
+          <div className="card-hint">
             {(rail?.events?.[0]?.minutes_to_event ?? 9999) <= 60
               ? 'Event risk elevated: avoid fresh adds into the release window.'
               : 'No immediate high-impact release window; event risk is manageable.'}
@@ -989,32 +966,32 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
         </div>
 
         <div className="card">
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Key Levels Ladder</div>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 6 }}>
-            Mid: <span style={{ color: 'var(--text-primary)' }}>{rail?.levels.mid ?? '-'}</span>
+          <div className="card-heading">Key Levels Ladder</div>
+          <div className="card-row" style={{ marginBottom: 8 }}>
+            Mid: <strong>{rail?.levels.mid ?? '-'}</strong>
           </div>
-          <div style={{ fontSize: '0.8rem', display: 'grid', gap: 4 }}>
-            <div style={{ color: 'var(--text-secondary)' }}>Resistance</div>
+          <div style={{ display: 'grid', gap: 6 }}>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', fontWeight: 600 }}>Resistance</div>
             {(rail?.levels.resistances || []).slice(0, 2).map((r, i) => (
-              <div key={`r-${i}`}>{r.price} ({r.distance_pips ?? '-'}p)</div>
+              <div key={`r-${i}`} className="card-row">{r.price} ({r.distance_pips ?? '-'}p)</div>
             ))}
-            <div style={{ color: 'var(--text-secondary)', marginTop: 6 }}>Support</div>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', fontWeight: 600, marginTop: 4 }}>Support</div>
             {(rail?.levels.supports || []).slice(0, 2).map((s, i) => (
-              <div key={`s-${i}`}>{s.price} ({s.distance_pips ?? '-'}p)</div>
+              <div key={`s-${i}`} className="card-row">{s.price} ({s.distance_pips ?? '-'}p)</div>
             ))}
           </div>
-          <div style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: '0.78rem' }}>{ladderImplication}</div>
+          <div className="card-hint">{ladderImplication}</div>
         </div>
 
         <div className="card">
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Session &amp; Volatility</div>
-          <div style={{ fontSize: '0.8rem', display: 'grid', gap: 4 }}>
-            <div>Session: {rail?.session_vol.overlap || (rail?.session_vol.active_sessions || []).join(' + ') || 'none'}</div>
-            <div>Next close: {rail?.session_vol.next_close || '-'}</div>
-            <div>Spread: {rail?.session_vol.spread_pips ?? '-'}p</div>
-            <div>ATR regime: {rail?.session_vol.vol_label || 'n/a'} ({rail?.session_vol.vol_ratio ?? '-'}x)</div>
+          <div className="card-heading">Session &amp; Volatility</div>
+          <div style={{ display: 'grid', gap: 6 }}>
+            <div className="card-row">Session: {rail?.session_vol.overlap || (rail?.session_vol.active_sessions || []).join(' + ') || 'none'}</div>
+            <div className="card-row">Next close: {rail?.session_vol.next_close || '-'}</div>
+            <div className="card-row">Spread: {rail?.session_vol.spread_pips ?? '-'}p</div>
+            <div className="card-row">ATR regime: {rail?.session_vol.vol_label || 'n/a'} ({rail?.session_vol.vol_ratio ?? '-'}x)</div>
           </div>
-          <div style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: '0.78rem' }}>{sessionImplication}</div>
+          <div className="card-hint">{sessionImplication}</div>
         </div>
       </div>
     </div>

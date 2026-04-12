@@ -246,6 +246,11 @@ def _loop_pid_path(profile_name: str) -> Path:
     return LOGS_DIR / profile_name / "loop.pid"
 
 
+def _suggestions_db_path(profile_name: str) -> Path:
+    """Per-profile AI suggestion tracker DB (sibling of assistant.db)."""
+    return LOGS_DIR / profile_name / "ai_suggestions.sqlite"
+
+
 def _research_out_path(filename: str) -> Path:
     return BASE_DIR / "research_out" / filename
 
@@ -5482,6 +5487,11 @@ class PlaceLimitOrderRequest(BaseModel):
     # None / "none" -> broker SL/TP only (no runtime management).
     exit_strategy: Optional[str] = None
     exit_params: Optional[dict[str, Any]] = None
+    # Suggestion tracking: link this order back to the AI suggestion it came
+    # from so the run_loop can stamp fill/close outcomes onto the suggestion row.
+    suggestion_id: Optional[str] = None
+    # Diff of {field: {before, after}} if the operator edited before placing.
+    edited_fields: Optional[dict[str, Any]] = None
 
 
 class AiSuggestTradeRequest(BaseModel):
@@ -5580,6 +5590,7 @@ def place_limit_order_endpoint(
                     "trail_mode": trail_mode_for_strategy(managed_exit_strategy),
                     "exit_params": managed_exit_params,
                     "source": "ai_manual",
+                    "suggestion_id": req.suggestion_id,
                     "created_utc": datetime.now(timezone.utc).isoformat(),
                 })
                 _state_data["managed_pending_orders"] = _pending_list
@@ -5587,6 +5598,23 @@ def place_limit_order_endpoint(
             except Exception as _reg_exc:
                 # Non-fatal — the order is placed; runtime management is best-effort.
                 print(f"[ai_suggest_trade] failed to register managed pending order: {_reg_exc}")
+
+        # Link this order back to the suggestion row (if it came from a suggestion).
+        # Records 'placed' terminal action + edit diff + oanda_order_id so later
+        # fill/close outcomes can be stamped onto the same row.
+        if req.suggestion_id:
+            try:
+                from api import suggestion_tracker
+
+                suggestion_tracker.log_action(
+                    _suggestions_db_path(profile_name),
+                    suggestion_id=req.suggestion_id,
+                    action="placed",
+                    edited_fields=req.edited_fields or {},
+                    oanda_order_id=str(result.order) if result.order is not None else None,
+                )
+            except Exception as _sa_exc:
+                print(f"[place_limit_order] suggestion_tracker.log_action failed: {_sa_exc}")
 
         return {
             "status": "placed",
@@ -5600,6 +5628,7 @@ def place_limit_order_endpoint(
             "gtd_time_utc": req.gtd_time_utc,
             "exit_strategy": managed_exit_strategy,
             "exit_params": managed_exit_params if managed_exit_strategy else None,
+            "suggestion_id": req.suggestion_id,
         }
     except HTTPException:
         raise
@@ -5631,6 +5660,7 @@ def ai_suggest_trade(
         raise HTTPException(status_code=400, detail=f"Profile load error: {e}")
 
     from api.ai_trading_chat import (
+        build_trade_suggestion_news_block,
         build_trading_context,
         resolve_ai_suggest_model,
         system_prompt_from_context,
@@ -5665,6 +5695,46 @@ def ai_suggest_trade(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"System prompt build error: {e}")
 
+    try:
+        news_timeout = float(os.environ.get("API_AI_SUGGEST_NEWS_TIMEOUT_SEC", "20"))
+    except ValueError:
+        news_timeout = 20.0
+    news_timeout = max(8.0, min(news_timeout, 60.0))
+    try:
+        rss_n = int(os.environ.get("API_AI_SUGGEST_NEWS_RSS_COUNT", "12"))
+    except ValueError:
+        rss_n = 12
+    try:
+        web_n = int(os.environ.get("API_AI_SUGGEST_NEWS_WEB_COUNT", "5"))
+    except ValueError:
+        web_n = 5
+    rss_n = max(1, min(rss_n, 20))
+    web_n = max(1, min(web_n, 10))
+    parallel_sec = max(6.0, news_timeout - 2.0)
+    sym = getattr(profile, "symbol", None) or "USD_JPY"
+    try:
+        news_block = _run_in_threadpool_with_timeout(
+            build_trade_suggestion_news_block,
+            news_timeout,
+            symbol=sym,
+            rss_headline_count=rss_n,
+            web_result_count=web_n,
+            parallel_timeout_sec=parallel_sec,
+        )
+        system = f"{system}\n\n{news_block}"
+    except FuturesTimeoutError:
+        system = (
+            f"{system}\n\n"
+            "=== TRADE SUGGESTION — EXTERNAL MARKET NEWS (prefetched) ===\n"
+            "RSS and web search timed out; proceed using LIVE TRADING CONTEXT only.\n"
+        )
+    except Exception as news_exc:
+        system = (
+            f"{system}\n\n"
+            "=== TRADE SUGGESTION — EXTERNAL MARKET NEWS (prefetched) ===\n"
+            f"News prefetch failed ({news_exc}); proceed using LIVE TRADING CONTEXT only.\n"
+        )
+
     from api.ai_exit_strategies import (
         AI_EXIT_STRATEGIES,
         DEFAULT_AI_EXIT_STRATEGY,
@@ -5677,7 +5747,8 @@ def ai_suggest_trade(
     _exit_catalog_text = exit_strategies_prompt_block()
 
     suggest_prompt = (
-        "Based on the current market context (technicals, macro bias, levels, session, volatility, and any recent news/events), "
+        "Based on LIVE TRADING CONTEXT and the prefetched EXTERNAL MARKET NEWS section (RSS headlines + web search), "
+        "including technicals, macro bias, levels, session, and volatility, "
         "suggest ONE specific USDJPY limit order trade right now. "
         "You MUST respond with ONLY a valid JSON object — no markdown, no code fences, no explanation outside the JSON. "
         "Use this exact JSON schema:\n"
@@ -5766,6 +5837,22 @@ def ai_suggest_trade(
             }
             for sid, cfg in AI_EXIT_STRATEGIES.items()
         }
+        # Persist the suggestion for later comparison (by model, by outcome).
+        # Never let tracker errors break the suggestion response itself.
+        try:
+            from api import suggestion_tracker
+
+            suggestion_id = suggestion_tracker.log_generated(
+                _suggestions_db_path(profile_name),
+                profile=profile_name,
+                model=effective_model,
+                suggestion=suggestion,
+                ctx=ctx,
+            )
+            suggestion["suggestion_id"] = suggestion_id
+        except Exception as _track_e:
+            print(f"[api] suggestion_tracker.log_generated failed: {_track_e}")
+            suggestion["suggestion_id"] = None
         return suggestion
     except HTTPException:
         raise
@@ -5774,6 +5861,56 @@ def ai_suggest_trade(
     except Exception as e:
         detail = f"AI suggestion error: {e}\n{_tb.format_exc()}"
         raise HTTPException(status_code=502, detail=detail)
+
+
+class AiSuggestionActionRequest(BaseModel):
+    suggestion_id: str
+    action: str  # "placed" | "rejected"
+    edited_fields: Optional[dict[str, Any]] = None
+    oanda_order_id: Optional[str] = None
+
+
+@app.post("/api/data/{profile_name}/ai-suggestions/action")
+def ai_suggestion_action(
+    profile_name: str, req: AiSuggestionActionRequest,
+) -> dict[str, Any]:
+    """Record a terminal action (placed / rejected) on a prior suggestion.
+
+    The 'placed' path is normally handled automatically by place-limit-order,
+    so in practice this endpoint is primarily used for 'rejected'. Kept flexible
+    for both in case the UI ever wants to log placements that bypass our
+    wrapper (e.g. manual reconciliation).
+    """
+    from api import suggestion_tracker
+
+    try:
+        ok = suggestion_tracker.log_action(
+            _suggestions_db_path(profile_name),
+            suggestion_id=req.suggestion_id,
+            action=req.action,
+            edited_fields=req.edited_fields or {},
+            oanda_order_id=req.oanda_order_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"log_action failed: {e}") from e
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"suggestion {req.suggestion_id} not found")
+    return {"status": "ok", "suggestion_id": req.suggestion_id, "action": req.action}
+
+
+@app.get("/api/data/{profile_name}/ai-suggestions/stats")
+def ai_suggestion_stats(profile_name: str, days_back: int = 30) -> dict[str, Any]:
+    """Summary stats grouped by model. UI will render this once data accrues."""
+    from api import suggestion_tracker
+
+    try:
+        return suggestion_tracker.get_stats(
+            _suggestions_db_path(profile_name), days_back=days_back
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"get_stats failed: {e}") from e
 
 
 @app.get("/api/ai-chat/models")
