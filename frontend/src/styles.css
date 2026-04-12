@@ -426,7 +426,7 @@ tr:hover td {
 .fillmore-page {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 380px;
-  grid-template-rows: 1fr auto;
+  grid-template-rows: 1fr;
   gap: 20px;
   align-items: start;
   height: calc(100vh - 48px);
