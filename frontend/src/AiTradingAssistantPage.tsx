@@ -651,46 +651,140 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
           </div>
         </div>
 
-        {/* ===== Suggestion Panel ===== */}
-        <div className="fillmore-suggest-panel">
-          <div className="fillmore-suggest-header">
-            <div className="fillmore-suggest-title">Trade Suggestion</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              {suggestModelList.length > 0 && (
-                <select
-                  className="fillmore-model-select"
-                  style={{ minWidth: 120, fontSize: '0.82rem' }}
-                  value={suggestModel}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setSuggestModel(v);
-                    saveSuggestModelToStorage(profile.path, v);
-                  }}
-                  disabled={suggestLoading}
-                >
-                  {suggestModelList.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
-              )}
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={suggestLoading}
-                onClick={() => void handleSuggestTrade()}
-                style={{ borderRadius: 10, padding: '7px 18px', fontSize: '0.88rem' }}
-              >
-                {suggestLoading ? 'Analyzing...' : editDraft ? 'New Suggestion' : 'Generate'}
-              </button>
-            </div>
-          </div>
+      </div>
 
-          {suggestError && <div className="fillmore-error">{suggestError}</div>}
-          {placeResult && (
-            <div className="fillmore-success">
-              Order {placeResult.status}{placeResult.order_id ? ` (ID: ${placeResult.order_id})` : ''}
+      {/* ===== RIGHT: Context sidebar ===== */}
+      <div className="fillmore-sidebar">
+        {/* Generate Suggestion — always visible at top of sidebar */}
+        <div className="card">
+          <div className="card-heading">Trade Suggestion</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {suggestModelList.length > 0 && (
+              <select
+                className="fillmore-model-select"
+                style={{ width: '100%', fontSize: '0.85rem' }}
+                value={suggestModel}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setSuggestModel(v);
+                  saveSuggestModelToStorage(profile.path, v);
+                }}
+                disabled={suggestLoading}
+              >
+                {suggestModelList.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            )}
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={suggestLoading}
+              onClick={() => void handleSuggestTrade()}
+              style={{ width: '100%', borderRadius: 10, padding: '10px 18px', fontSize: '0.92rem' }}
+            >
+              {suggestLoading ? 'Analyzing...' : editDraft ? 'New Suggestion' : 'Generate Suggestion'}
+            </button>
+            {suggestError && <div style={{ color: '#f87171', fontSize: '0.84rem' }}>{suggestError}</div>}
+            {placeResult && (
+              <div style={{ color: '#4ade80', fontSize: '0.84rem' }}>
+                Order {placeResult.status}{placeResult.order_id ? ` (ID: ${placeResult.order_id})` : ''}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-heading">Macro Confirmation</div>
+          <div className="card-row" style={{ marginBottom: 8 }}>
+            Bias: <strong>{rail?.macro.combined_bias || 'n/a'}</strong> ({rail?.macro.confidence || 'n/a'})
+          </div>
+          <div style={{ display: 'grid', gap: 6 }}>
+            <div className="card-row">DXY: {rail?.macro.dxy.value ?? '-'} | 1D {moveArrow(rail?.macro.dxy.one_day)} | 5D {moveArrow(rail?.macro.dxy.five_day)} ({signedPct(rail?.macro.dxy.five_day)})</div>
+            <div className="card-row">US10Y: {rail?.macro.us10y.value ?? '-'}% | 1D {moveArrow(rail?.macro.us10y.one_day)} | 5D {moveArrow(rail?.macro.us10y.five_day)}</div>
+            <div className="card-row">Oil: {rail?.macro.oil.value ?? '-'} | 1D {moveArrow(rail?.macro.oil.one_day)} | 5D {moveArrow(rail?.macro.oil.five_day)} ({signedPct(rail?.macro.oil.five_day)})</div>
+            <div className="card-row">Gold: {rail?.macro.gold.value ?? '-'} | 1D {moveArrow(rail?.macro.gold.one_day)} | 5D {moveArrow(rail?.macro.gold.five_day)}</div>
+          </div>
+          <div className="card-hint">{macroImplication}</div>
+        </div>
+
+        <div className="card">
+          <div className="card-heading">Event Risk Countdown</div>
+          {(rail?.events || []).length === 0 ? (
+            <div className="card-row" style={{ color: 'var(--text-secondary)' }}>No upcoming high-impact USD/JPY events.</div>
+          ) : (
+            <div style={{ display: 'grid', gap: 8 }}>
+              {(rail?.events || []).slice(0, 3).map((ev, idx) => {
+                const mins = Number(ev.minutes_to_event || 0);
+                const urgent = mins <= 60;
+                const soon = mins > 60 && mins <= 180;
+                const tone = urgent ? 'var(--danger)' : soon ? 'var(--warning, #d4a017)' : 'var(--text-secondary)';
+                return (
+                  <div key={`${ev.timestamp_utc}-${idx}`}>
+                    <div className="card-row">{ev.currency} {ev.event}</div>
+                    <div style={{ color: tone, fontSize: '0.84rem' }}>
+                      {countdownLabel(mins)} ({ev.time || ev.date})
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
+          <div className="card-hint">
+            {(rail?.events?.[0]?.minutes_to_event ?? 9999) <= 60
+              ? 'Event risk elevated: avoid fresh adds into the release window.'
+              : 'No immediate high-impact release window; event risk is manageable.'}
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-heading">Key Levels Ladder</div>
+          <div className="card-row" style={{ marginBottom: 8 }}>
+            Mid: <strong>{rail?.levels.mid ?? '-'}</strong>
+          </div>
+          <div style={{ display: 'grid', gap: 6 }}>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', fontWeight: 600 }}>Resistance</div>
+            {(rail?.levels.resistances || []).slice(0, 2).map((r, i) => (
+              <div key={`r-${i}`} className="card-row">{r.price} ({r.distance_pips ?? '-'}p)</div>
+            ))}
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', fontWeight: 600, marginTop: 4 }}>Support</div>
+            {(rail?.levels.supports || []).slice(0, 2).map((s, i) => (
+              <div key={`s-${i}`} className="card-row">{s.price} ({s.distance_pips ?? '-'}p)</div>
+            ))}
+          </div>
+          <div className="card-hint">{ladderImplication}</div>
+        </div>
+
+        <div className="card">
+          <div className="card-heading">Session &amp; Volatility</div>
+          <div style={{ display: 'grid', gap: 6 }}>
+            <div className="card-row">Session: {rail?.session_vol.overlap || (rail?.session_vol.active_sessions || []).join(' + ') || 'none'}</div>
+            <div className="card-row">Next close: {rail?.session_vol.next_close || '-'}</div>
+            <div className="card-row">Spread: {rail?.session_vol.spread_pips ?? '-'}p</div>
+            <div className="card-row">ATR regime: {rail?.session_vol.vol_label || 'n/a'} ({rail?.session_vol.vol_ratio ?? '-'}x)</div>
+          </div>
+          <div className="card-hint">{sessionImplication}</div>
+        </div>
+      </div>
+
+      {/* ===== Suggestion Panel — slides in below chat when active ===== */}
+      {(editDraft || suggestLoading) && (
+        <div className="fillmore-suggest-panel" style={{ gridColumn: '1 / -1' }}>
+          <div className="fillmore-suggest-header">
+            <div className="fillmore-suggest-title">Trade Suggestion</div>
+            {editDraft && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className={`fillmore-badge ${editDraft.confidence}`}>
+                  {editDraft.confidence.toUpperCase()}
+                </span>
+                {(suggestion?.model_used || editDraft.model_used) && (
+                  <span className="fillmore-badge model">
+                    {suggestion?.model_used || editDraft.model_used}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
 
           {suggestLoading && (
             <div className="fillmore-tool-status" style={{ justifyContent: 'center', padding: '24px 0' }}>
@@ -704,14 +798,6 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
               <div className="fillmore-rationale">
                 <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Rationale:</span>{' '}
                 {suggestion?.rationale || editDraft.rationale}
-                <span className={`fillmore-badge ${editDraft.confidence}`}>
-                  {editDraft.confidence.toUpperCase()}
-                </span>
-                {(suggestion?.model_used || editDraft.model_used) && (
-                  <span className="fillmore-badge model">
-                    {suggestion?.model_used || editDraft.model_used}
-                  </span>
-                )}
               </div>
 
               {/* Order grid */}
@@ -911,89 +997,8 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
               </div>
             </div>
           )}
-
-          {!editDraft && !suggestLoading && !placeResult && (
-            <div className="fillmore-suggest-empty">
-              Click <strong>Generate</strong> for an AI-suggested limit order based on current market conditions.
-            </div>
-          )}
         </div>
-      </div>
-
-      {/* ===== RIGHT: Context sidebar ===== */}
-      <div className="fillmore-sidebar">
-        <div className="card">
-          <div className="card-heading">Macro Confirmation</div>
-          <div className="card-row" style={{ marginBottom: 8 }}>
-            Bias: <strong>{rail?.macro.combined_bias || 'n/a'}</strong> ({rail?.macro.confidence || 'n/a'})
-          </div>
-          <div style={{ display: 'grid', gap: 6 }}>
-            <div className="card-row">DXY: {rail?.macro.dxy.value ?? '-'} | 1D {moveArrow(rail?.macro.dxy.one_day)} | 5D {moveArrow(rail?.macro.dxy.five_day)} ({signedPct(rail?.macro.dxy.five_day)})</div>
-            <div className="card-row">US10Y: {rail?.macro.us10y.value ?? '-'}% | 1D {moveArrow(rail?.macro.us10y.one_day)} | 5D {moveArrow(rail?.macro.us10y.five_day)}</div>
-            <div className="card-row">Oil: {rail?.macro.oil.value ?? '-'} | 1D {moveArrow(rail?.macro.oil.one_day)} | 5D {moveArrow(rail?.macro.oil.five_day)} ({signedPct(rail?.macro.oil.five_day)})</div>
-            <div className="card-row">Gold: {rail?.macro.gold.value ?? '-'} | 1D {moveArrow(rail?.macro.gold.one_day)} | 5D {moveArrow(rail?.macro.gold.five_day)}</div>
-          </div>
-          <div className="card-hint">{macroImplication}</div>
-        </div>
-
-        <div className="card">
-          <div className="card-heading">Event Risk Countdown</div>
-          {(rail?.events || []).length === 0 ? (
-            <div className="card-row" style={{ color: 'var(--text-secondary)' }}>No upcoming high-impact USD/JPY events.</div>
-          ) : (
-            <div style={{ display: 'grid', gap: 8 }}>
-              {(rail?.events || []).slice(0, 3).map((ev, idx) => {
-                const mins = Number(ev.minutes_to_event || 0);
-                const urgent = mins <= 60;
-                const soon = mins > 60 && mins <= 180;
-                const tone = urgent ? 'var(--danger)' : soon ? 'var(--warning, #d4a017)' : 'var(--text-secondary)';
-                return (
-                  <div key={`${ev.timestamp_utc}-${idx}`}>
-                    <div className="card-row">{ev.currency} {ev.event}</div>
-                    <div style={{ color: tone, fontSize: '0.84rem' }}>
-                      {countdownLabel(mins)} ({ev.time || ev.date})
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          <div className="card-hint">
-            {(rail?.events?.[0]?.minutes_to_event ?? 9999) <= 60
-              ? 'Event risk elevated: avoid fresh adds into the release window.'
-              : 'No immediate high-impact release window; event risk is manageable.'}
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-heading">Key Levels Ladder</div>
-          <div className="card-row" style={{ marginBottom: 8 }}>
-            Mid: <strong>{rail?.levels.mid ?? '-'}</strong>
-          </div>
-          <div style={{ display: 'grid', gap: 6 }}>
-            <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', fontWeight: 600 }}>Resistance</div>
-            {(rail?.levels.resistances || []).slice(0, 2).map((r, i) => (
-              <div key={`r-${i}`} className="card-row">{r.price} ({r.distance_pips ?? '-'}p)</div>
-            ))}
-            <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', fontWeight: 600, marginTop: 4 }}>Support</div>
-            {(rail?.levels.supports || []).slice(0, 2).map((s, i) => (
-              <div key={`s-${i}`} className="card-row">{s.price} ({s.distance_pips ?? '-'}p)</div>
-            ))}
-          </div>
-          <div className="card-hint">{ladderImplication}</div>
-        </div>
-
-        <div className="card">
-          <div className="card-heading">Session &amp; Volatility</div>
-          <div style={{ display: 'grid', gap: 6 }}>
-            <div className="card-row">Session: {rail?.session_vol.overlap || (rail?.session_vol.active_sessions || []).join(' + ') || 'none'}</div>
-            <div className="card-row">Next close: {rail?.session_vol.next_close || '-'}</div>
-            <div className="card-row">Spread: {rail?.session_vol.spread_pips ?? '-'}p</div>
-            <div className="card-row">ATR regime: {rail?.session_vol.vol_label || 'n/a'} ({rail?.session_vol.vol_ratio ?? '-'}x)</div>
-          </div>
-          <div className="card-hint">{sessionImplication}</div>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
