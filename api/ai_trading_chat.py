@@ -257,6 +257,90 @@ def _fetch_cross_asset_prices(adapter: Any) -> dict[str, Any]:
     return result
 
 
+def _fetch_jpy_cross_bias(adapter: Any) -> dict[str, Any] | None:
+    """Fetch EURJPY/GBPJPY/AUDJPY mids + % change over 4h & 24h via OANDA H1 bars.
+
+    Used to disambiguate USD-strength from JPY-weakness. If all three JPY crosses
+    are up alongside USDJPY, JPY weakness is the driver — BUY bias on USDJPY has
+    more conviction. If USDJPY is up while JPY crosses are flat, it's a pure USD
+    move and conviction is lower.
+    """
+    instruments = ["EUR_JPY", "GBP_JPY", "AUD_JPY"]
+    out: dict[str, Any] = {}
+    try:
+        aid = adapter._get_account_id()
+    except Exception:
+        return None
+
+    # Current mids (one pricing call, not three)
+    current: dict[str, float] = {}
+    try:
+        inst_param = ",".join(instruments)
+        data = adapter._req("GET", f"/v3/accounts/{aid}/pricing?instruments={inst_param}")
+        for p in data.get("prices", []) or []:
+            inst = p.get("instrument", "")
+            bids = p.get("bids", [{}])
+            asks = p.get("asks", [{}])
+            bid = float(bids[0].get("price", 0)) if bids else 0
+            ask = float(asks[0].get("price", 0)) if asks else 0
+            if bid > 0 and ask > 0:
+                current[inst] = (bid + ask) / 2.0
+    except Exception:
+        return None
+
+    if not current:
+        return None
+
+    # H1 bars for 4h and 24h lookback change
+    for inst in instruments:
+        mid = current.get(inst)
+        if not mid:
+            continue
+        entry: dict[str, Any] = {"mid": round(mid, 3)}
+        try:
+            # 25 H1 bars: current is incomplete — use iloc[-2] as 1h-ago reference.
+            df = adapter.get_bars(inst.replace("_", ""), "H1", count=30)
+            if df is not None and not df.empty and len(df) >= 5:
+                # 4h change vs close of 4 completed bars ago
+                if len(df) >= 5:
+                    ref_4h = float(df.iloc[-5]["close"])
+                    if ref_4h > 0:
+                        entry["change_4h_pct"] = round((mid - ref_4h) / ref_4h * 100.0, 3)
+                # 24h change vs close ~24 completed bars ago
+                if len(df) >= 25:
+                    ref_24h = float(df.iloc[-25]["close"])
+                    if ref_24h > 0:
+                        entry["change_24h_pct"] = round((mid - ref_24h) / ref_24h * 100.0, 3)
+        except Exception:
+            pass
+        out[inst.lower()] = entry
+
+    if not out:
+        return None
+
+    # Consensus: how many crosses are up over 4h?
+    directions_4h = [v.get("change_4h_pct") for v in out.values() if isinstance(v, dict)]
+    valid = [d for d in directions_4h if isinstance(d, (int, float))]
+    if valid:
+        ups = sum(1 for d in valid if d > 0.05)  # >5bps filter to ignore pure noise
+        downs = sum(1 for d in valid if d < -0.05)
+        if ups >= 2 and downs == 0:
+            summary = "JPY weakness confirmed across crosses"
+        elif downs >= 2 and ups == 0:
+            summary = "JPY strength confirmed across crosses"
+        elif ups >= 2 and downs >= 1:
+            summary = "Mixed — JPY crosses diverging"
+        elif ups == 0 and downs == 0:
+            summary = "JPY crosses flat"
+        else:
+            summary = "Mixed"
+        out["summary_4h"] = summary
+        out["crosses_up_4h"] = ups
+        out["crosses_down_4h"] = downs
+
+    return out
+
+
 def _fetch_us10y_yield() -> dict[str, Any] | None:
     """Fetch US 10-Year Treasury yield history from FRED (free, no API key).
 
@@ -587,6 +671,157 @@ def _compute_candle_streak(df: Any, lookback: int = 10) -> dict[str, Any] | None
         return None
 
 
+def _detect_bar_patterns(df: Any) -> list[str]:
+    """Detect classic 1-3 bar reversal/continuation patterns at the last completed bar.
+
+    Returns a list of pattern labels. Empty list if nothing clean fires.
+    Patterns checked: bullish/bearish engulfing, hammer, shooting star, inside bar,
+    three-bar reversal, doji.
+    """
+    patterns: list[str] = []
+    try:
+        if df is None or df.empty or len(df) < 3:
+            return patterns
+        tail = df.tail(5)
+        rows = [(float(r["open"]), float(r["high"]), float(r["low"]), float(r["close"]))
+                for _, r in tail.iterrows()]
+        if len(rows) < 3:
+            return patterns
+        o, h, l, c = rows[-1]
+        po, ph, pl, pc = rows[-2]
+        ppo, pph, ppl, ppc = rows[-3]
+    except Exception:
+        return patterns
+
+    body = abs(c - o)
+    rng = h - l
+    if rng <= 0:
+        return patterns
+    upper_wick = h - max(o, c)
+    lower_wick = min(o, c) - l
+    prev_body = abs(pc - po)
+    is_bull = c > o
+    is_bear = c < o
+    prev_bull = pc > po
+    prev_bear = pc < po
+
+    # Doji (indecision) — tiny body relative to range
+    if body <= 0.1 * rng:
+        patterns.append("doji")
+
+    # Bullish engulfing: prev bear, current bull, body engulfs prev body
+    if prev_bear and is_bull and c >= po and o <= pc and body > prev_body:
+        patterns.append("bullish_engulfing")
+
+    # Bearish engulfing: prev bull, current bear, body engulfs prev body
+    if prev_bull and is_bear and o >= pc and c <= po and body > prev_body:
+        patterns.append("bearish_engulfing")
+
+    # Hammer: small body in upper half, long lower wick (>=2x body)
+    if body > 0 and lower_wick >= 2 * body and upper_wick <= body and min(o, c) > (l + 0.5 * rng):
+        patterns.append("hammer")
+
+    # Shooting star: small body in lower half, long upper wick (>=2x body)
+    if body > 0 and upper_wick >= 2 * body and lower_wick <= body and max(o, c) < (l + 0.5 * rng):
+        patterns.append("shooting_star")
+
+    # Inside bar: current H<=prev H AND current L>=prev L
+    if h <= ph and l >= pl:
+        patterns.append("inside_bar")
+
+    # Three-bar reversal (bull): two bears then a bull whose close exceeds prior bar's open
+    if ppc < ppo and prev_bear and is_bull and c > po:
+        patterns.append("three_bar_reversal_bull")
+    # Three-bar reversal (bear): two bulls then a bear whose close breaks prior bar's open
+    if ppc > ppo and prev_bull and is_bear and c < po:
+        patterns.append("three_bar_reversal_bear")
+
+    return patterns
+
+
+def _compute_tf_consensus(ta: dict[str, dict[str, Any]] | None) -> dict[str, Any] | None:
+    """Collapse multi-timeframe TA into alignment scores.
+
+    Counts timeframe agreement on: regime direction, RSI zone, MACD direction.
+    Returns {regime_score, rsi_score, macd_score, overall, dominant_direction,
+    divergences[]} or None if no TA available.
+    """
+    if not isinstance(ta, dict) or not ta:
+        return None
+    tfs = ["H1", "M15", "M5", "M1"]
+    regimes: dict[str, list[str]] = {"bull": [], "bear": [], "neutral": []}
+    macds: dict[str, list[str]] = {"positive": [], "negative": [], "neutral": []}
+    rsi_zones: dict[str, list[str]] = {"overbought": [], "oversold": [], "mid": []}
+
+    for tf in tfs:
+        t = ta.get(tf)
+        if not isinstance(t, dict):
+            continue
+        regime = str(t.get("regime") or "").lower()
+        if "bull" in regime:
+            regimes["bull"].append(tf)
+        elif "bear" in regime:
+            regimes["bear"].append(tf)
+        else:
+            regimes["neutral"].append(tf)
+
+        macd = str(t.get("macd_direction") or "").lower()
+        if macd in macds:
+            macds[macd].append(tf)
+
+        zone = str(t.get("rsi_zone") or "").lower()
+        if "overbought" in zone:
+            rsi_zones["overbought"].append(tf)
+        elif "oversold" in zone:
+            rsi_zones["oversold"].append(tf)
+        else:
+            rsi_zones["mid"].append(tf)
+
+    total = sum(len(v) for v in regimes.values())
+    if total == 0:
+        return None
+
+    # Dominant direction via regime
+    if len(regimes["bull"]) > len(regimes["bear"]) and len(regimes["bull"]) >= 3:
+        dominant = "bullish_aligned"
+    elif len(regimes["bear"]) > len(regimes["bull"]) and len(regimes["bear"]) >= 3:
+        dominant = "bearish_aligned"
+    elif len(regimes["bull"]) > len(regimes["bear"]):
+        dominant = "bullish_leaning"
+    elif len(regimes["bear"]) > len(regimes["bull"]):
+        dominant = "bearish_leaning"
+    else:
+        dominant = "mixed"
+
+    # Divergences: any TF disagreeing with dominant regime
+    divergences: list[str] = []
+    if dominant in ("bullish_aligned", "bullish_leaning"):
+        for tf in regimes["bear"]:
+            divergences.append(f"{tf} bear vs dominant bull")
+    elif dominant in ("bearish_aligned", "bearish_leaning"):
+        for tf in regimes["bull"]:
+            divergences.append(f"{tf} bull vs dominant bear")
+
+    # RSI extremes (conviction dampener)
+    rsi_warn: list[str] = []
+    if len(rsi_zones["overbought"]) >= 2:
+        rsi_warn.append(f"{'/'.join(rsi_zones['overbought'])} overbought")
+    if len(rsi_zones["oversold"]) >= 2:
+        rsi_warn.append(f"{'/'.join(rsi_zones['oversold'])} oversold")
+
+    return {
+        "regime_bull_tfs": regimes["bull"],
+        "regime_bear_tfs": regimes["bear"],
+        "regime_neutral_tfs": regimes["neutral"],
+        "macd_positive_tfs": macds["positive"],
+        "macd_negative_tfs": macds["negative"],
+        "dominant_direction": dominant,
+        "divergences": divergences,
+        "rsi_warnings": rsi_warn,
+        "total_tfs": total,
+    }
+
+
 def _compute_ta_snapshot(adapter: Any, profile: ProfileV1) -> dict[str, dict[str, Any]] | None:
     """Compute TA for H1, M15, M5, M1. Returns {timeframe: {regime, rsi, ...}} or None."""
     from core.ta_analysis import compute_ta_for_tf
@@ -614,6 +849,9 @@ def _compute_ta_snapshot(adapter: Any, profile: ProfileV1) -> dict[str, dict[str
             # Recent candle streak
             streak = _compute_candle_streak(df, lookback=10)
 
+            # Bar patterns (only meaningful on M5/M15 — M1 too noisy, H1 too slow for scalp)
+            patterns = _detect_bar_patterns(df) if tf in ("M5", "M15") else []
+
             result[tf] = {
                 "regime": ta.regime,
                 "rsi_value": round(ta.rsi_value, 1) if ta.rsi_value is not None else None,
@@ -626,6 +864,7 @@ def _compute_ta_snapshot(adapter: Any, profile: ProfileV1) -> dict[str, dict[str
                 "price": ta.price,
                 "summary": ta.summary,
                 "streak": streak,
+                "patterns": patterns,
             }
         except Exception:
             continue
@@ -1505,6 +1744,16 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
             events = []
         return ("upcoming_events", events)
 
+    def _fetch_jpy_crosses() -> tuple[str, Any]:
+        """EURJPY/GBPJPY/AUDJPY bias for disambiguating USD vs JPY moves."""
+        cached = _ctx_cache.get("jpy_crosses")
+        if cached is not None:
+            return ("jpy_crosses", cached)
+        result = _fetch_jpy_cross_bias(adapter)
+        if result:
+            _ctx_cache.set("jpy_crosses", result, 120)  # 2 min
+        return ("jpy_crosses", result)
+
     # --- Dispatch all calls in parallel ---
 
     try:
@@ -1516,7 +1765,7 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
                  _fetch_vol, _fetch_ta, _fetch_ohlc, _fetch_price_struct, _fetch_upcoming_events]
 
         if is_oanda:
-            tasks.extend([_fetch_cross_assets, _fetch_macro_bias, _fetch_order_book, _fetch_pos_book, _fetch_pending_orders])
+            tasks.extend([_fetch_cross_assets, _fetch_macro_bias, _fetch_order_book, _fetch_pos_book, _fetch_pending_orders, _fetch_jpy_crosses])
 
         with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
             futures = {pool.submit(fn): fn.__name__ for fn in tasks}
@@ -1603,6 +1852,13 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
                     "count": count,
                     "unrealized_pl_usd": round(total_upl, 2),
                 }
+
+        # Multi-timeframe consensus (derived from ta_snapshot, no API call).
+        ta_data = ctx.get("ta_snapshot")
+        if isinstance(ta_data, dict):
+            consensus = _compute_tf_consensus(ta_data)
+            if consensus:
+                ctx["tf_consensus"] = consensus
 
         # Pip value in USD per lot at current price (USDJPY specific math).
         # pip_value_per_lot_usd = (pip_size * 100000) / mid   =>  1000 / mid at pip_size 0.01
@@ -2047,7 +2303,29 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
             if isinstance(streak, dict) and streak.get("count"):
                 arrow = "^" if streak.get("direction") == "up" else ("v" if streak.get("direction") == "down" else "-")
                 parts_line += f" | streak {streak['count']}{arrow}"
+            patterns = t.get("patterns")
+            if isinstance(patterns, list) and patterns:
+                parts_line += f" | patterns: {', '.join(patterns)}"
             lines.append(parts_line)
+
+        # TF consensus
+        tfc = ctx.get("tf_consensus")
+        if isinstance(tfc, dict):
+            dom = str(tfc.get("dominant_direction", "")).replace("_", " ")
+            bull_tfs = tfc.get("regime_bull_tfs") or []
+            bear_tfs = tfc.get("regime_bear_tfs") or []
+            neutral_tfs = tfc.get("regime_neutral_tfs") or []
+            lines.append(
+                f"  CONSENSUS: {dom} | bull {'/'.join(bull_tfs) if bull_tfs else '-'} "
+                f"| bear {'/'.join(bear_tfs) if bear_tfs else '-'} "
+                f"| neutral {'/'.join(neutral_tfs) if neutral_tfs else '-'}"
+            )
+            divs = tfc.get("divergences") or []
+            if divs:
+                lines.append(f"  DIVERGENCES: {'; '.join(divs)}")
+            rsi_warn = tfc.get("rsi_warnings") or []
+            if rsi_warn:
+                lines.append(f"  RSI EXTREMES: {'; '.join(rsi_warn)}")
 
     cross = ctx.get("cross_assets")
     if cross:
@@ -2093,6 +2371,38 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
         impl = bias.get("usdjpy_implication", "")
         if combined:
             lines.append(f"  Combined: {combined.upper()} ({conf} confidence) — {impl}")
+
+    # JPY cross bias — disambiguates USD strength from JPY weakness.
+    jc = ctx.get("jpy_crosses")
+    if isinstance(jc, dict) and jc:
+        lines.append("")
+        lines.append("JPY CROSS BIAS (USD-strength vs JPY-weakness disambiguation):")
+        for key in ("eur_jpy", "gbp_jpy", "aud_jpy"):
+            entry = jc.get(key)
+            if not isinstance(entry, dict):
+                continue
+            mid = entry.get("mid")
+            c4h = entry.get("change_4h_pct")
+            c24h = entry.get("change_24h_pct")
+            parts = []
+            if mid is not None:
+                parts.append(f"{mid}")
+            if c4h is not None:
+                parts.append(f"4h {c4h:+.2f}%")
+            if c24h is not None:
+                parts.append(f"24h {c24h:+.2f}%")
+            label = key.replace("_", "").upper()
+            lines.append(f"  {label}: {' | '.join(parts)}")
+        summary = jc.get("summary_4h")
+        if summary:
+            lines.append(
+                f"  -> {summary} (4h: {jc.get('crosses_up_4h', 0)} up, "
+                f"{jc.get('crosses_down_4h', 0)} down)"
+            )
+        lines.append(
+            "  Read: if USDJPY is up AND crosses are up -> JPY weakness (higher BUY conviction). "
+            "If USDJPY up but crosses flat/down -> pure USD move (lower conviction)."
+        )
 
     # Position book sentiment (OANDA volume proxy)
     pb = ctx.get("position_book")

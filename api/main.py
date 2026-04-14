@@ -5520,8 +5520,8 @@ def place_limit_order_endpoint(
     side = req.side.lower().strip()
     if side not in ("buy", "sell"):
         raise HTTPException(status_code=400, detail=f"Invalid side: {req.side!r}. Must be 'buy' or 'sell'.")
-    if req.lots <= 0 or req.lots > 10:
-        raise HTTPException(status_code=400, detail=f"Invalid lot size: {req.lots}. Must be 0 < lots <= 10.")
+    if req.lots <= 0 or req.lots > 15:
+        raise HTTPException(status_code=400, detail=f"Invalid lot size: {req.lots}. Must be 0 < lots <= 15.")
     if req.price <= 0:
         raise HTTPException(status_code=400, detail="Price must be positive.")
     tif = req.time_in_force.upper()
@@ -5807,8 +5807,10 @@ def ai_suggest_trade(
 
     suggest_prompt = (
         "Based on LIVE TRADING CONTEXT and the prefetched EXTERNAL MARKET NEWS section (RSS headlines + web search), "
-        "including technicals, macro bias, levels, session, and volatility, "
         "suggest ONE specific USDJPY limit order trade right now. "
+        "The trader will manually review every suggestion before placing — so these guidelines are a decision framework, "
+        "not hard constraints. If your read of the tape says a guideline doesn't fit this setup, bypass it and explain why "
+        "in the rationale. Your job is to bring conviction and a clear read, not to robot-apply rules.\n\n"
         "You MUST respond with ONLY a valid JSON object — no markdown, no code fences, no explanation outside the JSON. "
         "Use this exact JSON schema:\n"
         '{\n'
@@ -5816,7 +5818,7 @@ def ai_suggest_trade(
         '  "price": <limit entry price as number>,\n'
         '  "sl": <stop loss price as number>,\n'
         '  "tp": <take profit price as number>,\n'
-        '  "lots": <position size as number, e.g. 0.05>,\n'
+        '  "lots": <position size as number, e.g. 5.0>,\n'
         '  "time_in_force": "GTC" or "GTD",\n'
         '  "gtd_time_utc": <ISO datetime string if GTD, else null>,\n'
         '  "exit_strategy": one of [' + _strategy_ids + '],\n'
@@ -5827,17 +5829,56 @@ def ai_suggest_trade(
         "\n"
         + _exit_catalog_text
         + "\n\n"
-        "Rules:\n"
-        "- The limit price must be AWAY from current price (buy below current, sell above current).\n"
-        "- Use the nearest support/resistance levels and current technicals to set price, SL, and TP.\n"
-        "- SL should be 10-15 pips from entry, TP 4-10 pips from entry, consistent with a scalper's style.\n"
-        "- Lot size should be proportional to confidence (0.01-0.10 typical range).\n"
-        "- Default to GTC unless there is a clear time-based reason (event risk, session close).\n"
-        f'- For exit_strategy, default to "{DEFAULT_AI_EXIT_STRATEGY}" UNLESS the setup clearly favors another option (or none). '
-        "Your rationale MUST explicitly justify the exit_strategy choice (why the default fits, or why you picked an alternative, "
-        'or why "none" is better here).\n'
-        "- If you genuinely see no good setup, return the JSON with confidence 'low' and explain in rationale.\n"
+        "=== DECISION FRAMEWORK (guidelines — bypass with reason when the tape warrants) ===\n"
+        "\n"
+        "DIRECTION (which side to take):\n"
+        "- Cross-check TECHNICAL SNAPSHOT CONSENSUS. Prefer setups where 3+ timeframes align (bullish_aligned / bearish_aligned). "
+        "When consensus is 'mixed' or 'leaning', demand a better entry price or downgrade confidence.\n"
+        "- Name any DIVERGENCES in the rationale (e.g., 'M1 bear against H1/M15/M5 bull — pullback setup, not trend flip').\n"
+        "- Use JPY CROSS BIAS to disambiguate. Higher BUY conviction when JPY crosses confirm JPY weakness (>=2 crosses up 4h). "
+        "USDJPY up while crosses are flat/mixed = pure USD move, weaker conviction.\n"
+        "- RSI extremes across 2+ TFs = conviction dampener. Counter-trend scalp is fine but size accordingly.\n"
+        "\n"
+        "ENTRY PRICE (where to rest the limit):\n"
+        "- Anchor the limit on PRICE STRUCTURE levels — PDH/PDL, PWH/PWL, WH/WL, round levels (xx.00 / xx.50). "
+        "These are the magnets. Place limits 2-4 pips on the favorable side, not inside the level.\n"
+        "- Cross-reference ORDER BOOK nearest support/resistance for additional confirmation.\n"
+        "- Check PENDING FILLS in the price structure block — don't stack a new limit 2 pips from an existing resting order.\n"
+        "- Favor bar-pattern context from TECHNICAL SNAPSHOT (M5/M15 patterns: engulfing, hammer, shooting_star, etc.) "
+        "when naming the setup.\n"
+        "\n"
+        "STOP AND TARGET (let ATR breathe):\n"
+        "- Baseline: SL 10-15 pips, TP 4-10 pips (scalper's style). "
+        "Flex with M5/M15 ATR — wider stops on high ATR, tighter on compressed ranges. State the ATR you saw in rationale.\n"
+        "- Never stick the SL 1-2 pips past a known level (it gets swept). Give it room past PDH/PDL/round.\n"
+        "\n"
+        "SIZING (1-15 lots, proportional to conviction):\n"
+        "- Range: 1 lot (low conviction / probe) up to 15 lots (elite setup — TF consensus aligned + JPY crosses confirming "
+        "+ limit anchored on strong structure + no catalyst risk).\n"
+        "- Typical medium-conviction: 3-7 lots. High conviction: 8-12. Reserve 13-15 for A+ setups.\n"
+        "- Downgrade lots if SESSION PERFORMANCE shows current session is negative over last 14d.\n"
+        "- Downgrade lots if OPEN P&L is red — don't pyramid into drawdown.\n"
+        "- Reference PIP VALUE line to keep dollar risk realistic in your head.\n"
+        "\n"
+        "EXIT STRATEGY:\n"
+        f'- Default "{DEFAULT_AI_EXIT_STRATEGY}" unless the setup favors another (or "none").\n'
+        "- If EXIT STRATEGY PERFORMANCE is present with meaningful N (10+ closed), prefer strategies with positive net P&L "
+        "and avoid strategies underperforming in the current regime.\n"
+        "- Rationale MUST justify the exit_strategy choice (why default fits, why you deviated, or why 'none').\n"
+        "\n"
+        "TIMING VETO:\n"
+        "- If the IMMINENT EVENT banner is active (<30m to a high-impact release), strongly consider returning confidence='low' "
+        "and explaining why you won't plant a limit into the catalyst — unless your rationale names a specific post-event "
+        "level worth fading/riding.\n"
+        "- Default time_in_force 'GTC' unless there's a concrete time-based reason for GTD (event, session close, weekly H/L sweep).\n"
+        "\n"
+        "MECHANICS:\n"
+        "- Limit price must be AWAY from current price (BUY below current bid, SELL above current ask).\n"
+        "- If you genuinely see no good setup, return confidence='low' and explain — don't force a trade.\n"
         "- If market is closed or data is stale, still provide a suggestion based on last known levels and context.\n"
+        "\n"
+        "Remember: the trader reviews every suggestion manually. Bring a sharp read and a clear rationale. "
+        "Don't suggest trades you wouldn't personally back at the number you're quoting.\n"
     )
 
     import openai
