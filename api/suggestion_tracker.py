@@ -415,7 +415,39 @@ def get_by_order_id(db_path: Path, oanda_order_id: str) -> Optional[dict[str, An
             (str(oanda_order_id),),
         )
         row = cur.fetchone()
-        return dict(row) if row else None
+        return _deserialize_row(dict(row)) if row else None
+
+
+def get_history(
+    db_path: Path,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Return row-level suggestion history ordered newest-first."""
+    init_db(db_path)
+    limit = max(1, min(int(limit), 500))
+    offset = max(0, int(offset))
+
+    with _connect(db_path) as conn:
+        total = int(conn.execute("SELECT COUNT(*) FROM ai_suggestions").fetchone()[0] or 0)
+        cur = conn.execute(
+            """
+            SELECT *
+            FROM ai_suggestions
+            ORDER BY created_utc DESC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        )
+        items = [_deserialize_row(dict(row)) for row in cur.fetchall()]
+
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "items": items,
+    }
 
 
 def get_stats(db_path: Path, days_back: int = 30) -> dict[str, Any]:
@@ -519,6 +551,15 @@ def _load_rows_since(db_path: Path, cutoff_iso: str) -> list[dict[str, Any]]:
             (cutoff_iso,),
         )
         return [dict(r) for r in cur.fetchall()]
+
+
+def _deserialize_row(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    out["market_snapshot"] = _json_obj(out.pop("market_snapshot_json", None))
+    out["edited_fields"] = _json_obj(out.pop("edited_fields_json", None))
+    out["placed_order"] = _json_obj(out.pop("placed_order_json", None))
+    out["exit_params"] = _json_obj(out.pop("exit_params_json", None))
+    return out
 
 
 def _summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:

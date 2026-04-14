@@ -998,6 +998,46 @@ export interface AiTradeSuggestion {
   suggestion_id?: string | null;
 }
 
+export interface AiSuggestionHistoryItem {
+  suggestion_id: string;
+  created_utc: string;
+  profile: string;
+  model: string;
+  side: string;
+  limit_price: number;
+  sl: number | null;
+  tp: number | null;
+  lots: number;
+  time_in_force: string | null;
+  gtd_time_utc: string | null;
+  confidence: string | null;
+  rationale: string | null;
+  exit_strategy: string | null;
+  exit_params: Record<string, unknown>;
+  market_snapshot: Record<string, unknown>;
+  action: string | null;
+  action_utc: string | null;
+  edited_fields: Record<string, unknown>;
+  placed_order: Record<string, unknown>;
+  oanda_order_id: string | null;
+  trade_id: string | null;
+  outcome_status: string | null;
+  filled_at: string | null;
+  fill_price: number | null;
+  closed_at: string | null;
+  exit_price: number | null;
+  pnl: number | null;
+  pips: number | null;
+  win_loss: string | null;
+}
+
+export interface AiSuggestionHistoryResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  items: AiSuggestionHistoryItem[];
+}
+
 export interface PlaceLimitOrderRequest {
   side: string;
   price: number;
@@ -1080,6 +1120,20 @@ export async function logSuggestionAction(
         oanda_order_id: oandaOrderId || null,
       }),
     },
+  );
+}
+
+export async function getAiSuggestionHistory(
+  profileName: string,
+  limit = 100,
+  offset = 0,
+): Promise<AiSuggestionHistoryResponse> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  return fetchJson<AiSuggestionHistoryResponse>(
+    `${API_BASE}/data/${encodeURIComponent(profileName)}/ai-suggestions/history?${params.toString()}`
   );
 }
 

@@ -5874,15 +5874,25 @@ def ai_suggest_trade(
         suggestion["lots"] = float(suggestion["lots"])
         suggestion.setdefault("time_in_force", "GTC")
         suggestion.setdefault("gtd_time_utc", None)
-        # Normalize exit strategy + params (fall back to default if missing/invalid).
+        # Normalize exit strategy + params.
+        #   Missing / empty field -> fall back to DEFAULT_AI_EXIT_STRATEGY (so the
+        #     trade still gets managed — a silent AI omission must not become "none").
+        #   Explicit "none" from the model -> respect it (operator-style pass-through).
+        #   Unknown string -> normalize_exit_strategy maps to default.
         raw_exit = suggestion.get("exit_strategy")
-        if raw_exit is None or str(raw_exit).strip().lower() == "none":
+        raw_exit_str = str(raw_exit).strip().lower() if raw_exit is not None else ""
+        if raw_exit_str == "none":
             suggestion["exit_strategy"] = "none"
             suggestion["exit_params"] = {}
         else:
-            suggestion["exit_strategy"] = normalize_exit_strategy(str(raw_exit))
+            if not raw_exit_str or raw_exit_str not in AI_EXIT_STRATEGIES:
+                chosen = DEFAULT_AI_EXIT_STRATEGY
+                print(f"[ai_suggest_trade] exit_strategy missing/invalid ({raw_exit!r}); defaulting to {chosen}")
+            else:
+                chosen = normalize_exit_strategy(raw_exit_str)
+            suggestion["exit_strategy"] = chosen
             raw_params = suggestion.get("exit_params") if isinstance(suggestion.get("exit_params"), dict) else None
-            suggestion["exit_params"] = merge_exit_params(suggestion["exit_strategy"], raw_params)
+            suggestion["exit_params"] = merge_exit_params(chosen, raw_params)
         # Echo the chosen model so the UI can display which brain picked the trade.
         suggestion["model_used"] = effective_model
         # Expose catalog so the UI can render dropdown options + descriptions.
@@ -5970,6 +5980,25 @@ def ai_suggestion_stats(profile_name: str, days_back: int = 30) -> dict[str, Any
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"get_stats failed: {e}") from e
+
+
+@app.get("/api/data/{profile_name}/ai-suggestions/history")
+def ai_suggestion_history(
+    profile_name: str,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Row-level Fillmore suggestion history for a profile."""
+    from api import suggestion_tracker
+
+    try:
+        return suggestion_tracker.get_history(
+            _suggestions_db_path(profile_name),
+            limit=limit,
+            offset=offset,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"get_history failed: {e}") from e
 
 
 @app.get("/api/ai-chat/models")

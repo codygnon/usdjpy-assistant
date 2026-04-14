@@ -150,7 +150,7 @@ def test_stats_capture_generated_placed_edited_rejected_and_closed(tmp_path: Pat
     linked = suggestion_tracker.get_by_order_id(db_path, "101")
     assert linked is not None
     assert linked["trade_id"] == "ai_manual:101:1"
-    assert linked["placed_order_json"] is not None
+    assert linked["placed_order"]["exit_strategy"] == "tp1_be_hwm_trail"
 
 
 def test_learning_prompt_block_surfaces_behavioral_feedback(tmp_path: Path) -> None:
@@ -205,3 +205,39 @@ def test_learning_prompt_block_handles_empty_history(tmp_path: Path) -> None:
     block = suggestion_tracker.build_learning_prompt_block(db_path, days_back=365)
 
     assert "No prior AI suggestion history is available yet" in block
+
+
+def test_get_history_returns_row_level_details_with_parsed_json(tmp_path: Path) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+
+    sid = suggestion_tracker.log_generated(
+        db_path,
+        profile="kumatora2",
+        model="gpt-5.4",
+        suggestion=_suggestion(side="sell", price=150.45),
+        ctx=_ctx(bias="bearish", session="New York", vol="elevated"),
+    )
+    suggestion_tracker.log_action(
+        db_path,
+        suggestion_id=sid,
+        action="placed",
+        edited_fields={"price": {"before": 150.45, "after": 150.5}},
+        placed_order={"side": "sell", "price": 150.5, "exit_strategy": "tp1_be_only"},
+        oanda_order_id="301",
+    )
+    suggestion_tracker.mark_filled(db_path, oanda_order_id="301", fill_price=150.5, trade_id="ai_manual:301:1")
+
+    history = suggestion_tracker.get_history(db_path, limit=10, offset=0)
+
+    assert history["total"] == 1
+    assert history["limit"] == 10
+    assert history["offset"] == 0
+    assert len(history["items"]) == 1
+
+    row = history["items"][0]
+    assert row["suggestion_id"] == sid
+    assert row["profile"] == "kumatora2"
+    assert row["market_snapshot"]["macro_bias"]["combined_bias"] == "bearish"
+    assert row["edited_fields"]["price"]["after"] == 150.5
+    assert row["placed_order"]["exit_strategy"] == "tp1_be_only"
+    assert row["trade_id"] == "ai_manual:301:1"
