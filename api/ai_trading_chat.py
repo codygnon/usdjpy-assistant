@@ -548,14 +548,53 @@ def _compute_adx(df: Any, period: int = 14) -> tuple[float | None, float | None]
     return adx_val, adxr_val
 
 
+def _compute_candle_streak(df: Any, lookback: int = 10) -> dict[str, Any] | None:
+    """Count consecutive same-direction bars ending at the last completed bar.
+
+    Returns {direction: 'up'|'down'|'doji', count: N, last_close: float} or None.
+    """
+    try:
+        if df is None or df.empty or len(df) < 2:
+            return None
+        tail = df.tail(lookback)
+        dirs: list[str] = []
+        for _, row in tail.iterrows():
+            o = float(row["open"])
+            c = float(row["close"])
+            if c > o:
+                dirs.append("up")
+            elif c < o:
+                dirs.append("down")
+            else:
+                dirs.append("doji")
+        if not dirs:
+            return None
+        last_dir = dirs[-1]
+        if last_dir == "doji":
+            return {"direction": "doji", "count": 1, "last_close": round(float(tail.iloc[-1]["close"]), 3)}
+        streak = 0
+        for d in reversed(dirs):
+            if d == last_dir:
+                streak += 1
+            else:
+                break
+        return {
+            "direction": last_dir,
+            "count": streak,
+            "last_close": round(float(tail.iloc[-1]["close"]), 3),
+        }
+    except Exception:
+        return None
+
+
 def _compute_ta_snapshot(adapter: Any, profile: ProfileV1) -> dict[str, dict[str, Any]] | None:
-    """Compute TA for H1, M5, M1 only. Returns {timeframe: {regime, rsi, ...}} or None."""
+    """Compute TA for H1, M15, M5, M1. Returns {timeframe: {regime, rsi, ...}} or None."""
     from core.ta_analysis import compute_ta_for_tf
 
     result: dict[str, dict[str, Any]] = {}
     pip_size = float(profile.pip_size) if profile.pip_size else 0.01
 
-    for tf in ("H1", "M5", "M1"):
+    for tf in ("H1", "M15", "M5", "M1"):
         try:
             df = adapter.get_bars(profile.symbol, tf, count=700)
             if df is None or df.empty:
@@ -572,6 +611,9 @@ def _compute_ta_snapshot(adapter: Any, profile: ProfileV1) -> dict[str, dict[str
             # ADX / ADXR
             adx_val, adxr_val = _compute_adx(df, period=14)
 
+            # Recent candle streak
+            streak = _compute_candle_streak(df, lookback=10)
+
             result[tf] = {
                 "regime": ta.regime,
                 "rsi_value": round(ta.rsi_value, 1) if ta.rsi_value is not None else None,
@@ -583,6 +625,7 @@ def _compute_ta_snapshot(adapter: Any, profile: ProfileV1) -> dict[str, dict[str
                 "adxr": adxr_val,
                 "price": ta.price,
                 "summary": ta.summary,
+                "streak": streak,
             }
         except Exception:
             continue
@@ -649,6 +692,104 @@ def _compute_session_info(now_utc: datetime) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Derived trade stats (today / this week)
 # ---------------------------------------------------------------------------
+
+def _compute_session_stats(closed_trades: list[dict], days_back: int = 14) -> dict[str, Any] | None:
+    """Group closed trades by trading session (Tokyo / London / NY / Off-hours).
+
+    Uses close_time UTC hour as a proxy for entry session — good enough for scalpers
+    whose trades typically close within minutes of entry. Windows match _SESSIONS.
+    """
+    if not closed_trades:
+        return None
+    now_utc = datetime.now(timezone.utc)
+    cutoff = now_utc - timedelta(days=max(1, int(days_back)))
+    # Session hour-ranges (UTC). Overlaps are intentional — we bucket by *primary* session
+    # using the same precedence as _SESSIONS: later-ranked wins for overlap bars.
+    def _bucket(hour_utc: int) -> str:
+        # Simple precedence: NY overlap wins over London, London overlap wins over Tokyo.
+        if 12 <= hour_utc < 21:
+            return "NY"
+        if 7 <= hour_utc < 16:
+            return "London"
+        if 0 <= hour_utc < 9:
+            return "Tokyo"
+        return "Off-hours"
+
+    buckets: dict[str, list[float]] = {"Tokyo": [], "London": [], "NY": [], "Off-hours": []}
+    for t in closed_trades:
+        ct_str = t.get("close_time", "")
+        if not ct_str:
+            continue
+        try:
+            ct = datetime.fromisoformat(ct_str.replace("Z", "+00:00"))
+        except Exception:
+            continue
+        if ct < cutoff:
+            continue
+        try:
+            pnl = float(t.get("profit", 0) or 0)
+        except Exception:
+            continue
+        buckets[_bucket(ct.hour)].append(pnl)
+
+    out: dict[str, Any] = {}
+    for name, pnls in buckets.items():
+        if not pnls:
+            continue
+        wins = sum(1 for p in pnls if p > 0)
+        out[name] = {
+            "trades": len(pnls),
+            "wins": wins,
+            "losses": sum(1 for p in pnls if p < 0),
+            "win_rate": round(wins / len(pnls) * 100, 1),
+            "net_pl": round(sum(pnls), 2),
+        }
+    return out if out else None
+
+
+def _compute_exit_strategy_performance(db_path: Any, days_back: int = 90) -> list[dict[str, Any]] | None:
+    """Group closed AI-suggested trades by exit strategy and summarize.
+
+    Returns list of {strategy, closed, win_rate_pct, avg_pips, avg_pnl, total_pnl}.
+    None when the DB is missing or empty (no AI suggestions accrued yet).
+    """
+    try:
+        from api import suggestion_tracker as _st
+        from pathlib import Path as _P
+        if not _P(str(db_path)).exists():
+            return None
+        cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=max(1, int(days_back)))).isoformat()
+        rows = _st._load_rows_since(_P(str(db_path)), cutoff_iso)
+        if not rows:
+            return None
+        buckets: dict[str, list[dict[str, Any]]] = {}
+        for r in rows:
+            if not r.get("closed_at") or r.get("pnl") is None:
+                continue
+            placed = _st._json_obj(r.get("placed_order_json"))
+            strat = str(placed.get("exit_strategy") or r.get("exit_strategy") or "unknown").strip() or "unknown"
+            buckets.setdefault(strat, []).append(r)
+        if not buckets:
+            return None
+        out: list[dict[str, Any]] = []
+        for strat, group in buckets.items():
+            pnls = [float(g.get("pnl") or 0) for g in group]
+            pips = [float(g.get("pips") or 0) for g in group]
+            wins = sum(1 for g in group if str(g.get("win_loss") or "") == "win")
+            out.append({
+                "strategy": strat,
+                "closed": len(group),
+                "wins": wins,
+                "win_rate_pct": round(wins / len(group) * 100.0, 1) if group else 0.0,
+                "avg_pips": round(sum(pips) / len(pips), 2) if pips else 0.0,
+                "avg_pnl": round(sum(pnls) / len(pnls), 2) if pnls else 0.0,
+                "total_pnl": round(sum(pnls), 2),
+            })
+        out.sort(key=lambda r: r["closed"], reverse=True)
+        return out
+    except Exception:
+        return None
+
 
 def _compute_derived_stats(closed_trades: list[dict]) -> dict[str, Any]:
     """Compute today's and this week's stats from closed trade list.
@@ -1005,6 +1146,149 @@ def _fetch_ohlc_history(adapter: Any, profile: ProfileV1) -> dict[str, list[dict
     return result if result else None
 
 
+def _fetch_price_structure_bars(adapter: Any, profile: ProfileV1) -> dict[str, Any] | None:
+    """Fetch daily & weekly bars and compute intraday O/H/L, PDH/PDL, PWH/PWL.
+
+    Round levels, in-range positioning, and pending-order distances are layered
+    on in post-processing (they depend on spot_price / pending_orders in ctx).
+    """
+    pip_size = float(profile.pip_size) if profile.pip_size else 0.01
+    out: dict[str, Any] = {}
+
+    # Daily: pull 3 bars with incomplete=True so today's partial candle is included.
+    try:
+        df_d = adapter.get_bars(profile.symbol, "D", count=3, include_incomplete=True)
+        if df_d is not None and not df_d.empty:
+            today = df_d.iloc[-1]
+            out["intraday"] = {
+                "open": round(float(today["open"]), 3),
+                "high": round(float(today["high"]), 3),
+                "low": round(float(today["low"]), 3),
+                "range_pips": round((float(today["high"]) - float(today["low"])) / pip_size, 1),
+            }
+            if len(df_d) >= 2:
+                prev = df_d.iloc[-2]
+                out["prev_day"] = {
+                    "high": round(float(prev["high"]), 3),
+                    "low": round(float(prev["low"]), 3),
+                    "close": round(float(prev["close"]), 3),
+                    "range_pips": round((float(prev["high"]) - float(prev["low"])) / pip_size, 1),
+                }
+    except Exception:
+        pass
+
+    # Weekly: current (incomplete) + previous.
+    try:
+        df_w = adapter.get_bars(profile.symbol, "W", count=2, include_incomplete=True)
+        if df_w is not None and not df_w.empty:
+            cur_w = df_w.iloc[-1]
+            out["current_week"] = {
+                "high": round(float(cur_w["high"]), 3),
+                "low": round(float(cur_w["low"]), 3),
+            }
+            if len(df_w) >= 2:
+                prev_w = df_w.iloc[-2]
+                out["prev_week"] = {
+                    "high": round(float(prev_w["high"]), 3),
+                    "low": round(float(prev_w["low"]), 3),
+                    "close": round(float(prev_w["close"]), 3),
+                }
+    except Exception:
+        pass
+
+    return out if out else None
+
+
+def _enrich_price_structure(ps: dict[str, Any], mid: float | None, pip_size: float,
+                            pending_orders: list[dict[str, Any]] | None) -> None:
+    """Attach round levels, in-range position, key-level distances, and pending-order distances.
+
+    Mutates `ps` in place.
+    """
+    if mid is None or mid <= 0:
+        return
+
+    def _dist(level: float) -> float:
+        return round((level - mid) / pip_size, 1)
+
+    # Position within intraday range
+    intra = ps.get("intraday")
+    if isinstance(intra, dict):
+        hi = float(intra.get("high") or 0)
+        lo = float(intra.get("low") or 0)
+        rng = hi - lo
+        if rng > 0:
+            intra["pct_of_range"] = round((mid - lo) / rng * 100.0, 1)
+        intra["pips_from_high"] = round((hi - mid) / pip_size, 1) if hi else None
+        intra["pips_from_low"] = round((mid - lo) / pip_size, 1) if lo else None
+
+    # Distances to key daily/weekly levels
+    key_levels: list[tuple[str, float]] = []
+    pd_blk = ps.get("prev_day")
+    if isinstance(pd_blk, dict):
+        key_levels.extend([("PDH", float(pd_blk["high"])), ("PDL", float(pd_blk["low"])),
+                           ("PDC", float(pd_blk["close"]))])
+    pw_blk = ps.get("prev_week")
+    if isinstance(pw_blk, dict):
+        key_levels.extend([("PWH", float(pw_blk["high"])), ("PWL", float(pw_blk["low"]))])
+    cw_blk = ps.get("current_week")
+    if isinstance(cw_blk, dict):
+        key_levels.extend([("WH", float(cw_blk["high"])), ("WL", float(cw_blk["low"]))])
+    if key_levels:
+        ps["key_level_distances"] = [
+            {"name": name, "price": round(px, 3), "distance_pips": _dist(px)}
+            for name, px in key_levels
+        ]
+
+    # Round/psychological levels: nearest .00 and .50 above & below
+    step = 0.50
+    below_half = (int(mid / step)) * step
+    above_half = below_half + step
+    big_below = float(int(mid))
+    big_above = big_below + 1.0
+    candidates = [
+        (big_above, "big_figure"),
+        (above_half, "half_figure"),
+        (below_half, "half_figure"),
+        (big_below, "big_figure"),
+    ]
+    seen: set[str] = set()
+    rounds: list[dict[str, Any]] = []
+    for px, kind in candidates:
+        name = f"{px:.2f}"
+        if name in seen:
+            continue
+        seen.add(name)
+        rounds.append({
+            "name": name,
+            "price": round(px, 3),
+            "distance_pips": _dist(px),
+            "type": kind,
+        })
+    rounds.sort(key=lambda r: abs(r["distance_pips"]))
+    ps["round_levels"] = rounds[:4]
+
+    # Pending order distances (pre-computed so Fillmore doesn't math it himself)
+    if isinstance(pending_orders, list) and pending_orders:
+        po_out: list[dict[str, Any]] = []
+        for o in pending_orders:
+            try:
+                px = float(o.get("price") or 0)
+                if px <= 0:
+                    continue
+                po_out.append({
+                    "id": o.get("id"),
+                    "side": o.get("side"),
+                    "price": round(px, 3),
+                    "distance_pips": _dist(px),
+                    "lots": o.get("lots"),
+                })
+            except Exception:
+                continue
+        if po_out:
+            ps["pending_order_distances"] = po_out
+
+
 def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[str, Any]:
     """Fetch live account state from the broker and return a plain dict.
 
@@ -1135,6 +1419,9 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
             result: dict[str, Any] = {"recent_closed_trades": tagged_closed}
             if closed:
                 result["derived_stats"] = _compute_derived_stats(closed)
+                session_stats = _compute_session_stats(closed, days_back=14)
+                if session_stats:
+                    result["session_stats"] = session_stats
             return ("closed_trades", result)
         else:
             report = adapter.get_mt5_report_stats(
@@ -1207,6 +1494,17 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
     def _fetch_ohlc() -> tuple[str, Any]:
         return ("ohlc_history", _fetch_ohlc_history(adapter, profile))
 
+    def _fetch_price_struct() -> tuple[str, Any]:
+        return ("price_structure", _fetch_price_structure_bars(adapter, profile))
+
+    def _fetch_upcoming_events() -> tuple[str, Any]:
+        """Next few USD/JPY high-impact events with countdowns. Cached 1 hour via _CALENDAR_CACHE."""
+        try:
+            events = get_economic_calendar_events(days_ahead=7, limit=3)
+        except Exception:
+            events = []
+        return ("upcoming_events", events)
+
     # --- Dispatch all calls in parallel ---
 
     try:
@@ -1215,7 +1513,7 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
             adapter.ensure_symbol(profile.symbol)
 
         tasks = [_fetch_account, _fetch_tick, _fetch_positions, _fetch_closed_trades,
-                 _fetch_vol, _fetch_ta, _fetch_ohlc]
+                 _fetch_vol, _fetch_ta, _fetch_ohlc, _fetch_price_struct, _fetch_upcoming_events]
 
         if is_oanda:
             tasks.extend([_fetch_cross_assets, _fetch_macro_bias, _fetch_order_book, _fetch_pos_book, _fetch_pending_orders])
@@ -1275,6 +1573,50 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
             if side_summary:
                 ctx["position_summary"] = side_summary
 
+        # Post-process: enrich price structure with round levels + distances
+        # (depends on spot_price + pending_orders fetched in parallel above).
+        spot = ctx.get("spot_price") or {}
+        mid = None
+        try:
+            mid = float(spot.get("mid")) if spot.get("mid") is not None else None
+        except Exception:
+            mid = None
+        pip_size = float(profile.pip_size) if profile.pip_size else 0.01
+
+        ps = ctx.get("price_structure")
+        if isinstance(ps, dict):
+            _enrich_price_structure(ps, mid, pip_size, ctx.get("pending_orders"))
+
+        # Open P&L total — single-number drawdown/runner read.
+        open_list = ctx.get("open_positions") or []
+        if isinstance(open_list, list) and open_list:
+            total_upl = 0.0
+            count = 0
+            for p in open_list:
+                try:
+                    total_upl += float(p.get("unrealized_pl", 0) or 0)
+                    count += 1
+                except Exception:
+                    pass
+            if count:
+                ctx["open_pl_summary"] = {
+                    "count": count,
+                    "unrealized_pl_usd": round(total_upl, 2),
+                }
+
+        # Pip value in USD per lot at current price (USDJPY specific math).
+        # pip_value_per_lot_usd = (pip_size * 100000) / mid   =>  1000 / mid at pip_size 0.01
+        if mid and mid > 0:
+            try:
+                pip_value_per_lot_usd = (pip_size * 100_000.0) / mid
+                ctx["pip_value_usd"] = {
+                    "per_lot_usd": round(pip_value_per_lot_usd, 2),
+                    "per_0_05_lot_usd": round(pip_value_per_lot_usd * 0.05, 2),
+                    "per_0_10_lot_usd": round(pip_value_per_lot_usd * 0.10, 2),
+                }
+            except Exception:
+                pass
+
     finally:
         try:
             adapter.shutdown()
@@ -1288,6 +1630,15 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
             dashboard = _read_dashboard_and_runtime(profile_name)
             if dashboard:
                 ctx["dashboard"] = dashboard
+        except Exception:
+            pass
+
+        # Exit-strategy performance from per-profile suggestion tracker DB (best-effort).
+        try:
+            suggestions_db = LOGS_DIR / profile_name / "ai_suggestions.sqlite"
+            perf = _compute_exit_strategy_performance(suggestions_db, days_back=90)
+            if perf:
+                ctx["exit_strategy_performance"] = perf
         except Exception:
             pass
 
@@ -1479,6 +1830,38 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
             line += f" | {w}"
         lines.append(line)
 
+    # Upcoming high-impact economic events (with countdowns)
+    events = ctx.get("upcoming_events")
+    if isinstance(events, list) and events:
+        # Imminent-event banner: any event <=30 min away gets a loud warning line up top.
+        imminent = [e for e in events if isinstance(e.get("minutes_to_event"), int) and e["minutes_to_event"] <= 30 and e["minutes_to_event"] >= 0]
+        if imminent:
+            lines.append("")
+            for e in imminent:
+                mins = e["minutes_to_event"]
+                lines.append(
+                    f"*** EVENT IMMINENT: {e.get('event', '?')} ({e.get('currency', '?')}, "
+                    f"{e.get('impact', '?')}) in {mins}m — spreads can widen, factor into entries ***"
+                )
+        lines.append("")
+        lines.append("UPCOMING EVENTS (USD/JPY, high-impact):")
+        for e in events[:3]:
+            mins = e.get("minutes_to_event")
+            if isinstance(mins, int):
+                if mins < 60:
+                    when = f"in {mins}m"
+                elif mins < 1440:
+                    when = f"in {mins // 60}h {mins % 60}m"
+                else:
+                    days = mins // 1440
+                    rem_hours = (mins % 1440) // 60
+                    when = f"in {days}d {rem_hours}h"
+            else:
+                when = f"{e.get('date', '?')} {e.get('time', '?')} UTC"
+            lines.append(
+                f"  {e.get('event', '?')} ({e.get('currency', '?')}, {e.get('impact', '?')}) — {when}"
+            )
+
     spot = ctx.get("spot_price")
     if spot:
         lines.append("")
@@ -1488,6 +1871,54 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
             f"LIVE PRICE ({ctx.get('symbol', 'USDJPY')}): {spot['bid']:.3f}/{spot['ask']:.3f} "
             f"(mid {spot['mid']:.3f}){spread_txt}"
         )
+
+    # Price structure: intraday O/H/L, PDH/PDL, weekly H/L, round levels, pending distances
+    ps = ctx.get("price_structure")
+    if isinstance(ps, dict) and ps:
+        lines.append("")
+        lines.append("PRICE STRUCTURE:")
+        intra = ps.get("intraday")
+        if isinstance(intra, dict):
+            pct = intra.get("pct_of_range")
+            pct_txt = f" | {pct:.0f}% of range" if pct is not None else ""
+            from_hi = intra.get("pips_from_high")
+            from_lo = intra.get("pips_from_low")
+            edge_txt = ""
+            if from_hi is not None and from_lo is not None:
+                edge_txt = f" | {from_hi}p from H, {from_lo}p from L"
+            lines.append(
+                f"  Today: O {intra.get('open')} H {intra.get('high')} L {intra.get('low')} "
+                f"(range {intra.get('range_pips')}p){pct_txt}{edge_txt}"
+            )
+        pd_blk = ps.get("prev_day")
+        if isinstance(pd_blk, dict):
+            lines.append(
+                f"  Prev Day: H {pd_blk.get('high')} L {pd_blk.get('low')} "
+                f"C {pd_blk.get('close')} (range {pd_blk.get('range_pips')}p)"
+            )
+        cw_blk = ps.get("current_week")
+        if isinstance(cw_blk, dict):
+            lines.append(f"  This Week: H {cw_blk.get('high')} L {cw_blk.get('low')}")
+        pw_blk = ps.get("prev_week")
+        if isinstance(pw_blk, dict):
+            lines.append(
+                f"  Prev Week: H {pw_blk.get('high')} L {pw_blk.get('low')} C {pw_blk.get('close')}"
+            )
+        kld = ps.get("key_level_distances")
+        if isinstance(kld, list) and kld:
+            parts = [f"{k['name']} {k['price']} ({k['distance_pips']:+}p)" for k in kld]
+            lines.append("  Key levels: " + " | ".join(parts))
+        rounds = ps.get("round_levels")
+        if isinstance(rounds, list) and rounds:
+            parts = [f"{r['name']} ({r['distance_pips']:+}p)" for r in rounds]
+            lines.append("  Round levels nearby: " + " | ".join(parts))
+        pod = ps.get("pending_order_distances")
+        if isinstance(pod, list) and pod:
+            parts = [
+                f"#{p.get('id')} {p.get('side')} @ {p.get('price')} ({p.get('distance_pips'):+}p)"
+                for p in pod
+            ]
+            lines.append("  Pending fills: " + " | ".join(parts))
 
     # Today's / this week's derived stats
     derived = ctx.get("derived_stats", {})
@@ -1522,6 +1953,51 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
             f"({month_s['trades']} trades)"
         )
 
+    # Open P&L summary — current exposure at a glance.
+    open_pl = ctx.get("open_pl_summary")
+    if isinstance(open_pl, dict) and open_pl.get("count"):
+        lines.append("")
+        lines.append(
+            f"OPEN P&L: {open_pl.get('count')} position(s) | "
+            f"Unrealized: ${open_pl.get('unrealized_pl_usd', 0):+,.2f}"
+        )
+
+    # Pip value in USD (at current mid).
+    pvu = ctx.get("pip_value_usd")
+    if isinstance(pvu, dict) and pvu.get("per_lot_usd"):
+        lines.append("")
+        lines.append(
+            f"PIP VALUE (at current price): ${pvu['per_lot_usd']:.2f}/lot | "
+            f"${pvu.get('per_0_05_lot_usd', 0):.2f} at 0.05 lots | "
+            f"${pvu.get('per_0_10_lot_usd', 0):.2f} at 0.10 lots"
+        )
+
+    # Session win rates — where his edge lives by time of day.
+    sess_stats = ctx.get("session_stats")
+    if isinstance(sess_stats, dict) and sess_stats:
+        lines.append("")
+        lines.append("SESSION PERFORMANCE (last 14d, by close-time UTC):")
+        for name in ("Tokyo", "London", "NY", "Off-hours"):
+            s = sess_stats.get(name)
+            if not isinstance(s, dict):
+                continue
+            lines.append(
+                f"  {name}: {s.get('trades')} trades | {s.get('win_rate')}% wins | "
+                f"Net ${s.get('net_pl', 0):+,.2f}"
+            )
+
+    # Exit-strategy performance (AI-suggested trades only, from suggestion_tracker).
+    exit_perf = ctx.get("exit_strategy_performance")
+    if isinstance(exit_perf, list) and exit_perf:
+        lines.append("")
+        lines.append("EXIT STRATEGY PERFORMANCE (AI suggestions, last 90d, closed only):")
+        for e in exit_perf:
+            lines.append(
+                f"  {e.get('strategy')}: {e.get('closed')} closed | "
+                f"{e.get('win_rate_pct')}% wins | avg {e.get('avg_pips'):+.1f}p "
+                f"| net ${e.get('total_pnl', 0):+,.2f}"
+            )
+
     # Guardrail alerts (only if triggered)
     alerts = ctx.get("guardrail_alerts")
     if alerts:
@@ -1547,7 +2023,7 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
     if ta:
         lines.append("")
         lines.append("TECHNICAL SNAPSHOT:")
-        for tf in ("H1", "M5", "M1"):
+        for tf in ("H1", "M15", "M5", "M1"):
             t = ta.get(tf)
             if not t:
                 continue
@@ -1567,6 +2043,10 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
             parts_line = f"  {tf}: {regime} | {rsi_str} | MACD {macd} | {atr_str}"
             if adx_str:
                 parts_line += f" | {adx_str}"
+            streak = t.get("streak")
+            if isinstance(streak, dict) and streak.get("count"):
+                arrow = "^" if streak.get("direction") == "up" else ("v" if streak.get("direction") == "down" else "-")
+                parts_line += f" | streak {streak['count']}{arrow}"
             lines.append(parts_line)
 
     cross = ctx.get("cross_assets")
