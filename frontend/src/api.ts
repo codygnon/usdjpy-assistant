@@ -1026,6 +1026,7 @@ export interface PlaceLimitOrderResponse {
   exit_strategy?: string | null;
   exit_params?: Record<string, number> | null;
   suggestion_id?: string | null;
+  loop_auto_started?: boolean;
 }
 
 export async function aiSuggestTrade(

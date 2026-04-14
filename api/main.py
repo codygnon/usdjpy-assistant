@@ -5599,6 +5599,37 @@ def place_limit_order_endpoint(
                 # Non-fatal — the order is placed; runtime management is best-effort.
                 print(f"[ai_suggest_trade] failed to register managed pending order: {_reg_exc}")
 
+        # Auto-start the loop if not running so the watchdog can detect fills
+        # and run the managed exit strategy.  Non-fatal if it fails.
+        loop_auto_started = False
+        if managed_exit_strategy and not _is_loop_running(profile_name):
+            try:
+                _auto_log_dir = LOGS_DIR / profile_name
+                _auto_log_dir.mkdir(parents=True, exist_ok=True)
+                _auto_log_path = _auto_log_dir / "loop.log"
+                _auto_log_file = open(_auto_log_path, "w", encoding="utf-8")
+                _auto_proc = subprocess.Popen(
+                    [sys.executable, "-u", str(BASE_DIR / "run_loop.py"), "--profile", str(path)],
+                    cwd=str(BASE_DIR),
+                    stdout=_auto_log_file,
+                    stderr=subprocess.STDOUT,
+                )
+                _auto_log_file.close()
+                _loop_processes[profile_name] = _auto_proc
+                _auto_pid_path = _loop_pid_path(profile_name)
+                _auto_pid_path.parent.mkdir(parents=True, exist_ok=True)
+                _auto_pid_path.write_text(str(_auto_proc.pid), encoding="utf-8")
+                _time.sleep(0.5)
+                if _auto_proc.poll() is None:
+                    loop_auto_started = True
+                    print(f"[place_limit_order] auto-started loop for {profile_name} (pid {_auto_proc.pid})")
+                else:
+                    _loop_processes.pop(profile_name, None)
+                    _auto_pid_path.unlink(missing_ok=True)
+                    print(f"[place_limit_order] auto-start loop failed: exited code {_auto_proc.returncode}")
+            except Exception as _loop_exc:
+                print(f"[place_limit_order] auto-start loop error: {_loop_exc}")
+
         # Link this order back to the suggestion row (if it came from a suggestion).
         # Records 'placed' terminal action + edit diff + oanda_order_id so later
         # fill/close outcomes can be stamped onto the same row.
@@ -5611,6 +5642,17 @@ def place_limit_order_endpoint(
                     suggestion_id=req.suggestion_id,
                     action="placed",
                     edited_fields=req.edited_fields or {},
+                    placed_order={
+                        "side": side,
+                        "price": float(req.price),
+                        "lots": float(req.lots),
+                        "sl": float(req.sl) if req.sl is not None else None,
+                        "tp": float(req.tp) if req.tp is not None else None,
+                        "time_in_force": tif,
+                        "gtd_time_utc": req.gtd_time_utc,
+                        "exit_strategy": managed_exit_strategy or "none",
+                        "exit_params": managed_exit_params if managed_exit_strategy else {},
+                    },
                     oanda_order_id=str(result.order) if result.order is not None else None,
                 )
             except Exception as _sa_exc:
@@ -5629,6 +5671,7 @@ def place_limit_order_endpoint(
             "exit_strategy": managed_exit_strategy,
             "exit_params": managed_exit_params if managed_exit_strategy else None,
             "suggestion_id": req.suggestion_id,
+            "loop_auto_started": loop_auto_started,
         }
     except HTTPException:
         raise
@@ -5733,6 +5776,22 @@ def ai_suggest_trade(
             f"{system}\n\n"
             "=== TRADE SUGGESTION — EXTERNAL MARKET NEWS (prefetched) ===\n"
             f"News prefetch failed ({news_exc}); proceed using LIVE TRADING CONTEXT only.\n"
+        )
+
+    try:
+        from api import suggestion_tracker
+
+        learning_block = suggestion_tracker.build_learning_prompt_block(
+            _suggestions_db_path(profile_name),
+            days_back=180,
+            max_recent_examples=8,
+        )
+        system = f"{system}\n\n{learning_block}"
+    except Exception as learn_exc:
+        system = (
+            f"{system}\n\n"
+            "=== FILLMORE LEARNING MEMORY (recent AI limit-order outcomes) ===\n"
+            f"Learning memory unavailable ({learn_exc}); rely on LIVE TRADING CONTEXT and be selective.\n"
         )
 
     from api.ai_exit_strategies import (

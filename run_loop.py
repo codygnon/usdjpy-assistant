@@ -603,6 +603,25 @@ def _watch_ai_managed_pending_orders(profile, adapter, store, state_path) -> Non
             exit_params = entry.get("exit_params") or {}
             side = str(entry.get("side") or "buy").lower()
             trade_id = f"ai_manual:{order_id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}"
+            fill_price = float(entry.get("price") or 0.0)
+            try:
+                pos = adapter.get_position_by_ticket(int(position_id))
+                if isinstance(pos, dict):
+                    fill_price = float(
+                        pos.get("price_open")
+                        or pos.get("open_price")
+                        or pos.get("price")
+                        or fill_price
+                    )
+                elif pos is not None:
+                    fill_price = float(
+                        getattr(pos, "price_open", None)
+                        or getattr(pos, "open_price", None)
+                        or getattr(pos, "price", None)
+                        or fill_price
+                    )
+            except Exception:
+                pass
             row: dict[str, Any] = {
                 "trade_id": trade_id,
                 "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
@@ -611,7 +630,7 @@ def _watch_ai_managed_pending_orders(profile, adapter, store, state_path) -> Non
                 "side": side,
                 "policy_type": "ai_manual",
                 "config_json": json.dumps({"source": "ai_manual", "order_id": order_id}),
-                "entry_price": float(entry.get("price") or 0.0),
+                "entry_price": fill_price,
                 "stop_price": entry.get("sl"),
                 "target_price": entry.get("tp"),
                 "size_lots": float(entry.get("lots") or 0.0),
@@ -648,8 +667,9 @@ def _watch_ai_managed_pending_orders(profile, adapter, store, state_path) -> Non
                 _st_fill(
                     _st_db,
                     oanda_order_id=str(order_id),
-                    fill_price=float(entry.get("price") or 0.0),
+                    fill_price=fill_price,
                     filled_at=pd.Timestamp.now(tz="UTC").isoformat(),
+                    trade_id=trade_id,
                 )
             except Exception as _st_e:
                 print(f"[{profile.profile_name}] suggestion_tracker fill error: {_st_e}")

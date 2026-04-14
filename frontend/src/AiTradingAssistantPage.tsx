@@ -174,7 +174,7 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
   const [suggestLoading, setSuggestLoading] = useState(false);
   const [suggestError, setSuggestError] = useState<string | null>(null);
   const [placeLoading, setPlaceLoading] = useState(false);
-  const [placeResult, setPlaceResult] = useState<{ status: string; order_id?: number | null } | null>(null);
+  const [placeResult, setPlaceResult] = useState<{ status: string; order_id?: number | null; loop_auto_started?: boolean } | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const suggestPanelRef = useRef<HTMLDivElement>(null);
@@ -411,7 +411,7 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
         suggestion_id: suggestion?.suggestion_id || null,
         edited_fields: editedFields,
       });
-      setPlaceResult({ status: res.status, order_id: res.order_id });
+      setPlaceResult({ status: res.status, order_id: res.order_id, loop_auto_started: res.loop_auto_started });
       setSuggestion(null);
       setEditDraft(null);
       setIsEditing(false);
@@ -924,6 +924,9 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
             {placeResult && (
               <div style={{ color: '#4ade80', fontSize: '0.84rem' }}>
                 Order {placeResult.status}{placeResult.order_id ? ` (ID: ${placeResult.order_id})` : ''}
+                {placeResult.loop_auto_started && (
+                  <div style={{ color: '#facc15', marginTop: 4 }}>Loop auto-started for exit management</div>
+                )}
               </div>
             )}
           </div>
