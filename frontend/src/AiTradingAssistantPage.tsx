@@ -765,10 +765,10 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
           {messages.length === 0 && !sending && (
             <div className="fillmore-welcome">
               <div className="fillmore-welcome-avatar">F</div>
-              <h2>Hey, I&apos;m Fillmore</h2>
+              <h2>Fillmore. Let&apos;s go to work.</h2>
               <p>
-                Your context-aware USDJPY trading assistant. I can see your broker positions,
-                recent trades, macro data, and technicals in real time. Ask me anything.
+                Elite USDJPY desk partner. I&apos;ve got your book, the tape, the macro, and the
+                headlines — all live. Let&apos;s fill more banks.
               </p>
               <div className="fillmore-chips">
                 {[

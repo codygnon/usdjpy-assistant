@@ -1074,6 +1074,49 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
                     })
         return ("open_positions", open_list)
 
+    def _fetch_pending_orders() -> tuple[str, Any]:
+        """Pending limit/stop orders resting at the broker (OANDA only)."""
+        if not is_oanda or not hasattr(adapter, "list_pending_orders"):
+            return ("pending_orders", [])
+        try:
+            raw = adapter.list_pending_orders(profile.symbol) or []
+        except Exception:
+            return ("pending_orders", [])
+        out: list[dict[str, Any]] = []
+        for o in raw[:20]:
+            if not isinstance(o, dict):
+                continue
+            try:
+                units_raw = float(o.get("units") or 0)
+            except Exception:
+                units_raw = 0.0
+            side = "BUY" if units_raw > 0 else ("SELL" if units_raw < 0 else "?")
+            lots = abs(units_raw) / 100_000.0 if units_raw else None
+            sl_px = None
+            tp_px = None
+            sl = o.get("stopLossOnFill") or {}
+            tp = o.get("takeProfitOnFill") or {}
+            if isinstance(sl, dict):
+                sl_px = sl.get("price")
+            if isinstance(tp, dict):
+                tp_px = tp.get("price")
+            out.append({
+                "id": o.get("id"),
+                "type": o.get("type"),  # e.g. LIMIT, STOP
+                "instrument": o.get("instrument"),
+                "side": side,
+                "units": abs(units_raw) if units_raw else None,
+                "lots": round(lots, 2) if lots is not None else None,
+                "price": o.get("price"),
+                "sl": sl_px,
+                "tp": tp_px,
+                "time_in_force": o.get("timeInForce"),
+                "gtd_time": o.get("gtdTime"),
+                "create_time": o.get("createTime"),
+                "state": o.get("state"),
+            })
+        return ("pending_orders", out)
+
     def _fetch_closed_trades() -> tuple[str, Any]:
         if is_oanda:
             closed = adapter.get_closed_trade_summaries(
@@ -1175,7 +1218,7 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
                  _fetch_vol, _fetch_ta, _fetch_ohlc]
 
         if is_oanda:
-            tasks.extend([_fetch_cross_assets, _fetch_macro_bias, _fetch_order_book, _fetch_pos_book])
+            tasks.extend([_fetch_cross_assets, _fetch_macro_bias, _fetch_order_book, _fetch_pos_book, _fetch_pending_orders])
 
         with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
             futures = {pool.submit(fn): fn.__name__ for fn in tasks}
@@ -1270,11 +1313,19 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
 def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str:
     """Build a system prompt that grounds the assistant in live trading data."""
     lines = [
-        "You are a trading assistant for a professional manual USDJPY scalper with a proven profitable track record.",
+        # ---- Identity & persona ----
+        "You are FILLMORE — an elite USDJPY trading assistant. Think Cornelius Fillmore: sharp, streetwise, 130+ IQ, reformed operator now on the right side of the tape. Your mission is simple — help the trader Fill More Banks.",
+        "You are not a chatbot printing data. You are a desk partner with a point of view. Have personality. Be direct, confident, dry-witted, never saccharine and never robotic.",
+        "Voice: Cool operator in a good suit. Short sentences. Street-smart phrasing mixed with pro trading vocabulary. Occasional dry quip when it lands — never forced, never cringy, never more than one a response.",
+        "Signature vibes (use sparingly, don't overdo): 'Locked in.', 'That's the read.', 'Tape's telling us...', 'Don't fight the flow.', 'We're stacking pips, not hopes.' Never sign every message with a catchphrase — personality shows up in rhythm, not repetition.",
+        "Never roleplay as a cartoon. Never narrate your own persona. Never say things like 'as Fillmore' or 'my IQ tells me'. The personality IS the voice — don't describe it.",
+        "",
+        "# Professional scope",
+        "You serve a professional manual USDJPY scalper with a proven profitable track record.",
         "Your job is to make them faster and more informed — not to tell them what to do. Do not question their edge.",
         "Be concise. Lead with numbers. Never give imperative trade instructions like 'buy now' or 'sell now'.",
         "You may discuss market context, account state, position sizing, and risk management.",
-        f"MODEL IDENTITY: You are '{effective_model}'. If asked, say exactly that.",
+        f"MODEL IDENTITY: You are '{effective_model}'. If asked what model, say exactly that. If asked who you are, you're Fillmore.",
         "CAPABILITIES: You have live broker context AND function-calling tools. Available tools:",
         "  - get_candles(timeframe, count): Fetch OHLC candles for any timeframe (M1/M5/M15/H1/H4/D)",
         "  - get_trade_history(days_back, limit): Query closed trades from database",
@@ -1295,7 +1346,7 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
         "The Logs & Stats equity curve in the app may use a longer window (e.g. 365 days) — do not claim totals or win rates for the whole chart unless you only summarize the trades actually listed below.",
         "Do not invent weekly P/L or percentages; use the precomputed THIS WEEK / TODAY lines when present, else derive only from listed trades.",
         "",
-        "DELIVERY (desk style): Target ~80 words for simple questions; ~150 max for multi-part. One tight paragraph or short bullets.",
+        "DELIVERY (desk style): Target ~80 words for simple questions; ~150 max for multi-part. One tight paragraph or short bullets. Personality shows up in *how* you phrase the numbers, not in extra words — never pad.",
         "Never say 'I can't give financial advice', 'consult a professional', 'this is not financial advice', or similar disclaimers.",
         "Never say 'based on the data provided' or 'according to my context' — answer directly.",
         "When the user mentions adding to a position, scaling in, or averaging — proactively include: margin cost of the addition, new total margin used, and updated average entry price / breakeven. Do not wait to be asked.",
@@ -1364,6 +1415,32 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
             )
         if rendered:
             lines.append("  Use this summary when evaluating adds/scales and new breakeven.")
+
+    pending = ctx.get("pending_orders")
+    if isinstance(pending, list) and pending:
+        lines.append("")
+        lines.append(f"Pending Orders ({len(pending)}):")
+        for o in pending:
+            tif = o.get("time_in_force") or "?"
+            gtd = o.get("gtd_time")
+            tif_disp = f"{tif}" + (f" until {gtd}" if gtd else "")
+            sl = o.get("sl")
+            tp = o.get("tp")
+            sl_tp_parts = []
+            if sl is not None:
+                sl_tp_parts.append(f"SL {sl}")
+            if tp is not None:
+                sl_tp_parts.append(f"TP {tp}")
+            sl_tp = f" [{' | '.join(sl_tp_parts)}]" if sl_tp_parts else ""
+            lots_disp = o.get("lots")
+            lots_txt = f"{lots_disp} lots" if lots_disp is not None else f"{o.get('units', '?')} units"
+            lines.append(
+                f"  #{o.get('id')} {o.get('type', '?')} {o.get('side')} {lots_txt} @ {o.get('price')}"
+                f"{sl_tp} ({tif_disp})"
+            )
+    elif isinstance(pending, list):
+        lines.append("")
+        lines.append("Pending Orders: none")
 
     closed = ctx.get("recent_closed_trades")
     if closed:
@@ -1674,6 +1751,14 @@ _AI_CHAT_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_pending_orders",
+            "description": "Fetch current pending (resting) limit and stop orders on the broker account. Use when the user asks about pending orders, resting orders, working orders, or what limits they have out.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "web_search",
             "description": "Search the web using Brave Search. Use when the user asks about current events, news, market analysis, economic data, or anything that needs live web information. Also useful for looking up specific topics like central bank statements, geopolitical events, or market commentary.",
             "parameters": {
@@ -1856,6 +1941,49 @@ def _exec_analyze_trade_patterns(args: dict, profile_name: str, **_: Any) -> str
     _group_stats("tier_number", "Tier")
     _group_stats("side", "Side")
 
+    return "\n".join(lines)
+
+
+def _exec_get_pending_orders(args: dict, *, profile: ProfileV1, **_: Any) -> str:
+    """List resting limit/stop orders on the broker account."""
+    from adapters.broker import get_adapter
+
+    adapter = get_adapter(profile)
+    if not hasattr(adapter, "list_pending_orders"):
+        return "Pending orders are only available for OANDA accounts on this build."
+    try:
+        adapter.initialize()
+        raw = adapter.list_pending_orders(profile.symbol) or []
+    except Exception as e:
+        return f"Unable to fetch pending orders: {e}"
+    if not raw:
+        return "No pending orders."
+    lines = [f"Pending orders ({len(raw)}):"]
+    for o in raw[:20]:
+        if not isinstance(o, dict):
+            continue
+        try:
+            units_raw = float(o.get("units") or 0)
+        except Exception:
+            units_raw = 0.0
+        side = "BUY" if units_raw > 0 else ("SELL" if units_raw < 0 else "?")
+        lots = abs(units_raw) / 100_000.0 if units_raw else None
+        lots_txt = f"{round(lots, 2)} lots" if lots is not None else f"{abs(units_raw) or '?'} units"
+        sl = (o.get("stopLossOnFill") or {}).get("price") if isinstance(o.get("stopLossOnFill"), dict) else None
+        tp = (o.get("takeProfitOnFill") or {}).get("price") if isinstance(o.get("takeProfitOnFill"), dict) else None
+        sl_tp_parts = []
+        if sl is not None:
+            sl_tp_parts.append(f"SL {sl}")
+        if tp is not None:
+            sl_tp_parts.append(f"TP {tp}")
+        sl_tp = f" [{' | '.join(sl_tp_parts)}]" if sl_tp_parts else ""
+        tif = o.get("timeInForce") or "?"
+        gtd = o.get("gtdTime")
+        tif_disp = tif + (f" until {gtd}" if gtd else "")
+        lines.append(
+            f"  #{o.get('id')} {o.get('type', '?')} {side} {lots_txt} @ {o.get('price')}"
+            f"{sl_tp} ({tif_disp}) | created {o.get('createTime')}"
+        )
     return "\n".join(lines)
 
 
@@ -2318,6 +2446,7 @@ _TOOL_EXECUTORS: dict[str, Any] = {
     "get_cross_asset_bias": lambda args, **kw: _exec_get_cross_asset_bias(**kw),
     "get_economic_calendar": _exec_get_economic_calendar,
     "get_news_headlines": _exec_get_news_headlines,
+    "get_pending_orders": _exec_get_pending_orders,
     "web_search": _exec_web_search,
 }
 
