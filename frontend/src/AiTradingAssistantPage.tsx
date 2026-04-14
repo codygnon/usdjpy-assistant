@@ -299,6 +299,7 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
             const labels: Record<string, string> = {
               get_candles: 'Fetching candles...',
               get_trade_history: 'Loading trades...',
+              get_ai_suggestion_history: 'Loading Fillmore history...',
               get_trade_details: 'Looking up trade...',
               analyze_trade_patterns: 'Analyzing patterns...',
               get_cross_asset_bias: 'Checking macro bias...',

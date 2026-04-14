@@ -1329,12 +1329,13 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
         "CAPABILITIES: You have live broker context AND function-calling tools. Available tools:",
         "  - get_candles(timeframe, count): Fetch OHLC candles for any timeframe (M1/M5/M15/H1/H4/D)",
         "  - get_trade_history(days_back, limit): Query closed trades from database",
+        "  - get_ai_suggestion_history(days_back, limit, suggestion_id, oanda_order_id, action, outcome_status): Query Fillmore's AI suggestion history, including edited fields, market context, placed orders, and outcomes",
         "  - analyze_trade_patterns(days_back): Win/loss stats by session, tier, entry type",
         "  - get_cross_asset_bias(): Full macro bias reading (oil, DXY, combined USDJPY implication)",
         "  - get_economic_calendar(days_ahead): Upcoming high-impact USD/JPY events (FOMC, NFP, BOJ, CPI)",
         "  - get_news_headlines(count): Recent USDJPY/forex news from RSS feeds",
         "  - web_search(query, count): Full web search via Brave Search — use for current events, analysis, central bank statements, geopolitical context, or any question needing live web data",
-        "Use tools proactively when the user's question would benefit from fresh data. Prefer web_search for broad questions about markets or events. Use get_news_headlines for quick headline scans. Use get_economic_calendar for upcoming events, and get_trade_history for specific past trades.",
+        "Use tools proactively when the user's question would benefit from fresh data. Prefer web_search for broad questions about markets or events. Use get_news_headlines for quick headline scans. Use get_economic_calendar for upcoming events, get_trade_history for specific past trades, and get_ai_suggestion_history for Fillmore-generated idea history.",
         "Never mention training-data cutoff dates or generic model limitations.",
         "You may answer general knowledge questions using web_search if needed. You are not limited to trading topics.",
         "",
@@ -1704,6 +1705,24 @@ _AI_CHAT_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_ai_suggestion_history",
+            "description": "Query Fillmore's AI suggestion history, including generated ideas, edited fields, placed orders, market snapshot, and eventual outcomes. Use when the user asks about AI-generated trades, specific suggestion IDs, specific order IDs, or why a Fillmore idea was edited, cancelled, filled, or left open.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days_back": {"type": "integer", "minimum": 1, "maximum": 365, "description": "How many days back to search (default 30)"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Max suggestion rows to return (default 10)"},
+                    "suggestion_id": {"type": "string", "description": "Optional exact Fillmore suggestion_id to inspect"},
+                    "oanda_order_id": {"type": "string", "description": "Optional broker order id to inspect"},
+                    "action": {"type": "string", "enum": ["placed", "rejected"], "description": "Optional action filter"},
+                    "outcome_status": {"type": "string", "enum": ["filled", "cancelled", "expired"], "description": "Optional outcome filter"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "analyze_trade_patterns",
             "description": "Analyze win/loss patterns grouped by session (Tokyo/London/NY), entry type, and tier. Use when the user asks about which setups work best or worst.",
             "parameters": {
@@ -1873,6 +1892,136 @@ def _exec_get_trade_history(args: dict, profile_name: str, **_: Any) -> str:
         lines.append("  " + " ".join(parts))
 
     return "\n".join(lines)
+
+
+def _exec_get_ai_suggestion_history(args: dict, profile_name: str, **_: Any) -> str:
+    """Query Fillmore AI suggestion history from the tracker DB."""
+    from api import suggestion_tracker
+
+    days_back = min(int(args.get("days_back", 30)), 365)
+    limit = min(int(args.get("limit", 10)), 50)
+    suggestion_id = str(args.get("suggestion_id") or "").strip()
+    order_id = str(args.get("oanda_order_id") or "").strip()
+    action_filter = str(args.get("action") or "").strip().lower()
+    outcome_filter = str(args.get("outcome_status") or "").strip().lower()
+
+    db_path = LOGS_DIR / profile_name / "ai_suggestions.sqlite"
+    if not db_path.exists():
+        return "No Fillmore suggestion history found for this profile."
+
+    if order_id:
+        row = suggestion_tracker.get_by_order_id(db_path, order_id)
+        if row is None:
+            return f"No Fillmore suggestion found for order {order_id}."
+        return _format_ai_suggestion_rows([row], heading=f"Fillmore suggestion for order {order_id}:")
+
+    history = suggestion_tracker.get_history(db_path, limit=500, offset=0)
+    items = list(history.get("items") or [])
+    if not items:
+        return "No Fillmore suggestion history found for this profile."
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
+
+    def _created_after(row: dict[str, Any]) -> bool:
+        created = row.get("created_utc")
+        try:
+            dt = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+        except Exception:
+            return False
+        return dt >= cutoff
+
+    rows = [row for row in items if _created_after(row)]
+    if suggestion_id:
+        rows = [row for row in rows if str(row.get("suggestion_id") or "") == suggestion_id]
+    if action_filter:
+        rows = [row for row in rows if str(row.get("action") or "").lower() == action_filter]
+    if outcome_filter:
+        rows = [row for row in rows if str(row.get("outcome_status") or "").lower() == outcome_filter]
+
+    if not rows:
+        filters: list[str] = []
+        if suggestion_id:
+            filters.append(f"suggestion_id={suggestion_id}")
+        if action_filter:
+            filters.append(f"action={action_filter}")
+        if outcome_filter:
+            filters.append(f"outcome_status={outcome_filter}")
+        if not filters:
+            filters.append(f"last {days_back}d")
+        return f"No Fillmore suggestions matched ({', '.join(filters)})."
+
+    return _format_ai_suggestion_rows(
+        rows[:limit],
+        heading=f"Fillmore suggestion history (last {days_back}d, showing {min(limit, len(rows))} of {len(rows)}):",
+    )
+
+
+def _format_ai_suggestion_rows(rows: list[dict[str, Any]], *, heading: str) -> str:
+    lines = [heading]
+    for row in rows:
+        created = str(row.get("created_utc") or "")[:16]
+        side = str(row.get("side") or "?").upper()
+        limit_px = row.get("limit_price")
+        sl = row.get("sl")
+        tp = row.get("tp")
+        lots = row.get("lots")
+        model = str(row.get("model") or "?")
+        confidence = str(row.get("confidence") or "?")
+        action = str(row.get("action") or "none")
+        outcome = str(row.get("outcome_status") or row.get("win_loss") or "open")
+        order_id = row.get("oanda_order_id")
+        trade_id = row.get("trade_id")
+        exit_strategy = str((row.get("placed_order") or {}).get("exit_strategy") or row.get("exit_strategy") or "")
+
+        head = f"  {created} | {model} | {side} {limit_px} SL {sl} TP {tp} lots {lots} | {confidence} | action={action} | outcome={outcome}"
+        lines.append(head)
+
+        meta: list[str] = [f"id={row.get('suggestion_id')}"]
+        if order_id:
+            meta.append(f"order={order_id}")
+        if trade_id:
+            meta.append(f"trade={trade_id}")
+        if exit_strategy:
+            meta.append(f"exit={exit_strategy}")
+        lines.append("    " + " | ".join(meta))
+
+        edited_fields = row.get("edited_fields") or {}
+        if isinstance(edited_fields, dict) and edited_fields:
+            edits = []
+            for key, change in list(edited_fields.items())[:6]:
+                before = change.get("before") if isinstance(change, dict) else None
+                after = change.get("after") if isinstance(change, dict) else None
+                edits.append(f"{key}: {before} -> {after}")
+            lines.append("    edited: " + "; ".join(edits))
+
+        snap = row.get("market_snapshot") or {}
+        session = ((snap.get("session") or {}).get("overlap") or _join_list((snap.get("session") or {}).get("active_sessions")))
+        macro = (snap.get("macro_bias") or {}).get("combined_bias")
+        vol = (snap.get("volatility") or {}).get("label")
+        spread = snap.get("spread_pips")
+        ctx_bits = []
+        if session:
+            ctx_bits.append(f"session={session}")
+        if macro:
+            ctx_bits.append(f"macro={macro}")
+        if vol:
+            ctx_bits.append(f"vol={vol}")
+        if spread is not None:
+            ctx_bits.append(f"spread={spread}p")
+        if ctx_bits:
+            lines.append("    context: " + ", ".join(ctx_bits))
+
+        rationale = str(row.get("rationale") or "").strip()
+        if rationale:
+            lines.append(f"    rationale: {rationale[:320]}")
+    return "\n".join(lines)
+
+
+def _join_list(values: Any) -> str:
+    if not isinstance(values, list):
+        return ""
+    cleaned = [str(v).strip() for v in values if str(v).strip()]
+    return " + ".join(cleaned)
 
 
 def _exec_analyze_trade_patterns(args: dict, profile_name: str, **_: Any) -> str:
@@ -2442,6 +2591,7 @@ def build_trade_suggestion_news_block(
 _TOOL_EXECUTORS: dict[str, Any] = {
     "get_candles": _exec_get_candles,
     "get_trade_history": _exec_get_trade_history,
+    "get_ai_suggestion_history": _exec_get_ai_suggestion_history,
     "analyze_trade_patterns": _exec_analyze_trade_patterns,
     "get_cross_asset_bias": lambda args, **kw: _exec_get_cross_asset_bias(**kw),
     "get_economic_calendar": _exec_get_economic_calendar,
