@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Generator
 
+import pandas as pd
 from core.profile import ProfileV1
 
 
@@ -2703,6 +2704,7 @@ def _exec_get_ai_suggestion_history(args: dict, profile_name: str, **_: Any) -> 
         row = suggestion_tracker.get_by_order_id(db_path, order_id)
         if row is None:
             return f"No Fillmore suggestion found for order {order_id}."
+        _attach_ai_suggestion_trade_results([row], profile_name)
         return _format_ai_suggestion_rows([row], heading=f"Fillmore suggestion for order {order_id}:")
 
     history = suggestion_tracker.get_history(db_path, limit=500, offset=0)
@@ -2740,10 +2742,112 @@ def _exec_get_ai_suggestion_history(args: dict, profile_name: str, **_: Any) -> 
             filters.append(f"last {days_back}d")
         return f"No Fillmore suggestions matched ({', '.join(filters)})."
 
+    _attach_ai_suggestion_trade_results(rows, profile_name)
+
     return _format_ai_suggestion_rows(
         rows[:limit],
         heading=f"Fillmore suggestion history (last {days_back}d, showing {min(limit, len(rows))} of {len(rows)}):",
     )
+
+
+def _attach_ai_suggestion_trade_results(rows: list[dict[str, Any]], profile_name: str) -> None:
+    """Enrich suggestion rows with actual ai_manual trade results from assistant.db."""
+    if not rows:
+        return
+
+    from storage.sqlite_store import SqliteStore
+
+    db_path = LOGS_DIR / profile_name / "assistant.db"
+    if not db_path.exists():
+        for row in rows:
+            _set_resolved_suggestion_result(row, None)
+        return
+
+    try:
+        store = SqliteStore(db_path)
+        df = store.read_trades_df(profile_name)
+    except Exception:
+        for row in rows:
+            _set_resolved_suggestion_result(row, None)
+        return
+
+    trade_by_id: dict[str, dict[str, Any]] = {}
+    trade_by_order: dict[str, dict[str, Any]] = {}
+    if not df.empty:
+        ai_df = df[df["entry_type"].fillna("").str.lower() == "ai_manual"].copy() if "entry_type" in df.columns else df.iloc[0:0].copy()
+        for _, rec in ai_df.iterrows():
+            trade = rec.to_dict()
+            trade_id = str(trade.get("trade_id") or "").strip()
+            if trade_id:
+                trade_by_id[trade_id] = trade
+            order_val = trade.get("mt5_order_id")
+            if order_val is not None and not pd.isna(order_val):
+                try:
+                    trade_by_order[str(int(float(order_val)))] = trade
+                except (TypeError, ValueError):
+                    trade_by_order[str(order_val).strip()] = trade
+
+    for row in rows:
+        linked_trade = None
+        trade_id = str(row.get("trade_id") or "").strip()
+        order_id = str(row.get("oanda_order_id") or "").strip()
+        if trade_id and trade_id in trade_by_id:
+            linked_trade = trade_by_id[trade_id]
+        elif order_id and order_id in trade_by_order:
+            linked_trade = trade_by_order[order_id]
+        _set_resolved_suggestion_result(row, linked_trade)
+
+
+def _set_resolved_suggestion_result(row: dict[str, Any], linked_trade: dict[str, Any] | None) -> None:
+    row["linked_trade"] = linked_trade
+    action = str(row.get("action") or "").strip().lower()
+    outcome = str(row.get("outcome_status") or "").strip().lower()
+    win_loss = str(row.get("win_loss") or "").strip().lower()
+
+    if linked_trade:
+        exit_price = linked_trade.get("exit_price")
+        if exit_price is not None and not pd.isna(exit_price):
+            pnl = linked_trade.get("profit")
+            pips = linked_trade.get("pips")
+            exit_reason = linked_trade.get("exit_reason")
+            closed_at = linked_trade.get("exit_timestamp_utc")
+            wl = win_loss
+            if not wl:
+                try:
+                    pnl_f = float(pnl or 0.0)
+                    wl = "win" if pnl_f > 0 else "loss" if pnl_f < 0 else "breakeven"
+                except Exception:
+                    wl = "closed"
+            row["resolved_outcome"] = f"closed/{wl}"
+            row["resolved_result"] = {
+                "pnl": None if pnl is None or pd.isna(pnl) else float(pnl),
+                "pips": None if pips is None or pd.isna(pips) else float(pips),
+                "exit_reason": str(exit_reason or ""),
+                "closed_at": str(closed_at or ""),
+            }
+            return
+        row["resolved_outcome"] = "filled/open"
+        row["resolved_result"] = {
+            "entry_price": None if linked_trade.get("entry_price") is None or pd.isna(linked_trade.get("entry_price")) else float(linked_trade.get("entry_price")),
+            "size_lots": None if linked_trade.get("size_lots") is None or pd.isna(linked_trade.get("size_lots")) else float(linked_trade.get("size_lots")),
+            "timestamp_utc": str(linked_trade.get("timestamp_utc") or ""),
+        }
+        return
+
+    if outcome:
+        row["resolved_outcome"] = outcome
+        row["resolved_result"] = {}
+        return
+    if action == "placed":
+        row["resolved_outcome"] = "pending"
+        row["resolved_result"] = {}
+        return
+    if action == "rejected":
+        row["resolved_outcome"] = "rejected"
+        row["resolved_result"] = {}
+        return
+    row["resolved_outcome"] = "generated_only"
+    row["resolved_result"] = {}
 
 
 def _format_ai_suggestion_rows(rows: list[dict[str, Any]], *, heading: str) -> str:
@@ -2758,7 +2862,7 @@ def _format_ai_suggestion_rows(rows: list[dict[str, Any]], *, heading: str) -> s
         model = str(row.get("model") or "?")
         confidence = str(row.get("confidence") or "?")
         action = str(row.get("action") or "none")
-        outcome = str(row.get("outcome_status") or row.get("win_loss") or "open")
+        outcome = str(row.get("resolved_outcome") or row.get("outcome_status") or row.get("win_loss") or "open")
         order_id = row.get("oanda_order_id")
         trade_id = row.get("trade_id")
         exit_strategy = str((row.get("placed_order") or {}).get("exit_strategy") or row.get("exit_strategy") or "")
@@ -2771,6 +2875,10 @@ def _format_ai_suggestion_rows(rows: list[dict[str, Any]], *, heading: str) -> s
             meta.append(f"order={order_id}")
         if trade_id:
             meta.append(f"trade={trade_id}")
+        linked_trade = row.get("linked_trade") or {}
+        linked_trade_id = str(linked_trade.get("trade_id") or "").strip()
+        if linked_trade_id and linked_trade_id != str(trade_id or "").strip():
+            meta.append(f"linked_trade={linked_trade_id}")
         if exit_strategy:
             meta.append(f"exit={exit_strategy}")
         lines.append("    " + " | ".join(meta))
@@ -2800,6 +2908,37 @@ def _format_ai_suggestion_rows(rows: list[dict[str, Any]], *, heading: str) -> s
             ctx_bits.append(f"spread={spread}p")
         if ctx_bits:
             lines.append("    context: " + ", ".join(ctx_bits))
+
+        resolved = row.get("resolved_result") or {}
+        if outcome.startswith("closed/"):
+            pnl = resolved.get("pnl")
+            pips = resolved.get("pips")
+            exit_reason = str(resolved.get("exit_reason") or "").strip()
+            closed_at = str(resolved.get("closed_at") or "").strip()
+            result_bits = []
+            if pips is not None:
+                result_bits.append(f"pips={float(pips):+.1f}")
+            if pnl is not None:
+                result_bits.append(f"pnl=${float(pnl):+,.2f}")
+            if exit_reason:
+                result_bits.append(f"exit={exit_reason}")
+            if closed_at:
+                result_bits.append(f"closed={closed_at[:16]}")
+            if result_bits:
+                lines.append("    result: " + " | ".join(result_bits))
+        elif outcome == "filled/open":
+            entry_price = resolved.get("entry_price")
+            size_lots = resolved.get("size_lots")
+            ts = str(resolved.get("timestamp_utc") or "").strip()
+            result_bits = []
+            if entry_price is not None:
+                result_bits.append(f"entry={float(entry_price):.3f}")
+            if size_lots is not None:
+                result_bits.append(f"size={float(size_lots)} lots")
+            if ts:
+                result_bits.append(f"filled={ts[:16]}")
+            if result_bits:
+                lines.append("    result: " + " | ".join(result_bits))
 
         rationale = str(row.get("rationale") or "").strip()
         if rationale:
