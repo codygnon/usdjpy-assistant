@@ -15,6 +15,151 @@ const CHAT_STORAGE_PREFIX = 'usdjpy_ai_chat:';
 const MODEL_STORAGE_PREFIX = 'usdjpy_ai_chat_model:';
 const SUGGEST_MODEL_STORAGE_PREFIX = 'usdjpy_ai_suggest_model:';
 
+type ExpiryOptionValue =
+  | 'no_expiry'
+  | '1h'
+  | '2h'
+  | '3h'
+  | '4h'
+  | '5h'
+  | '6h'
+  | '12h'
+  | '18h'
+  | '1d'
+  | '2d'
+  | '1w'
+  | '1m'
+  | '2m'
+  | '3m';
+
+const EXPIRY_OPTIONS: { value: ExpiryOptionValue; label: string }[] = [
+  { value: 'no_expiry', label: 'No Expiry' },
+  { value: '1h', label: '1 Hour' },
+  { value: '2h', label: '2 Hours' },
+  { value: '3h', label: '3 Hours' },
+  { value: '4h', label: '4 Hours' },
+  { value: '5h', label: '5 Hours' },
+  { value: '6h', label: '6 Hours' },
+  { value: '12h', label: '12 Hours' },
+  { value: '18h', label: '18 Hours' },
+  { value: '1d', label: '1 Day' },
+  { value: '2d', label: '2 Days' },
+  { value: '1w', label: '1 Week' },
+  { value: '1m', label: '1 Month' },
+  { value: '2m', label: '2 Months' },
+  { value: '3m', label: '3 Months' },
+];
+
+const DEFAULT_EXPIRY_OPTION: ExpiryOptionValue = '1d';
+
+function addExpiryDuration(base: Date, option: ExpiryOptionValue): Date | null {
+  if (option === 'no_expiry') return null;
+  const out = new Date(base.getTime());
+  switch (option) {
+    case '1h':
+      out.setUTCHours(out.getUTCHours() + 1);
+      return out;
+    case '2h':
+      out.setUTCHours(out.getUTCHours() + 2);
+      return out;
+    case '3h':
+      out.setUTCHours(out.getUTCHours() + 3);
+      return out;
+    case '4h':
+      out.setUTCHours(out.getUTCHours() + 4);
+      return out;
+    case '5h':
+      out.setUTCHours(out.getUTCHours() + 5);
+      return out;
+    case '6h':
+      out.setUTCHours(out.getUTCHours() + 6);
+      return out;
+    case '12h':
+      out.setUTCHours(out.getUTCHours() + 12);
+      return out;
+    case '18h':
+      out.setUTCHours(out.getUTCHours() + 18);
+      return out;
+    case '1d':
+      out.setUTCDate(out.getUTCDate() + 1);
+      return out;
+    case '2d':
+      out.setUTCDate(out.getUTCDate() + 2);
+      return out;
+    case '1w':
+      out.setUTCDate(out.getUTCDate() + 7);
+      return out;
+    case '1m':
+      out.setUTCMonth(out.getUTCMonth() + 1);
+      return out;
+    case '2m':
+      out.setUTCMonth(out.getUTCMonth() + 2);
+      return out;
+    case '3m':
+      out.setUTCMonth(out.getUTCMonth() + 3);
+      return out;
+  }
+}
+
+function expiryOptionToOrderTiming(option: ExpiryOptionValue): { time_in_force: 'GTC' | 'GTD'; gtd_time_utc: string | null } {
+  if (option === 'no_expiry') {
+    return { time_in_force: 'GTC', gtd_time_utc: null };
+  }
+  const expiresAt = addExpiryDuration(new Date(), option);
+  return {
+    time_in_force: 'GTD',
+    gtd_time_utc: expiresAt ? expiresAt.toISOString() : null,
+  };
+}
+
+function expiryOptionLabel(option: string | null | undefined): string {
+  return EXPIRY_OPTIONS.find((item) => item.value === option)?.label || '1 Day';
+}
+
+function inferExpiryOption(timeInForce: string | null | undefined, gtdTimeUtc: string | null | undefined): ExpiryOptionValue {
+  const tif = String(timeInForce || '').trim().toUpperCase();
+  if (tif === 'GTC') return 'no_expiry';
+  if (tif !== 'GTD' || !gtdTimeUtc) return DEFAULT_EXPIRY_OPTION;
+
+  const target = new Date(gtdTimeUtc);
+  if (Number.isNaN(target.getTime())) return DEFAULT_EXPIRY_OPTION;
+  const now = new Date();
+  const targetMs = target.getTime();
+
+  let best: ExpiryOptionValue = DEFAULT_EXPIRY_OPTION;
+  let bestDiff = Number.POSITIVE_INFINITY;
+  for (const option of EXPIRY_OPTIONS) {
+    if (option.value === 'no_expiry') continue;
+    const candidate = addExpiryDuration(now, option.value);
+    if (!candidate) continue;
+    const diff = Math.abs(candidate.getTime() - targetMs);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = option.value;
+    }
+  }
+  return best;
+}
+
+function normalizeSuggestionExpiry(suggestion: api.AiTradeSuggestion): api.AiTradeSuggestion {
+  const option = inferExpiryOption(suggestion.time_in_force, suggestion.gtd_time_utc);
+  const normalized = { ...suggestion, expiry_option: option };
+  if (!suggestion.time_in_force || (String(suggestion.time_in_force).toUpperCase() === 'GTD' && !suggestion.gtd_time_utc)) {
+    const timing = expiryOptionToOrderTiming(option);
+    normalized.time_in_force = timing.time_in_force;
+    normalized.gtd_time_utc = timing.gtd_time_utc;
+  }
+  return normalized;
+}
+
+function formatExpirySummary(option: string | null | undefined, gtdTimeUtc: string | null | undefined): string {
+  const label = expiryOptionLabel(option);
+  if (!gtdTimeUtc || option === 'no_expiry') return label;
+  const dt = new Date(gtdTimeUtc);
+  if (Number.isNaN(dt.getTime())) return label;
+  return `${label} (${dt.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})`;
+}
+
 function chatStorageKey(profilePath: string): string {
   return `${CHAT_STORAGE_PREFIX}${profilePath}`;
 }
@@ -355,8 +500,9 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
     setIsEditing(false);
     try {
       const s = await api.aiSuggestTrade(profile.name, profile.path, suggestModel || undefined);
-      setSuggestion(s);
-      setEditDraft(s);
+      const normalized = normalizeSuggestionExpiry(s);
+      setSuggestion(normalized);
+      setEditDraft(normalized);
     } catch (e) {
       setSuggestError((e as Error).message || 'Failed to get suggestion');
     } finally {
@@ -368,7 +514,7 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
   const buildEditedFields = useCallback((): Record<string, { before: unknown; after: unknown }> | null => {
     if (!suggestion || !editDraft) return null;
     const diff: Record<string, { before: unknown; after: unknown }> = {};
-    const tracked: (keyof api.AiTradeSuggestion)[] = ['side', 'price', 'sl', 'tp', 'lots', 'time_in_force', 'exit_strategy'];
+    const tracked: (keyof api.AiTradeSuggestion)[] = ['side', 'price', 'sl', 'tp', 'lots', 'time_in_force', 'gtd_time_utc', 'exit_strategy', 'expiry_option'];
     for (const key of tracked) {
       const before = suggestion[key];
       const after = editDraft[key];
@@ -398,14 +544,15 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
     setSuggestError(null);
     try {
       const editedFields = buildEditedFields();
+      const timing = expiryOptionToOrderTiming((editDraft.expiry_option as ExpiryOptionValue | undefined) || DEFAULT_EXPIRY_OPTION);
       const res = await api.placeLimitOrder(profile.name, profile.path, {
         side: editDraft.side,
         price: editDraft.price,
         lots: editDraft.lots,
         sl: editDraft.sl,
         tp: editDraft.tp,
-        time_in_force: editDraft.time_in_force || 'GTC',
-        gtd_time_utc: editDraft.gtd_time_utc,
+        time_in_force: timing.time_in_force,
+        gtd_time_utc: timing.gtd_time_utc,
         comment: `ai_suggest:${editDraft.confidence}`,
         exit_strategy: editDraft.exit_strategy || 'none',
         exit_params: editDraft.exit_params || null,
@@ -449,6 +596,19 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
         return prev;
       }
       return { ...prev, [field]: value };
+    });
+  }, []);
+
+  const updateExpiryOption = useCallback((option: ExpiryOptionValue) => {
+    setEditDraft((prev) => {
+      if (!prev) return prev;
+      const timing = expiryOptionToOrderTiming(option);
+      return {
+        ...prev,
+        expiry_option: option,
+        time_in_force: timing.time_in_force,
+        gtd_time_utc: timing.gtd_time_utc,
+      };
     });
   }, []);
 
@@ -562,28 +722,17 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
               {isEditing ? (
                 <div style={{ display: 'flex', gap: 4 }}>
                   <select
-                    value={editDraft.time_in_force || 'GTC'}
-                    onChange={(e) => {
-                      updateDraft('time_in_force', e.target.value);
-                      if (e.target.value === 'GTC') updateDraft('gtd_time_utc', '');
-                    }}
+                    value={(editDraft.expiry_option as ExpiryOptionValue | undefined) || DEFAULT_EXPIRY_OPTION}
+                    onChange={(e) => updateExpiryOption(e.target.value as ExpiryOptionValue)}
                   >
-                    <option value="GTC">GTC</option>
-                    <option value="GTD">GTD</option>
+                    {EXPIRY_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
                   </select>
-                  {(editDraft.time_in_force || 'GTC') === 'GTD' && (
-                    <input
-                      type="datetime-local"
-                      value={(editDraft.gtd_time_utc || '').slice(0, 16)}
-                      onChange={(e) => updateDraft('gtd_time_utc', e.target.value ? e.target.value + ':00Z' : '')}
-                      style={{ flex: 1 }}
-                    />
-                  )}
                 </div>
               ) : (
                 <div className="field-value" style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>
-                  {editDraft.time_in_force || 'GTC'}
-                  {editDraft.gtd_time_utc ? ` (${editDraft.gtd_time_utc.slice(0, 16)})` : ''}
+                  {formatExpirySummary(editDraft.expiry_option, editDraft.gtd_time_utc)}
                 </div>
               )}
             </div>

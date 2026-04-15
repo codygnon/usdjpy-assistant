@@ -989,6 +989,7 @@ export interface AiTradeSuggestion {
   lots: number;
   time_in_force: string;
   gtd_time_utc: string | null;
+  expiry_option?: string | null;
   rationale: string;
   confidence: string;
   exit_strategy?: string;

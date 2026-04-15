@@ -5870,7 +5870,8 @@ def ai_suggest_trade(
         "- If the IMMINENT EVENT banner is active (<30m to a high-impact release), strongly consider returning confidence='low' "
         "and explaining why you won't plant a limit into the catalyst — unless your rationale names a specific post-event "
         "level worth fading/riding.\n"
-        "- Default time_in_force 'GTC' unless there's a concrete time-based reason for GTD (event, session close, weekly H/L sweep).\n"
+        "- Default time_in_force 'GTD' with gtd_time_utc about 1 day from now unless there's a concrete reason to use another expiry.\n"
+        "- Use 'GTC' only when no-expiry is clearly intentional.\n"
         "\n"
         "MECHANICS:\n"
         "- Limit price must be AWAY from current price (BUY below current bid, SELL above current ask).\n"
@@ -5913,8 +5914,15 @@ def ai_suggest_trade(
         suggestion["sl"] = float(suggestion["sl"])
         suggestion["tp"] = float(suggestion["tp"])
         suggestion["lots"] = float(suggestion["lots"])
-        suggestion.setdefault("time_in_force", "GTC")
-        suggestion.setdefault("gtd_time_utc", None)
+        default_gtd = (datetime.now(timezone.utc) + timedelta(days=1)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        raw_tif = str(suggestion.get("time_in_force") or "").strip().upper()
+        raw_gtd = suggestion.get("gtd_time_utc")
+        if raw_tif == "GTC":
+            suggestion["time_in_force"] = "GTC"
+            suggestion["gtd_time_utc"] = None
+        else:
+            suggestion["time_in_force"] = "GTD"
+            suggestion["gtd_time_utc"] = str(raw_gtd).strip() if raw_gtd else default_gtd
         # Normalize exit strategy + params.
         #   Missing / empty field -> fall back to DEFAULT_AI_EXIT_STRATEGY (so the
         #     trade still gets managed — a silent AI omission must not become "none").
