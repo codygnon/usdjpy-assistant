@@ -11,7 +11,7 @@ import signal
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
