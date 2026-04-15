@@ -604,7 +604,7 @@ class OandaAdapter:
         return deal_id
 
     def get_position_id_from_order(self, order_id: int) -> int | None:
-        # Cache mapping from order_id -> trade_id to avoid repeatedly hitting the transactions endpoint.
+        # Cache mapping from order_id -> trade_id to avoid repeatedly hitting the API.
         try:
             cached = self._order_to_position.get(int(order_id))
         except (TypeError, ValueError):
@@ -613,18 +613,84 @@ class OandaAdapter:
             return cached
 
         aid = self._get_account_id()
-        data = self._req("GET", f"/v3/accounts/{aid}/transactions?orderID={order_id}")
-        for t in data.get("transactions", []):
-            if t.get("type") == "ORDER_FILL" and str(t.get("orderID")) == str(order_id):
-                opened = t.get("tradeOpened", {})
-                tid = opened.get("tradeID")
-                if tid:
-                    try:
-                        tid_int = int(tid)
-                        self._order_to_position[int(order_id)] = tid_int
-                        return tid_int
-                    except (TypeError, ValueError):
-                        return None
+        # Primary: query the order directly. OANDA v20's `/orders/{orderSpecifier}`
+        # returns the order object with its state and, on fill, `tradeOpenedID`.
+        # (Previous implementation tried `/transactions?orderID=X` but `orderID` is
+        # not a valid filter on that endpoint — the response came back with no
+        # `transactions` inline, so filled orders were never linked to their
+        # position and AI-managed exits never engaged.)
+        try:
+            data = self._req("GET", f"/v3/accounts/{aid}/orders/{order_id}")
+            order_obj = data.get("order") or {}
+            state = str(order_obj.get("state") or "").upper()
+            # On fill, the order carries `tradeOpenedID` (new trade) and/or
+            # `tradeReducedID` / `tradeClosedIDs` (reducing/closing an existing
+            # position). For our AI-manual LIMIT flow we always expect a new
+            # trade, but fall back to the reduced/closed IDs just in case.
+            tid_raw = (
+                order_obj.get("tradeOpenedID")
+                or order_obj.get("tradeReducedID")
+                or (order_obj.get("tradeClosedIDs") or [None])[0]
+            )
+            if tid_raw:
+                try:
+                    tid_int = int(tid_raw)
+                    self._order_to_position[int(order_id)] = tid_int
+                    return tid_int
+                except (TypeError, ValueError):
+                    pass
+            # Order was seen but is still pending / cancelled / triggered without
+            # a trade link — caller will decide whether to keep waiting.
+            if state in ("CANCELLED", "EXPIRED", "TRIGGERED"):
+                return None
+        except Exception as e:
+            # Fall through to the transaction-history fallback below.
+            print(f"[oanda] get_position_id_from_order({order_id}): orders endpoint failed: {e}")
+
+        # Fallback: scan recent ORDER_FILL transactions (covers the rare case
+        # where the order object has already been archived but the fill
+        # transaction is still in the recent window).
+        try:
+            from datetime import datetime, timedelta, timezone
+
+            to_ts = datetime.now(timezone.utc)
+            from_ts = to_ts - timedelta(days=2)
+            tx_data = self._req(
+                "GET",
+                f"/v3/accounts/{aid}/transactions",
+                params={
+                    "from": _rfc3339_utc(from_ts),
+                    "to": _rfc3339_utc(to_ts),
+                    "type": "ORDER_FILL",
+                    "pageSize": 500,
+                },
+            )
+            pages = tx_data.get("pages") or []
+            candidates: list[dict] = list(tx_data.get("transactions") or [])
+            for page_path in pages:
+                try:
+                    req_path = page_path
+                    if page_path.startswith(self._base):
+                        req_path = page_path[len(self._base):]
+                    elif not page_path.startswith("/"):
+                        req_path = "/" + page_path
+                    page_data = self._req("GET", req_path)
+                    candidates.extend(page_data.get("transactions") or [])
+                except Exception:
+                    continue
+            for t in candidates:
+                if t.get("type") == "ORDER_FILL" and str(t.get("orderID")) == str(order_id):
+                    opened = t.get("tradeOpened") or {}
+                    tid = opened.get("tradeID")
+                    if tid:
+                        try:
+                            tid_int = int(tid)
+                            self._order_to_position[int(order_id)] = tid_int
+                            return tid_int
+                        except (TypeError, ValueError):
+                            return None
+        except Exception as e:
+            print(f"[oanda] get_position_id_from_order({order_id}): transaction-history fallback failed: {e}")
         return None
 
     def get_deals_by_position(self, ticket: int) -> list:
