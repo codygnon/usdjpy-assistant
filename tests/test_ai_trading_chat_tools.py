@@ -148,3 +148,65 @@ def test_exec_get_ai_suggestion_history_resolves_closed_trade_results_from_assis
     assert "outcome=closed/win" in out
     assert "linked_trade=ai_manual:127777:1" in out
     assert "result: pips=+8.6 | pnl=$+270.50 | exit=tp_hit | closed=2026-04-14T07:28" in out
+
+
+def test_exec_get_ai_suggestion_history_falls_back_to_order_id_match_for_legacy_trade_rows(tmp_path: Path, monkeypatch) -> None:
+    profile_name = "newera8"
+    log_dir = tmp_path / profile_name
+    log_dir.mkdir(parents=True, exist_ok=True)
+    suggestions_db = log_dir / "ai_suggestions.sqlite"
+    assistant_db = log_dir / "assistant.db"
+
+    sid = suggestion_tracker.log_generated(
+        suggestions_db,
+        profile=profile_name,
+        model="gpt-5.4",
+        suggestion=_suggestion(),
+        ctx=_ctx(),
+    )
+    suggestion_tracker.log_action(
+        suggestions_db,
+        suggestion_id=sid,
+        action="placed",
+        edited_fields={},
+        placed_order={"side": "sell", "price": 159.3, "lots": 5.0, "exit_strategy": "tp1_be_m5_trail"},
+        oanda_order_id="99123",
+    )
+
+    store = SqliteStore(assistant_db)
+    store.init_db()
+    store.insert_trade(
+        {
+            "trade_id": "legacy_trade_99123",
+            "timestamp_utc": "2026-04-10T12:01:00+00:00",
+            "profile": profile_name,
+            "symbol": "USD_JPY",
+            "side": "sell",
+            "entry_price": 159.303,
+            "stop_price": 159.43,
+            "target_price": 159.22,
+            "size_lots": 5.0,
+            "notes": "manual import from broker history",
+            "snapshot_id": None,
+            "exit_price": 159.251,
+            "exit_timestamp_utc": "2026-04-10T12:14:00+00:00",
+            "exit_reason": "manual_close",
+            "pips": 5.2,
+            "mt5_order_id": 99123,
+            "profit": 155.0,
+            "entry_type": "",
+            "opened_by": "",
+            "policy_type": "",
+        }
+    )
+
+    monkeypatch.setattr(ai_trading_chat, "LOGS_DIR", tmp_path)
+
+    out = ai_trading_chat._exec_get_ai_suggestion_history(
+        {"days_back": 30, "limit": 5, "oanda_order_id": "99123"},
+        profile_name=profile_name,
+    )
+
+    assert "outcome=closed/win" in out
+    assert "linked_trade=legacy_trade_99123" in out
+    assert "result: pips=+5.2 | pnl=$+155.00 | exit=manual_close | closed=2026-04-10T12:14" in out

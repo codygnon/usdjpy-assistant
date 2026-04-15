@@ -2771,11 +2771,29 @@ def _attach_ai_suggestion_trade_results(rows: list[dict[str, Any]], profile_name
             _set_resolved_suggestion_result(row, None)
         return
 
+    def _is_fillmore_trade(trade: dict[str, Any]) -> bool:
+        entry_type = str(trade.get("entry_type") or "").strip().lower()
+        policy_type = str(trade.get("policy_type") or "").strip().lower()
+        opened_by = str(trade.get("opened_by") or "").strip().lower()
+        trade_id = str(trade.get("trade_id") or "").strip().lower()
+        notes = str(trade.get("notes") or "").strip().lower()
+        if entry_type == "ai_manual":
+            return True
+        if policy_type == "ai_manual":
+            return True
+        if opened_by == "ai_manual":
+            return True
+        if trade_id.startswith("ai_manual:"):
+            return True
+        if notes.startswith("ai_manual:") or ":order_" in notes:
+            return True
+        return False
+
     trade_by_id: dict[str, dict[str, Any]] = {}
-    trade_by_order: dict[str, dict[str, Any]] = {}
+    fillmore_trade_by_order: dict[str, dict[str, Any]] = {}
+    any_trade_by_order: dict[str, dict[str, Any]] = {}
     if not df.empty:
-        ai_df = df[df["entry_type"].fillna("").str.lower() == "ai_manual"].copy() if "entry_type" in df.columns else df.iloc[0:0].copy()
-        for _, rec in ai_df.iterrows():
+        for _, rec in df.iterrows():
             trade = rec.to_dict()
             trade_id = str(trade.get("trade_id") or "").strip()
             if trade_id:
@@ -2783,9 +2801,13 @@ def _attach_ai_suggestion_trade_results(rows: list[dict[str, Any]], profile_name
             order_val = trade.get("mt5_order_id")
             if order_val is not None and not pd.isna(order_val):
                 try:
-                    trade_by_order[str(int(float(order_val)))] = trade
+                    order_key = str(int(float(order_val)))
                 except (TypeError, ValueError):
-                    trade_by_order[str(order_val).strip()] = trade
+                    order_key = str(order_val).strip()
+                if order_key:
+                    any_trade_by_order[order_key] = trade
+                    if _is_fillmore_trade(trade):
+                        fillmore_trade_by_order[order_key] = trade
 
     for row in rows:
         linked_trade = None
@@ -2793,8 +2815,10 @@ def _attach_ai_suggestion_trade_results(rows: list[dict[str, Any]], profile_name
         order_id = str(row.get("oanda_order_id") or "").strip()
         if trade_id and trade_id in trade_by_id:
             linked_trade = trade_by_id[trade_id]
-        elif order_id and order_id in trade_by_order:
-            linked_trade = trade_by_order[order_id]
+        elif order_id and order_id in fillmore_trade_by_order:
+            linked_trade = fillmore_trade_by_order[order_id]
+        elif order_id and order_id in any_trade_by_order:
+            linked_trade = any_trade_by_order[order_id]
         _set_resolved_suggestion_result(row, linked_trade)
 
 

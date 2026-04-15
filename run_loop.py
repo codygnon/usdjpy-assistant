@@ -505,6 +505,7 @@ MIN_CLOSE_LOTS = 0.01
 # Throttle for sticky TP1 retries: don't hammer OANDA on every poll cycle.
 _tp1_retry_last: dict[int, float] = {}  # position_id -> last retry timestamp
 _TP1_RETRY_INTERVAL = 3.0  # seconds between retry attempts
+_AI_MANUAL_FILL_LOOKUP_GRACE_SEC = 90.0
 
 # ---------------------------------------------------------------------------
 # AI-suggested manual trades: fill detection + managed exit watchdog.
@@ -545,6 +546,18 @@ def _watch_ai_managed_pending_orders(profile, adapter, store, state_path) -> Non
     if not pending_list:
         return
 
+    def _fill_lookup_age_seconds(entry: dict[str, Any]) -> float:
+        started = entry.get("fill_lookup_started_at_utc")
+        if not started:
+            return 0.0
+        try:
+            ts = pd.Timestamp(started)
+            if ts.tzinfo is None:
+                ts = ts.tz_localize("UTC")
+            return max(0.0, (pd.Timestamp.now(tz="UTC") - ts).total_seconds())
+        except Exception:
+            return 0.0
+
     # Fetch current pending orders once; anything NOT in this set has either
     # filled, been cancelled, or expired.
     try:
@@ -584,7 +597,22 @@ def _watch_ai_managed_pending_orders(profile, adapter, store, state_path) -> Non
             continue
 
         if position_id is None:
-            # Cancelled / expired / rejected — drop it quietly.
+            # OANDA can briefly lag when a pending order leaves the book before the
+            # fill transaction is queryable by order id. Keep the descriptor around
+            # for a short grace period so managed exits still attach to real fills.
+            lookup_age = _fill_lookup_age_seconds(entry)
+            if lookup_age < _AI_MANUAL_FILL_LOOKUP_GRACE_SEC:
+                if not entry.get("fill_lookup_started_at_utc"):
+                    entry["fill_lookup_started_at_utc"] = pd.Timestamp.now(tz="UTC").isoformat()
+                    changed = True
+                kept.append(entry)
+                print(
+                    f"[{profile.profile_name}] ai_manual watchdog: order {order_id} left pending book; "
+                    f"awaiting fill confirmation ({lookup_age:.0f}s/{_AI_MANUAL_FILL_LOOKUP_GRACE_SEC:.0f}s)"
+                )
+                continue
+
+            # Cancelled / expired / rejected — drop it after the grace period.
             print(f"[{profile.profile_name}] ai_manual watchdog: order {order_id} not filled (cancelled/expired), dropping")
             # Stamp outcome on suggestion tracker if linked.
             try:
@@ -629,7 +657,14 @@ def _watch_ai_managed_pending_orders(profile, adapter, store, state_path) -> Non
                 "symbol": profile.symbol,
                 "side": side,
                 "policy_type": "ai_manual",
-                "config_json": json.dumps({"source": "ai_manual", "order_id": order_id}),
+                "config_json": json.dumps(
+                    {
+                        "source": "ai_manual",
+                        "order_id": order_id,
+                        "exit_strategy": entry.get("exit_strategy"),
+                        "exit_params": exit_params,
+                    }
+                ),
                 "entry_price": fill_price,
                 "stop_price": entry.get("sl"),
                 "target_price": entry.get("tp"),
@@ -761,6 +796,17 @@ def _manage_ai_manual_trades(
             except Exception:
                 return None
 
+        def _ai_manual_exit_params(trade_row: dict[str, Any]) -> dict[str, Any]:
+            raw = trade_row.get("config_json")
+            if not raw:
+                return {}
+            try:
+                parsed = json.loads(str(raw))
+            except Exception:
+                return {}
+            data = parsed.get("exit_params") if isinstance(parsed, dict) else {}
+            return data if isinstance(data, dict) else {}
+
         for trade_row in ai_trades:
             try:
                 position_id = trade_row.get("mt5_position_id")
@@ -779,6 +825,7 @@ def _manage_ai_manual_trades(
                 entry = float(trade_row.get("entry_price") or 0.0)
                 if entry <= 0:
                     continue
+                exit_params = _ai_manual_exit_params(trade_row)
                 trail_mode = str(trade_row.get("managed_trail_mode") or "none").lower()
                 tp1_pips = float(trade_row.get("managed_tp1_pips") or 6.0)
                 tp1_pct = float(trade_row.get("managed_tp1_close_pct") or 70.0)
@@ -875,7 +922,7 @@ def _manage_ai_manual_trades(
                     continue  # TP1 + BE only, no further trailing
 
                 if trail_mode == "hwm":
-                    hwm_pips = 3.0
+                    hwm_pips = float(exit_params.get("hwm_trail_pips") or 3.0)
                     stored_peak = trade_row.get("peak_price")
                     if side == "buy":
                         current_peak = max(float(stored_peak) if stored_peak is not None else entry, mid)
@@ -911,7 +958,8 @@ def _manage_ai_manual_trades(
                         store.update_trade(trade_id, {"peak_price": round(current_peak, 5)})
 
                 elif trail_mode == "m1":
-                    ema_val = _last_completed_ema(m1_df, 21)
+                    ema_period = max(2, int(round(float(exit_params.get("trail_ema_period") or 21.0))))
+                    ema_val = _last_completed_ema(m1_df, ema_period)
                     last_close = _last_completed_close(m1_df)
                     if ema_val is None or last_close is None:
                         continue
@@ -967,7 +1015,8 @@ def _manage_ai_manual_trades(
                                     print(f"[{profile.profile_name}] ai_manual M1 close error: {e}")
 
                 elif trail_mode == "m5":
-                    ema_val = _last_completed_ema(m5_df, 20)
+                    ema_period = max(2, int(round(float(exit_params.get("trail_ema_period") or 20.0))))
+                    ema_val = _last_completed_ema(m5_df, ema_period)
                     last_close = _last_completed_close(m5_df)
                     if ema_val is None or last_close is None:
                         continue
