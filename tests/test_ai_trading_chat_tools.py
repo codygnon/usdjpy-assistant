@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from api import ai_trading_chat, suggestion_tracker
+from api import ai_trading_chat, autonomous_fillmore, suggestion_tracker
 from storage.sqlite_store import SqliteStore
 
 
@@ -210,3 +210,53 @@ def test_exec_get_ai_suggestion_history_falls_back_to_order_id_match_for_legacy_
     assert "outcome=closed/win" in out
     assert "linked_trade=legacy_trade_99123" in out
     assert "result: pips=+5.2 | pnl=$+155.00 | exit=manual_close | closed=2026-04-10T12:14" in out
+
+
+def test_exec_get_fillmore_system_info_describes_trade_suggestion_flow() -> None:
+    out = ai_trading_chat._exec_get_fillmore_system_info(
+        {"topic": "trade_suggestion", "include_runtime": False},
+        profile_name="kumatora2",
+    )
+
+    assert "FILLMORE TRADE SUGGESTION" in out
+    assert "manual/operator-assisted flow" in out
+    assert "ai_suggestions.sqlite" in out
+    assert "suggestion_id" in out
+    assert "filled/pending/cancelled/expired" in out
+
+
+def test_exec_get_fillmore_system_info_includes_autonomous_runtime_snapshot(tmp_path: Path, monkeypatch) -> None:
+    profile_name = "kumatora2"
+    log_dir = tmp_path / profile_name
+    log_dir.mkdir(parents=True, exist_ok=True)
+    state_path = log_dir / "runtime_state.json"
+
+    autonomous_fillmore.set_config(
+        state_path,
+        {
+            "mode": "paper",
+            "enabled": True,
+            "order_type": "market",
+            "aggressiveness": "balanced",
+            "min_confidence": "medium",
+            "model": "gpt-5.4-mini",
+            "daily_budget_usd": 3.5,
+            "max_open_ai_trades": 3,
+            "max_daily_loss_usd": 75.0,
+            "max_lots_per_trade": 2.5,
+        },
+    )
+
+    monkeypatch.setattr(ai_trading_chat, "LOGS_DIR", tmp_path)
+
+    out = ai_trading_chat._exec_get_fillmore_system_info(
+        {"topic": "autonomous_fillmore", "include_runtime": True},
+        profile_name=profile_name,
+    )
+
+    assert "AUTONOMOUS FILLMORE" in out
+    assert "CURRENT AUTONOMOUS SNAPSHOT" in out
+    assert "mode=paper enabled=True order_type=market" in out
+    assert "aggressiveness=balanced" in out
+    assert "daily_budget=$3.50" in out
+    assert "max_open_ai_trades=3" in out

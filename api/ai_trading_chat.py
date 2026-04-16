@@ -2027,12 +2027,14 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
         "  - get_candles(timeframe, count): Fetch OHLC candles for any timeframe (M1/M5/M15/H1/H4/D)",
         "  - get_trade_history(days_back, limit): Query closed trades from database",
         "  - get_ai_suggestion_history(days_back, limit, suggestion_id, oanda_order_id, action, outcome_status): Query Fillmore's AI suggestion history, including edited fields, market context, placed orders, and outcomes",
+        "  - get_fillmore_system_info(topic, include_runtime): Explain how Fillmore trade suggestions, autonomous mode, and learning/history work in this build",
         "  - analyze_trade_patterns(days_back): Win/loss stats by session, tier, entry type",
         "  - get_cross_asset_bias(): Full macro bias reading (oil, DXY, combined USDJPY implication)",
         "  - get_economic_calendar(days_ahead): Upcoming high-impact USD/JPY events (FOMC, NFP, BOJ, CPI)",
         "  - get_news_headlines(count): Recent USDJPY/forex news from RSS feeds",
         "  - web_search(query, count): Full web search via Brave Search — use for current events, analysis, central bank statements, geopolitical context, or any question needing live web data",
         "Use tools proactively when the user's question would benefit from fresh data. Prefer web_search for broad questions about markets or events. Use get_news_headlines for quick headline scans. Use get_economic_calendar for upcoming events, get_trade_history for specific past trades, and get_ai_suggestion_history for Fillmore-generated idea history.",
+        "When the user asks how Fillmore's trade suggestion flow, autonomous mode, learning memory, or suggestion tracking works, call get_fillmore_system_info before answering so you describe the real implementation instead of hand-waving.",
         "Never mention training-data cutoff dates or generic model limitations.",
         "You may answer general knowledge questions using web_search if needed. You are not limited to trading topics.",
         "",
@@ -2663,6 +2665,27 @@ _AI_CHAT_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_fillmore_system_info",
+            "description": "Explain how Fillmore's manual trade suggestion flow, autonomous Fillmore engine, and learning/history tracking work in this build. Use when the user asks how Fillmore works, how autonomous mode works, how suggestion history is tracked, or what Fillmore can see about its own trades.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "enum": ["trade_suggestion", "autonomous_fillmore", "history_learning", "all"],
+                        "description": "Which Fillmore subsystem to explain (default all)",
+                    },
+                    "include_runtime": {
+                        "type": "boolean",
+                        "description": "Whether to include the current profile's autonomous config/runtime snapshot when relevant (default true)",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "analyze_trade_patterns",
             "description": "Analyze win/loss patterns grouped by session (Tokyo/London/NY), entry type, and tier. Use when the user asks about which setups work best or worst.",
             "parameters": {
@@ -3124,6 +3147,94 @@ def _join_list(values: Any) -> str:
         return ""
     cleaned = [str(v).strip() for v in values if str(v).strip()]
     return " + ".join(cleaned)
+
+
+def _exec_get_fillmore_system_info(args: dict, profile_name: str, **_: Any) -> str:
+    """Explain Fillmore's own suggestion / autonomous / learning systems."""
+    topic = str(args.get("topic") or "all").strip().lower()
+    if topic not in {"trade_suggestion", "autonomous_fillmore", "history_learning", "all"}:
+        topic = "all"
+    include_runtime = args.get("include_runtime")
+    if include_runtime is None:
+        include_runtime = True
+    include_runtime = bool(include_runtime)
+
+    sections: list[str] = []
+
+    if topic in {"trade_suggestion", "all"}:
+        sections.append(_fillmore_trade_suggestion_help())
+    if topic in {"autonomous_fillmore", "all"}:
+        sections.append(_fillmore_autonomous_help(profile_name, include_runtime=include_runtime))
+    if topic in {"history_learning", "all"}:
+        sections.append(_fillmore_history_learning_help())
+
+    return "\n\n".join(part for part in sections if part.strip())
+
+
+def _fillmore_trade_suggestion_help() -> str:
+    return "\n".join([
+        "FILLMORE TRADE SUGGESTION",
+        "- This is the manual/operator-assisted flow from the Trade Suggestion card in the Fillmore UI.",
+        "- When you generate a suggestion, the server builds live trading context first: account state, spot price/spread, open positions, recent trades, session context, volatility, TA snapshot, price structure, upcoming events, and OANDA-specific extras like macro bias, order book, pending orders, and JPY cross bias when available.",
+        "- The suggest prompt also appends a prefetched external news block and a learning-memory block built from prior Fillmore suggestion outcomes.",
+        "- The model returns one structured JSON idea with side, price, stop, target, lots, time-in-force, expiration, exit_strategy, exit_params, rationale, and confidence.",
+        "- That generated idea is persisted immediately into ai_suggestions.sqlite with a suggestion_id, market snapshot, and the original suggestion fields.",
+        "- In the UI, the user can edit side/price/SL/TP/lots/expiration/exit strategy before placement. Those edits are diffed and logged.",
+        "- If the user places the order, the suggestion row is updated with action=placed, the placed order payload, and the broker order ID. If the user rejects it, action=rejected is stored instead.",
+        "- If the broker order later fills, the system stamps filled_at, fill_price, and the linked local trade_id. If that trade later closes, the suggestion row is updated with realized exit price, P&L, pips, and win/loss result.",
+        "- Net effect: Fillmore can inspect the whole lifecycle of a suggestion: generated -> edited or verbatim -> placed or rejected -> filled/pending/cancelled/expired -> closed result when available.",
+    ])
+
+
+def _fillmore_autonomous_help(profile_name: str, *, include_runtime: bool) -> str:
+    lines = [
+        "AUTONOMOUS FILLMORE",
+        "- This is the unattended engine that runs inside the main trading loop each tick, not the normal chat reply path.",
+        "- It first loads autonomous config/runtime state from the profile runtime_state.json block.",
+        "- Then it evaluates a three-layer gate before paying for an LLM call.",
+        "- Layer 1 hard filters: enabled flag, mode not off, spread cap, no-trade-zone flag, max open AI trades, daily loss cap, daily LLM budget cap, allowed trading sessions, and minimum cooldown since the last model call.",
+        "- Layer 2 adaptive throttle: if Fillmore is in a cooldown from repeated no-trade replies, a loss streak, or too many consecutive errors, it blocks before calling the model.",
+        "- Layer 3 signal gate: this depends on aggressiveness. Conservative wants M3 trend + M1 stack + pullback/zone + daily high/low buffer. Balanced wants aligned M3 and M1. Aggressive only needs some trend evidence. Very aggressive is close to hard-filters-only.",
+        "- If the gate passes, Autonomous Fillmore calls the same suggestion pipeline as manual suggestions, including live context, news enrichment, and learning memory.",
+        "- Then it compares returned confidence vs min_confidence. Low-confidence ideas can be skipped even after the gate passed.",
+        "- Mode behavior: OFF disables it, SHADOW logs would-have-traded decisions without placing, PAPER places to the OANDA practice environment, and LIVE places to the real broker account.",
+        "- Order type behavior: MARKET sends immediately at the broker, LIMIT registers a resting pending order.",
+        "- When a trade is placed, the order id and suggestion id are written back into autonomous runtime stats. Suggestion history and later trade results are meant to feed the same learning loop as manual suggestions.",
+    ]
+
+    if include_runtime:
+        try:
+            from api import autonomous_fillmore as _af
+
+            state_path = LOGS_DIR / profile_name / "runtime_state.json"
+            cfg = _af.get_config(state_path)
+            stats = _af.build_stats(state_path, cfg=cfg)
+            today = stats.get("today") or {}
+            throttle = stats.get("throttle") or {}
+            lines.extend([
+                "CURRENT AUTONOMOUS SNAPSHOT",
+                f"- mode={cfg.get('mode')} enabled={bool(cfg.get('enabled'))} order_type={cfg.get('order_type')} aggressiveness={cfg.get('aggressiveness')} min_confidence={cfg.get('min_confidence')} model={cfg.get('model')}",
+                f"- budgets/caps: daily_budget=${float(cfg.get('daily_budget_usd') or 0):.2f}, max_open_ai_trades={int(cfg.get('max_open_ai_trades') or 0)}, max_daily_loss=${float(cfg.get('max_daily_loss_usd') or 0):.2f}, max_lots={float(cfg.get('max_lots_per_trade') or 0):.2f}",
+                f"- activity today: llm_calls={int(today.get('llm_calls') or 0)}, trades_placed={int(today.get('trades_placed') or 0)}, spend=${float(today.get('spend_usd') or 0):.4f}, pnl=${float(today.get('pnl_usd') or 0):.2f}",
+                f"- throttle: active={bool(throttle.get('active'))}, reason={throttle.get('reason') or 'none'}, no_trade_streak={int(throttle.get('consecutive_no_trade_replies') or 0)}, loss_streak={int(throttle.get('consecutive_losses') or 0)}, consecutive_errors={int(throttle.get('consecutive_errors') or 0)}",
+            ])
+        except Exception as e:
+            lines.append(f"- Current autonomous runtime snapshot unavailable: {e}")
+
+    return "\n".join(lines)
+
+
+def _fillmore_history_learning_help() -> str:
+    return "\n".join([
+        "FILLMORE HISTORY AND LEARNING",
+        "- Fillmore suggestion history lives in ai_suggestions.sqlite on a per-profile basis. It is separate from the closed-trade ledger in assistant.db.",
+        "- The suggestion tracker stores the generated idea, market snapshot, edits, placed order payload, broker order id, fill status, linked trade id, and eventual realized result when matched.",
+        "- To answer outcome questions, Fillmore can inspect both suggestion history and trade history. Suggestion rows hold the idea/order trail; trade rows hold the execution/close trail.",
+        "- The learning prompt block is not a raw dump of every old suggestion. It builds a compact summary from prior rows: generated/placed/rejected counts, fill and cancel rates, closed-trade win rate, average pnl/pips/hold time, top edited fields, exit strategy results, and recent examples.",
+        "- When current live context is available, the learning block tries to select a matched analog cohort by session, macro bias, and volatility before falling back to broad history.",
+        "- That means Fillmore is supposed to learn from behavior in similar conditions rather than blindly replaying the whole database every time.",
+        "- Suggestion history can still differ from broker trade history in shape: generated-only or rejected suggestions never become trades, placed limits can remain pending/cancel/expire, and filled trades may close later in the broker ledger before being summarized back into suggestion history.",
+    ])
 
 
 def _exec_analyze_trade_patterns(args: dict, profile_name: str, **_: Any) -> str:
@@ -3694,6 +3805,7 @@ _TOOL_EXECUTORS: dict[str, Any] = {
     "get_candles": _exec_get_candles,
     "get_trade_history": _exec_get_trade_history,
     "get_ai_suggestion_history": _exec_get_ai_suggestion_history,
+    "get_fillmore_system_info": _exec_get_fillmore_system_info,
     "analyze_trade_patterns": _exec_analyze_trade_patterns,
     "get_cross_asset_bias": lambda args, **kw: _exec_get_cross_asset_bias(**kw),
     "get_economic_calendar": _exec_get_economic_calendar,
