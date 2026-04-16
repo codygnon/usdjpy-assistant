@@ -319,7 +319,13 @@ const MODE_LABELS: { value: api.AutonomousConfig['mode']; label: string; color: 
   { value: 'live',   label: 'LIVE',   color: '#f87171' },
 ];
 
-function AutonomousFillmorePanel({ profileName }: { profileName: string }) {
+function AutonomousFillmorePanel({
+  profileName,
+  modelOptions,
+}: {
+  profileName: string;
+  modelOptions: string[];
+}) {
   const [cfg, setCfg] = useState<api.AutonomousConfig | null>(null);
   const [gateModes, setGateModes] = useState<Record<string, api.AutonomousGateMode>>({});
   const [stats, setStats] = useState<api.AutonomousStats | null>(null);
@@ -382,6 +388,9 @@ function AutonomousFillmorePanel({ profileName }: { profileName: string }) {
   const today = stats?.today;
   const thr = stats?.throttle;
   const window_ = stats?.window;
+  const autonomousModelOptions = modelOptions.includes(cfg.model)
+    ? modelOptions
+    : [cfg.model, ...modelOptions.filter((m) => m !== cfg.model)];
 
   // Budget bar color
   const budgetPct = today ? Math.min(100, today.budget_used_pct) : 0;
@@ -574,14 +583,27 @@ function AutonomousFillmorePanel({ profileName }: { profileName: string }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
         <div>
           <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Model</label>
-          <input
-            type="text"
-            value={cfg.model}
-            disabled={busy}
-            onChange={(e) => setCfg({ ...cfg, model: e.target.value })}
-            onBlur={(e) => void save({ model: e.target.value })}
-            style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem' }}
-          />
+          {autonomousModelOptions.length > 0 ? (
+            <select
+              value={cfg.model}
+              disabled={busy}
+              onChange={(e) => void save({ model: e.target.value })}
+              style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem' }}
+            >
+              {autonomousModelOptions.map((modelId) => (
+                <option key={modelId} value={modelId}>{modelId}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={cfg.model}
+              disabled={busy}
+              onChange={(e) => setCfg({ ...cfg, model: e.target.value })}
+              onBlur={(e) => void save({ model: e.target.value })}
+              style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem' }}
+            />
+          )}
         </div>
         <div>
           <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Min confidence</label>
@@ -1472,7 +1494,7 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
       {/* ===== RIGHT: Context sidebar ===== */}
       <div className="fillmore-sidebar">
         {/* Autonomous Fillmore — when enabled, trades happen without manual review */}
-        <AutonomousFillmorePanel profileName={profile.name} />
+        <AutonomousFillmorePanel profileName={profile.name} modelOptions={suggestModelList} />
 
         {/* Generate Suggestion — always visible at top of sidebar */}
         <div className="card">

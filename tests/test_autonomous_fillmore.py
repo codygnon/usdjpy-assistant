@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -80,6 +81,16 @@ def _install_fake_main(monkeypatch, db_path: Path) -> None:
     fake_main = ModuleType("api.main")
     fake_main._suggestions_db_path = lambda profile_name: db_path
     monkeypatch.setitem(sys.modules, "api.main", fake_main)
+
+
+def _gate_cfg(aggressiveness: str) -> dict:
+    cfg = dict(autonomous_fillmore.DEFAULT_CONFIG)
+    cfg.update({
+        "enabled": True,
+        "mode": "paper",
+        "aggressiveness": aggressiveness,
+    })
+    return cfg
 
 
 def test_invoke_suggest_persists_autonomous_suggestion_history(tmp_path: Path, monkeypatch) -> None:
@@ -216,3 +227,114 @@ def test_limit_order_with_no_exit_strategy_still_registers_pending_watch(tmp_pat
     assert tracked is not None
     assert tracked["placed_order"]["order_type"] == "limit"
     assert tracked["placed_order"]["exit_strategy"] == "none"
+
+
+def test_aggressive_gate_blocks_when_m3_and_m1_disagree(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bear")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend: True)
+
+    decision = autonomous_fillmore.evaluate_gate(
+        _gate_cfg("aggressive"),
+        {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0},
+        autonomous_fillmore.GateInputs(
+            spread_pips=0.8,
+            tick_mid=159.25,
+            open_ai_trade_count=0,
+            data_by_tf={},
+            ntz_active=False,
+        ),
+    )
+
+    assert decision.result == "block"
+    assert decision.layer == "signal"
+    assert decision.reason == "m3_m1_mismatch:bull/bear"
+
+
+def test_aggressive_gate_requires_pullback_or_zone(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: None)
+    monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend: False)
+
+    decision = autonomous_fillmore.evaluate_gate(
+        _gate_cfg("aggressive"),
+        {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0},
+        autonomous_fillmore.GateInputs(
+            spread_pips=0.8,
+            tick_mid=159.25,
+            open_ai_trade_count=0,
+            data_by_tf={},
+            ntz_active=False,
+        ),
+    )
+
+    assert decision.result == "block"
+    assert decision.layer == "signal"
+    assert decision.reason == "no_pullback_or_zone"
+
+
+def test_very_aggressive_gate_still_requires_some_trend_signal(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: None)
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: None)
+
+    decision = autonomous_fillmore.evaluate_gate(
+        _gate_cfg("very_aggressive"),
+        {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0},
+        autonomous_fillmore.GateInputs(
+            spread_pips=0.8,
+            tick_mid=159.25,
+            open_ai_trade_count=0,
+            data_by_tf={},
+            ntz_active=False,
+        ),
+    )
+
+    assert decision.result == "block"
+    assert decision.layer == "signal"
+    assert decision.reason == "no_trend_signal"
+
+
+def test_loss_streak_throttle_does_not_rearm_forever_for_same_streak() -> None:
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    rt = {
+        "loss_streak_last_throttled_day_utc": today,
+        "loss_streak_last_throttled_value": 4,
+        "throttle_until_utc": "2000-01-01T00:00:00+00:00",
+        "throttle_reason": "loss_streak=4",
+    }
+
+    armed = autonomous_fillmore._maybe_arm_loss_streak_throttle(
+        rt,
+        dict(autonomous_fillmore.DEFAULT_CONFIG),
+        4,
+    )
+
+    assert armed is False
+    assert rt["throttle_until_utc"] == "2000-01-01T00:00:00+00:00"
+    assert rt["throttle_reason"] == "loss_streak=4"
+
+
+def test_set_config_turning_autonomous_off_clears_active_throttle(tmp_path: Path) -> None:
+    state_path = tmp_path / "kumatora2" / "runtime_state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "autonomous_fillmore": {
+                    "config": {"enabled": True, "mode": "paper"},
+                    "runtime": {
+                        "throttle_until_utc": "2099-01-01T00:00:00+00:00",
+                        "throttle_reason": "loss_streak=4",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    autonomous_fillmore.set_config(state_path, {"enabled": False, "mode": "off"})
+
+    state = autonomous_fillmore._load_state(state_path)
+    rt = (state.get("autonomous_fillmore") or {}).get("runtime") or {}
+    assert rt.get("throttle_until_utc") is None
+    assert rt.get("throttle_reason") is None

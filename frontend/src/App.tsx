@@ -10860,6 +10860,56 @@ function LogsPage({ profile }: { profile: Profile }) {
     return trade.exit_price === null || trade.exit_price === undefined;
   };
 
+  const isFillmoreTrade = (trade: Record<string, unknown>) => {
+    const entryType = String(trade.entry_type || '').toLowerCase();
+    const openedBy = String(trade.opened_by || '').toLowerCase();
+    const tradeId = String(trade.trade_id || '').toLowerCase();
+    return entryType === 'ai_manual' || openedBy === 'ai_manual' || tradeId.startsWith('ai_manual:');
+  };
+
+  const getExitStrategyBadge = (trade: Record<string, unknown>) => {
+    if (!isFillmoreTrade(trade)) return null;
+    const mode = String(trade.managed_trail_mode || '').trim().toLowerCase();
+    switch (mode) {
+      case 'hwm':
+        return {
+          text: 'HWM Trail',
+          color: '#14b8a6',
+          background: 'rgba(20, 184, 166, 0.16)',
+        };
+      case 'm5':
+        return {
+          text: 'M5 Trail',
+          color: 'var(--accent)',
+          background: 'rgba(59, 130, 246, 0.16)',
+        };
+      case 'm1':
+        return {
+          text: 'M1 Trail',
+          color: '#f97316',
+          background: 'rgba(249, 115, 22, 0.16)',
+        };
+      case 'be':
+        return {
+          text: 'BE Only',
+          color: '#f59e0b',
+          background: 'rgba(245, 158, 11, 0.16)',
+        };
+      case 'none':
+        return {
+          text: 'Broker Only',
+          color: '#facc15',
+          background: 'rgba(250, 204, 21, 0.16)',
+        };
+      default:
+        return {
+          text: 'Managed Exit',
+          color: '#4ade80',
+          background: 'rgba(74, 222, 128, 0.16)',
+        };
+    }
+  };
+
   const handleLoadData = useCallback(() => {
     if (!historyLoaded) setHistoryLoaded(true);
     fetchData();
@@ -11480,6 +11530,7 @@ function LogsPage({ profile }: { profile: Profile }) {
                   const phase3Session = String(t.phase3_session || '');
                   const phase3Family = String(t.phase3_strategy_family || '');
                   const ownershipCell = String(t.ownership_cell || '');
+                  const exitStrategyBadge = getExitStrategyBadge(t);
                   const strategyLabel = phase3Family === 'v14'
                     ? 'V14'
                     : phase3Family === 'london_v2_d'
@@ -11588,6 +11639,23 @@ function LogsPage({ profile }: { profile: Profile }) {
                                   {ownershipCell}
                                 </span>
                               )}
+                            </div>
+                          )}
+                          {exitStrategyBadge && (
+                            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                              <span
+                                title="Fillmore exit strategy / management mode"
+                                style={{
+                                  fontSize: '0.68rem',
+                                  padding: '1px 6px',
+                                  borderRadius: 999,
+                                  background: exitStrategyBadge.background,
+                                  color: exitStrategyBadge.color,
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {exitStrategyBadge.text}
+                              </span>
                             </div>
                           )}
                         </div>

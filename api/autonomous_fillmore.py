@@ -99,22 +99,24 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
         "expected_pass_rate_pct": 4.0,
     },
     "aggressive": {
-        "description": "M1 EMA stack OR M3 trend signal",
+        "description": "M3 or M1 trend signal, but veto disagreement; require pullback/zone and avoid daily H/L edges",
+        "require_m3_trend": False,
+        "require_m1_stack": False,
+        "require_pullback_or_zone": True,
+        "require_daily_hl_buffer_pips": 3.0,
+        "require_any_trend_signal": True,
+        "reject_m3_m1_mismatch_if_both_present": True,
+        "expected_pass_rate_pct": 3.0,
+    },
+    "very_aggressive": {
+        "description": "M3 or M1 trend signal, but veto disagreement",
         "require_m3_trend": False,
         "require_m1_stack": False,
         "require_pullback_or_zone": False,
         "require_daily_hl_buffer_pips": 0.0,
         "require_any_trend_signal": True,
-        "expected_pass_rate_pct": 10.0,
-    },
-    "very_aggressive": {
-        "description": "Hard filters only (spread/cooldown/budget)",
-        "require_m3_trend": False,
-        "require_m1_stack": False,
-        "require_pullback_or_zone": False,
-        "require_daily_hl_buffer_pips": 0.0,
-        "require_any_trend_signal": False,
-        "expected_pass_rate_pct": 27.0,
+        "reject_m3_m1_mismatch_if_both_present": True,
+        "expected_pass_rate_pct": 8.0,
     },
 }
 
@@ -223,6 +225,10 @@ def set_config(state_path: Path, patch: dict[str, Any]) -> dict[str, Any]:
                 clean.pop(numkey, None)
     merged = {**cur, **clean}
     auto["config"] = merged
+    if not bool(merged.get("enabled")) or str(merged.get("mode") or "off").lower() == "off":
+        runtime = _runtime_block(state)
+        runtime["throttle_until_utc"] = None
+        runtime["throttle_reason"] = None
     state["autonomous_fillmore"] = auto
     _save_state(state_path, state)
     return get_config(state_path)
@@ -249,6 +255,8 @@ def _runtime_block(state: dict[str, Any]) -> dict[str, Any]:
         "consecutive_losses": 0,
         "throttle_until_utc": None,
         "throttle_reason": None,
+        "loss_streak_last_throttled_day_utc": None,
+        "loss_streak_last_throttled_value": 0,
         "last_suggestion_id": None,
         "last_placed_order_id": None,
         "daily_pnl_usd": 0.0,
@@ -282,6 +290,39 @@ def _rollover_daily_counters(rt: dict[str, Any]) -> None:
     if rt.get("pnl_day_utc") != today:
         rt["pnl_day_utc"] = today
         rt["daily_pnl_usd"] = 0.0
+        rt["loss_streak_last_throttled_day_utc"] = None
+        rt["loss_streak_last_throttled_value"] = 0
+
+
+def _clear_loss_streak_marker(rt: dict[str, Any]) -> None:
+    rt["loss_streak_last_throttled_day_utc"] = None
+    rt["loss_streak_last_throttled_value"] = 0
+
+
+def _maybe_arm_loss_streak_throttle(rt: dict[str, Any], cfg: dict[str, Any], streak: int) -> bool:
+    threshold = int(cfg.get("throttle_loss_streak") or 2)
+    if streak < threshold:
+        _clear_loss_streak_marker(rt)
+        return False
+
+    today = _today_utc_key()
+    last_day = str(rt.get("loss_streak_last_throttled_day_utc") or "")
+    try:
+        last_value = int(rt.get("loss_streak_last_throttled_value") or 0)
+    except (TypeError, ValueError):
+        last_value = 0
+
+    # Only arm once per streak level per day. This prevents an expired cooldown
+    # from being re-armed forever from the same historical losses on every tick.
+    if last_day == today and streak <= last_value:
+        return False
+
+    until = datetime.now(timezone.utc) + timedelta(seconds=int(cfg.get("throttle_loss_cooldown_sec") or 900))
+    rt["throttle_until_utc"] = until.isoformat()
+    rt["throttle_reason"] = f"loss_streak={streak}"
+    rt["loss_streak_last_throttled_day_utc"] = today
+    rt["loss_streak_last_throttled_value"] = streak
+    return True
 
 
 def _estimated_call_cost_usd(model: str) -> float:
@@ -346,12 +387,10 @@ def record_trade_outcome(state_path: Path, pnl_usd: float, cfg: dict[str, Any]) 
     if pnl_usd is not None and float(pnl_usd) < 0:
         rt["consecutive_losses"] = int(rt.get("consecutive_losses") or 0) + 1
         streak = int(rt["consecutive_losses"])
-        if streak >= int(cfg.get("throttle_loss_streak") or 2):
-            until = datetime.now(timezone.utc) + timedelta(seconds=int(cfg.get("throttle_loss_cooldown_sec") or 900))
-            rt["throttle_until_utc"] = until.isoformat()
-            rt["throttle_reason"] = f"loss_streak={streak}"
+        _maybe_arm_loss_streak_throttle(rt, cfg, streak)
     elif pnl_usd is not None and float(pnl_usd) > 0:
         rt["consecutive_losses"] = 0
+        _clear_loss_streak_marker(rt)
     _save_state(state_path, state)
 
 
@@ -552,10 +591,12 @@ def evaluate_gate(
         return _block("signal", "no_m3_trend", extras)
     if thresholds.get("require_m1_stack") and m1 is None:
         return _block("signal", "no_m1_stack", extras)
-    if thresholds.get("require_m3_trend") and thresholds.get("require_m1_stack"):
-        # Require alignment between M3 and M1 to avoid fighting the tape.
-        if m3 is not None and m1 is not None and m3 != m1:
-            return _block("signal", f"m3_m1_mismatch:{m3}/{m1}", extras)
+    mismatch_veto = bool(
+        thresholds.get("reject_m3_m1_mismatch_if_both_present")
+        or (thresholds.get("require_m3_trend") and thresholds.get("require_m1_stack"))
+    )
+    if mismatch_veto and m3 is not None and m1 is not None and m3 != m1:
+        return _block("signal", f"m3_m1_mismatch:{m3}/{m1}", extras)
 
     if thresholds.get("require_pullback_or_zone"):
         trend = m1 or m3
@@ -673,7 +714,7 @@ def _count_open_ai_trades(store, profile_name: str) -> int:
     return n
 
 
-def _refresh_daily_pnl(store, profile_name: str, rt: dict[str, Any]) -> None:
+def _refresh_daily_pnl(store, profile_name: str, rt: dict[str, Any], cfg: Optional[dict[str, Any]] = None) -> None:
     """Query closed ai_manual trades for today and update rt['daily_pnl_usd'].
 
     Runs best-effort — any error leaves rt['daily_pnl_usd'] unchanged. Called
@@ -720,6 +761,9 @@ def _refresh_daily_pnl(store, profile_name: str, rt: dict[str, Any]) -> None:
             # v == 0: leave streak as-is
         rt["daily_pnl_usd"] = daily
         rt["consecutive_losses"] = losses_in_streak
+        loss_thr = int((cfg or {}).get("throttle_loss_streak") or DEFAULT_CONFIG.get("throttle_loss_streak") or 2)
+        if losses_in_streak < loss_thr:
+            _clear_loss_streak_marker(rt)
     except Exception:
         return
 
@@ -761,26 +805,10 @@ def tick_autonomous_fillmore(
     _rollover_daily_counters(rt)
     # Refresh daily P&L + loss streak from the trades store so the daily loss
     # cap + loss-streak throttle stay honest without needing a close-path hook.
-    _refresh_daily_pnl(store, profile_name, rt)
+    _refresh_daily_pnl(store, profile_name, rt, cfg)
     # Apply loss-streak throttle if needed (fresh computation each tick).
     streak = int(rt.get("consecutive_losses") or 0)
-    loss_thr = int(cfg.get("throttle_loss_streak") or 2)
-    if streak >= loss_thr:
-        # Only set if not already set to a future time.
-        existing = rt.get("throttle_until_utc")
-        existing_future = False
-        if existing:
-            try:
-                tu = datetime.fromisoformat(existing)
-                if tu.tzinfo is None:
-                    tu = tu.replace(tzinfo=timezone.utc)
-                existing_future = tu > datetime.now(timezone.utc)
-            except Exception:
-                pass
-        if not existing_future:
-            until = datetime.now(timezone.utc) + timedelta(seconds=int(cfg.get("throttle_loss_cooldown_sec") or 900))
-            rt["throttle_until_utc"] = until.isoformat()
-            rt["throttle_reason"] = f"loss_streak={streak}"
+    _maybe_arm_loss_streak_throttle(rt, cfg, streak)
     state["autonomous_fillmore"]["runtime"] = rt
     _save_state(state_path, state)
 
