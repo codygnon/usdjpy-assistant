@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
@@ -58,7 +59,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": False,
     "mode": "off",                      # off|shadow|paper|live — paper = real OANDA practice orders (not in-app sim)
     "aggressiveness": "balanced",
-    "order_type": "market",             # market|limit — market = fill NOW at bid/ask
+    "order_type": "limit",              # market|limit — limit default so LLM's named level actually becomes the entry (not current tick)
+    "limit_gtd_minutes": 45,            # autonomous limit orders expire if not filled; keep stale ideas from resting forever
     "daily_budget_usd": 2.00,
     "min_llm_cooldown_sec": 60,
     "trading_hours": {
@@ -70,52 +72,62 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "max_open_ai_trades": 2,
     "max_daily_loss_usd": 50.0,
     "max_consecutive_errors": 5,
-    "min_confidence": "medium",         # low|medium|high — below this we skip placing
+    "min_confidence": "high",           # low|medium|high — Stage 4: medium is advisory/watchlist, high is required to place by default
     "model": "gpt-5.4-mini",
     # adaptive throttle
     "throttle_no_trade_streak": 5,       # after N "no trade" LLM replies, pause
     "throttle_no_trade_cooldown_sec": 300,
     "throttle_loss_streak": 2,
     "throttle_loss_cooldown_sec": 900,
+    # Stage 3: book-correlation veto + same-setup dedupe
+    "correlation_veto_enabled": True,    # post-LLM: block placement if same-side position open within distance
+    "correlation_distance_pips": 15.0,
+    "repeat_setup_dedupe_enabled": True, # pre-LLM: block tick if a placed suggestion in same price bucket fired within window
+    "repeat_setup_window_min": 30,
+    "repeat_setup_bucket_pips": 25.0,
 }
 
 # Per-mode gate thresholds. Lower = easier to pass = more LLM calls.
 # These are the *signal* filters applied after hard filters pass.
 GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
     "conservative": {
-        "description": "M3 trend + M1 EMA stack + (pullback OR zone entry) + daily H/L buffer",
+        "description": "M3 trend + M1 EMA stack + (pullback OR zone entry) + daily H/L buffer + within 5p of structure",
         "require_m3_trend": True,
         "require_m1_stack": True,
         "require_pullback_or_zone": True,
         "require_daily_hl_buffer_pips": 5.0,
+        "require_level_proximity_pips": 5.0,
         "expected_pass_rate_pct": 1.5,
     },
     "balanced": {
-        "description": "M3 trend aligned + M1 EMA stack",
+        "description": "M3 trend aligned + M1 EMA stack + within 8p of a structure level (PDH/PDL/round/today's H-L)",
         "require_m3_trend": True,
         "require_m1_stack": True,
         "require_pullback_or_zone": False,
         "require_daily_hl_buffer_pips": 0.0,
-        "expected_pass_rate_pct": 4.0,
+        "require_level_proximity_pips": 8.0,
+        "expected_pass_rate_pct": 3.5,
     },
     "aggressive": {
-        "description": "M3 or M1 trend signal, but veto disagreement; require pullback/zone and avoid daily H/L edges",
+        "description": "M3 or M1 trend signal (veto on disagreement) + pullback/zone + daily H/L buffer + within 12p of structure",
         "require_m3_trend": False,
         "require_m1_stack": False,
         "require_pullback_or_zone": True,
         "require_daily_hl_buffer_pips": 3.0,
         "require_any_trend_signal": True,
         "reject_m3_m1_mismatch_if_both_present": True,
-        "expected_pass_rate_pct": 3.0,
+        "require_level_proximity_pips": 12.0,
+        "expected_pass_rate_pct": 2.5,
     },
     "very_aggressive": {
-        "description": "M3 or M1 trend signal, but veto disagreement",
+        "description": "M3 or M1 trend signal (veto on disagreement). No structure proximity check.",
         "require_m3_trend": False,
         "require_m1_stack": False,
         "require_pullback_or_zone": False,
         "require_daily_hl_buffer_pips": 0.0,
         "require_any_trend_signal": True,
         "reject_m3_m1_mismatch_if_both_present": True,
+        "require_level_proximity_pips": 0.0,
         "expected_pass_rate_pct": 8.0,
     },
 }
@@ -217,6 +229,8 @@ def set_config(state_path: Path, patch: dict[str, Any]) -> dict[str, Any]:
         "max_open_ai_trades", "max_daily_loss_usd", "max_consecutive_errors",
         "throttle_no_trade_streak", "throttle_no_trade_cooldown_sec",
         "throttle_loss_streak", "throttle_loss_cooldown_sec",
+        "limit_gtd_minutes",
+        "correlation_distance_pips", "repeat_setup_window_min", "repeat_setup_bucket_pips",
     ):
         if numkey in clean:
             try:
@@ -232,6 +246,20 @@ def set_config(state_path: Path, patch: dict[str, Any]) -> dict[str, Any]:
     state["autonomous_fillmore"] = auto
     _save_state(state_path, state)
     return get_config(state_path)
+
+
+def clear_throttle(state_path: Path) -> dict[str, Any]:
+    """Clear active throttle/cooldown state while preserving config and stats."""
+    state = _load_state(state_path)
+    rt = _runtime_block(state)
+    rt["throttle_until_utc"] = None
+    rt["throttle_reason"] = None
+    rt["consecutive_no_trade_replies"] = 0
+    rt["consecutive_errors"] = 0
+    _clear_loss_streak_marker(rt)
+    state["autonomous_fillmore"]["runtime"] = rt
+    _save_state(state_path, state)
+    return build_stats(state_path, cfg=get_config(state_path))
 
 
 # -----------------------------------------------------------------------------
@@ -486,6 +514,159 @@ def _m1_pullback_or_zone(data_by_tf: dict[str, pd.DataFrame], trend: Optional[st
     return False
 
 
+def _nearest_structure_pips(
+    tick_mid: float,
+    data_by_tf: dict[str, pd.DataFrame],
+    pip_size: float = 0.01,
+) -> dict[str, Optional[float]]:
+    """Distance in pips to nearest key structure level above and below current price.
+
+    Considers: today's H/L, previous day's H/L, and round levels at x.00/x.50 cadence
+    within ±3 round-level steps. Returns a dict with keys:
+        overhead_pips: distance to nearest level strictly above price (or None)
+        underfoot_pips: distance to nearest level strictly below price (or None)
+        nearest_pips: min of the two, or None if neither side has a level.
+
+    Used by the gate to ensure the LLM is invoked near actionable structure,
+    not in mid-range chop where fades/breaks are premature.
+    """
+    levels_above: list[float] = []
+    levels_below: list[float] = []
+
+    d_df = data_by_tf.get("D") if data_by_tf else None
+    if d_df is not None and len(d_df) >= 1:
+        try:
+            today = d_df.iloc[-1]
+            th = float(today["high"]); tl = float(today["low"])
+            if th > tick_mid:
+                levels_above.append(th)
+            if tl < tick_mid:
+                levels_below.append(tl)
+        except Exception:
+            pass
+    if d_df is not None and len(d_df) >= 2:
+        try:
+            prev = d_df.iloc[-2]
+            pdh = float(prev["high"]); pdl = float(prev["low"])
+            if pdh > tick_mid:
+                levels_above.append(pdh)
+            if pdl < tick_mid:
+                levels_below.append(pdl)
+        except Exception:
+            pass
+
+    # Round levels: x.00 and x.50 cadence (50-pip spacing at pip_size 0.01).
+    try:
+        base = int(tick_mid * 2) / 2.0  # floor to nearest 0.50
+        for step in range(-3, 4):
+            lvl = round(base + 0.5 * step, 2)
+            if lvl > tick_mid:
+                levels_above.append(lvl)
+            elif lvl < tick_mid:
+                levels_below.append(lvl)
+    except Exception:
+        pass
+
+    pip = pip_size or 0.01
+
+    def _closest(levels: list[float]) -> Optional[float]:
+        if not levels:
+            return None
+        return min(abs(l - tick_mid) / pip for l in levels)
+
+    up = _closest(levels_above)
+    dn = _closest(levels_below)
+    candidates = [v for v in (up, dn) if v is not None]
+    return {
+        "overhead_pips": up,
+        "underfoot_pips": dn,
+        "nearest_pips": min(candidates) if candidates else None,
+    }
+
+
+def _correlated_open_position(
+    db_path: Optional[Path],
+    side: str,
+    proposed_price: float,
+    distance_pips: float,
+    pip_size: float = 0.01,
+) -> Optional[dict[str, Any]]:
+    """Return an open ai_manual position that conflicts with a new proposed entry.
+
+    Conflict = same side AND fill_price within ``distance_pips`` of the
+    proposed entry. The autonomous loop calls this AFTER the LLM responds, so
+    we can act on the proposed side+price (which the gate doesn't know).
+    """
+    if db_path is None or distance_pips <= 0 or proposed_price <= 0:
+        return None
+    side_norm = str(side or "").lower()
+    if side_norm not in ("buy", "sell"):
+        return None
+    try:
+        from api import suggestion_tracker
+        open_rows = suggestion_tracker.get_open_filled_positions(db_path)
+    except Exception:
+        return None
+    pip = pip_size or 0.01
+    distance_price = distance_pips * pip
+    for r in open_rows:
+        if str(r.get("side") or "").lower() != side_norm:
+            continue
+        try:
+            fill = float(r.get("fill_price") or r.get("limit_price") or 0)
+        except (TypeError, ValueError):
+            continue
+        if fill <= 0:
+            continue
+        if abs(fill - proposed_price) <= distance_price:
+            return r
+    return None
+
+
+def _recent_setup_already_fired(
+    db_path: Optional[Path],
+    tick_mid: float,
+    window_min: int,
+    bucket_pips: float,
+    pip_size: float = 0.01,
+) -> Optional[dict[str, Any]]:
+    """Same-setup dedupe lookup.
+
+    Returns the matching prior suggestion row if a *placed* suggestion fired
+    within ``window_min`` minutes whose ``limit_price`` falls in the same
+    ``bucket_pips`` price bucket as ``tick_mid``. The bucket is anchored on
+    ``tick_mid`` (so a 25p bucket means anything within ±12.5p counts as same
+    bucket — captures repeat fades at the same level regardless of side).
+    Returns None if no match or the lookup fails.
+
+    Skipping rejected/non-placed suggestions is intentional: an LLM "low
+    confidence pass" doesn't burn the level the way a real placement does.
+    """
+    if db_path is None or window_min <= 0 or bucket_pips <= 0:
+        return None
+    try:
+        from api import suggestion_tracker
+        cutoff_iso = (datetime.now(timezone.utc) - timedelta(minutes=int(window_min))).isoformat()
+        rows = suggestion_tracker.get_recent_suggestions_since(db_path, cutoff_iso)
+    except Exception:
+        return None
+    pip = pip_size or 0.01
+    half_bucket = (bucket_pips / 2.0) * pip
+    for r in rows:
+        action = str(r.get("action") or "")
+        if action != "placed":
+            continue
+        try:
+            prior_price = float(r.get("limit_price") or 0)
+        except (TypeError, ValueError):
+            continue
+        if prior_price <= 0:
+            continue
+        if abs(prior_price - tick_mid) <= half_bucket:
+            return r
+    return None
+
+
 def _near_daily_hl(tick_mid: float, data_by_tf: dict[str, pd.DataFrame], buffer_pips: float) -> bool:
     """True if current price is within buffer_pips of today's H or L."""
     df = data_by_tf.get("D") if data_by_tf else None
@@ -512,6 +693,7 @@ class GateInputs:
     open_ai_trade_count: int
     data_by_tf: dict[str, pd.DataFrame]
     ntz_active: bool = False
+    suggestions_db_path: Optional[Path] = None  # for same-setup dedupe lookup; None disables the check
 
 
 def evaluate_gate(
@@ -611,6 +793,39 @@ def evaluate_gate(
     if thresholds.get("require_any_trend_signal"):
         if m3 is None and m1 is None:
             return _block("signal", "no_trend_signal", extras)
+
+    # Level-proximity: only fire when price is actually near actionable structure.
+    # Prevents the LLM from being woken mid-range where its level-based rationale
+    # can't actually be expressed as a clean entry.
+    prox_thr = float(thresholds.get("require_level_proximity_pips") or 0.0)
+    if prox_thr > 0:
+        prox = _nearest_structure_pips(inputs.tick_mid, inputs.data_by_tf)
+        nearest = prox.get("nearest_pips")
+        extras["nearest_level_pips"] = round(nearest, 1) if nearest is not None else None
+        extras["overhead_level_pips"] = round(prox["overhead_pips"], 1) if prox.get("overhead_pips") is not None else None
+        extras["underfoot_level_pips"] = round(prox["underfoot_pips"], 1) if prox.get("underfoot_pips") is not None else None
+        if nearest is None or nearest > prox_thr:
+            return _block("signal", f"no_structure_within_{prox_thr:.0f}p", extras)
+
+    # Same-setup dedupe: skip the LLM call entirely if a placement already fired
+    # in this price bucket recently. Avoids paying tokens to retry a tape-rejected
+    # idea. The today-block in the prompt also surfaces it visually for the LLM,
+    # but a hard gate-side block is cheaper and more reliable.
+    if cfg.get("repeat_setup_dedupe_enabled"):
+        window_min = int(cfg.get("repeat_setup_window_min") or 30)
+        bucket_pips = float(cfg.get("repeat_setup_bucket_pips") or 25.0)
+        prior = _recent_setup_already_fired(
+            inputs.suggestions_db_path, inputs.tick_mid, window_min, bucket_pips,
+        )
+        if prior is not None:
+            extras["dedupe_prior_side"] = prior.get("side")
+            extras["dedupe_prior_price"] = prior.get("limit_price")
+            extras["dedupe_prior_at_utc"] = prior.get("created_utc")
+            return _block(
+                "signal",
+                f"repeat_setup_within_{bucket_pips:.0f}p_in_{window_min}m",
+                extras,
+            )
 
     return GateDecision(
         timestamp_utc=now_utc.isoformat(),
@@ -792,12 +1007,22 @@ def tick_autonomous_fillmore(
     mid = (float(tick.bid) + float(tick.ask)) / 2.0
     spread_pips = (float(tick.ask) - float(tick.bid)) / pip if pip > 0 else None
 
+    # Resolve the suggestions DB path once so the gate can run dedupe lookups
+    # and the post-LLM correlation veto can find open positions.
+    db_path: Optional[Path] = None
+    try:
+        from api.main import _suggestions_db_path
+        db_path = _suggestions_db_path(profile_name)
+    except Exception:
+        db_path = None
+
     inputs = GateInputs(
         spread_pips=float(spread_pips) if spread_pips is not None else 999.0,
         tick_mid=mid,
         open_ai_trade_count=_count_open_ai_trades(store, profile_name),
         data_by_tf=data_by_tf or {},
         ntz_active=bool(ntz_active),
+        suggestions_db_path=db_path,
     )
 
     state = _load_state(state_path)
@@ -838,6 +1063,43 @@ def tick_autonomous_fillmore(
         print(f"[{profile_name}] autonomous Fillmore: suggestion confidence {conf} < min {min_conf}; skipping")
         record_no_trade_reply(state_path, cfg)
         return
+
+    # Book-correlation veto: don't stack a same-side trade near an existing fill.
+    # Logged as a synthetic gate decision so the user sees it in the decisions log.
+    if cfg.get("correlation_veto_enabled"):
+        veto_dist = float(cfg.get("correlation_distance_pips") or 15.0)
+        try:
+            sug_side = str(suggestion.get("side") or "").lower()
+            sug_price = float(suggestion.get("price") or 0)
+        except (TypeError, ValueError):
+            sug_side, sug_price = "", 0.0
+        prior_open = _correlated_open_position(db_path, sug_side, sug_price, veto_dist)
+        if prior_open is not None:
+            try:
+                prior_fill = float(prior_open.get("fill_price") or prior_open.get("limit_price") or 0)
+            except (TypeError, ValueError):
+                prior_fill = 0.0
+            print(
+                f"[{profile_name}] autonomous Fillmore: correlation veto — "
+                f"{sug_side.upper()} @ {sug_price:.3f} blocked, open same-side at {prior_fill:.3f} "
+                f"(within {veto_dist:.1f}p)"
+            )
+            log_decision(
+                state_path,
+                GateDecision(
+                    timestamp_utc=datetime.now(timezone.utc).isoformat(),
+                    result="block", layer="signal",
+                    reason=f"correlation_veto_within_{veto_dist:.0f}p",
+                    mode=mode, aggressiveness=str(cfg.get("aggressiveness") or "balanced"),
+                    extras={
+                        "proposed_side": sug_side,
+                        "proposed_price": sug_price,
+                        "open_fill_price": prior_fill,
+                        "open_suggestion_id": prior_open.get("suggestion_id"),
+                    },
+                ),
+            )
+            return
 
     # Shadow mode logs the would-have-traded decision but stops here.
     if mode == "shadow":
@@ -885,16 +1147,115 @@ def tick_autonomous_fillmore(
         record_error(state_path, cfg, str(e))
 
 
-def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> dict[str, Any]:
-    """Call the same suggestion pipeline the HTTP endpoint uses.
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
 
-    We import lazily to avoid a circular dependency (api.main imports us).
+
+def _extract_json_object(text: str) -> tuple[str, Optional[str]]:
+    """Return (json_str, analysis_text).
+
+    The autonomous prompt asks the model to reply with free-text ANALYSIS
+    followed by a fenced ```json``` block. We prefer the last fenced JSON block.
+    Fallback: scan for the last balanced ``{ ... }`` object in the response.
+    ``analysis_text`` is whatever preceded the JSON (stripped), for logging.
+    """
+    if not text:
+        raise ValueError("empty LLM response")
+    stripped = text.strip()
+
+    matches = list(_JSON_FENCE_RE.finditer(stripped))
+    if matches:
+        m = matches[-1]
+        analysis = stripped[: m.start()].strip() or None
+        return m.group(1).strip(), analysis
+
+    # Fallback: find the last balanced top-level JSON object by brace scan.
+    last_end = stripped.rfind("}")
+    if last_end < 0:
+        raise ValueError("no JSON object found in LLM response")
+    depth = 0
+    start = -1
+    for i in range(last_end, -1, -1):
+        ch = stripped[i]
+        if ch == "}":
+            depth += 1
+        elif ch == "{":
+            depth -= 1
+            if depth == 0:
+                start = i
+                break
+    if start < 0:
+        raise ValueError("unbalanced JSON braces in LLM response")
+    analysis = stripped[:start].strip() or None
+    return stripped[start : last_end + 1].strip(), analysis
+
+
+def _autonomous_session_profile(ctx: dict[str, Any] | None) -> str:
+    session = ((ctx or {}).get("session") or {}) if isinstance(ctx, dict) else {}
+    active = [str(x).strip().lower() for x in (session.get("active_sessions") or []) if str(x).strip()]
+    overlap = str(session.get("overlap") or "").strip().lower()
+    labels = set(active)
+    if overlap:
+        if "tokyo" in overlap:
+            labels.add("tokyo")
+        if "london" in overlap:
+            labels.add("london")
+        if "new york" in overlap or "ny" in overlap:
+            labels.add("ny")
+
+    if "london" in labels or "ny" in labels:
+        return "trend"
+    if labels == {"tokyo"} or "tokyo" in labels:
+        return "tokyo"
+    return "trend"
+
+
+def _apply_autonomous_exit_calibration(
+    strategy_id: str,
+    exit_params: dict[str, Any],
+    ctx: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Autonomous-only exit calibration.
+
+    Preserve wider runners than the manual suggestion path. Tokyo gets a slightly
+    tighter first take-profit; London/NY keep more size on for runner capture.
+    """
+    if str(strategy_id or "").strip().lower() == "none":
+        return dict(exit_params or {})
+
+    calibrated = dict(exit_params or {})
+    profile = _autonomous_session_profile(ctx)
+    target_tp1 = 5.0 if profile == "tokyo" else 6.0
+    target_tp1_close_pct = 50.0 if profile == "tokyo" else 33.0
+
+    if "tp1_pips" in calibrated:
+        try:
+            calibrated["tp1_pips"] = max(float(calibrated["tp1_pips"]), target_tp1)
+        except (TypeError, ValueError):
+            calibrated["tp1_pips"] = target_tp1
+    if "tp1_close_pct" in calibrated:
+        try:
+            calibrated["tp1_close_pct"] = min(float(calibrated["tp1_close_pct"]), target_tp1_close_pct)
+        except (TypeError, ValueError):
+            calibrated["tp1_close_pct"] = target_tp1_close_pct
+    return calibrated
+
+
+def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Invoke the LLM for autonomous Fillmore.
+
+    Reason-then-commit flow: the user prompt asks for a plain-text ANALYSIS
+    section first, then a fenced ```json``` DECISION block. The analysis
+    gives the model room to think without inflating token cost by 2x (still
+    a single API call). Uses the lean autonomous system prompt (no Fillmore
+    persona / desk voice) to keep focus on judgment.
+
+    Lazy imports avoid circular dependency with api.main.
     """
     from api.ai_trading_chat import (
+        autonomous_system_prompt_from_context,
         build_trade_suggestion_news_block,
         build_trading_context,
         resolve_ai_suggest_model,
-        system_prompt_from_context,
     )
     from api import suggestion_tracker
     from api.ai_exit_strategies import (
@@ -910,7 +1271,7 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> dict[str
 
     ctx = build_trading_context(profile, profile_name)
     model = resolve_ai_suggest_model(cfg.get("model"))
-    system = system_prompt_from_context(ctx, model)
+    system = autonomous_system_prompt_from_context(ctx, model)
     # Best-effort news enrichment; swallow errors.
     try:
         news_block = build_trade_suggestion_news_block(
@@ -922,113 +1283,114 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> dict[str
         system = f"{system}\n\n{news_block}"
     except Exception:
         pass
-    # Learning memory block.
+    # Learning memory block + today's autonomous run history.
     try:
         from api.main import _suggestions_db_path
+        db_path = _suggestions_db_path(profile_name)
         learning = suggestion_tracker.build_learning_prompt_block(
-            _suggestions_db_path(profile_name), days_back=180, max_recent_examples=8, current_ctx=ctx,
+            db_path, days_back=180, max_recent_examples=8, current_ctx=ctx,
         )
         system = f"{system}\n\n{learning}"
+        today_block = suggestion_tracker.build_autonomous_today_block(db_path, max_items=10)
+        system = f"{system}\n\n{today_block}"
     except Exception:
         pass
 
-    # Autonomous header: tell the LLM it's running unattended + current mode + order type.
     agg = cfg.get("aggressiveness") or "balanced"
-    order_type = cfg.get("order_type") or "market"
+    order_type = str(cfg.get("order_type") or "limit").lower()
     max_lots = float(cfg.get("max_lots_per_trade") or 15.0)
     mode = str(cfg.get("mode") or "off")
-    if mode == "paper":
-        order_context = (
-            "PAPER (OANDA practice): MARKET orders are sent to your OANDA **practice** API — real fills on demo "
-            "margin, same as LIVE but only when profile oanda_environment is 'practice'."
-            if str(order_type).lower() == "market" else
-            "PAPER (OANDA practice): LIMIT orders are sent to OANDA practice — real working orders on demo funds."
+    limit_gtd_min = int(cfg.get("limit_gtd_minutes") or 45)
+    min_conf = str(cfg.get("min_confidence") or "high").lower()
+
+    if order_type == "market":
+        exec_note = (
+            "ORDER EXECUTION: MARKET — fills at current bid/ask the instant placement happens. "
+            "Your 'price' field is informational; only side/lots/SL/TP matter. "
+            "Because you can't anchor on a specific level for the fill, require tight alignment "
+            "between current tape and your thesis."
         )
+        price_instr = "Put your expected fill reference (current mid is fine)."
     else:
-        order_context = (
-            "These trades execute as MARKET orders — the 'price' field is informational only; "
-            "the fill happens at current bid/ask the moment the gate passes. Size and side "
-            "are what matter. SL/TP are the real constraints."
-            if str(order_type).lower() == "market" else
-            "These trades execute as LIMIT orders at the 'price' you set. They may never fill "
-            "if the market doesn't come to your level. Default GTD 1 day unless you specify otherwise."
+        exec_note = (
+            f"ORDER EXECUTION: LIMIT — rests at the 'price' you set; fills only if the market reaches it. "
+            f"Default expiry {limit_gtd_min} minutes (GTD). If the market moves away, the order dies harmlessly. "
+            "BUY LIMIT must be BELOW current bid; SELL LIMIT must be ABOVE current ask. Set your price at "
+            "the actual structure level you want to fade/buy — not the current mid."
         )
+        price_instr = (
+            "Limit price MUST be away from current price (BUY below current bid, SELL above current ask). "
+            "Anchor on a real level (PDH/PDL, round, OANDA order-book cluster, today's H/L)."
+        )
+
     paper_note = (
-        "\nPAPER MODE: Autonomous uses real broker order placement on the OANDA **practice** server only. "
-        "Ensure this profile has oanda_environment='practice' and a practice API token. "
-        "Fills, SL/TP, and managed exits run through the same paths as LIVE (including learning logs).\n"
+        " Paper mode sends real orders to OANDA practice (real fills on demo funds)."
         if mode == "paper" else ""
-    )
-    system = (
-        f"{system}\n\n=== AUTONOMOUS MODE ===\n"
-        f"You are running unattended in gate mode '{agg}' (execution mode: {mode}). The signal gate woke you up because it "
-        f"saw a setup worth checking, but the trader is NOT reviewing each suggestion. "
-        f"Be MORE selective than usual — only return confidence='high' when the setup is genuinely strong. "
-        f"Return confidence='low' freely when the setup is weak; the system will skip placing.\n\n"
-        f"ORDER EXECUTION: {order_context}\n"
-        f"LOT CEILING: {max_lots:.0f} lots maximum. Size within your normal 1-{int(max_lots)} range."
-        f"{paper_note}"
     )
 
     _strategy_ids = ", ".join(f'"{sid}"' for sid in AI_EXIT_STRATEGIES.keys())
     _exit_catalog_text = exit_strategies_prompt_block()
-    order_label = "market" if order_type == "market" else "limit"
-    price_instr = (
-        'The "price" field is informational — put your expected fill reference (e.g., current mid).'
-        if order_type == "market" else
-        'Limit price must be AWAY from current price (BUY below current bid, SELL above current ask).'
-    )
+    _exit_profile = _autonomous_session_profile(ctx)
+    if _exit_profile == "tokyo":
+        exit_calibration_text = (
+            "AUTONOMOUS EXIT CALIBRATION: Tokyo/chop profile. Keep TP1 around +5p and do not scale more than 50% "
+            "at TP1 unless you explicitly justify it. The point is to leave a runner, not cash most of it at the first pop."
+        )
+    else:
+        exit_calibration_text = (
+            "AUTONOMOUS EXIT CALIBRATION: London/NY trend profile. TP1 should usually be around +6p and you should "
+            "scale no more than 33% at TP1 unless you explicitly justify a tighter or heavier first take."
+        )
+
     suggest_prompt = (
-        f"Based on LIVE TRADING CONTEXT and the prefetched EXTERNAL MARKET NEWS section (RSS headlines + web search), "
-        f"suggest ONE specific USDJPY {order_label} order trade right now OR return low confidence. "
-        "You MUST respond with ONLY a valid JSON object — no markdown, no code fences, no explanation outside the JSON. "
-        "Use this exact JSON schema:\n"
-        '{\n'
-        '  "side": "buy" or "sell",\n'
-        f'  "price": <{order_label} entry price as number>,\n'
+        f"=== AUTONOMOUS DECISION REQUEST ===\n"
+        f"Gate mode: {agg}. Execution mode: {mode}.{paper_note}\n"
+        f"{exec_note}\n"
+        f"LOT CEILING: {max_lots:.0f} lots. Typical range 1-{int(max_lots)} proportional to conviction.\n"
+        "\n"
+        "RESPONSE FORMAT (two parts, in this exact order):\n"
+        "\n"
+        "1. ANALYSIS (plain text, 6-12 lines). Think through the setup. Cover each of:\n"
+        "   - H1/M15/M5/M1 trend consensus (note any divergence).\n"
+        "   - JPY CROSS BIAS — does it confirm or contradict direction?\n"
+        "   - Nearest PRICE STRUCTURE level(s) + order-book clusters. Name the level you'd anchor the entry on.\n"
+        "   - Relevant bar patterns / recent candle streak.\n"
+        "   - M5/M15 ATR — does it justify a wider or tighter SL?\n"
+        "   - OPEN POSITIONS + YOUR MOST RECENT SUGGESTION — are you about to stack a correlated idea? "
+        "If you already have a same-side position near this level, downgrade confidence or pass.\n"
+        "   - Imminent events / session warnings that should cap confidence.\n"
+        "   - EXIT STRATEGY choice + why (reference EXIT STRATEGY PERFORMANCE if present).\n"
+        "   - Final call: commit or pass? Be honest — low confidence is a valid answer.\n"
+        "\n"
+        "2. DECISION (single fenced JSON code block). Use this exact schema:\n"
+        "```json\n"
+        "{\n"
+        '  "side": "buy" | "sell",\n'
+        f'  "price": <{order_type} entry price as number>,\n'
         '  "sl": <stop loss price as number>,\n'
         '  "tp": <take profit price as number>,\n'
-        f'  "lots": <position size as number, 1-{int(max_lots)}>,\n'
-        '  "time_in_force": "GTC" or "GTD",\n'
+        f'  "lots": <position size 1-{int(max_lots)}>,\n'
+        '  "time_in_force": "GTC" | "GTD",\n'
         '  "gtd_time_utc": <ISO datetime string if GTD, else null>,\n'
         '  "exit_strategy": one of [' + _strategy_ids + '],\n'
         '  "exit_params": {<optional numeric overrides>} or null,\n'
-        '  "rationale": "<2-4 sentence SETUP + EXIT choice explanation>",\n'
-        '  "confidence": "low" or "medium" or "high"\n'
-        '}\n\n'
+        '  "rationale": "<1-2 sentence concise summary of the decision>",\n'
+        '  "confidence": "low" | "medium" | "high"\n'
+        "}\n"
+        "```\n"
+        "\n"
+        "ENTRY PRICE RULE: " + price_instr + "\n"
+        "SL/TP: Baseline SL 10-15p, TP 4-10p; flex with ATR. Never glue SL 1-2p past a known level.\n"
+        f'EXIT STRATEGY: default "{DEFAULT_AI_EXIT_STRATEGY}" unless analysis favors another (or "none").\n'
+        + exit_calibration_text + "\n"
+        "CONFIDENCE CALIBRATION:\n"
+        f"- Current placement threshold is '{min_conf}'. Anything below that will be skipped.\n"
+        "- high = rare. A-tier only: clear TF consensus, JPY crosses agree, anchored on named structure, clean invalidation, no correlation to existing book, no event landmine. If you would hesitate unattended, it is not high.\n"
+        "- medium = B setup / watchlist quality. There may be edge, but some meaningful element is mixed or fragile. Use medium when a human might review it, but the autonomous engine should usually stand down.\n"
+        "- low = weak tape, mid-range, correlated to existing book, or imminent event risk. "
+        "Returning low will skip placement — this is the preferred answer when in doubt.\n"
+        "\n"
         + _exit_catalog_text
-        + "\n\n=== DECISION FRAMEWORK (guidelines — bypass with reason when the tape warrants) ===\n"
-        "\nDIRECTION:\n"
-        "- Cross-check TECHNICAL SNAPSHOT CONSENSUS. Prefer setups where 3+ timeframes align. "
-        "When consensus is 'mixed' or 'leaning', demand a better entry or downgrade confidence.\n"
-        "- Name any DIVERGENCES in the rationale (e.g., 'M1 bear against H1/M15/M5 bull — pullback setup').\n"
-        "- Use JPY CROSS BIAS to disambiguate. Higher BUY conviction when crosses confirm JPY weakness.\n"
-        "- RSI extremes across 2+ TFs = conviction dampener.\n"
-        "\nENTRY PRICE:\n"
-        f"- {price_instr}\n"
-        "- Anchor on PRICE STRUCTURE — PDH/PDL, PWH/PWL, WH/WL, round levels (xx.00 / xx.50).\n"
-        "- Cross-reference ORDER BOOK nearest S/R for confirmation.\n"
-        "- Favor bar-pattern context (engulfing, hammer, etc.) when naming the setup.\n"
-        "\nSTOP AND TARGET (let ATR breathe):\n"
-        "- Baseline: SL 10-15 pips, TP 4-10 pips (scalper's style). Flex with M5/M15 ATR — "
-        "wider stops on high ATR, tighter on compressed ranges. State the ATR you saw in rationale.\n"
-        "- Never stick the SL 1-2 pips past a known level (it gets swept). Give it room.\n"
-        f"\nSIZING (1-{int(max_lots)} lots, proportional to conviction):\n"
-        f"- Range: 1 lot (low conviction / probe) up to {int(max_lots)} lots (elite setup — TF consensus + JPY crosses + "
-        "strong structure + no catalyst risk).\n"
-        f"- Typical medium-conviction: 3-7 lots. High conviction: 8-12. Reserve 13-{int(max_lots)} for A+ setups.\n"
-        "- Downgrade lots if SESSION PERFORMANCE is negative over last 14d.\n"
-        "- Downgrade lots if OPEN P&L is red — don't pyramid into drawdown.\n"
-        "\nEXIT STRATEGY:\n"
-        f'- Default "{DEFAULT_AI_EXIT_STRATEGY}" unless setup favors another (or "none").\n'
-        "- If EXIT STRATEGY PERFORMANCE is present with meaningful N, prefer strategies with positive net P&L.\n"
-        "- Rationale MUST justify the exit_strategy choice.\n"
-        "\nTIMING VETO:\n"
-        "- If IMMINENT EVENT banner is active (<30m to high-impact release), strongly consider confidence='low' "
-        "unless rationale names a specific post-event level worth fading/riding.\n"
-        "\nMECHANICS:\n"
-        "- If you genuinely see no good setup, return confidence='low' and explain.\n"
-        "- If market is closed or data is stale, still provide a suggestion based on last known levels.\n"
     )
 
     client = openai.OpenAI()
@@ -1040,12 +1402,29 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> dict[str
         ],
     )
     raw = (resp.choices[0].message.content or "").strip()
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
-    if raw.endswith("```"):
-        raw = raw[: raw.rfind("```")]
-    raw = raw.strip()
-    suggestion = _json.loads(raw)
+    try:
+        json_str, analysis_text = _extract_json_object(raw)
+        suggestion = _json.loads(json_str)
+    except Exception as e:
+        # Last-resort legacy fallback: strip code fences globally and parse.
+        cleaned = raw
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[: cleaned.rfind("```")]
+        try:
+            suggestion = _json.loads(cleaned.strip())
+            analysis_text = None
+        except Exception:
+            raise ValueError(f"failed to parse suggestion JSON: {e}; raw[:300]={raw[:300]!r}") from e
+
+    # Preserve the analysis text alongside the rationale for later inspection.
+    if analysis_text:
+        existing_rat = str(suggestion.get("rationale") or "").strip()
+        if existing_rat:
+            suggestion["rationale"] = f"{existing_rat}\n\nANALYSIS:\n{analysis_text}"
+        else:
+            suggestion["rationale"] = f"ANALYSIS:\n{analysis_text}"
 
     # Normalize like the HTTP path does.
     suggestion["side"] = str(suggestion.get("side") or "buy").lower()
@@ -1058,8 +1437,11 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> dict[str
         tif = "GTD"
     suggestion["time_in_force"] = tif
     if tif == "GTD" and not suggestion.get("gtd_time_utc"):
+        # Autonomous default: short GTD so stale ideas die. Use configured
+        # limit_gtd_minutes for limit orders; 1h for market (harmless — market fills now).
+        gtd_min = limit_gtd_min if order_type == "limit" else 60
         suggestion["gtd_time_utc"] = (
-            (datetime.now(timezone.utc) + timedelta(days=1))
+            (datetime.now(timezone.utc) + timedelta(minutes=gtd_min))
             .replace(microsecond=0).isoformat().replace("+00:00", "Z")
         )
     raw_exit = suggestion.get("exit_strategy")
@@ -1071,7 +1453,8 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> dict[str
         chosen = normalize_exit_strategy(raw_exit_s) if raw_exit_s in AI_EXIT_STRATEGIES else DEFAULT_AI_EXIT_STRATEGY
         suggestion["exit_strategy"] = chosen
         raw_params = suggestion.get("exit_params") if isinstance(suggestion.get("exit_params"), dict) else None
-        suggestion["exit_params"] = merge_exit_params(chosen, raw_params)
+        merged_params = merge_exit_params(chosen, raw_params)
+        suggestion["exit_params"] = _apply_autonomous_exit_calibration(chosen, merged_params, ctx)
     suggestion["model_used"] = model
 
     # Persist the suggestion row (so learning memory + stats include it).

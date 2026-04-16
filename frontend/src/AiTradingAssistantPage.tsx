@@ -370,6 +370,18 @@ function AutonomousFillmorePanel({
     }
   }, [profileName]);
 
+  const resetThrottle = useCallback(async () => {
+    setBusy(true); setErr(null);
+    try {
+      const nextStats = await api.resetAutonomousThrottle(profileName);
+      setStats(nextStats);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [profileName]);
+
   if (!cfg) {
     return (
       <div className="card">
@@ -577,6 +589,17 @@ function AutonomousFillmorePanel({
           Throttled: {thr.reason || 'adaptive cooldown'}
           {thr.until_utc && <span> until {new Date(thr.until_utc).toLocaleTimeString()}</span>}
         </div>
+      )}
+      {thr?.active && (
+        <button
+          type="button"
+          className="btn btn-secondary"
+          disabled={busy}
+          onClick={() => void resetThrottle()}
+          style={{ width: '100%', fontSize: '0.78rem', padding: '6px 10px', marginBottom: 10 }}
+        >
+          Reset Throttle
+        </button>
       )}
 
       {/* Model + confidence */}

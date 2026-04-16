@@ -595,6 +595,105 @@ def build_learning_prompt_block(
     return "\n".join(lines)
 
 
+def get_open_filled_positions(db_path: Path) -> list[dict[str, Any]]:
+    """Suggestions that were placed and filled but haven't closed yet.
+
+    Used by the autonomous correlation veto to avoid stacking same-side trades
+    near the same level. Includes both autonomous and manually-placed Fillmore
+    suggestions (they share the DB) — both should count as "in book."
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            SELECT * FROM ai_suggestions
+            WHERE action = 'placed'
+              AND outcome_status = 'filled'
+              AND closed_at IS NULL
+            ORDER BY filled_at DESC
+            """
+        )
+        return [_deserialize_row(dict(r)) for r in cur.fetchall()]
+
+
+def get_recent_suggestions_since(db_path: Path, since_iso: str) -> list[dict[str, Any]]:
+    """All suggestion rows created since `since_iso`, newest first.
+
+    Used by the autonomous same-setup dedupe gate to detect repeat-fires.
+    """
+    return _load_rows_since(db_path, since_iso)
+
+
+def build_autonomous_today_block(
+    db_path: Path,
+    *,
+    max_items: int = 10,
+    pip_size: float = 0.01,
+) -> str:
+    """One-shot 'what your autonomous self has done today' block for the prompt.
+
+    Distinct from the learning memory block — this is *today only*, ordered
+    chronologically, and surfaces side+price+outcome explicitly so the LLM can
+    notice repeat-fade patterns that the cohort-summary view masks.
+    """
+    init_db(db_path)
+    today_utc_midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    rows = _load_rows_since(db_path, today_utc_midnight.isoformat())
+    rows = [_deserialize_row(r) if "market_snapshot" not in r else r for r in rows]
+
+    header = "=== AUTONOMOUS RUN TODAY (your own recent suggestions) ==="
+    if not rows:
+        return f"{header}\nNo prior autonomous suggestions today. Tape is fresh — be selective."
+
+    # Show oldest -> newest in the printed log so the LLM can read it as a story.
+    rows = list(reversed(rows[: max(1, max_items)]))
+    pip = pip_size or 0.01
+    lines = [header]
+    pnl_today = 0.0
+    closed_today = 0
+    for r in rows:
+        ts_raw = str(r.get("created_utc") or "")
+        ts = ts_raw[11:16] if len(ts_raw) >= 16 else ts_raw
+        side = str(r.get("side") or "?").upper()
+        price = r.get("limit_price")
+        conf = str(r.get("confidence") or "?")
+        action = str(r.get("action") or "none")
+        outcome = str(r.get("outcome_status") or "")
+        win_loss = str(r.get("win_loss") or "")
+        pips = r.get("pips")
+        pnl = r.get("pnl")
+
+        if r.get("closed_at") and pnl is not None:
+            closed_today += 1
+            pnl_today += _to_float(pnl)
+
+        if action == "rejected":
+            tail = "REJECTED by user"
+        elif action != "placed":
+            tail = f"NOT PLACED ({conf} confidence)"
+        elif win_loss in ("win", "loss", "breakeven"):
+            tail = f"CLOSED {win_loss} ({_to_float(pips):+.1f}p, ${_to_float(pnl):+.2f})"
+        elif outcome == "filled":
+            tail = "FILLED — still open"
+        elif outcome in ("cancelled", "expired"):
+            tail = f"{outcome.upper()} (limit never filled)"
+        elif outcome == "":
+            tail = f"placed (waiting for fill, {conf})"
+        else:
+            tail = f"{outcome} ({conf})"
+
+        price_str = f"@{_to_float(price):.3f}" if price is not None else "@?"
+        lines.append(f"  {ts}Z  {side:4s} {price_str}  -> {tail}")
+
+    if closed_today > 0:
+        lines.append(f"Today closed P&L (autonomous + manual AI): ${pnl_today:+.2f} across {closed_today} closed trade(s).")
+    lines.append(
+        "Self-coaching rule: if the same side+level keeps firing without working, "
+        "the tape is rejecting that thesis — pass instead of stacking."
+    )
+    return "\n".join(lines)
+
+
 def _timedelta_days(days: int):
     from datetime import timedelta
 

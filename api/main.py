@@ -6103,6 +6103,15 @@ def get_autonomous_stats(profile_name: str) -> dict[str, Any]:
     return autonomous_fillmore.build_stats(state_path)
 
 
+@app.post("/api/data/{profile_name}/autonomous/reset-throttle")
+def reset_autonomous_throttle(profile_name: str) -> dict[str, Any]:
+    """Clear active autonomous throttle/cooldown state for this profile."""
+    from api import autonomous_fillmore
+
+    state_path = _runtime_state_path(profile_name)
+    return autonomous_fillmore.clear_throttle(state_path)
+
+
 @app.get("/api/ai-chat/models")
 def get_ai_chat_models_list() -> dict[str, Any]:
     """Models the assistant UI may select (allowlist; extend via AI_CHAT_ALLOWED_MODELS)."""

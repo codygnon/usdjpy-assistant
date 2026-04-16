@@ -1232,6 +1232,12 @@ export async function getAutonomousStats(profileName: string): Promise<Autonomou
   return fetchJson(`${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/stats`);
 }
 
+export async function resetAutonomousThrottle(profileName: string): Promise<AutonomousStats> {
+  return fetchJson(`${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/reset-throttle`, {
+    method: 'POST',
+  });
+}
+
 async function readApiErrorDetail(res: Response): Promise<string> {
   const text = await res.text();
   try {

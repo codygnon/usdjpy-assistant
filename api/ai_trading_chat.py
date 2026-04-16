@@ -2610,6 +2610,46 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
     return "\n".join(lines)
 
 
+def autonomous_system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str:
+    """Lean system prompt for Autonomous Fillmore — strips chat persona/delivery/tool blocks.
+
+    Keeps the LIVE TRADING CONTEXT sections intact (sessions, price structure, TA,
+    macro bias, order book, etc.) but replaces the Fillmore-voice preamble with a
+    disciplined-analyst framing. Autonomous mode doesn't need personality — it
+    needs tight judgment, and persona tokens dilute focus.
+    """
+    full = system_prompt_from_context(ctx, effective_model)
+    marker = "=== LIVE TRADING CONTEXT ==="
+    idx = full.find(marker)
+    if idx < 0:
+        return full  # safety fallback — shouldn't happen in practice
+
+    lean_preamble = "\n".join([
+        "You are a disciplined USDJPY scalping analyst operating in AUTONOMOUS mode.",
+        "The signal gate has already verified basic conditions (spread/session/cooldown/trend/level-proximity) "
+        "and woke you because a setup *may* exist near actionable structure. "
+        "Your job: evaluate the live context below and either commit to ONE well-reasoned trade OR "
+        "return confidence='low' to pass. Unattended: the trader is NOT reviewing each call, so be selective. "
+        "Prefer passing over forcing a trade.",
+        "",
+        "Critical discipline:",
+        "- Your price field is the INTENDED ENTRY and when order_type=limit it WILL be the fill price. "
+        "Set it at the actual structure level you want (PDH/PDL, round, cluster) — not the current mid.",
+        "- Check the OPEN POSITIONS block below. If you already have a position open in the same direction "
+        "within ~15 pips of your proposed entry, DOWNGRADE to confidence='low' unless this is a genuinely "
+        "new setup at a different level. Don't stack correlated ideas.",
+        "- Check YOUR MOST RECENT SUGGESTION and recent closed trades. If the same side+level has been "
+        "firing repeatedly without working, step back — the tape is eating that idea.",
+        "- No persona, no narration, no desk voice. Just clear analysis and a clean commit.",
+        "",
+        f"MODEL: You are '{effective_model}'.",
+        "SIZING: USDJPY — 1 lot = 100,000 units, ~$3,000 margin/lot, ~$6.30/pip/lot at 158-160.",
+        "PRICE AUTHORITY: The LIVE PRICE section below is authoritative.",
+        "",
+    ])
+    return lean_preamble + full[idx:]
+
+
 # ---------------------------------------------------------------------------
 # 3. Function calling tools
 # ---------------------------------------------------------------------------
