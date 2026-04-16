@@ -1054,6 +1054,7 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> dict[str
             profile=profile_name,
             model=model,
             suggestion=suggestion,
+            ctx=ctx,
         )
         suggestion["suggestion_id"] = sid
     except Exception as e:
@@ -1093,6 +1094,31 @@ def _place_from_suggestion(
         managed_strategy = normalize_exit_strategy(exit_strat)
         managed_params = merge_exit_params(managed_strategy, suggestion.get("exit_params"))
 
+    def _resolve_position_id() -> Any:
+        position_id = None
+        deal_id = getattr(result, "deal", None)
+        order_id = getattr(result, "order", None)
+        try:
+            if deal_id:
+                position_id = adapter.get_position_id_from_deal(deal_id)
+        except Exception:
+            position_id = None
+        if position_id is None and order_id:
+            try:
+                position_id = adapter.get_position_id_from_order(order_id)
+            except Exception:
+                position_id = None
+        if position_id is None and order_id and getattr(profile, "broker_type", None) == "oanda":
+            for _ in range(3):
+                try:
+                    time.sleep(0.5)
+                    position_id = adapter.get_position_id_from_order(order_id)
+                    if position_id is not None:
+                        break
+                except Exception:
+                    position_id = None
+        return position_id
+
     adapter = get_adapter(profile)
     adapter.initialize()
     try:
@@ -1110,13 +1136,15 @@ def _place_from_suggestion(
                 raise RuntimeError(f"market order rejected: {result.comment}")
 
             fill_price = float(getattr(result, "fill_price", None) or price or 0.0)
-            position_id = getattr(result, "deal", None)  # OANDA tradeID = position id
+            position_id = _resolve_position_id()
             order_id = getattr(result, "order", None)
+            trade_id: str | None = None
 
-            # Insert trade row directly so _manage_ai_manual_trades picks it up.
-            if managed_strategy and position_id is not None:
+            # Insert trade row directly so local accounting + later sync can
+            # see every autonomous market order, even when exit_strategy='none'.
+            if position_id is not None:
                 try:
-                    trail_mode = trail_mode_for_strategy(managed_strategy)
+                    trail_mode = trail_mode_for_strategy(managed_strategy) if managed_strategy else "none"
                     trade_id = f"ai_manual:{order_id or position_id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}"
                     row: dict[str, Any] = {
                         "trade_id": trade_id,
@@ -1128,7 +1156,7 @@ def _place_from_suggestion(
                         "config_json": _json.dumps({
                             "source": "autonomous_fillmore",
                             "order_id": order_id,
-                            "exit_strategy": managed_strategy,
+                            "exit_strategy": managed_strategy or "none",
                             "exit_params": managed_params,
                             "order_type": "market",
                         }),
@@ -1136,7 +1164,7 @@ def _place_from_suggestion(
                         "stop_price": float(sl) if sl is not None else None,
                         "target_price": float(tp) if tp is not None else None,
                         "size_lots": lots,
-                        "notes": f"autonomous_fillmore:{managed_strategy}:order_{order_id}",
+                        "notes": f"autonomous_fillmore:{managed_strategy or 'none'}:order_{order_id}",
                         "snapshot_id": None,
                         "mt5_order_id": int(order_id) if order_id is not None else None,
                         "mt5_deal_id": None,
@@ -1158,7 +1186,7 @@ def _place_from_suggestion(
                     store.insert_trade(row)
                     print(
                         f"[{profile_name}] autonomous Fillmore: inserted market trade {trade_id} "
-                        f"(pos {position_id}, strategy={managed_strategy}, trail={trail_mode})"
+                        f"(pos {position_id}, strategy={managed_strategy or 'none'}, trail={trail_mode})"
                     )
                 except Exception as e:
                     print(f"[{profile_name}] autonomous Fillmore: insert_trade error: {e}")
@@ -1190,7 +1218,7 @@ def _place_from_suggestion(
                         oanda_order_id=str(order_id) if order_id is not None else None,
                         fill_price=fill_price,
                         filled_at=pd.Timestamp.now(tz="UTC").isoformat(),
-                        trade_id=f"ai_manual:{order_id or position_id}",
+                        trade_id=trade_id,
                     )
                 except Exception as e:
                     print(f"[{profile_name}] autonomous Fillmore: tracker stamp failed: {e}")
@@ -1211,7 +1239,7 @@ def _place_from_suggestion(
         if result.retcode != 0:
             raise RuntimeError(f"limit order rejected: {result.comment}")
 
-        if managed_strategy and result.order is not None:
+        if result.order is not None:
             state = _load_state(state_path)
             pending = list(state.get("managed_pending_orders") or [])
             pending = [p for p in pending if str(p.get("order_id")) != str(result.order)]
@@ -1222,8 +1250,8 @@ def _place_from_suggestion(
                 "lots": lots,
                 "sl": float(sl) if sl is not None else None,
                 "tp": float(tp) if tp is not None else None,
-                "exit_strategy": managed_strategy,
-                "trail_mode": trail_mode_for_strategy(managed_strategy),
+                "exit_strategy": managed_strategy or "none",
+                "trail_mode": trail_mode_for_strategy(managed_strategy) if managed_strategy else "none",
                 "exit_params": managed_params,
                 "source": "ai_manual",  # reuse watchdog path
                 "suggestion_id": suggestion.get("suggestion_id"),
