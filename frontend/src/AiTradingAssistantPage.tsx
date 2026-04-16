@@ -301,6 +301,437 @@ function countdownLabel(minutesToEvent: number): string {
   return `${h}h ${m}m`;
 }
 
+// ===========================================================================
+// Autonomous Fillmore panel
+// ===========================================================================
+
+const AGG_LABELS: { value: api.AutonomousConfig['aggressiveness']; label: string }[] = [
+  { value: 'conservative',    label: 'Conservative' },
+  { value: 'balanced',        label: 'Balanced' },
+  { value: 'aggressive',      label: 'Aggressive' },
+  { value: 'very_aggressive', label: 'Very Aggressive' },
+];
+
+const MODE_LABELS: { value: api.AutonomousConfig['mode']; label: string; color: string }[] = [
+  { value: 'off',    label: 'OFF',    color: 'var(--text-secondary)' },
+  { value: 'shadow', label: 'SHADOW', color: '#d4a017' },
+  { value: 'paper',  label: 'PAPER',  color: '#4ade80' },
+  { value: 'live',   label: 'LIVE',   color: '#f87171' },
+];
+
+function AutonomousFillmorePanel({ profileName }: { profileName: string }) {
+  const [cfg, setCfg] = useState<api.AutonomousConfig | null>(null);
+  const [gateModes, setGateModes] = useState<Record<string, api.AutonomousGateMode>>({});
+  const [stats, setStats] = useState<api.AutonomousStats | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showDecisions, setShowDecisions] = useState(false);
+
+  // Initial load.
+  useEffect(() => {
+    let cancelled = false;
+    api.getAutonomousConfig(profileName).then((r) => {
+      if (cancelled) return;
+      setCfg(r.config);
+      setGateModes(r.gate_modes);
+    }).catch((e) => setErr(String(e?.message || e)));
+    return () => { cancelled = true; };
+  }, [profileName]);
+
+  // Poll stats every 5s (cheap — reads runtime_state.json).
+  useEffect(() => {
+    let cancelled = false;
+    const tick = () => {
+      api.getAutonomousStats(profileName).then((s) => {
+        if (!cancelled) setStats(s);
+      }).catch(() => { /* silent */ });
+    };
+    tick();
+    const id = window.setInterval(tick, 5000);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, [profileName]);
+
+  const save = useCallback(async (patch: Partial<api.AutonomousConfig>) => {
+    setBusy(true); setErr(null);
+    try {
+      const r = await api.updateAutonomousConfig(profileName, patch);
+      setCfg(r.config);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [profileName]);
+
+  if (!cfg) {
+    return (
+      <div className="card">
+        <div className="card-heading">Autonomous Fillmore</div>
+        <div className="card-row" style={{ color: 'var(--text-secondary)' }}>Loading…</div>
+        {err && <div style={{ color: '#f87171', fontSize: '0.82rem', marginTop: 6 }}>{err}</div>}
+      </div>
+    );
+  }
+
+  const modeMeta = MODE_LABELS.find((m) => m.value === cfg.mode) || MODE_LABELS[0];
+  const aggDesc = gateModes[cfg.aggressiveness]?.description;
+  const expectedPct = gateModes[cfg.aggressiveness]?.expected_pass_rate_pct;
+
+  const canEnable = cfg.mode !== 'off';
+  const today = stats?.today;
+  const thr = stats?.throttle;
+  const window_ = stats?.window;
+
+  // Budget bar color
+  const budgetPct = today ? Math.min(100, today.budget_used_pct) : 0;
+  const budgetColor = budgetPct >= 90 ? '#f87171' : budgetPct >= 60 ? '#facc15' : '#4ade80';
+
+  return (
+    <div className="card">
+      <div className="card-heading" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span>Autonomous Fillmore</span>
+        <span style={{
+          fontSize: '0.72rem',
+          padding: '2px 8px',
+          borderRadius: 999,
+          background: 'rgba(255,255,255,0.06)',
+          color: modeMeta.color,
+          fontWeight: 700,
+          letterSpacing: 0.5,
+        }}>
+          {modeMeta.label}
+        </span>
+      </div>
+
+      {err && <div style={{ color: '#f87171', fontSize: '0.82rem', marginBottom: 8 }}>{err}</div>}
+
+      {cfg.mode === 'paper' && (
+        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, lineHeight: 1.35 }}>
+          Paper mode sends real orders to your OANDA <strong>practice</strong> account (profile must have{' '}
+          <code style={{ fontSize: '0.72rem' }}>oanda_environment: &quot;practice&quot;</code>
+          {' '}and a practice API token). Fills and outcomes are normal broker trades and feed Fillmore learning.
+        </div>
+      )}
+
+      {/* Master mode + enabled toggle */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+        <div>
+          <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Mode</label>
+          <select
+            value={cfg.mode}
+            disabled={busy}
+            onChange={(e) => void save({ mode: e.target.value as api.AutonomousConfig['mode'], enabled: e.target.value !== 'off' })}
+            style={{ width: '100%', padding: '4px 6px', fontSize: '0.85rem' }}
+          >
+            {MODE_LABELS.map((m) => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Enabled</label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, height: 26 }}>
+            <input
+              type="checkbox"
+              checked={cfg.enabled && canEnable}
+              disabled={busy || !canEnable}
+              onChange={(e) => void save({ enabled: e.target.checked })}
+            />
+            <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+              {cfg.enabled && canEnable ? 'running' : 'paused'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Aggressiveness */}
+      <div style={{ marginBottom: 10 }}>
+        <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between' }}>
+          <span>Gate Aggressiveness</span>
+          {expectedPct != null && (
+            <span style={{ color: 'var(--text-secondary)' }}>
+              ~{expectedPct}% pass rate
+            </span>
+          )}
+        </label>
+        <select
+          value={cfg.aggressiveness}
+          disabled={busy}
+          onChange={(e) => void save({ aggressiveness: e.target.value as api.AutonomousConfig['aggressiveness'] })}
+          style={{ width: '100%', padding: '4px 6px', fontSize: '0.85rem' }}
+        >
+          {AGG_LABELS.map((a) => (
+            <option key={a.value} value={a.value}>{a.label}</option>
+          ))}
+        </select>
+        {aggDesc && (
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+            {aggDesc}
+          </div>
+        )}
+      </div>
+
+      {/* Order type */}
+      <div style={{ marginBottom: 10 }}>
+        <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Order Type</label>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {(['market', 'limit'] as const).map((t) => {
+            const active = cfg.order_type === t;
+            return (
+              <button
+                key={t}
+                type="button"
+                disabled={busy}
+                onClick={() => void save({ order_type: t })}
+                style={{
+                  flex: 1,
+                  padding: '4px 8px',
+                  fontSize: '0.82rem',
+                  background: active ? 'rgba(74,222,128,0.18)' : 'rgba(255,255,255,0.04)',
+                  color: active ? '#4ade80' : 'var(--text-secondary)',
+                  border: active ? '1px solid rgba(74,222,128,0.5)' : '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: 6,
+                  fontWeight: active ? 700 : 400,
+                  cursor: busy ? 'not-allowed' : 'pointer',
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.5,
+                }}
+              >
+                {t}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+          {cfg.order_type === 'market'
+            ? 'Fills immediately at best available price.'
+            : 'Rests as a pending order; fills only at the LLM-specified price.'}
+        </div>
+      </div>
+
+      {/* Budget + activity today */}
+      <div style={{
+        background: 'rgba(255,255,255,0.04)',
+        borderRadius: 8,
+        padding: 10,
+        marginBottom: 10,
+        display: 'grid',
+        gap: 6,
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem' }}>
+          <span style={{ color: 'var(--text-secondary)' }}>Today's spend</span>
+          <strong>${today?.spend_usd?.toFixed(3) ?? '0.000'} / ${cfg.daily_budget_usd.toFixed(2)}</strong>
+        </div>
+        <div style={{ height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3, overflow: 'hidden' }}>
+          <div style={{ width: `${budgetPct}%`, height: '100%', background: budgetColor, transition: 'width 0.3s' }} />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4, fontSize: '0.78rem', marginTop: 4 }}>
+          <div>
+            <div style={{ color: 'var(--text-secondary)' }}>LLM calls</div>
+            <strong>{today?.llm_calls ?? 0}</strong>
+          </div>
+          <div>
+            <div style={{ color: 'var(--text-secondary)' }}>Trades placed</div>
+            <strong>{today?.trades_placed ?? 0}</strong>
+          </div>
+          <div>
+            <div style={{ color: 'var(--text-secondary)' }}>P&L</div>
+            <strong style={{ color: (today?.pnl_usd ?? 0) >= 0 ? '#4ade80' : '#f87171' }}>
+              ${today?.pnl_usd?.toFixed(2) ?? '0.00'}
+            </strong>
+          </div>
+        </div>
+      </div>
+
+      {/* Gate window stats */}
+      {window_ && window_.total > 0 && (
+        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 10 }}>
+          Last {window_.total} ticks: <strong style={{ color: 'var(--text-primary)' }}>{window_.pass_rate_pct}%</strong> passed
+          {window_.blocks > 0 && Object.keys(window_.top_block_reasons).length > 0 && (
+            <span> · top blocks: {Object.keys(window_.top_block_reasons).slice(0, 2).join(', ')}</span>
+          )}
+        </div>
+      )}
+
+      {/* Throttle indicator */}
+      {thr?.active && (
+        <div style={{
+          fontSize: '0.78rem',
+          background: 'rgba(248, 113, 113, 0.1)',
+          border: '1px solid rgba(248, 113, 113, 0.3)',
+          color: '#f87171',
+          padding: 6,
+          borderRadius: 6,
+          marginBottom: 10,
+        }}>
+          Throttled: {thr.reason || 'adaptive cooldown'}
+          {thr.until_utc && <span> until {new Date(thr.until_utc).toLocaleTimeString()}</span>}
+        </div>
+      )}
+
+      {/* Model + confidence */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+        <div>
+          <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Model</label>
+          <input
+            type="text"
+            value={cfg.model}
+            disabled={busy}
+            onChange={(e) => setCfg({ ...cfg, model: e.target.value })}
+            onBlur={(e) => void save({ model: e.target.value })}
+            style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem' }}
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Min confidence</label>
+          <select
+            value={cfg.min_confidence}
+            disabled={busy}
+            onChange={(e) => void save({ min_confidence: e.target.value as api.AutonomousConfig['min_confidence'] })}
+            style={{ width: '100%', padding: '4px 6px', fontSize: '0.85rem' }}
+          >
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Advanced controls */}
+      <button
+        type="button"
+        className="btn btn-secondary"
+        style={{ width: '100%', fontSize: '0.8rem', padding: '6px 10px', marginBottom: 6 }}
+        onClick={() => setShowAdvanced((v) => !v)}
+      >
+        {showAdvanced ? 'Hide' : 'Show'} advanced settings
+      </button>
+
+      {showAdvanced && (
+        <div style={{ display: 'grid', gap: 8, marginBottom: 10, padding: 8, background: 'rgba(255,255,255,0.03)', borderRadius: 6 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div>
+              <label style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Daily budget ($)</label>
+              <input
+                type="number" step="0.5" min="0.1"
+                defaultValue={cfg.daily_budget_usd}
+                onBlur={(e) => void save({ daily_budget_usd: Number(e.target.value) })}
+                style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem' }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Min cooldown (s)</label>
+              <input
+                type="number" step="10" min="10"
+                defaultValue={cfg.min_llm_cooldown_sec}
+                onBlur={(e) => void save({ min_llm_cooldown_sec: Number(e.target.value) })}
+                style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem' }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Max lots / trade</label>
+              <input
+                type="number" step="0.01" min="0.01"
+                defaultValue={cfg.max_lots_per_trade}
+                onBlur={(e) => void save({ max_lots_per_trade: Number(e.target.value) })}
+                style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem' }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Max open AI trades</label>
+              <input
+                type="number" step="1" min="1"
+                defaultValue={cfg.max_open_ai_trades}
+                onBlur={(e) => void save({ max_open_ai_trades: Number(e.target.value) })}
+                style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem' }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Max daily loss ($)</label>
+              <input
+                type="number" step="5" min="1"
+                defaultValue={cfg.max_daily_loss_usd}
+                onBlur={(e) => void save({ max_daily_loss_usd: Number(e.target.value) })}
+                style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem' }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Error kill threshold</label>
+              <input
+                type="number" step="1" min="1"
+                defaultValue={cfg.max_consecutive_errors}
+                onBlur={(e) => void save({ max_consecutive_errors: Number(e.target.value) })}
+                style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem' }}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Trading sessions (UTC)</label>
+            <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+              {(['tokyo', 'london', 'ny'] as const).map((sess) => (
+                <label key={sess} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.82rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={cfg.trading_hours?.[sess] ?? true}
+                    disabled={busy}
+                    onChange={(e) => void save({
+                      trading_hours: { ...cfg.trading_hours, [sess]: e.target.checked },
+                    })}
+                  />
+                  {sess}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+            Est. cost per LLM call: ${stats?.est_cost_per_llm_call_usd?.toFixed(5) ?? '-'}
+          </div>
+        </div>
+      )}
+
+      {/* Recent decisions (diagnostic) */}
+      <button
+        type="button"
+        className="btn btn-secondary"
+        style={{ width: '100%', fontSize: '0.8rem', padding: '6px 10px' }}
+        onClick={() => setShowDecisions((v) => !v)}
+      >
+        {showDecisions ? 'Hide' : 'Show'} recent gate decisions
+      </button>
+
+      {showDecisions && stats?.recent_decisions && (
+        <div style={{
+          marginTop: 8,
+          maxHeight: 180,
+          overflowY: 'auto',
+          fontSize: '0.74rem',
+          fontFamily: 'monospace',
+          background: 'rgba(0,0,0,0.25)',
+          borderRadius: 6,
+          padding: 6,
+        }}>
+          {stats.recent_decisions.length === 0 ? (
+            <div style={{ color: 'var(--text-secondary)' }}>no decisions yet</div>
+          ) : (
+            stats.recent_decisions.slice(0, 30).map((d, i) => {
+              const time = new Date(d.t).toLocaleTimeString();
+              const color = d.r === 'pass' ? '#4ade80' : d.l === 'hard' ? '#f87171' : d.l === 'throttle' ? '#facc15' : 'var(--text-secondary)';
+              return (
+                <div key={`${d.t}-${i}`} style={{ color, marginBottom: 2 }}>
+                  {time} [{d.l}] {d.why}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AiTradingAssistantPage({ profile }: { profile: AiAssistantProfile }) {
   const [messages, setMessages] = useState<ChatLine[]>(() => loadChatFromStorage(profile.path));
   const [input, setInput] = useState('');
@@ -1040,6 +1471,9 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
 
       {/* ===== RIGHT: Context sidebar ===== */}
       <div className="fillmore-sidebar">
+        {/* Autonomous Fillmore — when enabled, trades happen without manual review */}
+        <AutonomousFillmorePanel profileName={profile.name} />
+
         {/* Generate Suggestion — always visible at top of sidebar */}
         <div className="card">
           <div className="card-heading">Trade Suggestion</div>

@@ -182,6 +182,42 @@ def test_learning_prompt_block_surfaces_behavioral_feedback(tmp_path: Path) -> N
     suggestion_tracker.mark_filled(db_path, oanda_order_id="201", fill_price=149.98, trade_id="ai_manual:201:1")
     suggestion_tracker.mark_closed(db_path, oanda_order_id="201", exit_price=150.06, pnl=25.0, pips=8.0)
 
+    sid3 = suggestion_tracker.log_generated(
+        db_path,
+        profile="demo",
+        model="gpt-5.4-mini",
+        suggestion=_suggestion(side="buy", price=150.1, exit_strategy="tp1_be_m5_trail"),
+        ctx=_ctx(bias="bullish", session="London", vol="compressed"),
+    )
+    suggestion_tracker.log_action(
+        db_path,
+        suggestion_id=sid3,
+        action="placed",
+        edited_fields={},
+        placed_order={"side": "buy", "price": 150.1, "exit_strategy": "tp1_be_m5_trail"},
+        oanda_order_id="203",
+    )
+    suggestion_tracker.mark_filled(db_path, oanda_order_id="203", fill_price=150.1, trade_id="ai_manual:203:1")
+    suggestion_tracker.mark_closed(db_path, oanda_order_id="203", exit_price=150.18, pnl=22.0, pips=8.0)
+
+    sid4 = suggestion_tracker.log_generated(
+        db_path,
+        profile="demo",
+        model="gpt-5.4-mini",
+        suggestion=_suggestion(side="buy", price=150.2, exit_strategy="tp1_be_hwm_trail"),
+        ctx=_ctx(bias="bullish", session="London", vol="compressed"),
+    )
+    suggestion_tracker.log_action(
+        db_path,
+        suggestion_id=sid4,
+        action="placed",
+        edited_fields={},
+        placed_order={"side": "buy", "price": 150.2, "exit_strategy": "tp1_be_hwm_trail"},
+        oanda_order_id="204",
+    )
+    suggestion_tracker.mark_filled(db_path, oanda_order_id="204", fill_price=150.2, trade_id="ai_manual:204:1")
+    suggestion_tracker.mark_closed(db_path, oanda_order_id="204", exit_price=150.15, pnl=-12.0, pips=-5.0)
+
     suggestion_tracker.log_action(
         db_path,
         suggestion_id=sid2,
@@ -189,12 +225,22 @@ def test_learning_prompt_block_surfaces_behavioral_feedback(tmp_path: Path) -> N
         edited_fields={"lots": {"before": 0.05, "after": 0.03}},
     )
 
-    block = suggestion_tracker.build_learning_prompt_block(db_path, days_back=365, max_recent_examples=4)
+    block = suggestion_tracker.build_learning_prompt_block(
+        db_path,
+        days_back=365,
+        max_recent_examples=4,
+        current_ctx=_ctx(bias="bullish", session="London", vol="compressed"),
+    )
 
     assert "FILLMORE LEARNING MEMORY" in block
-    assert "Limit-order behavior" in block
+    assert "Matched analog cohort" in block
+    assert "session=london, bias=bullish, vol=compressed" in block
+    assert "Matched analog outcomes" in block
     assert "Most-edited fields" in block
-    assert "Recent examples:" in block
+    assert "Exit strategy results in this cohort:" in block
+    assert "tp1_be_m5_trail" in block
+    assert "tp1_be_hwm_trail" in block
+    assert "Recent matched examples:" in block
     assert "bias=bullish" in block
     assert "session=london" in block
 
@@ -205,6 +251,36 @@ def test_learning_prompt_block_handles_empty_history(tmp_path: Path) -> None:
     block = suggestion_tracker.build_learning_prompt_block(db_path, days_back=365)
 
     assert "No prior AI suggestion history is available yet" in block
+
+
+def test_learning_prompt_block_falls_back_when_no_close_context_match(tmp_path: Path) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+
+    sid = suggestion_tracker.log_generated(
+        db_path,
+        profile="demo",
+        model="gpt-5.4-mini",
+        suggestion=_suggestion(side="sell", price=150.4),
+        ctx=_ctx(bias="bearish", session="New York", vol="elevated"),
+    )
+    suggestion_tracker.log_action(
+        db_path,
+        suggestion_id=sid,
+        action="placed",
+        edited_fields={},
+        placed_order={"side": "sell", "price": 150.4, "exit_strategy": "tp1_be_only"},
+        oanda_order_id="401",
+    )
+    suggestion_tracker.mark_cancelled_or_expired(db_path, oanda_order_id="401", status="cancelled")
+
+    block = suggestion_tracker.build_learning_prompt_block(
+        db_path,
+        days_back=365,
+        max_recent_examples=4,
+        current_ctx=_ctx(bias="bullish", session="London", vol="compressed"),
+    )
+
+    assert "falling back to broad AI history" in block
 
 
 def test_get_history_returns_row_level_details_with_parsed_json(tmp_path: Path) -> None:

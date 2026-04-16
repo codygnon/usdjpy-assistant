@@ -1031,6 +1031,84 @@ def _compute_exit_strategy_performance(db_path: Any, days_back: int = 90) -> lis
         return None
 
 
+def _get_latest_suggestion_for_chat(db_path: Any) -> dict[str, Any] | None:
+    """Fetch the most recent Fillmore suggestion for injection into the chat system prompt.
+
+    Returns a compact dict with the suggestion details + action/outcome, or None
+    if no suggestions exist. This is a read-only bridge: chat can discuss what
+    Fillmore suggested, but this data never flows back into the suggestion endpoint.
+    """
+    try:
+        from api import suggestion_tracker as _st
+        from pathlib import Path as _P
+
+        p = _P(str(db_path))
+        if not p.exists():
+            return None
+        hist = _st.get_history(p, limit=1, offset=0)
+        items = hist.get("items") or []
+        if not items:
+            return None
+        row = items[0]
+        created = str(row.get("created_utc") or "")[:16]
+        side = str(row.get("side") or "?").upper()
+        price = row.get("limit_price")
+        sl = row.get("sl")
+        tp = row.get("tp")
+        lots = row.get("lots")
+        model = str(row.get("model") or "?")
+        confidence = str(row.get("confidence") or "?")
+        rationale = str(row.get("rationale") or "")
+        action = str(row.get("action") or "none")
+        exit_strategy = str(
+            (row.get("placed_order") or {}).get("exit_strategy")
+            or row.get("exit_strategy")
+            or ""
+        )
+        exit_params = row.get("exit_params") or {}
+
+        # Outcome
+        outcome = str(row.get("outcome_status") or "").strip()
+        win_loss = str(row.get("win_loss") or "").strip()
+        pnl = row.get("pnl")
+        pips = row.get("pips")
+
+        out: dict[str, Any] = {
+            "suggestion_id": row.get("suggestion_id"),
+            "created": created,
+            "model": model,
+            "side": side,
+            "price": price,
+            "sl": sl,
+            "tp": tp,
+            "lots": lots,
+            "confidence": confidence,
+            "rationale": rationale,
+            "action": action,
+            "exit_strategy": exit_strategy,
+            "exit_params": exit_params,
+        }
+        # Edits
+        edited = row.get("edited_fields") or {}
+        if edited:
+            out["edits"] = edited
+
+        # Outcome details
+        if outcome:
+            out["outcome"] = outcome
+        if win_loss:
+            out["win_loss"] = win_loss
+        if pnl is not None:
+            out["pnl"] = pnl
+        if pips is not None:
+            out["pips"] = pips
+        if row.get("oanda_order_id"):
+            out["order_id"] = row["oanda_order_id"]
+        return out
+    except Exception:
+        return None
+
+
 def _compute_derived_stats(closed_trades: list[dict]) -> dict[str, Any]:
     """Compute today's and this week's stats from closed trade list.
 
@@ -1899,6 +1977,17 @@ def build_trading_context(profile: ProfileV1, profile_name: str = "") -> dict[st
         except Exception:
             pass
 
+        # Latest Fillmore suggestion — injected into the chat system prompt so
+        # Fillmore can discuss its own ideas (one-way: chat reads suggestions,
+        # suggestions never read chat).
+        try:
+            suggestions_db = LOGS_DIR / profile_name / "ai_suggestions.sqlite"
+            latest = _get_latest_suggestion_for_chat(suggestions_db)
+            if latest:
+                ctx["latest_suggestion"] = latest
+        except Exception:
+            pass
+
     # Session awareness (no API call needed)
     now_utc = datetime.now(timezone.utc)
     ctx["session"] = _compute_session_info(now_utc)
@@ -2254,6 +2343,66 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
                 f"{e.get('win_rate_pct')}% wins | avg {e.get('avg_pips'):+.1f}p "
                 f"| net ${e.get('total_pnl', 0):+,.2f}"
             )
+
+    # Latest Fillmore suggestion — gives chat Fillmore awareness of its own ideas.
+    latest_sug = ctx.get("latest_suggestion")
+    if isinstance(latest_sug, dict):
+        lines.append("")
+        lines.append("YOUR MOST RECENT SUGGESTION (Fillmore-generated idea the trader saw):")
+        side = latest_sug.get("side", "?")
+        price = latest_sug.get("price")
+        sl = latest_sug.get("sl")
+        tp = latest_sug.get("tp")
+        lots = latest_sug.get("lots")
+        conf = latest_sug.get("confidence", "?")
+        lines.append(
+            f"  {side} @ {price} | SL {sl} | TP {tp} | {lots} lots | confidence={conf} "
+            f"| model={latest_sug.get('model', '?')} | {latest_sug.get('created', '?')}"
+        )
+        exit_strat = latest_sug.get("exit_strategy")
+        if exit_strat:
+            ep = latest_sug.get("exit_params") or {}
+            ep_str = ", ".join(f"{k}={v}" for k, v in ep.items()) if ep else "defaults"
+            lines.append(f"  Exit strategy: {exit_strat} ({ep_str})")
+        rationale = latest_sug.get("rationale", "")
+        if rationale:
+            lines.append(f"  Rationale: {rationale[:300]}")
+        action = latest_sug.get("action", "none")
+        edits = latest_sug.get("edits") or {}
+        if action == "placed":
+            edit_note = ""
+            if edits:
+                edit_parts = [f"{k}: {v.get('before')}→{v.get('after')}" for k, v in edits.items()]
+                edit_note = f" (edited: {', '.join(edit_parts[:5])})"
+            lines.append(f"  Action: PLACED{edit_note}")
+            oid = latest_sug.get("order_id")
+            if oid:
+                lines.append(f"  Order ID: {oid}")
+        elif action == "rejected":
+            edit_note = ""
+            if edits:
+                edit_parts = [f"{k}: {v.get('before')}→{v.get('after')}" for k, v in edits.items()]
+                edit_note = f" (fields viewed/edited before reject: {', '.join(edit_parts[:5])})"
+            lines.append(f"  Action: REJECTED{edit_note}")
+        else:
+            lines.append("  Action: pending (trader hasn't acted yet)")
+        outcome = latest_sug.get("outcome")
+        wl = latest_sug.get("win_loss")
+        pnl = latest_sug.get("pnl")
+        pips = latest_sug.get("pips")
+        if wl:
+            result_str = f"{wl.upper()}"
+            if pips is not None:
+                result_str += f" {pips:+.1f}p"
+            if pnl is not None:
+                result_str += f" (${pnl:+.2f})"
+            lines.append(f"  Outcome: {result_str}")
+        elif outcome:
+            lines.append(f"  Outcome: {outcome}")
+        lines.append(
+            "  ^ This is YOUR idea. If the trader asks about it, you remember the reasoning. "
+            "Reference it naturally when relevant — don't volunteer it unprompted on every message."
+        )
 
     # Guardrail alerts (only if triggered)
     alerts = ctx.get("guardrail_alerts")

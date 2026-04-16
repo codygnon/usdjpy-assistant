@@ -4381,6 +4381,39 @@ def main() -> None:
                 )
             except Exception as _aim_e2:
                 print(f"[{profile.profile_name}] ai_manual trade management error: {_aim_e2}")
+
+            # Autonomous Fillmore: evaluate gate and potentially place a fresh
+            # AI-suggested limit order. Fast-paths out when disabled.
+            try:
+                from api.autonomous_fillmore import tick_autonomous_fillmore
+
+                tick_autonomous_fillmore(
+                    profile=profile,
+                    profile_name=profile.profile_name,
+                    state_path=state_path,
+                    store=store,
+                    tick=tick,
+                    data_by_tf=data_by_tf,
+                    ntz_active=False,
+                )
+            except Exception as _auto_e:
+                print(f"[{profile.profile_name}] autonomous Fillmore tick error: {_auto_e}")
+
+            # Legacy in-app paper sim only (trades with config_json.paper=true). OANDA PAPER mode uses the broker.
+            try:
+                from api.paper_fillmore import tick_paper_fillmore_engine
+
+                tick_paper_fillmore_engine(
+                    profile=profile,
+                    profile_name=profile.profile_name,
+                    state_path=state_path,
+                    store=store,
+                    tick=tick,
+                    data_by_tf=data_by_tf,
+                )
+            except Exception as _paper_e:
+                print(f"[{profile.profile_name}] paper Fillmore engine error: {_paper_e}")
+
             _invalidate_trades_df_cache()
             _phase_done("trade_management", _tm_started)
             if has_phase3_integrated:

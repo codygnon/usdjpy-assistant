@@ -266,6 +266,10 @@ class SqliteStore:
             )
         return df
 
+    def get_trades_df(self, profile: str) -> pd.DataFrame:
+        """Alias for code paths that expect ``get_trades_df`` (e.g. autonomous Fillmore)."""
+        return self.read_trades_df(profile)
+
     def read_snapshots_df(self, profile: str) -> pd.DataFrame:
         with self.connect() as conn:
             cols = [r[1] for r in conn.execute("PRAGMA table_info(snapshots)").fetchall()]

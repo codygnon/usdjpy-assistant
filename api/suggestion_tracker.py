@@ -379,6 +379,48 @@ def mark_closed(
         return cur.rowcount > 0
 
 
+def mark_closed_by_suggestion_id(
+    db_path: Path,
+    *,
+    suggestion_id: str,
+    exit_price: float,
+    pnl: float,
+    pips: float,
+    closed_at: Optional[str] = None,
+) -> bool:
+    """Close outcome keyed by suggestion_id (paper trades use stable synthetic order ids)."""
+    init_db(db_path)
+    if pnl > 0:
+        outcome = "win"
+    elif pnl < 0:
+        outcome = "loss"
+    else:
+        outcome = "breakeven"
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            UPDATE ai_suggestions
+            SET closed_at = ?,
+                exit_price = ?,
+                pnl = ?,
+                pips = ?,
+                win_loss = ?
+            WHERE suggestion_id = ?
+              AND closed_at IS NULL
+            """,
+            (
+                closed_at or _now_utc_iso(),
+                float(exit_price),
+                float(pnl),
+                float(pips),
+                outcome,
+                str(suggestion_id),
+            ),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
 def mark_cancelled_or_expired(
     db_path: Path,
     *,
@@ -484,6 +526,7 @@ def build_learning_prompt_block(
     *,
     days_back: int = 180,
     max_recent_examples: int = 8,
+    current_ctx: Optional[dict[str, Any]] = None,
 ) -> str:
     """Compact performance-memory block for the AI suggestion prompt."""
     init_db(db_path)
@@ -496,11 +539,12 @@ def build_learning_prompt_block(
         )
 
     summary = _summarize_rows(rows)
-    recent_examples = _format_recent_examples(rows, max_items=max_recent_examples)
     top_edit_fields = _top_edited_fields(rows, limit=4)
-    bias_summary = _label_summary(rows, key="macro_bias")
-    session_summary = _label_summary(rows, key="session")
-    vol_summary = _label_summary(rows, key="vol_label")
+    current_labels = _context_labels_from_live_ctx(current_ctx) if current_ctx else {}
+    matched_rows, matched_keys = _select_matching_rows(rows, current_labels)
+    matched_summary = _summarize_rows(matched_rows) if matched_rows else None
+    recent_examples = _format_recent_examples(matched_rows or rows, max_items=max_recent_examples)
+    exit_summary = _exit_strategy_summary(matched_rows or rows, limit=3)
 
     lines = [
         "=== FILLMORE LEARNING MEMORY (recent AI limit-order outcomes) ===",
@@ -520,16 +564,30 @@ def build_learning_prompt_block(
             f"avg hold {summary['avg_hold_minutes']:.1f}m."
         ),
     ]
+    if matched_rows and matched_summary:
+        lines.append(
+            "Matched analog cohort: "
+            f"{_format_match_description(current_labels, matched_keys)} "
+            f"({len(matched_rows)} similar suggestions in sample)."
+        )
+        lines.append(
+            "Matched analog outcomes: "
+            f"{matched_summary['placed']} placed, {matched_summary['closed']} closed, "
+            f"win rate {matched_summary['win_rate_closed_pct']:.1f}%, "
+            f"avg pnl {matched_summary['avg_pnl_closed']:.2f}, avg pips {matched_summary['avg_pips_closed']:.2f}, "
+            f"fill rate {matched_summary['fill_rate_after_placement_pct']:.1f}%."
+        )
+    elif current_labels:
+        lines.append(
+            "Matched analog cohort: no close condition match found for the current context; "
+            "falling back to broad AI history."
+        )
     if top_edit_fields:
         lines.append(f"Most-edited fields before placement/rejection: {', '.join(top_edit_fields)}.")
-    if bias_summary:
-        lines.append(f"Macro-bias outcomes seen: {bias_summary}.")
-    if session_summary:
-        lines.append(f"Session outcomes seen: {session_summary}.")
-    if vol_summary:
-        lines.append(f"Volatility outcomes seen: {vol_summary}.")
+    if exit_summary:
+        lines.append(f"Exit strategy results in this cohort: {exit_summary}.")
     if recent_examples:
-        lines.append("Recent examples:")
+        lines.append("Recent matched examples:" if matched_rows else "Recent examples:")
         lines.extend(f"  - {line}" for line in recent_examples)
     lines.append(
         "Learning rule: prefer setups that align with what has been filling and closing well; be cautious with patterns that were often edited, rejected, cancelled, or closed poorly."
@@ -637,6 +695,97 @@ def _format_recent_examples(rows: list[dict[str, Any]], max_items: int = 8) -> l
     return out
 
 
+def _context_labels_from_live_ctx(ctx: dict[str, Any] | None) -> dict[str, str]:
+    if not isinstance(ctx, dict):
+        return {}
+    snap = _extract_market_snapshot(ctx)
+    return _labels_from_snapshot(snap)
+
+
+def _select_matching_rows(
+    rows: list[dict[str, Any]],
+    current_labels: dict[str, str],
+) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
+    if not rows or not current_labels:
+        return ([], ())
+
+    available_keys = tuple(key for key in ("session", "macro_bias", "vol_label") if current_labels.get(key))
+    if not available_keys:
+        return ([], ())
+
+    specs: list[tuple[str, ...]] = [
+        tuple(key for key in ("session", "macro_bias", "vol_label") if current_labels.get(key)),
+        tuple(key for key in ("session", "macro_bias") if current_labels.get(key)),
+        tuple(key for key in ("session", "vol_label") if current_labels.get(key)),
+        tuple(key for key in ("macro_bias", "vol_label") if current_labels.get(key)),
+        tuple(key for key in ("session",) if current_labels.get(key)),
+        tuple(key for key in ("macro_bias",) if current_labels.get(key)),
+        tuple(key for key in ("vol_label",) if current_labels.get(key)),
+    ]
+    specs = [spec for spec in specs if spec]
+
+    best_nonempty: tuple[list[dict[str, Any]], tuple[str, ...]] | None = None
+    for spec in specs:
+        matched = []
+        for row in rows:
+            labels = _snapshot_context(row)
+            if all(labels.get(key) == current_labels.get(key) for key in spec):
+                matched.append(row)
+        if matched and best_nonempty is None:
+            best_nonempty = (matched, spec)
+        if len(matched) >= 3:
+            return (matched, spec)
+    if best_nonempty is not None:
+        return best_nonempty
+    return ([], ())
+
+
+def _format_match_description(current_labels: dict[str, str], keys: tuple[str, ...]) -> str:
+    if not keys:
+        return "broad history fallback"
+    labels = {
+        "session": "session",
+        "macro_bias": "bias",
+        "vol_label": "vol",
+    }
+    return ", ".join(f"{labels[key]}={current_labels.get(key)}" for key in keys if current_labels.get(key))
+
+
+def _exit_strategy_summary(rows: list[dict[str, Any]], limit: int = 3) -> str:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        strat = _placed_exit_strategy(row)
+        if strat:
+            grouped[strat].append(row)
+    ranked: list[tuple[str, list[dict[str, Any]]]] = []
+    for strat, strat_rows in grouped.items():
+        closed_rows = [row for row in strat_rows if row.get("closed_at") and row.get("pnl") is not None]
+        ranked.append((strat, closed_rows if closed_rows else strat_rows))
+    if not ranked:
+        return ""
+    ranked.sort(
+        key=lambda item: (
+            len([row for row in item[1] if row.get("closed_at") and row.get("pnl") is not None]),
+            _safe_avg([_to_float(row.get("pips")) for row in item[1] if row.get("pips") is not None]),
+            len(item[1]),
+        ),
+        reverse=True,
+    )
+    parts: list[str] = []
+    for strat, strat_rows in ranked[: max(1, limit)]:
+        closed_rows = [row for row in strat_rows if row.get("closed_at") and row.get("pnl") is not None]
+        rows_for_metrics = closed_rows if closed_rows else strat_rows
+        avg_pips = _safe_avg([_to_float(row.get("pips")) for row in rows_for_metrics if row.get("pips") is not None])
+        wins = len([row for row in closed_rows if str(row.get("win_loss") or "") == "win"])
+        descriptor = (
+            f"{strat} ({len(closed_rows)} closed, { _safe_rate(wins, len(closed_rows)):.0f}% wins, avg {avg_pips:+.1f}p)"
+            if closed_rows
+            else f"{strat} ({len(rows_for_metrics)} seen, no closed outcomes yet)"
+        )
+        parts.append(descriptor)
+    return ", ".join(parts)
+
+
 def _top_edited_fields(rows: list[dict[str, Any]], limit: int = 4) -> list[str]:
     counts: Counter[str] = Counter()
     for row in rows:
@@ -667,6 +816,10 @@ def _label_summary(rows: list[dict[str, Any]], *, key: str) -> str:
 
 def _snapshot_context(row: dict[str, Any]) -> dict[str, Any]:
     raw = _json_obj(row.get("market_snapshot_json"))
+    return _labels_from_snapshot(raw)
+
+
+def _labels_from_snapshot(raw: dict[str, Any]) -> dict[str, Any]:
     session = _json_obj(raw.get("session"))
     macro_bias = _json_obj(raw.get("macro_bias"))
     volatility = _json_obj(raw.get("volatility"))

@@ -1138,6 +1138,100 @@ export async function getAiSuggestionHistory(
   );
 }
 
+// ---------- Autonomous Fillmore ----------
+
+export interface AutonomousConfig {
+  enabled: boolean;
+  mode: 'off' | 'shadow' | 'paper' | 'live';
+  aggressiveness: 'conservative' | 'balanced' | 'aggressive' | 'very_aggressive';
+  order_type: 'market' | 'limit';
+  daily_budget_usd: number;
+  min_llm_cooldown_sec: number;
+  trading_hours: { tokyo: boolean; london: boolean; ny: boolean };
+  max_lots_per_trade: number;
+  max_open_ai_trades: number;
+  max_daily_loss_usd: number;
+  max_consecutive_errors: number;
+  min_confidence: 'low' | 'medium' | 'high';
+  model: string;
+  throttle_no_trade_streak: number;
+  throttle_no_trade_cooldown_sec: number;
+  throttle_loss_streak: number;
+  throttle_loss_cooldown_sec: number;
+}
+
+export interface AutonomousGateMode {
+  description: string;
+  expected_pass_rate_pct: number;
+}
+
+export interface AutonomousDecision {
+  t: string;              // timestamp_utc
+  r: 'pass' | 'block';
+  l: 'hard' | 'signal' | 'throttle' | 'pass';
+  why: string;
+  mode: string;
+  agg: string;
+  x?: Record<string, unknown>;
+}
+
+export interface AutonomousStats {
+  config: AutonomousConfig;
+  gate_description?: string;
+  expected_pass_rate_pct?: number;
+  est_cost_per_llm_call_usd: number;
+  window: {
+    total: number;
+    passes: number;
+    blocks: number;
+    pass_rate_pct: number;
+    top_block_layers: Record<string, number>;
+    top_block_reasons: Record<string, number>;
+  };
+  today: {
+    llm_calls: number;
+    spend_usd: number;
+    budget_usd: number;
+    budget_used_pct: number;
+    trades_placed: number;
+    pnl_usd: number;
+  };
+  throttle: {
+    active: boolean;
+    until_utc: string | null;
+    reason: string | null;
+    consecutive_no_trade_replies: number;
+    consecutive_losses: number;
+    consecutive_errors: number;
+  };
+  last_llm_call_utc: string | null;
+  last_placed_order_id: string | null;
+  last_suggestion_id: string | null;
+  recent_decisions: AutonomousDecision[];
+}
+
+export async function getAutonomousConfig(profileName: string): Promise<{ config: AutonomousConfig; gate_modes: Record<string, AutonomousGateMode> }> {
+  return fetchJson(`${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/config`);
+}
+
+export async function updateAutonomousConfig(
+  profileName: string,
+  patch: Partial<AutonomousConfig>,
+): Promise<{ config: AutonomousConfig }> {
+  return fetchJson(
+    `${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/config`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    },
+  );
+}
+
+export async function getAutonomousStats(profileName: string): Promise<AutonomousStats> {
+  return fetchJson(`${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/stats`);
+}
+
 async function readApiErrorDetail(res: Response): Promise<string> {
   const text = await res.text();
   try {

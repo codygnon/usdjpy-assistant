@@ -5785,6 +5785,7 @@ def ai_suggest_trade(
             _suggestions_db_path(profile_name),
             days_back=180,
             max_recent_examples=8,
+            current_ctx=ctx,
         )
         system = f"{system}\n\n{learning_block}"
     except Exception as learn_exc:
@@ -6048,6 +6049,58 @@ def ai_suggestion_history(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"get_history failed: {e}") from e
+
+
+class AutonomousConfigPatch(BaseModel):
+    enabled: Optional[bool] = None
+    mode: Optional[str] = None
+    aggressiveness: Optional[str] = None
+    order_type: Optional[str] = None
+    daily_budget_usd: Optional[float] = None
+    min_llm_cooldown_sec: Optional[int] = None
+    trading_hours: Optional[dict[str, bool]] = None
+    max_lots_per_trade: Optional[float] = None
+    max_open_ai_trades: Optional[int] = None
+    max_daily_loss_usd: Optional[float] = None
+    max_consecutive_errors: Optional[int] = None
+    min_confidence: Optional[str] = None
+    model: Optional[str] = None
+    throttle_no_trade_streak: Optional[int] = None
+    throttle_no_trade_cooldown_sec: Optional[int] = None
+    throttle_loss_streak: Optional[int] = None
+    throttle_loss_cooldown_sec: Optional[int] = None
+
+
+@app.get("/api/data/{profile_name}/autonomous/config")
+def get_autonomous_config(profile_name: str) -> dict[str, Any]:
+    """Return the saved autonomous-Fillmore config merged with defaults."""
+    from api import autonomous_fillmore
+
+    state_path = _runtime_state_path(profile_name)
+    return {
+        "config": autonomous_fillmore.get_config(state_path),
+        "gate_modes": autonomous_fillmore.GATE_THRESHOLDS,
+    }
+
+
+@app.put("/api/data/{profile_name}/autonomous/config")
+def update_autonomous_config(profile_name: str, patch: AutonomousConfigPatch) -> dict[str, Any]:
+    """Merge-update the autonomous-Fillmore config. Partial updates allowed."""
+    from api import autonomous_fillmore
+
+    state_path = _runtime_state_path(profile_name)
+    clean = {k: v for k, v in patch.dict().items() if v is not None}
+    new_cfg = autonomous_fillmore.set_config(state_path, clean)
+    return {"config": new_cfg}
+
+
+@app.get("/api/data/{profile_name}/autonomous/stats")
+def get_autonomous_stats(profile_name: str) -> dict[str, Any]:
+    """Live stats + recent gate decisions for the autonomous panel."""
+    from api import autonomous_fillmore
+
+    state_path = _runtime_state_path(profile_name)
+    return autonomous_fillmore.build_stats(state_path)
 
 
 @app.get("/api/ai-chat/models")
