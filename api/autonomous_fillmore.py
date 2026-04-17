@@ -85,6 +85,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "repeat_setup_dedupe_enabled": True, # pre-LLM: block tick if a placed suggestion in same price bucket fired within window
     "repeat_setup_window_min": 30,
     "repeat_setup_bucket_pips": 25.0,
+    # Stage 6: event blackout + multi-trade planning
+    "event_blackout_enabled": True,      # gate blocks when high-impact USD/JPY event within N minutes
+    "event_blackout_minutes": 30,
+    "multi_trade_enabled": True,         # LLM can propose 0-2 setups per call instead of exactly 1
+    "max_suggestions_per_call": 2,
 }
 
 # Per-mode gate thresholds. Lower = easier to pass = more LLM calls.
@@ -131,6 +136,9 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
         "expected_pass_rate_pct": 8.0,
     },
 }
+
+_AUTONOMOUS_LIMIT_NEAR_TOUCH_MIN_PIPS = 0.1
+_AUTONOMOUS_LIMIT_NEAR_TOUCH_MAX_PIPS = 0.5
 
 
 @dataclass
@@ -231,6 +239,7 @@ def set_config(state_path: Path, patch: dict[str, Any]) -> dict[str, Any]:
         "throttle_loss_streak", "throttle_loss_cooldown_sec",
         "limit_gtd_minutes",
         "correlation_distance_pips", "repeat_setup_window_min", "repeat_setup_bucket_pips",
+        "event_blackout_minutes", "max_suggestions_per_call",
     ):
         if numkey in clean:
             try:
@@ -694,6 +703,7 @@ class GateInputs:
     data_by_tf: dict[str, pd.DataFrame]
     ntz_active: bool = False
     suggestions_db_path: Optional[Path] = None  # for same-setup dedupe lookup; None disables the check
+    upcoming_events: Optional[list[dict[str, Any]]] = None  # from get_economic_calendar_events(); None skips check
 
 
 def evaluate_gate(
@@ -724,6 +734,19 @@ def evaluate_gate(
         return _block("hard", f"spread_too_wide:{inputs.spread_pips}")
     if inputs.ntz_active:
         return _block("hard", "ntz_active")
+    # Event blackout: block when a high-impact USD/JPY event is imminent.
+    if cfg.get("event_blackout_enabled") and inputs.upcoming_events:
+        blackout_min = int(cfg.get("event_blackout_minutes") or 30)
+        for ev in inputs.upcoming_events:
+            mins = ev.get("minutes_to_event")
+            impact = str(ev.get("impact") or "").lower()
+            currency = str(ev.get("currency") or "").upper()
+            if currency not in ("USD", "JPY", "ALL"):
+                continue
+            if impact not in ("high", "red"):
+                continue
+            if isinstance(mins, (int, float)) and 0 <= mins <= blackout_min:
+                return _block("hard", f"event_blackout:{ev.get('event', '?')}_{mins}m")
     if inputs.open_ai_trade_count >= int(cfg.get("max_open_ai_trades") or 2):
         return _block("hard", f"max_open_ai_trades:{inputs.open_ai_trade_count}")
     # Daily loss cap
@@ -1016,6 +1039,15 @@ def tick_autonomous_fillmore(
     except Exception:
         db_path = None
 
+    # Fetch upcoming economic events for the event blackout gate (cached 1 hour).
+    upcoming: Optional[list[dict[str, Any]]] = None
+    if cfg.get("event_blackout_enabled"):
+        try:
+            from api.ai_trading_chat import get_economic_calendar_events
+            upcoming = get_economic_calendar_events(days_ahead=1, limit=5)
+        except Exception:
+            upcoming = None
+
     inputs = GateInputs(
         spread_pips=float(spread_pips) if spread_pips is not None else 999.0,
         tick_mid=mid,
@@ -1023,6 +1055,7 @@ def tick_autonomous_fillmore(
         data_by_tf=data_by_tf or {},
         ntz_active=bool(ntz_active),
         suggestions_db_path=db_path,
+        upcoming_events=upcoming,
     )
 
     state = _load_state(state_path)
@@ -1048,7 +1081,7 @@ def tick_autonomous_fillmore(
     print(f"[{profile_name}] autonomous Fillmore: gate passed ({cfg.get('aggressiveness')}, {mode}); invoking LLM")
 
     try:
-        suggestion = _invoke_suggest(profile, profile_name, cfg)
+        suggestions = _invoke_suggest(profile, profile_name, cfg)
     except Exception as e:
         print(f"[{profile_name}] autonomous Fillmore: LLM error: {e}")
         record_error(state_path, cfg, str(e))
@@ -1057,105 +1090,124 @@ def tick_autonomous_fillmore(
     # Record the call & cost regardless of trade-or-not.
     record_llm_invocation(state_path, str(cfg.get("model") or "gpt-5.4-mini"))
 
-    conf = str(suggestion.get("confidence") or "low").lower()
+    # Process each suggestion from the LLM (1 in single mode, up to max_suggestions in multi).
     min_conf = str(cfg.get("min_confidence") or "medium").lower()
-    if _confidence_rank(conf) < _confidence_rank(min_conf):
-        print(f"[{profile_name}] autonomous Fillmore: suggestion confidence {conf} < min {min_conf}; skipping")
-        record_no_trade_reply(state_path, cfg)
-        return
+    order_type = str(cfg.get("order_type") or "market").lower()
+    max_lots = float(cfg.get("max_lots_per_trade") or 15.0)
+    placed_any = False
+    agg_label = str(cfg.get("aggressiveness") or "balanced")
+    max_open = int(cfg.get("max_open_ai_trades") or 2)
 
-    # Book-correlation veto: don't stack a same-side trade near an existing fill.
-    # Logged as a synthetic gate decision so the user sees it in the decisions log.
-    if cfg.get("correlation_veto_enabled"):
-        veto_dist = float(cfg.get("correlation_distance_pips") or 15.0)
-        try:
-            sug_side = str(suggestion.get("side") or "").lower()
-            sug_price = float(suggestion.get("price") or 0)
-        except (TypeError, ValueError):
-            sug_side, sug_price = "", 0.0
-        prior_open = _correlated_open_position(db_path, sug_side, sug_price, veto_dist)
-        if prior_open is not None:
+    for suggestion in suggestions:
+        # Respect max_open_ai_trades across the batch — count may change after each placement.
+        current_open = _count_open_ai_trades(store, profile_name)
+        if current_open >= max_open:
+            print(f"[{profile_name}] autonomous Fillmore: max open trades reached ({current_open}); skipping remaining suggestions")
+            break
+
+        conf = str(suggestion.get("confidence") or "low").lower()
+        if _confidence_rank(conf) < _confidence_rank(min_conf):
+            print(f"[{profile_name}] autonomous Fillmore: suggestion confidence {conf} < min {min_conf}; skipping")
+            continue
+
+        # Book-correlation veto: don't stack a same-side trade near an existing fill.
+        if cfg.get("correlation_veto_enabled"):
+            veto_dist = float(cfg.get("correlation_distance_pips") or 15.0)
             try:
-                prior_fill = float(prior_open.get("fill_price") or prior_open.get("limit_price") or 0)
+                sug_side = str(suggestion.get("side") or "").lower()
+                sug_price = float(suggestion.get("price") or 0)
             except (TypeError, ValueError):
-                prior_fill = 0.0
-            print(
-                f"[{profile_name}] autonomous Fillmore: correlation veto — "
-                f"{sug_side.upper()} @ {sug_price:.3f} blocked, open same-side at {prior_fill:.3f} "
-                f"(within {veto_dist:.1f}p)"
-            )
-            log_decision(
-                state_path,
-                GateDecision(
-                    timestamp_utc=datetime.now(timezone.utc).isoformat(),
-                    result="block", layer="signal",
-                    reason=f"correlation_veto_within_{veto_dist:.0f}p",
-                    mode=mode, aggressiveness=str(cfg.get("aggressiveness") or "balanced"),
-                    extras={
-                        "proposed_side": sug_side,
-                        "proposed_price": sug_price,
-                        "open_fill_price": prior_fill,
-                        "open_suggestion_id": prior_open.get("suggestion_id"),
-                    },
-                ),
-            )
-            return
+                sug_side, sug_price = "", 0.0
+            prior_open = _correlated_open_position(db_path, sug_side, sug_price, veto_dist)
+            if prior_open is not None:
+                try:
+                    prior_fill = float(prior_open.get("fill_price") or prior_open.get("limit_price") or 0)
+                except (TypeError, ValueError):
+                    prior_fill = 0.0
+                print(
+                    f"[{profile_name}] autonomous Fillmore: correlation veto — "
+                    f"{sug_side.upper()} @ {sug_price:.3f} blocked, open same-side at {prior_fill:.3f} "
+                    f"(within {veto_dist:.1f}p)"
+                )
+                log_decision(
+                    state_path,
+                    GateDecision(
+                        timestamp_utc=datetime.now(timezone.utc).isoformat(),
+                        result="block", layer="signal",
+                        reason=f"correlation_veto_within_{veto_dist:.0f}p",
+                        mode=mode, aggressiveness=agg_label,
+                        extras={
+                            "proposed_side": sug_side,
+                            "proposed_price": sug_price,
+                            "open_fill_price": prior_fill,
+                            "open_suggestion_id": prior_open.get("suggestion_id"),
+                        },
+                    ),
+                )
+                continue
 
-    # Shadow mode logs the would-have-traded decision but stops here.
-    if mode == "shadow":
-        print(f"[{profile_name}] autonomous Fillmore: SHADOW — would have placed {suggestion.get('side')} @ {suggestion.get('price')}")
-        # Successful decision in shadow mode; clear no-trade streak.
+        # Shadow mode logs but doesn't place.
+        if mode == "shadow":
+            print(f"[{profile_name}] autonomous Fillmore: SHADOW — would have placed {suggestion.get('side')} @ {suggestion.get('price')}")
+            placed_any = True
+            continue
+
+        # Safety cap on lots.
+        if float(suggestion.get("lots") or 0) > max_lots:
+            print(f"[{profile_name}] autonomous Fillmore: clipping lots {suggestion.get('lots')} -> {max_lots}")
+            suggestion["lots"] = max_lots
+        if float(suggestion.get("lots") or 0) <= 0:
+            print(f"[{profile_name}] autonomous Fillmore: invalid lots {suggestion.get('lots')}; skipping")
+            continue
+
+        # Paper mode safety check.
+        if mode == "paper":
+            bt = str(getattr(profile, "broker_type", None) or "mt5").lower()
+            if bt == "oanda":
+                env = str(getattr(profile, "oanda_environment", None) or "practice").lower()
+                if env != "practice":
+                    print(
+                        f"[{profile_name}] autonomous Fillmore: PAPER mode requires "
+                        f"profile oanda_environment='practice' (found {env!r}); skipping place."
+                    )
+                    continue
+        try:
+            placed = _place_from_suggestion(
+                profile, profile_name, state_path, suggestion, order_type, store,
+            )
+            record_trade_placed(state_path, placed.get("order_id"), suggestion.get("suggestion_id"))
+            kind = "MKT" if order_type == "market" else "LMT"
+            print(
+                f"[{profile_name}] autonomous Fillmore: placed {kind} {suggestion.get('side')} "
+                f"{suggestion.get('lots')} @ {suggestion.get('price')} (order {placed.get('order_id')})"
+            )
+            placed_any = True
+        except Exception as e:
+            print(f"[{profile_name}] autonomous Fillmore: place error: {e}")
+            record_error(state_path, cfg, str(e))
+
+    if not placed_any and suggestions:
+        all_low = all(_confidence_rank(str(s.get("confidence") or "low").lower()) < _confidence_rank(min_conf) for s in suggestions)
+        if all_low:
+            record_no_trade_reply(state_path, cfg)
+    elif placed_any and mode == "shadow":
         state = _load_state(state_path)
         rt = _runtime_block(state)
         rt["consecutive_no_trade_replies"] = 0
         _save_state(state_path, state)
-        return
-
-    # Safety cap — LLM is told the ceiling in the prompt, but backstop here.
-    max_lots = float(cfg.get("max_lots_per_trade") or 15.0)
-    if float(suggestion.get("lots") or 0) > max_lots:
-        print(f"[{profile_name}] autonomous Fillmore: clipping lots {suggestion.get('lots')} -> {max_lots}")
-        suggestion["lots"] = max_lots
-    if float(suggestion.get("lots") or 0) <= 0:
-        print(f"[{profile_name}] autonomous Fillmore: invalid lots {suggestion.get('lots')}; skipping")
-        return
-
-    # ---- Place the order (market or limit per config) ----
-    order_type = str(cfg.get("order_type") or "market").lower()
-    if mode == "paper":
-        bt = str(getattr(profile, "broker_type", None) or "mt5").lower()
-        if bt == "oanda":
-            env = str(getattr(profile, "oanda_environment", None) or "practice").lower()
-            if env != "practice":
-                print(
-                    f"[{profile_name}] autonomous Fillmore: PAPER mode requires "
-                    f"profile oanda_environment='practice' (found {env!r}); skipping place."
-                )
-                return
-    try:
-        placed = _place_from_suggestion(
-            profile, profile_name, state_path, suggestion, order_type, store,
-        )
-        record_trade_placed(state_path, placed.get("order_id"), suggestion.get("suggestion_id"))
-        kind = "MKT" if order_type == "market" else "LMT"
-        print(
-            f"[{profile_name}] autonomous Fillmore: placed {kind} {suggestion.get('side')} "
-            f"{suggestion.get('lots')} @ {suggestion.get('price')} (order {placed.get('order_id')})"
-        )
-    except Exception as e:
-        print(f"[{profile_name}] autonomous Fillmore: place error: {e}")
-        record_error(state_path, cfg, str(e))
 
 
-_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*([\[\{].*?[\]\}])\s*```", re.DOTALL | re.IGNORECASE)
 
 
 def _extract_json_object(text: str) -> tuple[str, Optional[str]]:
     """Return (json_str, analysis_text).
 
     The autonomous prompt asks the model to reply with free-text ANALYSIS
-    followed by a fenced ```json``` block. We prefer the last fenced JSON block.
-    Fallback: scan for the last balanced ``{ ... }`` object in the response.
+    followed by a fenced ```json``` block containing either a single object
+    or an array of objects (for multi-trade planning).
+    We prefer the last fenced JSON block.
+    Fallback: scan for the last balanced ``{ ... }`` or ``[ ... ]`` in the response.
     ``analysis_text`` is whatever preceded the JSON (stripped), for logging.
     """
     if not text:
@@ -1168,17 +1220,19 @@ def _extract_json_object(text: str) -> tuple[str, Optional[str]]:
         analysis = stripped[: m.start()].strip() or None
         return m.group(1).strip(), analysis
 
-    # Fallback: find the last balanced top-level JSON object by brace scan.
-    last_end = stripped.rfind("}")
-    if last_end < 0:
+    # Fallback: find the last balanced top-level JSON object or array by brace scan.
+    last_close = max(stripped.rfind("}"), stripped.rfind("]"))
+    if last_close < 0:
         raise ValueError("no JSON object found in LLM response")
+    close_char = stripped[last_close]
+    open_char = "{" if close_char == "}" else "["
     depth = 0
     start = -1
-    for i in range(last_end, -1, -1):
+    for i in range(last_close, -1, -1):
         ch = stripped[i]
-        if ch == "}":
+        if ch == close_char:
             depth += 1
-        elif ch == "{":
+        elif ch == open_char:
             depth -= 1
             if depth == 0:
                 start = i
@@ -1186,7 +1240,7 @@ def _extract_json_object(text: str) -> tuple[str, Optional[str]]:
     if start < 0:
         raise ValueError("unbalanced JSON braces in LLM response")
     analysis = stripped[:start].strip() or None
-    return stripped[start : last_end + 1].strip(), analysis
+    return stripped[start : last_close + 1].strip(), analysis
 
 
 def _autonomous_session_profile(ctx: dict[str, Any] | None) -> str:
@@ -1240,14 +1294,67 @@ def _apply_autonomous_exit_calibration(
     return calibrated
 
 
-def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> dict[str, Any]:
+def _apply_autonomous_limit_price_policy(
+    profile,
+    suggestion: dict[str, Any],
+    ctx: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Snap autonomous limit prices into a near-touch passive-entry band.
+
+    Manual Fillmore can still reason about deeper structure entries. Autonomous
+    mode is intentionally more execution-focused here: if it wants to participate,
+    the resting limit should usually sit just outside the spread rather than 5-10
+    pips away.
+    """
+    if not isinstance(suggestion, dict):
+        return suggestion
+    side = str(suggestion.get("side") or "").strip().lower()
+    if side not in ("buy", "sell"):
+        return suggestion
+
+    spot = ((ctx or {}).get("spot_price") or {}) if isinstance(ctx, dict) else {}
+    try:
+        bid = float(spot.get("bid") or 0.0)
+        ask = float(spot.get("ask") or 0.0)
+    except (TypeError, ValueError):
+        return suggestion
+    if bid <= 0 or ask <= 0:
+        return suggestion
+
+    pip = float(getattr(profile, "pip_size", 0.01) or 0.01)
+    if pip <= 0:
+        pip = 0.01
+    near_min = _AUTONOMOUS_LIMIT_NEAR_TOUCH_MIN_PIPS * pip
+    near_max = _AUTONOMOUS_LIMIT_NEAR_TOUCH_MAX_PIPS * pip
+
+    try:
+        requested = float(suggestion.get("price") or 0.0)
+    except (TypeError, ValueError):
+        requested = 0.0
+    if requested <= 0:
+        requested = bid if side == "buy" else ask
+
+    normalized = dict(suggestion)
+    normalized["requested_price"] = requested
+
+    if side == "buy":
+        lower = bid - near_max
+        upper = bid - near_min
+        normalized["price"] = round(min(max(requested, lower), upper), 3)
+    else:
+        lower = ask + near_min
+        upper = ask + near_max
+        normalized["price"] = round(max(min(requested, upper), lower), 3)
+    return normalized
+
+
+def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> list[dict[str, Any]]:
     """Invoke the LLM for autonomous Fillmore.
 
     Reason-then-commit flow: the user prompt asks for a plain-text ANALYSIS
-    section first, then a fenced ```json``` DECISION block. The analysis
-    gives the model room to think without inflating token cost by 2x (still
-    a single API call). Uses the lean autonomous system prompt (no Fillmore
-    persona / desk voice) to keep focus on judgment.
+    section first, then a fenced ```json``` DECISION block. When multi-trade
+    planning is enabled the model may return an array of 0-2 trade objects;
+    otherwise a single object. Returns a list of normalized suggestion dicts.
 
     Lazy imports avoid circular dependency with api.main.
     """
@@ -1291,6 +1398,12 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> dict[str
             db_path, days_back=180, max_recent_examples=8, current_ctx=ctx,
         )
         system = f"{system}\n\n{learning}"
+        reflection_block = suggestion_tracker.build_autonomous_reflection_prompt_block(
+            db_path,
+            limit=10,
+            autonomous_only=True,
+        )
+        system = f"{system}\n\n{reflection_block}"
         today_block = suggestion_tracker.build_autonomous_today_block(db_path, max_items=10)
         system = f"{system}\n\n{today_block}"
     except Exception:
@@ -1315,12 +1428,13 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> dict[str
         exec_note = (
             f"ORDER EXECUTION: LIMIT — rests at the 'price' you set; fills only if the market reaches it. "
             f"Default expiry {limit_gtd_min} minutes (GTD). If the market moves away, the order dies harmlessly. "
-            "BUY LIMIT must be BELOW current bid; SELL LIMIT must be ABOVE current ask. Set your price at "
-            "the actual structure level you want to fade/buy — not the current mid."
+            "BUY LIMIT must be BELOW current bid; SELL LIMIT must be ABOVE current ask. Autonomous limit mode is "
+            "near-touch by design: entries should usually sit just outside the spread, not 5-10 pips away at a deep pullback level."
         )
         price_instr = (
-            "Limit price MUST be away from current price (BUY below current bid, SELL above current ask). "
-            "Anchor on a real level (PDH/PDL, round, OANDA order-book cluster, today's H/L)."
+            "Use a near-touch passive entry. BUY LIMIT should usually be 0.1-0.5 pips below current bid; "
+            "SELL LIMIT should usually be 0.1-0.5 pips above current ask. Anchor the thesis on structure, "
+            "but do not park the actual autonomous order 5-10 pips away unless explicitly justified."
         )
 
     paper_note = (
@@ -1342,11 +1456,28 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> dict[str
             "scale no more than 33% at TP1 unless you explicitly justify a tighter or heavier first take."
         )
 
+    multi_enabled = bool(cfg.get("multi_trade_enabled"))
+    max_suggestions = int(cfg.get("max_suggestions_per_call") or 2) if multi_enabled else 1
+
+    if multi_enabled:
+        multi_note = (
+            f"You may propose 0 to {max_suggestions} trade ideas. If the tape has two distinct, uncorrelated setups "
+            f"at different levels/sides you may return an array of {max_suggestions} objects. If only one setup is clear, "
+            "return a single object. If nothing is worth taking, return a single object with confidence='low'."
+        )
+        decision_format = (
+            f"2. DECISION (single fenced JSON code block containing one object OR an array of up to {max_suggestions} objects).\n"
+        )
+    else:
+        multi_note = ""
+        decision_format = "2. DECISION (single fenced JSON code block). Use this exact schema:\n"
+
     suggest_prompt = (
         f"=== AUTONOMOUS DECISION REQUEST ===\n"
         f"Gate mode: {agg}. Execution mode: {mode}.{paper_note}\n"
         f"{exec_note}\n"
         f"LOT CEILING: {max_lots:.0f} lots. Typical range 1-{int(max_lots)} proportional to conviction.\n"
+        + (f"\n{multi_note}\n" if multi_note else "") +
         "\n"
         "RESPONSE FORMAT (two parts, in this exact order):\n"
         "\n"
@@ -1359,10 +1490,12 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> dict[str
         "   - OPEN POSITIONS + YOUR MOST RECENT SUGGESTION — are you about to stack a correlated idea? "
         "If you already have a same-side position near this level, downgrade confidence or pass.\n"
         "   - Imminent events / session warnings that should cap confidence.\n"
-        "   - EXIT STRATEGY choice + why (reference EXIT STRATEGY PERFORMANCE if present).\n"
+        "   - EXIT STRATEGY + EXIT PLAN: Choose a strategy and briefly describe your conditional exit logic "
+        "(e.g., 'trail on M1 21 EMA after TP1' or 'exit if M3 trend flips bearish within 10 min'). "
+        "The thesis monitor will use your exit_plan to judge mid-trade.\n"
         "   - Final call: commit or pass? Be honest — low confidence is a valid answer.\n"
         "\n"
-        "2. DECISION (single fenced JSON code block). Use this exact schema:\n"
+        + decision_format +
         "```json\n"
         "{\n"
         '  "side": "buy" | "sell",\n'
@@ -1374,6 +1507,7 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> dict[str
         '  "gtd_time_utc": <ISO datetime string if GTD, else null>,\n'
         '  "exit_strategy": one of [' + _strategy_ids + '],\n'
         '  "exit_params": {<optional numeric overrides>} or null,\n'
+        '  "exit_plan": "<1-2 sentence custom exit logic for the thesis monitor>",\n'
         '  "rationale": "<1-2 sentence concise summary of the decision>",\n'
         '  "confidence": "low" | "medium" | "high"\n'
         "}\n"
@@ -1383,6 +1517,10 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> dict[str
         "SL/TP: Baseline SL 10-15p, TP 4-10p; flex with ATR. Never glue SL 1-2p past a known level.\n"
         f'EXIT STRATEGY: default "{DEFAULT_AI_EXIT_STRATEGY}" unless analysis favors another (or "none").\n'
         + exit_calibration_text + "\n"
+        "EXIT PLAN: Describe how you want to manage the trade mid-flight. The thesis monitor runs every ~3 min "
+        "and can hold, tighten SL, scale out, or exit. Give it clear conditions: 'exit if M3 flips bear', "
+        "'tighten SL to BE after +5p', 'scale 50% at TP1 then trail on M1 21 EMA'. If you have no custom plan, "
+        'write "default" and the template strategy handles it.\n'
         "CONFIDENCE CALIBRATION:\n"
         f"- Current placement threshold is '{min_conf}'. Anything below that will be skipped.\n"
         "- high = rare. A-tier only: clear TF consensus, JPY crosses agree, anchored on named structure, clean invalidation, no correlation to existing book, no event landmine. If you would hesitate unattended, it is not high.\n"
@@ -1404,73 +1542,89 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> dict[str
     raw = (resp.choices[0].message.content or "").strip()
     try:
         json_str, analysis_text = _extract_json_object(raw)
-        suggestion = _json.loads(json_str)
+        parsed = _json.loads(json_str)
     except Exception as e:
-        # Last-resort legacy fallback: strip code fences globally and parse.
         cleaned = raw
         if cleaned.startswith("```"):
             cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
         if cleaned.endswith("```"):
             cleaned = cleaned[: cleaned.rfind("```")]
         try:
-            suggestion = _json.loads(cleaned.strip())
+            parsed = _json.loads(cleaned.strip())
             analysis_text = None
         except Exception:
             raise ValueError(f"failed to parse suggestion JSON: {e}; raw[:300]={raw[:300]!r}") from e
 
-    # Preserve the analysis text alongside the rationale for later inspection.
-    if analysis_text:
-        existing_rat = str(suggestion.get("rationale") or "").strip()
-        if existing_rat:
-            suggestion["rationale"] = f"{existing_rat}\n\nANALYSIS:\n{analysis_text}"
+    # Normalize to a list of suggestions (single object → list of one).
+    raw_suggestions: list[dict[str, Any]] = []
+    if isinstance(parsed, list):
+        raw_suggestions = [s for s in parsed if isinstance(s, dict)]
+    elif isinstance(parsed, dict):
+        raw_suggestions = [parsed]
+
+    if not raw_suggestions:
+        raw_suggestions = [{"confidence": "low", "rationale": "empty response", "side": "buy", "price": 0}]
+
+    suggestions_out: list[dict[str, Any]] = []
+    for suggestion in raw_suggestions[:max_suggestions]:
+        # Preserve the analysis text alongside the rationale.
+        if analysis_text:
+            existing_rat = str(suggestion.get("rationale") or "").strip()
+            if existing_rat:
+                suggestion["rationale"] = f"{existing_rat}\n\nANALYSIS:\n{analysis_text}"
+            else:
+                suggestion["rationale"] = f"ANALYSIS:\n{analysis_text}"
+
+        # Normalize fields.
+        suggestion["side"] = str(suggestion.get("side") or "buy").lower()
+        suggestion["price"] = float(suggestion.get("price") or 0)
+        suggestion["sl"] = float(suggestion.get("sl") or 0)
+        suggestion["tp"] = float(suggestion.get("tp") or 0)
+        suggestion["lots"] = float(suggestion.get("lots") or 0)
+        if order_type == "limit":
+            suggestion = _apply_autonomous_limit_price_policy(profile, suggestion, ctx)
+        tif = str(suggestion.get("time_in_force") or "GTD").upper()
+        if tif not in ("GTC", "GTD"):
+            tif = "GTD"
+        suggestion["time_in_force"] = tif
+        if tif == "GTD" and not suggestion.get("gtd_time_utc"):
+            gtd_min = limit_gtd_min if order_type == "limit" else 60
+            suggestion["gtd_time_utc"] = (
+                (datetime.now(timezone.utc) + timedelta(minutes=gtd_min))
+                .replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            )
+        # exit_plan: free-text field for the thesis monitor to reason about mid-trade.
+        suggestion["exit_plan"] = str(suggestion.get("exit_plan") or "default").strip()
+
+        raw_exit = suggestion.get("exit_strategy")
+        raw_exit_s = str(raw_exit).strip().lower() if raw_exit is not None else ""
+        if raw_exit_s == "none":
+            suggestion["exit_strategy"] = "none"
+            suggestion["exit_params"] = {}
         else:
-            suggestion["rationale"] = f"ANALYSIS:\n{analysis_text}"
+            chosen = normalize_exit_strategy(raw_exit_s) if raw_exit_s in AI_EXIT_STRATEGIES else DEFAULT_AI_EXIT_STRATEGY
+            suggestion["exit_strategy"] = chosen
+            raw_params = suggestion.get("exit_params") if isinstance(suggestion.get("exit_params"), dict) else None
+            merged_params = merge_exit_params(chosen, raw_params)
+            suggestion["exit_params"] = _apply_autonomous_exit_calibration(chosen, merged_params, ctx)
+        suggestion["model_used"] = model
 
-    # Normalize like the HTTP path does.
-    suggestion["side"] = str(suggestion.get("side") or "buy").lower()
-    suggestion["price"] = float(suggestion.get("price") or 0)
-    suggestion["sl"] = float(suggestion.get("sl") or 0)
-    suggestion["tp"] = float(suggestion.get("tp") or 0)
-    suggestion["lots"] = float(suggestion.get("lots") or 0)
-    tif = str(suggestion.get("time_in_force") or "GTD").upper()
-    if tif not in ("GTC", "GTD"):
-        tif = "GTD"
-    suggestion["time_in_force"] = tif
-    if tif == "GTD" and not suggestion.get("gtd_time_utc"):
-        # Autonomous default: short GTD so stale ideas die. Use configured
-        # limit_gtd_minutes for limit orders; 1h for market (harmless — market fills now).
-        gtd_min = limit_gtd_min if order_type == "limit" else 60
-        suggestion["gtd_time_utc"] = (
-            (datetime.now(timezone.utc) + timedelta(minutes=gtd_min))
-            .replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        )
-    raw_exit = suggestion.get("exit_strategy")
-    raw_exit_s = str(raw_exit).strip().lower() if raw_exit is not None else ""
-    if raw_exit_s == "none":
-        suggestion["exit_strategy"] = "none"
-        suggestion["exit_params"] = {}
-    else:
-        chosen = normalize_exit_strategy(raw_exit_s) if raw_exit_s in AI_EXIT_STRATEGIES else DEFAULT_AI_EXIT_STRATEGY
-        suggestion["exit_strategy"] = chosen
-        raw_params = suggestion.get("exit_params") if isinstance(suggestion.get("exit_params"), dict) else None
-        merged_params = merge_exit_params(chosen, raw_params)
-        suggestion["exit_params"] = _apply_autonomous_exit_calibration(chosen, merged_params, ctx)
-    suggestion["model_used"] = model
+        # Persist the suggestion row.
+        try:
+            from api.main import _suggestions_db_path
+            sid = suggestion_tracker.log_generated(
+                _suggestions_db_path(profile_name),
+                profile=profile_name,
+                model=model,
+                suggestion=suggestion,
+                ctx=ctx,
+            )
+            suggestion["suggestion_id"] = sid
+        except Exception as e:
+            print(f"[{profile_name}] autonomous Fillmore: log_generated failed: {e}")
+        suggestions_out.append(suggestion)
 
-    # Persist the suggestion row (so learning memory + stats include it).
-    try:
-        from api.main import _suggestions_db_path
-        sid = suggestion_tracker.log_generated(
-            _suggestions_db_path(profile_name),
-            profile=profile_name,
-            model=model,
-            suggestion=suggestion,
-            ctx=ctx,
-        )
-        suggestion["suggestion_id"] = sid
-    except Exception as e:
-        print(f"[{profile_name}] autonomous Fillmore: log_generated failed: {e}")
-    return suggestion
+    return suggestions_out
 
 
 def _place_from_suggestion(

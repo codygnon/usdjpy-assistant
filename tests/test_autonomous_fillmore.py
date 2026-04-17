@@ -93,6 +93,10 @@ def _gate_cfg(aggressiveness: str) -> dict:
     return cfg
 
 
+def _force_allowed_session(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_session_flag_now", lambda trading_hours: (True, "ny"))
+
+
 def test_invoke_suggest_persists_autonomous_suggestion_history(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "ai_suggestions.sqlite"
     fake_chat = ModuleType("api.ai_trading_chat")
@@ -123,12 +127,13 @@ def test_invoke_suggest_persists_autonomous_suggestion_history(tmp_path: Path, m
         "kumatora2",
         {"model": "gpt-5.4-mini", "order_type": "market", "aggressiveness": "balanced", "mode": "paper"},
     )
+    out0 = out[0]
 
-    assert out["suggestion_id"]
+    assert out0["suggestion_id"]
     history = suggestion_tracker.get_history(db_path, limit=10, offset=0)
     assert history["total"] == 1
     row = history["items"][0]
-    assert row["suggestion_id"] == out["suggestion_id"]
+    assert row["suggestion_id"] == out0["suggestion_id"]
     assert row["profile"] == "kumatora2"
     assert row["market_snapshot"]["macro_bias"]["combined_bias"] == "bearish"
 
@@ -174,6 +179,17 @@ def test_autonomous_exit_calibration_keeps_more_runner_weight_in_london_ny() -> 
 def test_invoke_suggest_stage4_sharpens_confidence_prompt_and_exit_calibration(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "ai_suggestions.sqlite"
     captured: dict[str, object] = {}
+    suggestion_tracker.log_reflection(
+        db_path,
+        profile="kumatora2",
+        suggestion_id="sid-auto",
+        trade_id="trade-auto",
+        model="gpt-5.4-mini",
+        what_read_right="Trend alignment was real.",
+        what_missed="Ignored resistance overhead.",
+        summary_text="BUY loss (-4.0p, $-8.00, exit=hit_stop_loss)",
+        autonomous=True,
+    )
 
     fake_chat = ModuleType("api.ai_trading_chat")
     fake_chat.build_trading_context = lambda profile, profile_name: _ctx()
@@ -207,14 +223,64 @@ def test_invoke_suggest_stage4_sharpens_confidence_prompt_and_exit_calibration(t
         "kumatora2",
         {"model": "gpt-5.4-mini", "order_type": "limit", "aggressiveness": "balanced", "mode": "paper", "min_confidence": "high"},
     )
+    out0 = out[0]
 
     user_prompt = str((captured.get("messages") or [{}, {}])[1]["content"])
     assert "Current placement threshold is 'high'" in user_prompt
     assert "high = rare. A-tier only" in user_prompt
     assert "medium = B setup / watchlist quality" in user_prompt
     assert "London/NY trend profile" in user_prompt
-    assert out["exit_params"]["tp1_pips"] == 6.0
-    assert out["exit_params"]["tp1_close_pct"] == 33.0
+    system_prompt = str((captured.get("messages") or [{}, {}])[0]["content"])
+    assert "SELF-REFLECTION MEMORY" in system_prompt
+    assert "Trend alignment was real." in system_prompt
+    assert out0["exit_params"]["tp1_pips"] == 6.0
+    assert out0["exit_params"]["tp1_close_pct"] == 33.0
+
+
+def test_invoke_suggest_snaps_limit_price_into_near_spread_band(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+    captured: dict[str, object] = {}
+
+    fake_chat = ModuleType("api.ai_trading_chat")
+    fake_chat.build_trading_context = lambda profile, profile_name: {
+        **_ctx(),
+        "spot_price": {"mid": 159.123, "bid": 159.121, "ask": 159.125, "spread_pips": 0.4},
+    }
+    fake_chat.build_trade_suggestion_news_block = lambda **kwargs: "NEWS BLOCK"
+    fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
+    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model: "AUTONOMOUS SYSTEM PROMPT"
+    monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
+    _install_fake_main(monkeypatch, db_path)
+
+    class _FakeOpenAIClient:
+        def __init__(self) -> None:
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+        def _create(self, **kwargs):
+            captured["messages"] = kwargs["messages"]
+            content = json.dumps({
+                **_suggestion(),
+                "price": 159.250,
+                "confidence": "high",
+            })
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+
+    fake_openai = ModuleType("openai")
+    fake_openai.OpenAI = _FakeOpenAIClient
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    out = autonomous_fillmore._invoke_suggest(
+        SimpleNamespace(symbol="USDJPY", pip_size=0.01),
+        "kumatora2",
+        {"model": "gpt-5.4-mini", "order_type": "limit", "aggressiveness": "balanced", "mode": "paper"},
+    )
+    out0 = out[0]
+
+    user_prompt = str((captured.get("messages") or [{}, {}])[1]["content"])
+    assert "0.1-0.5 pips below current bid" in user_prompt
+    assert out0["requested_price"] == 159.250
+    assert out0["price"] == 159.120
 
 
 def test_market_order_with_no_exit_strategy_still_links_trade_and_fill(tmp_path: Path, monkeypatch) -> None:
@@ -315,6 +381,7 @@ def test_limit_order_with_no_exit_strategy_still_registers_pending_watch(tmp_pat
 
 
 def test_aggressive_gate_blocks_when_m3_and_m1_disagree(monkeypatch) -> None:
+    _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bear")
     monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend: True)
@@ -337,6 +404,7 @@ def test_aggressive_gate_blocks_when_m3_and_m1_disagree(monkeypatch) -> None:
 
 
 def test_aggressive_gate_requires_pullback_or_zone(monkeypatch) -> None:
+    _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: None)
     monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend: False)
@@ -359,6 +427,7 @@ def test_aggressive_gate_requires_pullback_or_zone(monkeypatch) -> None:
 
 
 def test_very_aggressive_gate_still_requires_some_trend_signal(monkeypatch) -> None:
+    _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: None)
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: None)
 
@@ -453,6 +522,7 @@ def test_extract_json_object_falls_back_to_brace_balance() -> None:
 
 
 def test_proximity_gate_blocks_when_price_far_from_structure(monkeypatch) -> None:
+    _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend: True)
@@ -475,6 +545,7 @@ def test_proximity_gate_blocks_when_price_far_from_structure(monkeypatch) -> Non
 
 
 def test_proximity_gate_passes_when_price_near_round_level(monkeypatch) -> None:
+    _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend: True)
@@ -593,6 +664,7 @@ def test_dedupe_gate_blocks_when_recent_placement_in_same_bucket(tmp_path: Path,
     # so proximity check passes and dedupe fires.
     _seed_placed_suggestion(db_path, side="sell", price=159.05, minutes_ago=10)
 
+    _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend: True)
@@ -620,6 +692,7 @@ def test_dedupe_gate_passes_when_no_recent_placement(tmp_path: Path, monkeypatch
     db_path = tmp_path / "ai_suggestions.sqlite"
     suggestion_tracker.init_db(db_path)  # empty DB
 
+    _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend: True)
@@ -644,6 +717,7 @@ def test_dedupe_gate_ignores_old_suggestions_outside_window(tmp_path: Path, monk
     db_path = tmp_path / "ai_suggestions.sqlite"
     _seed_placed_suggestion(db_path, side="sell", price=159.05, minutes_ago=120)  # outside 30m window
 
+    _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend: True)
@@ -706,3 +780,138 @@ def test_build_autonomous_today_block_handles_empty_db(tmp_path: Path) -> None:
     suggestion_tracker.init_db(db_path)
     block = suggestion_tracker.build_autonomous_today_block(db_path)
     assert "No prior autonomous suggestions today" in block
+
+
+# -----------------------------------------------------------------------------
+# Stage 6: event blackout, JSON array parsing, exit_plan, reasoning feed
+# -----------------------------------------------------------------------------
+
+
+def test_event_blackout_gate_blocks_when_imminent_high_impact_event(monkeypatch) -> None:
+    _force_allowed_session(monkeypatch)
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend: True)
+
+    cfg = _gate_cfg("balanced")
+    cfg["event_blackout_enabled"] = True
+    cfg["event_blackout_minutes"] = 30
+
+    decision = autonomous_fillmore.evaluate_gate(
+        cfg,
+        {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0},
+        autonomous_fillmore.GateInputs(
+            spread_pips=0.8,
+            tick_mid=159.03,
+            open_ai_trade_count=0,
+            data_by_tf={},
+            ntz_active=False,
+            upcoming_events=[
+                {"event": "NFP", "impact": "high", "currency": "USD", "minutes_to_event": 15},
+            ],
+        ),
+    )
+
+    assert decision.result == "block"
+    assert decision.layer == "hard"
+    assert "event_blackout" in decision.reason
+    assert "NFP" in decision.reason
+
+
+def test_event_blackout_gate_ignores_low_impact_and_other_currencies(monkeypatch) -> None:
+    _force_allowed_session(monkeypatch)
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend: True)
+
+    cfg = _gate_cfg("balanced")
+    cfg["event_blackout_enabled"] = True
+    cfg["event_blackout_minutes"] = 30
+
+    decision = autonomous_fillmore.evaluate_gate(
+        cfg,
+        {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0},
+        autonomous_fillmore.GateInputs(
+            spread_pips=0.8,
+            tick_mid=159.03,
+            open_ai_trade_count=0,
+            data_by_tf={},
+            ntz_active=False,
+            upcoming_events=[
+                {"event": "EU CPI", "impact": "high", "currency": "EUR", "minutes_to_event": 10},
+                {"event": "Minor Report", "impact": "low", "currency": "USD", "minutes_to_event": 5},
+            ],
+        ),
+    )
+
+    assert decision.result == "pass"
+
+
+def test_extract_json_object_handles_array() -> None:
+    text = (
+        "ANALYSIS:\n"
+        "Two setups look good.\n"
+        "\n"
+        "```json\n"
+        '[{"side":"buy","price":159.10},{"side":"sell","price":159.50}]\n'
+        "```\n"
+    )
+    json_str, analysis = autonomous_fillmore._extract_json_object(text)
+    parsed = json.loads(json_str)
+    assert isinstance(parsed, list)
+    assert len(parsed) == 2
+    assert parsed[0]["side"] == "buy"
+    assert parsed[1]["side"] == "sell"
+    assert analysis is not None and "Two setups" in analysis
+
+
+def test_extract_json_object_array_fallback_without_fence() -> None:
+    text = 'Some analysis\n[{"side":"buy","price":159.10}]\n'
+    json_str, analysis = autonomous_fillmore._extract_json_object(text)
+    parsed = json.loads(json_str)
+    assert isinstance(parsed, list)
+    assert parsed[0]["side"] == "buy"
+
+
+def test_exit_plan_stored_in_suggestion_tracker(tmp_path: Path) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+    suggestion_tracker.init_db(db_path)
+
+    sugg = _suggestion()
+    sugg["exit_plan"] = "Hold if M3 stays bull; tighten SL to -3p if M1 flips bear; close on any M5 reversal bar."
+
+    sid = suggestion_tracker.log_generated(
+        db_path,
+        profile="kumatora2",
+        model="gpt-5.4-mini",
+        suggestion=sugg,
+        ctx=_ctx(),
+    )
+
+    history = suggestion_tracker.get_history(db_path, limit=1, offset=0)
+    row = history["items"][0]
+    assert row["suggestion_id"] == sid
+    assert row.get("exit_plan") == sugg["exit_plan"]
+
+
+def test_reasoning_feed_returns_structured_data(tmp_path: Path) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+    suggestion_tracker.init_db(db_path)
+
+    sugg = _suggestion()
+    sugg["exit_plan"] = "trail on M1 21 EMA"
+    suggestion_tracker.log_generated(
+        db_path,
+        profile="kumatora2",
+        model="gpt-5.4-mini",
+        suggestion=sugg,
+        ctx=_ctx(),
+    )
+
+    feed = suggestion_tracker.get_reasoning_feed(db_path)
+    assert "suggestions" in feed
+    assert "thesis_checks" in feed
+    assert "reflections" in feed
+    assert len(feed["suggestions"]) == 1
+    assert feed["suggestions"][0]["exit_plan"] == "trail on M1 21 EMA"
+    assert feed["suggestions"][0]["side"] == "buy"

@@ -1238,6 +1238,59 @@ export async function resetAutonomousThrottle(profileName: string): Promise<Auto
   });
 }
 
+export interface ReasoningSuggestion {
+  suggestion_id: string;
+  created_utc: string;
+  side: string;
+  price: number;
+  lots: number;
+  confidence: string;
+  rationale: string | null;
+  exit_plan: string | null;
+  exit_strategy: string | null;
+  action: string | null;
+  outcome_status: string | null;
+  win_loss: string | null;
+  pips: number | null;
+  pnl: number | null;
+}
+
+export interface ReasoningThesisCheck {
+  id: number;
+  profile: string;
+  suggestion_id: string;
+  trade_id: string;
+  created_utc: string;
+  action: string;
+  reason: string;
+  confidence: string;
+  requested_new_sl: number | null;
+  requested_scale_out_pct: number | null;
+  execution_succeeded: number | null;
+}
+
+export interface ReasoningReflection {
+  id: number;
+  profile: string;
+  suggestion_id: string;
+  trade_id: string;
+  created_utc: string;
+  what_read_right: string;
+  what_missed: string;
+  summary_text: string;
+  autonomous: number;
+}
+
+export interface ReasoningFeed {
+  suggestions: ReasoningSuggestion[];
+  thesis_checks: ReasoningThesisCheck[];
+  reflections: ReasoningReflection[];
+}
+
+export async function getAutonomousReasoning(profileName: string): Promise<ReasoningFeed> {
+  return fetchJson(`${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/reasoning`);
+}
+
 async function readApiErrorDetail(res: Response): Promise<string> {
   const text = await res.text();
   try {

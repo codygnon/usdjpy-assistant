@@ -3154,6 +3154,56 @@ def _sync_open_trades_with_broker(profile: ProfileV1, store: SqliteStore) -> int
             trade_row=trade_row,
             updates=updates,
         )
+        _is_fillmore_trade = (
+            str(trade_row.get("entry_type") or "").strip().lower() == "ai_manual"
+            or str(trade_row.get("policy_type") or "").strip().lower() == "ai_manual"
+            or str(trade_row.get("opened_by") or "").strip().lower() == "ai_manual"
+            or trade_id.startswith("ai_manual:")
+        )
+        if _is_fillmore_trade:
+            try:
+                from api import suggestion_tracker
+                from api.fillmore_learning import maybe_generate_trade_reflection
+
+                _db_path = _suggestions_db_path(profile.profile_name)
+                _order_id = str(trade_row.get("mt5_order_id") or "").strip()
+                if profit is not None:
+                    _closed = False
+                    if _order_id:
+                        _closed = suggestion_tracker.mark_closed(
+                            _db_path,
+                            oanda_order_id=_order_id,
+                            exit_price=float(exit_price),
+                            pnl=float(profit),
+                            pips=float(pips),
+                            closed_at=str(exit_time or ""),
+                        )
+                    if not _closed:
+                        _linked = suggestion_tracker.resolve_suggestion_for_trade(
+                            _db_path,
+                            trade_id=trade_id,
+                            oanda_order_id=_order_id or None,
+                        )
+                        if _linked is not None and str(_linked.get("suggestion_id") or "").strip():
+                            suggestion_tracker.mark_closed_by_suggestion_id(
+                                _db_path,
+                                suggestion_id=str(_linked.get("suggestion_id") or "").strip(),
+                                exit_price=float(exit_price),
+                                pnl=float(profit),
+                                pips=float(pips),
+                                closed_at=str(exit_time or ""),
+                            )
+
+                    _closed_trade = dict(trade_row)
+                    _closed_trade.update(updates)
+                    _closed_trade["profit"] = profit
+                    maybe_generate_trade_reflection(
+                        profile_name=profile.profile_name,
+                        trade_row=_closed_trade,
+                        db_path=_db_path,
+                    )
+            except Exception as _fillmore_close_e:
+                print(f"[api] Fillmore close sync follow-up failed for {trade_id}: {_fillmore_close_e}")
         print(f"[api] synced closed trade {trade_id}: {exit_reason}, pips={pips:.2f}")
         synced += 1
 
@@ -3518,6 +3568,56 @@ def _aggressive_sync_with_broker(profile: ProfileV1, store: SqliteStore) -> int:
             trade_row=trade_row,
             updates=updates,
         )
+        _is_fillmore_trade = (
+            str(trade_row.get("entry_type") or "").strip().lower() == "ai_manual"
+            or str(trade_row.get("policy_type") or "").strip().lower() == "ai_manual"
+            or str(trade_row.get("opened_by") or "").strip().lower() == "ai_manual"
+            or trade_id.startswith("ai_manual:")
+        )
+        if _is_fillmore_trade:
+            try:
+                from api import suggestion_tracker
+                from api.fillmore_learning import maybe_generate_trade_reflection
+
+                _db_path = _suggestions_db_path(profile.profile_name)
+                _order_id = str(trade_row.get("mt5_order_id") or "").strip()
+                if profit is not None:
+                    _closed = False
+                    if _order_id:
+                        _closed = suggestion_tracker.mark_closed(
+                            _db_path,
+                            oanda_order_id=_order_id,
+                            exit_price=float(exit_price),
+                            pnl=float(profit),
+                            pips=float(pips),
+                            closed_at=str(exit_time or ""),
+                        )
+                    if not _closed:
+                        _linked = suggestion_tracker.resolve_suggestion_for_trade(
+                            _db_path,
+                            trade_id=trade_id,
+                            oanda_order_id=_order_id or None,
+                        )
+                        if _linked is not None and str(_linked.get("suggestion_id") or "").strip():
+                            suggestion_tracker.mark_closed_by_suggestion_id(
+                                _db_path,
+                                suggestion_id=str(_linked.get("suggestion_id") or "").strip(),
+                                exit_price=float(exit_price),
+                                pnl=float(profit),
+                                pips=float(pips),
+                                closed_at=str(exit_time or ""),
+                            )
+
+                    _closed_trade = dict(trade_row)
+                    _closed_trade.update(updates)
+                    _closed_trade["profit"] = profit
+                    maybe_generate_trade_reflection(
+                        profile_name=profile.profile_name,
+                        trade_row=_closed_trade,
+                        db_path=_db_path,
+                    )
+            except Exception as _fillmore_close_e:
+                print(f"[api] aggressive sync Fillmore follow-up failed for {trade_id}: {_fillmore_close_e}")
         print(f"[api] aggressive sync: closed {trade_id} with exit_reason={exit_reason}, pips={pips:.2f}")
         synced += 1
 
@@ -6110,6 +6210,17 @@ def reset_autonomous_throttle(profile_name: str) -> dict[str, Any]:
 
     state_path = _runtime_state_path(profile_name)
     return autonomous_fillmore.clear_throttle(state_path)
+
+
+@app.get("/api/data/{profile_name}/autonomous/reasoning")
+def get_autonomous_reasoning(profile_name: str) -> dict[str, Any]:
+    """Combined reasoning feed: recent suggestion rationales, thesis-monitor
+    actions, and self-reflections. Zero extra LLM calls — reads stored data only.
+    """
+    from api import suggestion_tracker
+
+    db_path = _suggestions_db_path(profile_name)
+    return suggestion_tracker.get_reasoning_feed(db_path)
 
 
 @app.get("/api/ai-chat/models")

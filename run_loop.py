@@ -506,6 +506,8 @@ MIN_CLOSE_LOTS = 0.01
 _tp1_retry_last: dict[int, float] = {}  # position_id -> last retry timestamp
 _TP1_RETRY_INTERVAL = 3.0  # seconds between retry attempts
 _AI_MANUAL_FILL_LOOKUP_GRACE_SEC = 90.0
+_FILLMORE_THESIS_MIN_OPEN_AGE_SEC = 120.0
+_FILLMORE_THESIS_INTERVAL_SEC = 180.0
 
 # ---------------------------------------------------------------------------
 # AI-suggested manual trades: fill detection + managed exit watchdog.
@@ -718,6 +720,272 @@ def _watch_ai_managed_pending_orders(profile, adapter, store, state_path) -> Non
         _save_state_json(state_path, state_data)
 
 
+def _trade_open_age_seconds(trade_row: dict[str, Any]) -> float:
+    opened_raw = trade_row.get("timestamp_utc")
+    if not opened_raw:
+        return 0.0
+    try:
+        opened = pd.Timestamp(opened_raw)
+        if opened.tzinfo is None:
+            opened = opened.tz_localize("UTC")
+        return max(0.0, (pd.Timestamp.now(tz="UTC") - opened).total_seconds())
+    except Exception:
+        return 0.0
+
+
+def _position_current_lots(position: Any) -> float:
+    if isinstance(position, dict):
+        try:
+            units = float(position.get("currentUnits") or 0.0)
+            if units:
+                return abs(units) / 100_000.0
+        except (TypeError, ValueError):
+            pass
+        try:
+            volume = float(position.get("volume") or 0.0)
+            if volume:
+                return abs(volume)
+        except (TypeError, ValueError):
+            pass
+        for leg in ("long", "short"):
+            data = position.get(leg)
+            if not isinstance(data, dict):
+                continue
+            try:
+                units = float(data.get("units") or 0.0)
+            except (TypeError, ValueError):
+                units = 0.0
+            if units:
+                return abs(units) / 100_000.0
+        return 0.0
+    try:
+        return abs(float(getattr(position, "volume", 0.0) or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _position_effective_stop(trade_row: dict[str, Any], position: Any) -> float | None:
+    candidates: list[float] = []
+    if isinstance(position, dict):
+        for raw in (position.get("stop_loss"), position.get("stopLoss"), position.get("sl")):
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                value = 0.0
+            if value > 0:
+                candidates.append(value)
+        for key in ("stopLossOrder", "trailingStopLossOrder"):
+            payload = position.get(key)
+            if not isinstance(payload, dict):
+                continue
+            try:
+                value = float(payload.get("price") or 0.0)
+            except (TypeError, ValueError):
+                value = 0.0
+            if value > 0:
+                candidates.append(value)
+    else:
+        for attr in ("stop_loss", "sl", "stopLoss"):
+            try:
+                value = float(getattr(position, attr, 0.0) or 0.0)
+            except (TypeError, ValueError):
+                value = 0.0
+            if value > 0:
+                candidates.append(value)
+    for raw in (trade_row.get("breakeven_sl_price"), trade_row.get("stop_price")):
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = 0.0
+        if value > 0:
+            candidates.append(value)
+    return candidates[0] if candidates else None
+
+
+def _evaluate_fillmore_thesis_monitor(
+    profile,
+    trade_row: dict[str, Any],
+    position: Any,
+    tick: Any,
+    db_path: Path,
+) -> Optional[dict[str, Any]]:
+    from api.fillmore_learning import evaluate_trade_thesis
+
+    return evaluate_trade_thesis(
+        profile=profile,
+        profile_name=profile.profile_name,
+        trade_row=trade_row,
+        position=position,
+        tick=tick,
+        db_path=db_path,
+    )
+
+
+def _maybe_run_fillmore_thesis_monitor(
+    profile,
+    adapter,
+    store,
+    trade_row: dict[str, Any],
+    position: Any,
+    tick: Any,
+) -> dict[str, Any]:
+    """Run Fillmore's thesis monitor for an open ai_manual trade when eligible."""
+    out = {"ran": False, "skip_rest": False}
+    trade_id = str(trade_row.get("trade_id") or "").strip()
+    if not trade_id:
+        return out
+    if _trade_open_age_seconds(trade_row) < _FILLMORE_THESIS_MIN_OPEN_AGE_SEC:
+        return out
+
+    try:
+        from api.main import _suggestions_db_path
+        from api import suggestion_tracker
+    except Exception:
+        return out
+
+    db_path = _suggestions_db_path(profile.profile_name)
+    suggestion_row = suggestion_tracker.resolve_suggestion_for_trade(
+        db_path,
+        trade_id=trade_id,
+        oanda_order_id=str(trade_row.get("mt5_order_id") or "").strip() or None,
+    )
+    if not suggestion_row:
+        return out
+    if not str(suggestion_row.get("rationale") or "").strip():
+        return out
+
+    recent = suggestion_tracker.list_thesis_checks(db_path, trade_id=trade_id, limit=1)
+    if recent:
+        try:
+            last_dt = pd.Timestamp(recent[0].get("created_utc"))
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.tz_localize("UTC")
+            if (pd.Timestamp.now(tz="UTC") - last_dt).total_seconds() < _FILLMORE_THESIS_INTERVAL_SEC:
+                return out
+        except Exception:
+            pass
+
+    decision = _evaluate_fillmore_thesis_monitor(profile, trade_row, position, tick, db_path)
+    if not decision:
+        return out
+
+    out["ran"] = True
+    position_id = trade_row.get("mt5_position_id")
+    try:
+        position_id_int = int(position_id)
+    except (TypeError, ValueError):
+        position_id_int = 0
+    side = str(trade_row.get("side") or "buy").lower()
+    current_lots = _position_current_lots(position)
+    effective_stop = _position_effective_stop(trade_row, position)
+    action = str(decision.get("action") or "hold").lower()
+    new_sl = decision.get("new_sl")
+    scale_out_pct = decision.get("scale_out_pct")
+    reason = str(decision.get("reason") or "").strip()
+    confidence = str(decision.get("confidence") or "").strip().lower() or None
+    model_used = str(decision.get("model_used") or "").strip()
+    executed = False
+    note = ""
+
+    if action == "hold":
+        executed = True
+        note = "no broker action requested"
+    elif action == "tighten_sl":
+        try:
+            proposed = float(new_sl)
+        except (TypeError, ValueError):
+            proposed = None
+        if proposed is None or effective_stop is None:
+            note = "missing_stop_context"
+        else:
+            is_tighter = proposed > effective_stop if side == "buy" else proposed < effective_stop
+            if not is_tighter:
+                note = "not_tighter_than_current_stop"
+            else:
+                executed = _safe_update_trail_sl(
+                    adapter,
+                    store,
+                    position_id_int,
+                    trade_id,
+                    profile.symbol,
+                    proposed,
+                    effective_stop,
+                    side,
+                    tick,
+                    float(profile.pip_size),
+                    profile.profile_name,
+                    label="fillmore thesis tighten",
+                )
+                note = "sl_tightened" if executed else "tighten_rejected"
+    elif action == "scale_out":
+        try:
+            pct = float(scale_out_pct)
+        except (TypeError, ValueError):
+            pct = None
+        if pct not in (25.0, 33.0, 50.0):
+            note = "invalid_scale_out_pct"
+        elif current_lots <= 0:
+            note = "no_remaining_size"
+        else:
+            close_lots = round(current_lots * min(pct, 50.0) / 100.0, 2)
+            close_lots = max(MIN_CLOSE_LOTS, min(close_lots, current_lots))
+            if close_lots < 1e-6:
+                close_lots = min(MIN_CLOSE_LOTS, current_lots)
+            try:
+                adapter.close_position(
+                    ticket=position_id_int,
+                    symbol=profile.symbol,
+                    volume=close_lots,
+                    position_type=1 if side == "sell" else 0,
+                )
+                executed = True
+                out["skip_rest"] = True
+                note = f"scaled_out_{close_lots:.2f}_lots"
+            except Exception as e:
+                note = f"scale_out_error:{e}"
+    elif action == "exit_now":
+        if current_lots <= 0:
+            note = "no_remaining_size"
+        else:
+            try:
+                adapter.close_position(
+                    ticket=position_id_int,
+                    symbol=profile.symbol,
+                    volume=current_lots,
+                    position_type=1 if side == "sell" else 0,
+                )
+                executed = True
+                out["skip_rest"] = True
+                note = "closed_full_position"
+            except Exception as e:
+                note = f"exit_now_error:{e}"
+    else:
+        action = "hold"
+        executed = True
+        note = "normalized_to_hold"
+
+    try:
+        suggestion_tracker.log_thesis_check(
+            db_path,
+            profile=profile.profile_name,
+            suggestion_id=str(suggestion_row.get("suggestion_id") or "") or None,
+            trade_id=trade_id,
+            position_id=position_id,
+            model=model_used or "gpt-5.4-mini",
+            action=action,
+            reason=reason,
+            requested_new_sl=float(new_sl) if new_sl is not None else None,
+            requested_scale_out_pct=float(scale_out_pct) if scale_out_pct is not None else None,
+            confidence=confidence,
+            execution_succeeded=executed,
+            execution_note=note or None,
+        )
+    except Exception as e:
+        print(f"[{profile.profile_name}] fillmore thesis log error for {trade_id}: {e}")
+
+    return out
+
+
 def _manage_ai_manual_trades(
     profile,
     adapter,
@@ -833,6 +1101,17 @@ def _manage_ai_manual_trades(
                 tp1_done = bool(trade_row.get("tp1_partial_done") or 0)
                 tp1_triggered = bool(trade_row.get("tp1_triggered") or 0)
                 be_applied = bool(trade_row.get("breakeven_applied") or 0)
+
+                thesis_result = _maybe_run_fillmore_thesis_monitor(
+                    profile,
+                    adapter,
+                    store,
+                    trade_row,
+                    pos,
+                    tick,
+                )
+                if thesis_result.get("skip_rest"):
+                    continue
 
                 if trail_mode == "none":
                     continue  # broker-side SL/TP only

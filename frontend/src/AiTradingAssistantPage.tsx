@@ -333,6 +333,8 @@ function AutonomousFillmorePanel({
   const [err, setErr] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showDecisions, setShowDecisions] = useState(false);
+  const [showReasoning, setShowReasoning] = useState(false);
+  const [reasoning, setReasoning] = useState<api.ReasoningFeed | null>(null);
 
   // Initial load.
   useEffect(() => {
@@ -771,6 +773,124 @@ function AutonomousFillmorePanel({
               );
             })
           )}
+        </div>
+      )}
+
+      {/* Fillmore's Reasoning panel — displays stored analysis, thesis checks, reflections */}
+      <button
+        type="button"
+        className="btn btn-secondary"
+        style={{ width: '100%', fontSize: '0.8rem', padding: '6px 10px', marginTop: 6 }}
+        onClick={() => {
+          const next = !showReasoning;
+          setShowReasoning(next);
+          if (next && !reasoning) {
+            api.getAutonomousReasoning(profileName).then(setReasoning).catch(() => {});
+          }
+        }}
+      >
+        {showReasoning ? 'Hide' : 'Show'} Fillmore&apos;s reasoning
+      </button>
+
+      {showReasoning && reasoning && (
+        <div style={{
+          marginTop: 8,
+          maxHeight: 400,
+          overflowY: 'auto',
+          fontSize: '0.76rem',
+          background: 'rgba(0,0,0,0.25)',
+          borderRadius: 6,
+          padding: 8,
+        }}>
+          {/* Recent suggestions with analysis */}
+          {reasoning.suggestions.length > 0 && (
+            <>
+              <div style={{ fontWeight: 600, marginBottom: 4, color: '#93c5fd' }}>Recent Suggestions</div>
+              {reasoning.suggestions.map((s) => {
+                const time = s.created_utc ? new Date(s.created_utc).toLocaleTimeString() : '?';
+                const confColor = s.confidence === 'high' ? '#4ade80' : s.confidence === 'medium' ? '#facc15' : '#94a3b8';
+                const outcomeLabel = s.win_loss || s.outcome_status || s.action || '';
+                const outcomeColor = s.win_loss === 'win' ? '#4ade80' : s.win_loss === 'loss' ? '#f87171' : 'var(--text-secondary)';
+                const analysisMatch = (s.rationale || '').match(/ANALYSIS:\n([\s\S]*)/);
+                const analysisText = analysisMatch ? analysisMatch[1].trim() : null;
+                const shortRationale = analysisMatch
+                  ? (s.rationale || '').slice(0, (s.rationale || '').indexOf('\n\nANALYSIS:')).trim()
+                  : (s.rationale || '').trim();
+                return (
+                  <div key={s.suggestion_id} style={{ marginBottom: 10, borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 8 }}>
+                    <div>
+                      <span style={{ color: '#e2e8f0' }}>{time}</span>{' '}
+                      <span style={{ fontWeight: 600 }}>{(s.side || '').toUpperCase()}</span>{' '}
+                      @{s.price?.toFixed(3)}{' '}
+                      <span style={{ color: confColor }}>{s.confidence}</span>{' '}
+                      {outcomeLabel && <span style={{ color: outcomeColor }}>{outcomeLabel}{s.pips != null ? ` (${s.pips > 0 ? '+' : ''}${s.pips.toFixed(1)}p)` : ''}</span>}
+                    </div>
+                    {shortRationale && <div style={{ color: '#cbd5e1', marginTop: 2 }}>{shortRationale}</div>}
+                    {s.exit_plan && s.exit_plan !== 'default' && (
+                      <div style={{ color: '#a5b4fc', marginTop: 2, fontStyle: 'italic' }}>Exit plan: {s.exit_plan}</div>
+                    )}
+                    {analysisText && (
+                      <details style={{ marginTop: 4 }}>
+                        <summary style={{ color: '#93c5fd', cursor: 'pointer', fontSize: '0.72rem' }}>Full analysis</summary>
+                        <pre style={{ whiteSpace: 'pre-wrap', color: '#94a3b8', fontSize: '0.72rem', margin: '4px 0 0 8px' }}>{analysisText}</pre>
+                      </details>
+                    )}
+                  </div>
+                );
+              })}
+            </>
+          )}
+
+          {/* Thesis monitor checks */}
+          {reasoning.thesis_checks.length > 0 && (
+            <>
+              <div style={{ fontWeight: 600, marginBottom: 4, marginTop: 8, color: '#fbbf24' }}>Thesis Monitor</div>
+              {reasoning.thesis_checks.slice(0, 10).map((tc) => {
+                const time = tc.created_utc ? new Date(tc.created_utc).toLocaleTimeString() : '?';
+                const actionColor = tc.action === 'hold' ? '#94a3b8' : tc.action === 'exit_now' ? '#f87171' : '#facc15';
+                return (
+                  <div key={`tc-${tc.id}`} style={{ marginBottom: 4 }}>
+                    <span style={{ color: '#e2e8f0' }}>{time}</span>{' '}
+                    <span style={{ color: actionColor, fontWeight: 600 }}>{tc.action}</span>{' '}
+                    <span style={{ color: '#94a3b8' }}>{tc.reason}</span>
+                    {tc.requested_new_sl != null && <span style={{ color: '#facc15' }}> SL→{tc.requested_new_sl.toFixed(3)}</span>}
+                    {tc.requested_scale_out_pct != null && <span style={{ color: '#facc15' }}> scale {tc.requested_scale_out_pct}%</span>}
+                  </div>
+                );
+              })}
+            </>
+          )}
+
+          {/* Self-reflections */}
+          {reasoning.reflections.length > 0 && (
+            <>
+              <div style={{ fontWeight: 600, marginBottom: 4, marginTop: 8, color: '#a78bfa' }}>Self-Reflections</div>
+              {reasoning.reflections.slice(0, 8).map((r) => {
+                const time = r.created_utc ? new Date(r.created_utc).toLocaleTimeString() : '?';
+                return (
+                  <div key={`ref-${r.id}`} style={{ marginBottom: 6, borderLeft: '2px solid #a78bfa', paddingLeft: 6 }}>
+                    <div style={{ color: '#e2e8f0', fontSize: '0.72rem' }}>{time}</div>
+                    {r.summary_text && <div style={{ color: '#cbd5e1' }}>{r.summary_text}</div>}
+                    {r.what_read_right && <div style={{ color: '#4ade80', fontSize: '0.72rem' }}>Right: {r.what_read_right}</div>}
+                    {r.what_missed && <div style={{ color: '#f87171', fontSize: '0.72rem' }}>Missed: {r.what_missed}</div>}
+                  </div>
+                );
+              })}
+            </>
+          )}
+
+          {reasoning.suggestions.length === 0 && reasoning.thesis_checks.length === 0 && reasoning.reflections.length === 0 && (
+            <div style={{ color: 'var(--text-secondary)' }}>No reasoning data yet — Fillmore hasn&apos;t made any decisions.</div>
+          )}
+
+          <button
+            type="button"
+            className="btn btn-secondary"
+            style={{ width: '100%', fontSize: '0.72rem', padding: '4px 8px', marginTop: 6 }}
+            onClick={() => api.getAutonomousReasoning(profileName).then(setReasoning).catch(() => {})}
+          >
+            Refresh
+          </button>
         </div>
       )}
     </div>

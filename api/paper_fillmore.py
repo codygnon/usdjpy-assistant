@@ -157,6 +157,27 @@ def finalize_paper_close(
     except Exception:
         pass
 
+    try:
+        from api.fillmore_learning import maybe_generate_trade_reflection
+
+        closed_row = dict(trade_row)
+        closed_row.update(
+            {
+                "exit_price": float(exit_price),
+                "exit_timestamp_utc": now,
+                "exit_reason": exit_reason,
+                "pips": round(float(pips), 2),
+                "profit": round(float(total_profit), 4),
+            }
+        )
+        maybe_generate_trade_reflection(
+            profile_name=profile_name,
+            trade_row=closed_row,
+            db_path=db_path,
+        )
+    except Exception:
+        pass
+
 
 def place_paper_market_fill(
     *,

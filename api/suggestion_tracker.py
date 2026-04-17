@@ -78,6 +78,47 @@ CREATE INDEX IF NOT EXISTS idx_ai_suggestions_order
     ON ai_suggestions(oanda_order_id);
 CREATE INDEX IF NOT EXISTS idx_ai_suggestions_created
     ON ai_suggestions(created_utc);
+
+CREATE TABLE IF NOT EXISTS ai_thesis_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile TEXT NOT NULL,
+    suggestion_id TEXT,
+    trade_id TEXT,
+    position_id TEXT,
+    created_utc TEXT NOT NULL,
+    model TEXT NOT NULL,
+    action TEXT NOT NULL,
+    reason TEXT,
+    requested_new_sl REAL,
+    requested_scale_out_pct REAL,
+    confidence TEXT,
+    execution_succeeded INTEGER NOT NULL DEFAULT 0,
+    execution_note TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_thesis_checks_trade
+    ON ai_thesis_checks(trade_id, created_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_thesis_checks_suggestion
+    ON ai_thesis_checks(suggestion_id, created_utc DESC);
+
+CREATE TABLE IF NOT EXISTS ai_reflections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile TEXT NOT NULL,
+    suggestion_id TEXT NOT NULL,
+    trade_id TEXT NOT NULL,
+    created_utc TEXT NOT NULL,
+    model TEXT NOT NULL,
+    what_read_right TEXT NOT NULL,
+    what_missed TEXT NOT NULL,
+    summary_text TEXT NOT NULL,
+    autonomous INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(profile, suggestion_id, trade_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_reflections_created
+    ON ai_reflections(created_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_reflections_autonomous
+    ON ai_reflections(autonomous, created_utc DESC);
 """
 
 
@@ -98,6 +139,7 @@ def init_db(db_path: Path) -> None:
         conn.executescript(SCHEMA_SQL)
         _ensure_column(conn, "ai_suggestions", "placed_order_json", "TEXT")
         _ensure_column(conn, "ai_suggestions", "trade_id", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "exit_plan", "TEXT")
         conn.commit()
 
 
@@ -238,6 +280,7 @@ def log_generated(
         "rationale": suggestion.get("rationale"),
         "exit_strategy": suggestion.get("exit_strategy"),
         "exit_params_json": json.dumps(suggestion.get("exit_params") or {}),
+        "exit_plan": suggestion.get("exit_plan"),
         "market_snapshot_json": json.dumps(snapshot),
     }
 
@@ -248,12 +291,12 @@ def log_generated(
                 suggestion_id, created_utc, profile, model,
                 side, limit_price, sl, tp, lots, time_in_force, gtd_time_utc,
                 confidence, rationale, exit_strategy, exit_params_json,
-                market_snapshot_json
+                exit_plan, market_snapshot_json
             ) VALUES (
                 :suggestion_id, :created_utc, :profile, :model,
                 :side, :limit_price, :sl, :tp, :lots, :time_in_force, :gtd_time_utc,
                 :confidence, :rationale, :exit_strategy, :exit_params_json,
-                :market_snapshot_json
+                :exit_plan, :market_snapshot_json
             )
             """,
             row,
@@ -460,6 +503,303 @@ def get_by_order_id(db_path: Path, oanda_order_id: str) -> Optional[dict[str, An
         return _deserialize_row(dict(row)) if row else None
 
 
+def get_by_trade_id(db_path: Path, trade_id: str) -> Optional[dict[str, Any]]:
+    """Look up a suggestion row by linked trade_id."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            "SELECT * FROM ai_suggestions WHERE trade_id = ? LIMIT 1",
+            (str(trade_id),),
+        )
+        row = cur.fetchone()
+        return _deserialize_row(dict(row)) if row else None
+
+
+def resolve_suggestion_for_trade(
+    db_path: Path,
+    *,
+    trade_id: str | None = None,
+    oanda_order_id: str | None = None,
+) -> Optional[dict[str, Any]]:
+    """Resolve the best matching suggestion row for a Fillmore trade."""
+    if trade_id:
+        row = get_by_trade_id(db_path, trade_id)
+        if row is not None:
+            return row
+    if oanda_order_id:
+        return get_by_order_id(db_path, oanda_order_id)
+    return None
+
+
+def is_autonomous_suggestion_row(row: dict[str, Any] | None) -> bool:
+    if not isinstance(row, dict):
+        return False
+    placed = _json_obj(row.get("placed_order"))
+    if placed:
+        return bool(placed.get("autonomous"))
+    placed_json = _json_obj(row.get("placed_order_json"))
+    if placed_json:
+        return bool(placed_json.get("autonomous"))
+    return False
+
+
+def log_thesis_check(
+    db_path: Path,
+    *,
+    profile: str,
+    suggestion_id: str | None,
+    trade_id: str | None,
+    position_id: str | int | None,
+    model: str,
+    action: str,
+    reason: str,
+    requested_new_sl: float | None = None,
+    requested_scale_out_pct: float | None = None,
+    confidence: str | None = None,
+    execution_succeeded: bool = False,
+    execution_note: str | None = None,
+    created_utc: str | None = None,
+) -> int:
+    """Persist one thesis-monitor check row."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO ai_thesis_checks (
+                profile, suggestion_id, trade_id, position_id, created_utc,
+                model, action, reason, requested_new_sl, requested_scale_out_pct,
+                confidence, execution_succeeded, execution_note
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(profile),
+                str(suggestion_id or "") or None,
+                str(trade_id or "") or None,
+                str(position_id) if position_id not in (None, "") else None,
+                created_utc or _now_utc_iso(),
+                str(model or ""),
+                str(action or ""),
+                str(reason or ""),
+                float(requested_new_sl) if requested_new_sl is not None else None,
+                float(requested_scale_out_pct) if requested_scale_out_pct is not None else None,
+                str(confidence or "") or None,
+                1 if execution_succeeded else 0,
+                str(execution_note or "") or None,
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid or 0)
+
+
+def list_thesis_checks(
+    db_path: Path,
+    *,
+    trade_id: str | None = None,
+    suggestion_id: str | None = None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Return thesis-monitor checks newest-first for a trade or suggestion."""
+    init_db(db_path)
+    limit = max(1, min(int(limit), 100))
+    clauses: list[str] = []
+    params: list[Any] = []
+    if trade_id:
+        clauses.append("trade_id = ?")
+        params.append(str(trade_id))
+    if suggestion_id:
+        clauses.append("suggestion_id = ?")
+        params.append(str(suggestion_id))
+    if not clauses:
+        return []
+    where = " OR ".join(clauses)
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            f"""
+            SELECT *
+            FROM ai_thesis_checks
+            WHERE {where}
+            ORDER BY created_utc DESC, id DESC
+            LIMIT ?
+            """,
+            (*params, limit),
+        )
+        return [_deserialize_thesis_check(dict(row)) for row in cur.fetchall()]
+
+
+def reflection_exists(
+    db_path: Path,
+    *,
+    profile: str,
+    suggestion_id: str,
+    trade_id: str,
+) -> bool:
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            SELECT 1
+            FROM ai_reflections
+            WHERE profile = ? AND suggestion_id = ? AND trade_id = ?
+            LIMIT 1
+            """,
+            (str(profile), str(suggestion_id), str(trade_id)),
+        )
+        return cur.fetchone() is not None
+
+
+def log_reflection(
+    db_path: Path,
+    *,
+    profile: str,
+    suggestion_id: str,
+    trade_id: str,
+    model: str,
+    what_read_right: str,
+    what_missed: str,
+    summary_text: str,
+    autonomous: bool,
+    created_utc: str | None = None,
+) -> bool:
+    """Persist one post-trade Fillmore reflection. Idempotent per trade."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO ai_reflections (
+                profile, suggestion_id, trade_id, created_utc, model,
+                what_read_right, what_missed, summary_text, autonomous
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(profile),
+                str(suggestion_id),
+                str(trade_id),
+                created_utc or _now_utc_iso(),
+                str(model or ""),
+                str(what_read_right or "").strip(),
+                str(what_missed or "").strip(),
+                str(summary_text or "").strip(),
+                1 if autonomous else 0,
+            ),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def get_reflections(
+    db_path: Path,
+    *,
+    limit: int = 10,
+    autonomous_only: bool = False,
+) -> list[dict[str, Any]]:
+    init_db(db_path)
+    limit = max(1, min(int(limit), 100))
+    where = "WHERE autonomous = 1" if autonomous_only else ""
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            f"""
+            SELECT *
+            FROM ai_reflections
+            {where}
+            ORDER BY created_utc DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [_deserialize_reflection(dict(row)) for row in cur.fetchall()]
+
+
+def build_autonomous_reflection_prompt_block(
+    db_path: Path,
+    *,
+    limit: int = 10,
+    autonomous_only: bool = True,
+) -> str:
+    """Compact recent self-reflection block for autonomous prompts."""
+    rows = get_reflections(db_path, limit=limit, autonomous_only=autonomous_only)
+    header = "=== FILLMORE SELF-REFLECTION MEMORY (recent closed-trade postmortems) ==="
+    if not rows:
+        return (
+            f"{header}\n"
+            "No prior autonomous postmortems yet. Stay selective and write a clean rationale worth reviewing later."
+        )
+    lines = [header]
+    for row in rows:
+        created = str(row.get("created_utc") or "")[:16]
+        summary = str(row.get("summary_text") or "").strip()
+        right = str(row.get("what_read_right") or "").strip()
+        missed = str(row.get("what_missed") or "").strip()
+        if summary:
+            lines.append(f"- {created} {summary}")
+        if right:
+            lines.append(f"  Right: {right}")
+        if missed:
+            lines.append(f"  Missed: {missed}")
+    return "\n".join(lines)
+
+
+def get_recent_thesis_checks(
+    db_path: Path,
+    *,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Return the N most recent thesis checks across all trades, newest first."""
+    init_db(db_path)
+    limit = max(1, min(int(limit), 100))
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            SELECT *
+            FROM ai_thesis_checks
+            ORDER BY created_utc DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [_deserialize_thesis_check(dict(row)) for row in cur.fetchall()]
+
+
+def get_reasoning_feed(
+    db_path: Path,
+    *,
+    suggestions_limit: int = 8,
+    thesis_checks_limit: int = 10,
+    reflections_limit: int = 8,
+) -> dict[str, Any]:
+    """Combined reasoning feed for the frontend — suggestions with rationale,
+    thesis monitor actions, and self-reflections, all ordered newest-first.
+    Zero extra LLM calls; purely reads stored data.
+    """
+    init_db(db_path)
+    history = get_history(db_path, limit=suggestions_limit, offset=0)
+    suggestions = []
+    for row in history.get("items", []):
+        suggestions.append({
+            "suggestion_id": row.get("suggestion_id"),
+            "created_utc": row.get("created_utc"),
+            "side": row.get("side"),
+            "price": row.get("limit_price"),
+            "lots": row.get("lots"),
+            "confidence": row.get("confidence"),
+            "rationale": row.get("rationale"),
+            "exit_plan": row.get("exit_plan"),
+            "exit_strategy": row.get("exit_strategy"),
+            "action": row.get("action"),
+            "outcome_status": row.get("outcome_status"),
+            "win_loss": row.get("win_loss"),
+            "pips": row.get("pips"),
+            "pnl": row.get("pnl"),
+        })
+
+    thesis_checks = get_recent_thesis_checks(db_path, limit=thesis_checks_limit)
+    reflections = get_reflections(db_path, limit=reflections_limit)
+    return {
+        "suggestions": suggestions,
+        "thesis_checks": thesis_checks,
+        "reflections": reflections,
+    }
+
+
 def get_history(
     db_path: Path,
     *,
@@ -545,6 +885,8 @@ def build_learning_prompt_block(
     matched_summary = _summarize_rows(matched_rows) if matched_rows else None
     recent_examples = _format_recent_examples(matched_rows or rows, max_items=max_recent_examples)
     exit_summary = _exit_strategy_summary(matched_rows or rows, limit=3)
+    directional_summary = _directional_outcome_summary(matched_rows or rows)
+    autonomous_summary = _autonomous_outcome_summary(matched_rows or rows)
 
     lines = [
         "=== FILLMORE LEARNING MEMORY (recent AI limit-order outcomes) ===",
@@ -582,10 +924,14 @@ def build_learning_prompt_block(
             "Matched analog cohort: no close condition match found for the current context; "
             "falling back to broad AI history."
         )
+    if directional_summary:
+        lines.append(f"Directional edge in this cohort: {directional_summary}.")
     if top_edit_fields:
         lines.append(f"Most-edited fields before placement/rejection: {', '.join(top_edit_fields)}.")
     if exit_summary:
         lines.append(f"Exit strategy results in this cohort: {exit_summary}.")
+    if autonomous_summary:
+        lines.append(f"Autonomous-only outcomes in this cohort: {autonomous_summary}.")
     if recent_examples:
         lines.append("Recent matched examples:" if matched_rows else "Recent examples:")
         lines.extend(f"  - {line}" for line in recent_examples)
@@ -719,6 +1065,18 @@ def _deserialize_row(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _deserialize_thesis_check(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    out["execution_succeeded"] = bool(int(out.get("execution_succeeded") or 0))
+    return out
+
+
+def _deserialize_reflection(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    out["autonomous"] = bool(int(out.get("autonomous") or 0))
+    return out
+
+
 def _summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     generated = len(rows)
     placed_rows = [row for row in rows if str(row.get("action") or "") == "placed"]
@@ -808,12 +1166,25 @@ def _select_matching_rows(
     if not rows or not current_labels:
         return ([], ())
 
-    available_keys = tuple(key for key in ("session", "macro_bias", "vol_label") if current_labels.get(key))
+    ordered_keys = (
+        "session",
+        "macro_bias",
+        "vol_label",
+        "h1_regime",
+        "m5_regime",
+        "structure_context",
+    )
+    available_keys = tuple(key for key in ordered_keys if current_labels.get(key))
     if not available_keys:
         return ([], ())
 
     specs: list[tuple[str, ...]] = [
+        tuple(key for key in ("session", "macro_bias", "vol_label", "h1_regime", "m5_regime", "structure_context") if current_labels.get(key)),
+        tuple(key for key in ("session", "macro_bias", "vol_label", "h1_regime", "m5_regime") if current_labels.get(key)),
+        tuple(key for key in ("session", "macro_bias", "vol_label", "h1_regime") if current_labels.get(key)),
+        tuple(key for key in ("session", "macro_bias", "vol_label", "structure_context") if current_labels.get(key)),
         tuple(key for key in ("session", "macro_bias", "vol_label") if current_labels.get(key)),
+        tuple(key for key in ("session", "macro_bias", "h1_regime") if current_labels.get(key)),
         tuple(key for key in ("session", "macro_bias") if current_labels.get(key)),
         tuple(key for key in ("session", "vol_label") if current_labels.get(key)),
         tuple(key for key in ("macro_bias", "vol_label") if current_labels.get(key)),
@@ -846,6 +1217,9 @@ def _format_match_description(current_labels: dict[str, str], keys: tuple[str, .
         "session": "session",
         "macro_bias": "bias",
         "vol_label": "vol",
+        "h1_regime": "H1",
+        "m5_regime": "M5",
+        "structure_context": "structure",
     }
     return ", ".join(f"{labels[key]}={current_labels.get(key)}" for key in keys if current_labels.get(key))
 
@@ -922,10 +1296,17 @@ def _labels_from_snapshot(raw: dict[str, Any]) -> dict[str, Any]:
     session = _json_obj(raw.get("session"))
     macro_bias = _json_obj(raw.get("macro_bias"))
     volatility = _json_obj(raw.get("volatility"))
+    technicals = _json_obj(raw.get("technicals"))
+    h1 = _json_obj(technicals.get("H1"))
+    m5 = _json_obj(technicals.get("M5"))
+    order_book = _json_obj(raw.get("order_book"))
     return {
         "session": _normalize_label(session.get("overlap")) or _normalize_label_list(session.get("active_sessions")),
         "macro_bias": _normalize_label(macro_bias.get("combined_bias")),
         "vol_label": _normalize_label(volatility.get("label")),
+        "h1_regime": _normalize_label(h1.get("regime")),
+        "m5_regime": _normalize_label(m5.get("regime")),
+        "structure_context": _structure_context_from_order_book(order_book),
     }
 
 
@@ -943,6 +1324,54 @@ def _edited_fields(row: dict[str, Any]) -> dict[str, Any]:
 
 def _row_was_edited(row: dict[str, Any]) -> bool:
     return len(_edited_fields(row)) > 0
+
+
+def _is_autonomous_row(row: dict[str, Any]) -> bool:
+    return is_autonomous_suggestion_row(row)
+
+
+def _directional_outcome_summary(rows: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for side in ("buy", "sell"):
+        side_rows = [row for row in rows if str(row.get("side") or "").lower() == side]
+        closed_rows = [row for row in side_rows if row.get("closed_at") and row.get("pnl") is not None]
+        if not closed_rows:
+            continue
+        avg_pips = _safe_avg([_to_float(row.get("pips")) for row in closed_rows if row.get("pips") is not None])
+        wins = len([row for row in closed_rows if str(row.get("win_loss") or "") == "win"])
+        parts.append(
+            f"{side.upper()} {len(closed_rows)} closed, { _safe_rate(wins, len(closed_rows)):.0f}% wins, avg {avg_pips:+.1f}p"
+        )
+    return "; ".join(parts)
+
+
+def _autonomous_outcome_summary(rows: list[dict[str, Any]]) -> str:
+    autonomous_rows = [row for row in rows if _is_autonomous_row(row)]
+    if not autonomous_rows:
+        return ""
+    summary = _summarize_rows(autonomous_rows)
+    return (
+        f"{summary['placed']} placed, {summary['closed']} closed, "
+        f"win rate {summary['win_rate_closed_pct']:.1f}%, avg {summary['avg_pips_closed']:+.2f}p, "
+        f"fill rate {summary['fill_rate_after_placement_pct']:.1f}%"
+    )
+
+
+def _structure_context_from_order_book(order_book: dict[str, Any]) -> str:
+    support_pips = _positive_float(order_book.get("nearest_support_distance_pips"))
+    resistance_pips = _positive_float(order_book.get("nearest_resistance_distance_pips"))
+    threshold_pips = 12.0
+    near_support = support_pips is not None and support_pips <= threshold_pips
+    near_resistance = resistance_pips is not None and resistance_pips <= threshold_pips
+    if near_support and near_resistance:
+        return "between_levels"
+    if near_support:
+        return "near_support"
+    if near_resistance:
+        return "near_resistance"
+    if support_pips is not None or resistance_pips is not None:
+        return "midrange"
+    return ""
 
 
 def _json_obj(raw: Any) -> dict[str, Any]:
@@ -974,6 +1403,14 @@ def _to_float(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _positive_float(value: Any) -> Optional[float]:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if out >= 0 else None
 
 
 def _safe_avg(values: list[float | None]) -> float:
