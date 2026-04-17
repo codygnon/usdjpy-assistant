@@ -76,7 +76,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "max_open_ai_trades": 2,
     "max_daily_loss_usd": 50.0,
     "max_consecutive_errors": 5,
-    "min_confidence": "high",           # low|medium|high — Stage 4: medium is advisory/watchlist, high is required to place by default
+    "min_confidence": "medium",         # low|medium|high — medium lets the LLM place when it sees edge; high for live mode later
     "model": "gpt-5.4-mini",
     # adaptive throttle
     "throttle_no_trade_streak": 5,       # after N "no trade" LLM replies, pause
@@ -106,6 +106,8 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
         "require_m3_trend": True,
         "require_m1_stack": True,
         "require_pullback_or_zone": True,
+        "pullback_zone_min_pips": 1.5,
+        "pullback_lookback_bars": 3,
         "require_daily_hl_buffer_pips": 5.0,
         "require_level_proximity_pips": 5.0,
         "require_min_m5_atr_pips": 3.0,
@@ -126,6 +128,8 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
         "require_m3_trend": False,
         "require_m1_stack": False,
         "require_pullback_or_zone": True,
+        "pullback_zone_min_pips": 2.0,
+        "pullback_lookback_bars": 2,
         "require_daily_hl_buffer_pips": 3.0,
         "require_any_trend_signal": True,
         "reject_m3_m1_mismatch_if_both_present": True,
@@ -150,11 +154,11 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
 _AUTONOMOUS_PROMPT_SKELETON_ID = "autonomous_decision_request_v1"
 _AUTONOMOUS_AUX_MEMORY_BUDGET_WORDS = 650
 _USDJPY_SPREAD_LIMITS_PIPS = {
-    "tokyo": 2.2,
-    "london": 1.8,
-    "ny": 1.8,
-    "london/ny": 1.5,
-    "off-hours": 1.5,
+    "tokyo": 1.9,
+    "london": 1.5,
+    "ny": 1.5,
+    "london/ny": 1.25,
+    "off-hours": 1.25,
 }
 
 
@@ -693,7 +697,13 @@ def _m1_stack(data_by_tf: dict[str, pd.DataFrame]) -> Optional[str]:
         return None
 
 
-def _m1_pullback_or_zone(data_by_tf: dict[str, pd.DataFrame], trend: Optional[str]) -> bool:
+def _m1_pullback_or_zone(
+    data_by_tf: dict[str, pd.DataFrame],
+    trend: Optional[str],
+    *,
+    zone_min_pips: float = 1.5,
+    lookback_bars: int = 3,
+) -> bool:
     """True if price is at/near EMA9 (zone) or touched EMA13-17 (pullback) aligned with trend."""
     try:
         if trend is None:
@@ -710,9 +720,9 @@ def _m1_pullback_or_zone(data_by_tf: dict[str, pd.DataFrame], trend: Optional[st
             return False
         m1_atr_pips = _atr_pips(data_by_tf, "M1", period=14, pip_size=0.01)
         if m1_atr_pips is not None:
-            zone_width_pips = max(1.5, min(4.0, m1_atr_pips * 0.5))
+            zone_width_pips = max(float(zone_min_pips), min(4.0, m1_atr_pips * 0.5))
         else:
-            zone_width_pips = 2.5
+            zone_width_pips = max(float(zone_min_pips), 2.5)
         zone_width = zone_width_pips * 0.01
 
         # Zone: dynamic EMA9 proximity scaled to recent M1 volatility.
@@ -721,7 +731,7 @@ def _m1_pullback_or_zone(data_by_tf: dict[str, pd.DataFrame], trend: Optional[st
 
         lows = df["low"].astype(float)
         highs = df["high"].astype(float)
-        lookback = min(3, len(df))
+        lookback = max(1, min(int(lookback_bars or 1), len(df)))
         for i in range(-lookback, 0):
             bar_low = float(lows.iloc[i])
             bar_high = float(highs.iloc[i])
@@ -1041,7 +1051,12 @@ def evaluate_gate(
 
     if thresholds.get("require_pullback_or_zone"):
         trend = m1 or m3
-        if not _m1_pullback_or_zone(inputs.data_by_tf, trend):
+        if not _m1_pullback_or_zone(
+            inputs.data_by_tf,
+            trend,
+            zone_min_pips=float(thresholds.get("pullback_zone_min_pips") or 1.5),
+            lookback_bars=int(thresholds.get("pullback_lookback_bars") or 3),
+        ):
             return _block("signal", "no_pullback_or_zone", extras)
 
     buf = float(thresholds.get("require_daily_hl_buffer_pips") or 0.0)
@@ -1954,10 +1969,15 @@ def _invoke_suggest(
         'write "default" and the template strategy handles it.\n'
         "CONFIDENCE CALIBRATION:\n"
         f"- Current placement threshold is '{min_conf}'. Anything below that will be skipped.\n"
-        "- high = rare. A-tier only: clear TF consensus, JPY crosses agree, anchored on named structure, clean invalidation, no correlation to existing book, no event landmine. If you would hesitate unattended, it is not high.\n"
-        "- medium = B setup / watchlist quality. There may be edge, but some meaningful element is mixed or fragile. Use medium when a human might review it, but the autonomous engine should usually stand down.\n"
-        "- low = weak tape, mid-range, correlated to existing book, or imminent event risk. "
-        "Returning low will skip placement — this is the preferred answer when in doubt.\n"
+        "- high = the setup is there and you would take it. Multi-TF trend lines up, price is at or near a named level, "
+        "invalidation is clean, and nothing obvious argues against it. Not everything has to be perfect — one soft element "
+        "(e.g. crosses slightly lagging, ATR a touch wide) is fine as long as the core thesis is solid. "
+        "If a competent trader would put it on, it is high.\n"
+        "- medium = edge exists but one meaningful element is working against you — conflicting TF, weak structure, "
+        "session risk, or the entry is slightly chased. You see why it could work but you also see why it could fail. "
+        "Worth taking at smaller size or with a tighter leash.\n"
+        "- low = no real edge. Choppy tape, mid-range, stacking onto existing book, or the setup already fired and missed. "
+        "Returning low skips placement.\n"
         "\n"
         + _exit_catalog_text
     )
