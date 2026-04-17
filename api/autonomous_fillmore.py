@@ -139,6 +139,7 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
 
 _AUTONOMOUS_LIMIT_NEAR_TOUCH_MIN_PIPS = 0.1
 _AUTONOMOUS_LIMIT_NEAR_TOUCH_MAX_PIPS = 0.5
+_AUTONOMOUS_LIMIT_MAX_SNAP_PIPS = 1.5
 
 
 @dataclass
@@ -1348,6 +1349,46 @@ def _apply_autonomous_limit_price_policy(
     return normalized
 
 
+def _enforce_autonomous_limit_snap_guard(
+    profile,
+    suggestion: dict[str, Any],
+    *,
+    max_snap_pips: float = _AUTONOMOUS_LIMIT_MAX_SNAP_PIPS,
+) -> dict[str, Any]:
+    """Reject limit ideas whose snapped working price no longer matches the thesis.
+
+    Near-touch snapping is useful as an execution constraint, but if the snapped
+    entry drifts too far from the model's intended structural level, we should
+    pass rather than place a materially different trade.
+    """
+    normalized = dict(suggestion or {})
+    pip = float(getattr(profile, "pip_size", 0.01) or 0.01)
+    if pip <= 0:
+        pip = 0.01
+    try:
+        requested = float(normalized.get("requested_price") or normalized.get("price") or 0.0)
+        working = float(normalized.get("price") or 0.0)
+    except (TypeError, ValueError):
+        return normalized
+    if requested <= 0 or working <= 0:
+        return normalized
+
+    snap_pips = abs(working - requested) / pip
+    normalized["snap_distance_pips"] = round(float(snap_pips), 1)
+    if snap_pips <= float(max_snap_pips):
+        return normalized
+
+    normalized["confidence"] = "low"
+    reason = (
+        f"Autonomous pass: requested entry {requested:.3f} would snap to {working:.3f} "
+        f"({snap_pips:.1f}p), which is too far from the original thesis."
+    )
+    rationale = str(normalized.get("rationale") or "").strip()
+    if reason.lower() not in rationale.lower():
+        normalized["rationale"] = f"{rationale}\n\n{reason}".strip() if rationale else reason
+    return normalized
+
+
 def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> list[dict[str, Any]]:
     """Invoke the LLM for autonomous Fillmore.
 
@@ -1434,7 +1475,8 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> list[dic
         price_instr = (
             "Use a near-touch passive entry. BUY LIMIT should usually be 0.1-0.5 pips below current bid; "
             "SELL LIMIT should usually be 0.1-0.5 pips above current ask. Anchor the thesis on structure, "
-            "but do not park the actual autonomous order 5-10 pips away unless explicitly justified."
+            "but do not park the actual autonomous order 5-10 pips away unless explicitly justified. "
+            f"If the edge only appears at a level more than about {_AUTONOMOUS_LIMIT_MAX_SNAP_PIPS:.1f} pips away from the near-touch executable band, pass with confidence='low' instead of forcing it."
         )
 
     paper_note = (
@@ -1583,6 +1625,7 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> list[dic
         suggestion["lots"] = float(suggestion.get("lots") or 0)
         if order_type == "limit":
             suggestion = _apply_autonomous_limit_price_policy(profile, suggestion, ctx)
+            suggestion = _enforce_autonomous_limit_snap_guard(profile, suggestion)
         tif = str(suggestion.get("time_in_force") or "GTD").upper()
         if tif not in ("GTC", "GTD"):
             tif = "GTD"

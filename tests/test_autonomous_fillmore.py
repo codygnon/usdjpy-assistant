@@ -288,6 +288,52 @@ def test_invoke_suggest_snaps_limit_price_into_near_spread_band(tmp_path: Path, 
     assert row["limit_price"] == 159.120
 
 
+def test_limit_snap_guard_downgrades_far_requested_entry_to_pass(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+    fake_chat = ModuleType("api.ai_trading_chat")
+    fake_chat.build_trading_context = lambda profile, profile_name: {
+        **_ctx(),
+        "spot_price": {"mid": 159.123, "bid": 159.121, "ask": 159.125, "spread_pips": 0.4},
+    }
+    fake_chat.build_trade_suggestion_news_block = lambda **kwargs: "NEWS BLOCK"
+    fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
+    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model: "AUTONOMOUS SYSTEM PROMPT"
+    monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
+    _install_fake_main(monkeypatch, db_path)
+
+    class _FakeOpenAIClient:
+        def __init__(self) -> None:
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+        def _create(self, **kwargs):
+            content = json.dumps({
+                **_suggestion(),
+                "side": "sell",
+                "price": 159.451,
+                "confidence": "high",
+                "rationale": "Sell the 159.45 supply wall after rejection.",
+            })
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+
+    fake_openai = ModuleType("openai")
+    fake_openai.OpenAI = _FakeOpenAIClient
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    out = autonomous_fillmore._invoke_suggest(
+        SimpleNamespace(symbol="USDJPY", pip_size=0.01),
+        "kumatora2",
+        {"model": "gpt-5.4-mini", "order_type": "limit", "aggressiveness": "balanced", "mode": "paper"},
+    )
+    out0 = out[0]
+
+    assert out0["requested_price"] == 159.451
+    assert out0["price"] == 159.130
+    assert out0["snap_distance_pips"] == 32.1
+    assert out0["confidence"] == "low"
+    assert "too far from the original thesis" in str(out0["rationale"])
+
+
 def test_market_order_with_no_exit_strategy_still_links_trade_and_fill(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "ai_suggestions.sqlite"
     _install_fake_main(monkeypatch, db_path)
