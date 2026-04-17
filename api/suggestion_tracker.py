@@ -48,6 +48,10 @@ CREATE TABLE IF NOT EXISTS ai_suggestions (
     rationale TEXT,
     exit_strategy TEXT,
     exit_params_json TEXT,
+    exit_plan TEXT,
+    prompt_version TEXT,
+    prompt_hash TEXT,
+    snap_distance_pips REAL,
 
     -- Market snapshot at generation time (selected fields as JSON)
     market_snapshot_json TEXT,
@@ -66,6 +70,8 @@ CREATE TABLE IF NOT EXISTS ai_suggestions (
     fill_price REAL,
     closed_at TEXT,
     exit_price REAL,
+    price_at_expiry REAL,
+    distance_at_expiry_pips REAL,
     pnl REAL,
     pips REAL,
     win_loss TEXT               -- 'win' | 'loss' | 'breakeven' | NULL
@@ -112,6 +118,11 @@ CREATE TABLE IF NOT EXISTS ai_reflections (
     what_read_right TEXT NOT NULL,
     what_missed TEXT NOT NULL,
     summary_text TEXT NOT NULL,
+    primary_error_category TEXT,
+    primary_strength_category TEXT,
+    regime_at_entry TEXT,
+    session_at_entry TEXT,
+    lesson TEXT,
     autonomous INTEGER NOT NULL DEFAULT 0,
     UNIQUE(profile, suggestion_id, trade_id)
 );
@@ -120,6 +131,30 @@ CREATE INDEX IF NOT EXISTS idx_ai_reflections_created
     ON ai_reflections(created_utc DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_reflections_autonomous
     ON ai_reflections(autonomous, created_utc DESC);
+
+CREATE TABLE IF NOT EXISTS ai_performance_stats (
+    profile TEXT NOT NULL,
+    stats_key TEXT NOT NULL,
+    trade_count INTEGER DEFAULT 0,
+    closed_count INTEGER DEFAULT 0,
+    win_rate REAL,
+    avg_win_pips REAL,
+    avg_loss_pips REAL,
+    profit_factor REAL,
+    avg_hold_minutes REAL,
+    fill_rate_limits REAL,
+    avg_time_to_fill_sec REAL,
+    avg_fill_vs_requested_pips REAL,
+    thesis_intervention_rate REAL,
+    avg_mae_pips REAL,
+    avg_mfe_pips REAL,
+    win_rate_by_confidence_json TEXT,
+    win_rate_by_side_json TEXT,
+    win_rate_by_session_json TEXT,
+    prompt_version_breakdown_json TEXT,
+    updated_utc TEXT NOT NULL,
+    PRIMARY KEY (profile, stats_key)
+);
 """
 
 
@@ -142,6 +177,16 @@ def init_db(db_path: Path) -> None:
         _ensure_column(conn, "ai_suggestions", "trade_id", "TEXT")
         _ensure_column(conn, "ai_suggestions", "exit_plan", "TEXT")
         _ensure_column(conn, "ai_suggestions", "requested_price", "REAL")
+        _ensure_column(conn, "ai_suggestions", "prompt_version", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "prompt_hash", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "snap_distance_pips", "REAL")
+        _ensure_column(conn, "ai_suggestions", "price_at_expiry", "REAL")
+        _ensure_column(conn, "ai_suggestions", "distance_at_expiry_pips", "REAL")
+        _ensure_column(conn, "ai_reflections", "primary_error_category", "TEXT")
+        _ensure_column(conn, "ai_reflections", "primary_strength_category", "TEXT")
+        _ensure_column(conn, "ai_reflections", "regime_at_entry", "TEXT")
+        _ensure_column(conn, "ai_reflections", "session_at_entry", "TEXT")
+        _ensure_column(conn, "ai_reflections", "lesson", "TEXT")
         conn.commit()
 
 
@@ -284,6 +329,9 @@ def log_generated(
         "exit_strategy": suggestion.get("exit_strategy"),
         "exit_params_json": json.dumps(suggestion.get("exit_params") or {}),
         "exit_plan": suggestion.get("exit_plan"),
+        "prompt_version": suggestion.get("prompt_version"),
+        "prompt_hash": suggestion.get("prompt_hash"),
+        "snap_distance_pips": _fnum("snap_distance_pips"),
         "market_snapshot_json": json.dumps(snapshot),
     }
 
@@ -294,12 +342,12 @@ def log_generated(
                 suggestion_id, created_utc, profile, model,
                 side, requested_price, limit_price, sl, tp, lots, time_in_force, gtd_time_utc,
                 confidence, rationale, exit_strategy, exit_params_json,
-                exit_plan, market_snapshot_json
+                exit_plan, prompt_version, prompt_hash, snap_distance_pips, market_snapshot_json
             ) VALUES (
                 :suggestion_id, :created_utc, :profile, :model,
                 :side, :requested_price, :limit_price, :sl, :tp, :lots, :time_in_force, :gtd_time_utc,
                 :confidence, :rationale, :exit_strategy, :exit_params_json,
-                :exit_plan, :market_snapshot_json
+                :exit_plan, :prompt_version, :prompt_hash, :snap_distance_pips, :market_snapshot_json
             )
             """,
             row,
@@ -473,6 +521,8 @@ def mark_cancelled_or_expired(
     oanda_order_id: str,
     status: str,
     at: Optional[str] = None,
+    price_at_expiry: float | None = None,
+    distance_at_expiry_pips: float | None = None,
 ) -> bool:
     """Flag a placed-but-unfilled order as cancelled or expired."""
     status = (status or "").strip().lower()
@@ -484,11 +534,19 @@ def mark_cancelled_or_expired(
             """
             UPDATE ai_suggestions
             SET outcome_status = ?,
-                closed_at = ?
+                closed_at = ?,
+                price_at_expiry = COALESCE(?, price_at_expiry),
+                distance_at_expiry_pips = COALESCE(?, distance_at_expiry_pips)
             WHERE oanda_order_id = ?
               AND outcome_status IS NULL
             """,
-            (status, at or _now_utc_iso(), str(oanda_order_id)),
+            (
+                status,
+                at or _now_utc_iso(),
+                float(price_at_expiry) if price_at_expiry is not None else None,
+                float(distance_at_expiry_pips) if distance_at_expiry_pips is not None else None,
+                str(oanda_order_id),
+            ),
         )
         conn.commit()
         return cur.rowcount > 0
@@ -662,6 +720,11 @@ def log_reflection(
     summary_text: str,
     autonomous: bool,
     created_utc: str | None = None,
+    primary_error_category: str | None = None,
+    primary_strength_category: str | None = None,
+    regime_at_entry: str | None = None,
+    session_at_entry: str | None = None,
+    lesson: str | None = None,
 ) -> bool:
     """Persist one post-trade Fillmore reflection. Idempotent per trade."""
     init_db(db_path)
@@ -670,8 +733,10 @@ def log_reflection(
             """
             INSERT OR IGNORE INTO ai_reflections (
                 profile, suggestion_id, trade_id, created_utc, model,
-                what_read_right, what_missed, summary_text, autonomous
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                what_read_right, what_missed, summary_text,
+                primary_error_category, primary_strength_category,
+                regime_at_entry, session_at_entry, lesson, autonomous
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(profile),
@@ -682,6 +747,11 @@ def log_reflection(
                 str(what_read_right or "").strip(),
                 str(what_missed or "").strip(),
                 str(summary_text or "").strip(),
+                str(primary_error_category or "").strip() or None,
+                str(primary_strength_category or "").strip() or None,
+                str(regime_at_entry or "").strip() or None,
+                str(session_at_entry or "").strip() or None,
+                str(lesson or "").strip() or None,
                 1 if autonomous else 0,
             ),
         )
@@ -1079,6 +1149,92 @@ def _deserialize_reflection(row: dict[str, Any]) -> dict[str, Any]:
     out = dict(row)
     out["autonomous"] = bool(int(out.get("autonomous") or 0))
     return out
+
+
+def upsert_performance_stats(
+    db_path: Path,
+    *,
+    profile: str,
+    stats_key: str,
+    values: dict[str, Any],
+) -> None:
+    init_db(db_path)
+    payload = {
+        "profile": str(profile),
+        "stats_key": str(stats_key),
+        "trade_count": int(values.get("trade_count") or 0),
+        "closed_count": int(values.get("closed_count") or 0),
+        "win_rate": values.get("win_rate"),
+        "avg_win_pips": values.get("avg_win_pips"),
+        "avg_loss_pips": values.get("avg_loss_pips"),
+        "profit_factor": values.get("profit_factor"),
+        "avg_hold_minutes": values.get("avg_hold_minutes"),
+        "fill_rate_limits": values.get("fill_rate_limits"),
+        "avg_time_to_fill_sec": values.get("avg_time_to_fill_sec"),
+        "avg_fill_vs_requested_pips": values.get("avg_fill_vs_requested_pips"),
+        "thesis_intervention_rate": values.get("thesis_intervention_rate"),
+        "avg_mae_pips": values.get("avg_mae_pips"),
+        "avg_mfe_pips": values.get("avg_mfe_pips"),
+        "win_rate_by_confidence_json": values.get("win_rate_by_confidence_json"),
+        "win_rate_by_side_json": values.get("win_rate_by_side_json"),
+        "win_rate_by_session_json": values.get("win_rate_by_session_json"),
+        "prompt_version_breakdown_json": values.get("prompt_version_breakdown_json"),
+        "updated_utc": str(values.get("updated_utc") or _now_utc_iso()),
+    }
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO ai_performance_stats (
+                profile, stats_key, trade_count, closed_count, win_rate,
+                avg_win_pips, avg_loss_pips, profit_factor, avg_hold_minutes,
+                fill_rate_limits, avg_time_to_fill_sec, avg_fill_vs_requested_pips,
+                thesis_intervention_rate, avg_mae_pips, avg_mfe_pips,
+                win_rate_by_confidence_json, win_rate_by_side_json, win_rate_by_session_json,
+                prompt_version_breakdown_json, updated_utc
+            ) VALUES (
+                :profile, :stats_key, :trade_count, :closed_count, :win_rate,
+                :avg_win_pips, :avg_loss_pips, :profit_factor, :avg_hold_minutes,
+                :fill_rate_limits, :avg_time_to_fill_sec, :avg_fill_vs_requested_pips,
+                :thesis_intervention_rate, :avg_mae_pips, :avg_mfe_pips,
+                :win_rate_by_confidence_json, :win_rate_by_side_json, :win_rate_by_session_json,
+                :prompt_version_breakdown_json, :updated_utc
+            )
+            ON CONFLICT(profile, stats_key) DO UPDATE SET
+                trade_count=excluded.trade_count,
+                closed_count=excluded.closed_count,
+                win_rate=excluded.win_rate,
+                avg_win_pips=excluded.avg_win_pips,
+                avg_loss_pips=excluded.avg_loss_pips,
+                profit_factor=excluded.profit_factor,
+                avg_hold_minutes=excluded.avg_hold_minutes,
+                fill_rate_limits=excluded.fill_rate_limits,
+                avg_time_to_fill_sec=excluded.avg_time_to_fill_sec,
+                avg_fill_vs_requested_pips=excluded.avg_fill_vs_requested_pips,
+                thesis_intervention_rate=excluded.thesis_intervention_rate,
+                avg_mae_pips=excluded.avg_mae_pips,
+                avg_mfe_pips=excluded.avg_mfe_pips,
+                win_rate_by_confidence_json=excluded.win_rate_by_confidence_json,
+                win_rate_by_side_json=excluded.win_rate_by_side_json,
+                win_rate_by_session_json=excluded.win_rate_by_session_json,
+                prompt_version_breakdown_json=excluded.prompt_version_breakdown_json,
+                updated_utc=excluded.updated_utc
+            """,
+            payload,
+        )
+        conn.commit()
+
+
+def get_performance_stats(db_path: Path) -> dict[str, dict[str, Any]]:
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            SELECT *
+            FROM ai_performance_stats
+            ORDER BY stats_key
+            """
+        )
+        return {str(row["stats_key"]): dict(row) for row in cur.fetchall()}
 
 
 def _summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:

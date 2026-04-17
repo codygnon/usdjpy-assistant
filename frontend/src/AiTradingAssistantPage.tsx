@@ -456,6 +456,9 @@ function AutonomousFillmorePanel({
   const today = stats?.today;
   const thr = stats?.throttle;
   const window_ = stats?.window;
+  const regime = stats?.risk_regime;
+  const perf20 = stats?.performance?.rolling_20;
+  const alerts = stats?.health_alerts || [];
   const autonomousModelOptions = modelOptions.includes(cfg.model)
     ? modelOptions
     : [cfg.model, ...modelOptions.filter((m) => m !== cfg.model)];
@@ -502,6 +505,47 @@ function AutonomousFillmorePanel({
           Paper mode sends real orders to your OANDA <strong>practice</strong> account (profile must have{' '}
           <code style={{ fontSize: '0.72rem' }}>oanda_environment: &quot;practice&quot;</code>
           {' '}and a practice API token). Fills and outcomes are normal broker trades and feed Fillmore learning.
+        </div>
+      )}
+
+      {regime && (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: '10px 12px',
+            borderRadius: 14,
+            border: regime.label === 'normal'
+              ? '1px solid rgba(74,222,128,0.20)'
+              : '1px solid rgba(250,204,21,0.28)',
+            background: regime.label === 'normal'
+              ? 'rgba(74,222,128,0.06)'
+              : 'linear-gradient(180deg, rgba(250,204,21,0.12), rgba(15,23,42,0.55))',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: '0.72rem', letterSpacing: 0.6, textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+                Active Risk Regime
+              </div>
+              <div style={{ fontSize: '1rem', fontWeight: 700, color: regime.label === 'normal' ? '#4ade80' : '#facc15' }}>
+                {regime.label}
+                {regime.override_label ? ' · override' : ''}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', color: '#cbd5e1', fontSize: '0.78rem' }}>
+              <div>lots {regime.risk_multiplier.toFixed(2)}x</div>
+              <div>cooldown {regime.effective_min_llm_cooldown_sec}s</div>
+              <div>max open {regime.effective_max_open_ai_trades}</div>
+              <div>min conf {regime.effective_min_confidence}</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8, fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+            <div>losses {thr?.consecutive_losses ?? 0}</div>
+            <div>wins {thr?.consecutive_wins ?? 0}</div>
+            <div>recovery wins {(regime.recovery_wins ?? 0)}</div>
+            {regime.daily_drawdown_active && <div style={{ color: '#f87171' }}>daily drawdown trigger active</div>}
+            {regime.override_until_utc && <div>override until {new Date(regime.override_until_utc).toLocaleTimeString()}</div>}
+          </div>
         </div>
       )}
 
@@ -653,6 +697,37 @@ function AutonomousFillmorePanel({
         </div>
       </div>
 
+      {perf20 && (
+        <div className="autonomous-panel__section">
+          <div className="autonomous-panel__section-head">
+            <span className="autonomous-panel__section-title">Rolling Performance</span>
+            <span className="autonomous-panel__muted">last 20 autonomous closes</span>
+          </div>
+          <div className="autonomous-panel__stats-grid">
+            <div className="autonomous-panel__stat">
+              <div className="autonomous-panel__stat-label">Win rate</div>
+              <strong>{perf20.win_rate != null ? `${(perf20.win_rate * 100).toFixed(0)}%` : '–'}</strong>
+            </div>
+            <div className="autonomous-panel__stat">
+              <div className="autonomous-panel__stat-label">Profit factor</div>
+              <strong>{perf20.profit_factor != null ? perf20.profit_factor.toFixed(2) : '–'}</strong>
+            </div>
+            <div className="autonomous-panel__stat">
+              <div className="autonomous-panel__stat-label">Avg hold</div>
+              <strong>{perf20.avg_hold_minutes != null ? `${perf20.avg_hold_minutes.toFixed(0)}m` : '–'}</strong>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8, marginTop: 10 }}>
+            <div className="autonomous-panel__chip">avg win {perf20.avg_win_pips != null ? `${perf20.avg_win_pips > 0 ? '+' : ''}${perf20.avg_win_pips.toFixed(1)}p` : '–'}</div>
+            <div className="autonomous-panel__chip">avg loss {perf20.avg_loss_pips != null ? `${perf20.avg_loss_pips.toFixed(1)}p` : '–'}</div>
+            <div className="autonomous-panel__chip">limit fill {perf20.fill_rate_limits != null ? `${(perf20.fill_rate_limits * 100).toFixed(0)}%` : '–'}</div>
+            <div className="autonomous-panel__chip">market fill vs req {perf20.avg_fill_vs_requested_pips != null ? `${perf20.avg_fill_vs_requested_pips > 0 ? '+' : ''}${perf20.avg_fill_vs_requested_pips.toFixed(2)}p` : '–'}</div>
+            <div className="autonomous-panel__chip">avg MAE {perf20.avg_mae_pips != null ? `${perf20.avg_mae_pips.toFixed(1)}p` : '–'}</div>
+            <div className="autonomous-panel__chip">avg MFE {perf20.avg_mfe_pips != null ? `${perf20.avg_mfe_pips.toFixed(1)}p` : '–'}</div>
+          </div>
+        </div>
+      )}
+
       {/* Gate window stats */}
       {window_ && window_.total > 0 && (
         <div className="autonomous-panel__section">
@@ -692,6 +767,33 @@ function AutonomousFillmorePanel({
         >
           Reset Throttle
         </button>
+      )}
+
+      {alerts.length > 0 && (
+        <div className="autonomous-panel__section">
+          <div className="autonomous-panel__section-head">
+            <span className="autonomous-panel__section-title">Health</span>
+            <span className="autonomous-panel__muted">runtime diagnostics</span>
+          </div>
+          <div style={{ display: 'grid', gap: 8 }}>
+            {alerts.map((alert) => (
+              <div
+                key={alert.code}
+                style={{
+                  borderRadius: 10,
+                  padding: '8px 10px',
+                  border: alert.level === 'error' ? '1px solid rgba(248,113,113,0.35)' : '1px solid rgba(250,204,21,0.35)',
+                  background: alert.level === 'error' ? 'rgba(248,113,113,0.08)' : 'rgba(250,204,21,0.08)',
+                  color: alert.level === 'error' ? '#fecaca' : '#fde68a',
+                  fontSize: '0.76rem',
+                  lineHeight: 1.4,
+                }}
+              >
+                {alert.msg}
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* Model + confidence */}

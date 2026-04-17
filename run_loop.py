@@ -72,6 +72,10 @@ from storage.sqlite_store import SqliteStore
 
 logger = logging.getLogger(__name__)
 
+_AI_MAE_MFE_WRITE_INTERVAL_SEC = 30.0
+_AI_MAE_MFE_MIN_DELTA_PIPS = 0.1
+_ai_mae_mfe_write_state: dict[str, dict[str, float]] = {}
+
 
 def _safe_update_trail_sl(
     adapter, store, position_id, trade_id, symbol, new_sl, prev_be_sl,
@@ -621,7 +625,27 @@ def _watch_ai_managed_pending_orders(profile, adapter, store, state_path) -> Non
                 from api.suggestion_tracker import mark_cancelled_or_expired as _st_cancel
 
                 _st_db = Path(state_path).parent / "ai_suggestions.sqlite"
-                _st_cancel(_st_db, oanda_order_id=str(order_id), status="cancelled")
+                price_at_expiry = None
+                distance_at_expiry_pips = None
+                try:
+                    tick = adapter.get_tick(profile.symbol)
+                    bid = float(getattr(tick, "bid", None) if not isinstance(tick, dict) else tick.get("bid"))
+                    ask = float(getattr(tick, "ask", None) if not isinstance(tick, dict) else tick.get("ask"))
+                    if bid > 0 and ask > 0:
+                        price_at_expiry = (bid + ask) / 2.0
+                        working_price = float(entry.get("price") or 0.0)
+                        if working_price > 0:
+                            distance_at_expiry_pips = abs(price_at_expiry - working_price) / float(profile.pip_size or 0.01)
+                except Exception:
+                    price_at_expiry = None
+                    distance_at_expiry_pips = None
+                _st_cancel(
+                    _st_db,
+                    oanda_order_id=str(order_id),
+                    status="cancelled",
+                    price_at_expiry=price_at_expiry,
+                    distance_at_expiry_pips=distance_at_expiry_pips,
+                )
             except Exception as _st_e:
                 print(f"[{profile.profile_name}] suggestion_tracker cancel error: {_st_e}")
             changed = True
@@ -731,6 +755,62 @@ def _trade_open_age_seconds(trade_row: dict[str, Any]) -> float:
         return max(0.0, (pd.Timestamp.now(tz="UTC") - opened).total_seconds())
     except Exception:
         return 0.0
+
+
+def _update_ai_manual_mae_mfe(
+    store,
+    trade_row: dict[str, Any],
+    position: Any,
+    tick: Any,
+    profile,
+) -> None:
+    trade_id = str(trade_row.get("trade_id") or "")
+    if not trade_id:
+        return
+    entry = float(trade_row.get("entry_price") or 0.0)
+    if entry <= 0:
+        return
+    side = str(trade_row.get("side") or "buy").lower()
+    pip = float(getattr(profile, "pip_size", 0.01) or 0.01)
+    if pip <= 0:
+        pip = 0.01
+    try:
+        bid = float(getattr(tick, "bid", None) if not isinstance(tick, dict) else tick.get("bid"))
+        ask = float(getattr(tick, "ask", None) if not isinstance(tick, dict) else tick.get("ask"))
+    except (TypeError, ValueError):
+        return
+    if bid <= 0 or ask <= 0:
+        return
+    adverse_price = bid if side == "buy" else ask
+    favorable_price = ask if side == "buy" else bid
+    if side == "buy":
+        adverse_pips = max(0.0, (entry - adverse_price) / pip)
+        favorable_pips = max(0.0, (favorable_price - entry) / pip)
+    else:
+        adverse_pips = max(0.0, (adverse_price - entry) / pip)
+        favorable_pips = max(0.0, (entry - favorable_price) / pip)
+
+    current_mae = float(trade_row.get("max_adverse_pips") or 0.0)
+    current_mfe = float(trade_row.get("max_favorable_pips") or 0.0)
+    next_mae = max(current_mae, adverse_pips)
+    next_mfe = max(current_mfe, favorable_pips)
+    if abs(next_mae - current_mae) < _AI_MAE_MFE_MIN_DELTA_PIPS and abs(next_mfe - current_mfe) < _AI_MAE_MFE_MIN_DELTA_PIPS:
+        return
+    now = time.time()
+    last = _ai_mae_mfe_write_state.get(trade_id) or {}
+    if now - float(last.get("ts") or 0.0) < _AI_MAE_MFE_WRITE_INTERVAL_SEC:
+        return
+    store.update_trade(
+        trade_id,
+        {
+            "max_adverse_pips": round(next_mae, 3),
+            "max_favorable_pips": round(next_mfe, 3),
+            "mae_mfe_estimated": 0,
+        },
+    )
+    trade_row["max_adverse_pips"] = round(next_mae, 3)
+    trade_row["max_favorable_pips"] = round(next_mfe, 3)
+    _ai_mae_mfe_write_state[trade_id] = {"ts": now, "mae": next_mae, "mfe": next_mfe}
 
 
 def _position_current_lots(position: Any) -> float:
@@ -1101,6 +1181,8 @@ def _manage_ai_manual_trades(
                 tp1_done = bool(trade_row.get("tp1_partial_done") or 0)
                 tp1_triggered = bool(trade_row.get("tp1_triggered") or 0)
                 be_applied = bool(trade_row.get("breakeven_applied") or 0)
+
+                _update_ai_manual_mae_mfe(store, trade_row, pos, tick, profile)
 
                 thesis_result = _maybe_run_fillmore_thesis_monitor(
                     profile,

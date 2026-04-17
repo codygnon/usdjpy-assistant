@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from api import autonomous_fillmore, suggestion_tracker
+from api import autonomous_fillmore, autonomous_performance, suggestion_tracker
 
 
 def _ctx() -> dict:
@@ -966,3 +966,209 @@ def test_reasoning_feed_returns_structured_data(tmp_path: Path) -> None:
     assert len(feed["suggestions"]) == 1
     assert feed["suggestions"][0]["exit_plan"] == "trail on M1 21 EMA"
     assert feed["suggestions"][0]["side"] == "buy"
+
+
+def test_compute_risk_regime_hysteresis_and_daily_drawdown() -> None:
+    cfg = dict(autonomous_fillmore.DEFAULT_CONFIG)
+    cfg["max_daily_loss_usd"] = 50.0
+
+    rt = {
+        "consecutive_losses": 3,
+        "consecutive_wins": 0,
+        "daily_pnl_usd": 0.0,
+        "previous_regime_label": "normal",
+    }
+    hard = autonomous_fillmore._compute_risk_regime(rt, cfg)
+    assert hard["label"] == "defensive_hard"
+    assert hard["risk_multiplier"] == 0.5
+
+    recovering = {
+        "consecutive_losses": 0,
+        "consecutive_wins": 1,
+        "daily_pnl_usd": 0.0,
+        "previous_regime_label": "defensive_hard",
+    }
+    soft = autonomous_fillmore._compute_risk_regime(recovering, cfg)
+    assert soft["label"] == "defensive_soft"
+
+    recovered = {
+        "consecutive_losses": 0,
+        "consecutive_wins": 2,
+        "daily_pnl_usd": 0.0,
+        "previous_regime_label": "defensive_hard",
+    }
+    normal = autonomous_fillmore._compute_risk_regime(recovered, cfg)
+    assert normal["label"] == "normal"
+
+    dd = {
+        "consecutive_losses": 0,
+        "consecutive_wins": 2,
+        "daily_pnl_usd": -31.0,
+        "previous_regime_label": "normal",
+    }
+    drawdown = autonomous_fillmore._compute_risk_regime(dd, cfg)
+    assert drawdown["label"] == "defensive_hard"
+    assert drawdown["daily_drawdown_active"] is True
+
+
+def test_evaluate_gate_uses_risk_regime_effective_limits(monkeypatch) -> None:
+    _force_allowed_session(monkeypatch)
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend: True)
+
+    decision = autonomous_fillmore.evaluate_gate(
+        _gate_cfg("balanced"),
+        {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0, "last_llm_call_utc": None},
+        autonomous_fillmore.GateInputs(
+            spread_pips=0.8,
+            tick_mid=159.03,
+            open_ai_trade_count=1,
+            data_by_tf={},
+            ntz_active=False,
+        ),
+        risk_regime={
+            "label": "defensive_hard",
+            "effective_min_llm_cooldown_sec": 120,
+            "effective_max_open_ai_trades": 1,
+        },
+    )
+
+    assert decision.result == "block"
+    assert decision.reason == "max_open_ai_trades:1"
+    assert decision.extras.get("effective_limit") == 1
+
+
+def test_recompute_performance_stats_materializes_prompt_and_mae_metrics(tmp_path: Path) -> None:
+    from storage.sqlite_store import SqliteStore
+
+    suggestions_db = tmp_path / "ai_suggestions.sqlite"
+    assistant_db = tmp_path / "assistant.db"
+    store = SqliteStore(assistant_db)
+    store.init_db()
+
+    sugg = _suggestion(exit_strategy="tp1_be_m5_trail")
+    sugg["prompt_version"] = "autonomous_phase_a_v1"
+    sugg["prompt_hash"] = "abc123hash"
+    sid = suggestion_tracker.log_generated(
+        suggestions_db,
+        profile="kumatora2",
+        model="gpt-5.4-mini",
+        suggestion=sugg,
+        ctx=_ctx(),
+    )
+    suggestion_tracker.log_action(
+        suggestions_db,
+        suggestion_id=sid,
+        action="placed",
+        edited_fields=None,
+        placed_order={"order_type": "limit", "autonomous": True, "side": "buy", "price": 159.25},
+        oanda_order_id="701",
+    )
+    suggestion_tracker.mark_filled(
+        suggestions_db,
+        oanda_order_id="701",
+        fill_price=159.25,
+        filled_at="2026-04-16T10:01:00+00:00",
+        trade_id="ai_manual:701:1",
+    )
+    suggestion_tracker.mark_closed(
+        suggestions_db,
+        oanda_order_id="701",
+        exit_price=159.31,
+        pnl=12.5,
+        pips=6.0,
+        closed_at="2026-04-16T10:08:00+00:00",
+    )
+    store.insert_trade(
+        {
+            "trade_id": "ai_manual:701:1",
+            "timestamp_utc": "2026-04-16T10:01:00+00:00",
+            "exit_timestamp_utc": "2026-04-16T10:08:00+00:00",
+            "profile": "kumatora2",
+            "symbol": "USDJPY",
+            "side": "buy",
+            "entry_price": 159.25,
+            "exit_price": 159.31,
+            "profit": 12.5,
+            "pips": 6.0,
+            "max_adverse_pips": 1.4,
+            "max_favorable_pips": 7.2,
+            "mae_mfe_estimated": 0,
+        }
+    )
+
+    autonomous_performance.recompute_performance_stats(
+        profile="kumatora2",
+        suggestions_db_path=suggestions_db,
+        assistant_db_path=assistant_db,
+    )
+    stats = autonomous_performance.get_materialized_stats(suggestions_db)
+    rolling = stats["rolling_20"]
+    assert rolling["closed_count"] == 1
+    assert rolling["avg_mae_pips"] == 1.4
+    assert rolling["avg_mfe_pips"] == 7.2
+    breakdown = json.loads(rolling["prompt_version_breakdown_json"])
+    assert breakdown["autonomous_phase_a_v1"]["count"] == 1
+
+
+def test_tick_autonomous_fillmore_blocks_below_floor_risk_scaled_lot(tmp_path: Path, monkeypatch) -> None:
+    state_path = tmp_path / "kumatora2" / "runtime_state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "autonomous_fillmore": {
+                    "config": {
+                        **autonomous_fillmore.DEFAULT_CONFIG,
+                        "enabled": True,
+                        "mode": "paper",
+                        "min_lot_size": 0.01,
+                    },
+                    "runtime": {
+                        "risk_regime_override": "defensive_hard",
+                        "risk_regime_override_until_utc": "2099-01-01T00:00:00+00:00",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _TickStore:
+        def list_open_trades(self, profile_name: str):
+            return []
+
+    monkeypatch.setattr(autonomous_fillmore, "_session_flag_now", lambda trading_hours: (True, "ny"))
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend: True)
+    monkeypatch.setattr(
+        autonomous_fillmore,
+        "_invoke_suggest",
+        lambda profile, profile_name, cfg, risk_regime=None: [{
+            **_suggestion(),
+            "lots": 0.01,
+            "confidence": "high",
+        }],
+    )
+    monkeypatch.setattr(
+        autonomous_fillmore,
+        "_place_from_suggestion",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("placement should be vetoed")),
+    )
+
+    profile = SimpleNamespace(symbol="USDJPY", pip_size=0.01)
+    autonomous_fillmore.tick_autonomous_fillmore(
+        profile,
+        "kumatora2",
+        state_path,
+        _TickStore(),
+        SimpleNamespace(bid=159.02, ask=159.04),
+        data_by_tf={},
+        ntz_active=False,
+    )
+
+    stats = autonomous_fillmore.build_stats(state_path)
+    assert stats["risk_regime"]["label"] == "defensive_hard"
+    assert "risk_regime_lot_veto" in stats["recent_gate_blocks"]

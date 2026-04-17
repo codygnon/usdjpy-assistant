@@ -95,6 +95,61 @@ def _current_unrealized_usd(position: Any) -> Optional[float]:
     return None
 
 
+def _normalize_reflection_tags(raw: dict[str, Any], suggestion_row: dict[str, Any]) -> dict[str, Any]:
+    def _match(value: Any, valid: set[str], default: str | None = None) -> str | None:
+        text = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
+        if not text:
+            return default
+        if text in valid:
+            return text
+        for item in valid:
+            if item in text or text in item:
+                return item
+        return default
+
+    snap = suggestion_row.get("market_snapshot") or {}
+    session = snap.get("session") or {}
+    session_label = str(session.get("overlap") or "").strip().lower()
+    if "tokyo" in session_label:
+        inferred_session = "asian"
+    elif "london" in session_label and ("new york" in session_label or "ny" in session_label):
+        inferred_session = "overlap"
+    elif "london" in session_label:
+        inferred_session = "london"
+    elif "new york" in session_label or "ny" in session_label:
+        inferred_session = "ny"
+    else:
+        active = ",".join(str(x).lower() for x in (session.get("active_sessions") or []))
+        if "tokyo" in active:
+            inferred_session = "asian"
+        elif "london" in active:
+            inferred_session = "london"
+        elif "new york" in active or "ny" in active:
+            inferred_session = "ny"
+        else:
+            inferred_session = "unknown"
+
+    tech = snap.get("technicals") or {}
+    h1 = tech.get("H1") or {}
+    regime_guess = _match(h1.get("regime"), {"trending", "ranging", "mixed"}, None)
+
+    return {
+        "primary_error_category": _match(
+            raw.get("primary_error_category"),
+            {"timing", "direction", "sizing", "exit_management", "regime_mismatch", "event_risk", "none"},
+            None,
+        ),
+        "primary_strength_category": _match(
+            raw.get("primary_strength_category"),
+            {"entry_precision", "thesis_accuracy", "exit_discipline", "risk_management", "none"},
+            None,
+        ),
+        "regime_at_entry": _match(raw.get("regime_at_entry"), {"trending", "ranging", "mixed"}, regime_guess),
+        "session_at_entry": _match(raw.get("session_at_entry"), {"asian", "london", "ny", "overlap", "unknown"}, inferred_session),
+        "lesson": str(raw.get("lesson") or "").strip()[:500] or None,
+    }
+
+
 def _approx_usd_profit_usdjpy(*, pips: float, lots: float, mid: float, pip_size: float) -> float:
     if mid <= 0 or lots <= 0:
         return 0.0
@@ -343,7 +398,12 @@ def maybe_generate_trade_reflection(
         "Return JSON only:\n"
         "{\n"
         '  "what_read_right": "one concise line",\n'
-        '  "what_missed": "one concise line"\n'
+        '  "what_missed": "one concise line",\n'
+        '  "primary_error_category": "timing" | "direction" | "sizing" | "exit_management" | "regime_mismatch" | "event_risk" | "none",\n'
+        '  "primary_strength_category": "entry_precision" | "thesis_accuracy" | "exit_discipline" | "risk_management" | "none",\n'
+        '  "regime_at_entry": "trending" | "ranging" | "mixed",\n'
+        '  "session_at_entry": "asian" | "london" | "ny" | "overlap" | "unknown",\n'
+        '  "lesson": "one concise line"\n'
         "}\n"
         "\n"
         f"Original suggestion: side={suggestion_row.get('side')} entry={suggestion_row.get('limit_price')} "
@@ -377,6 +437,7 @@ def maybe_generate_trade_reflection(
     missed = str(parsed.get("what_missed") or "").strip()
     if not right or not missed:
         return False
+    tags = _normalize_reflection_tags(parsed, suggestion_row)
 
     outcome = "win" if float(pnl) > 0 else "loss" if float(pnl) < 0 else "breakeven"
     summary_text = (
@@ -391,5 +452,10 @@ def maybe_generate_trade_reflection(
         what_read_right=right,
         what_missed=missed,
         summary_text=summary_text,
+        primary_error_category=tags.get("primary_error_category"),
+        primary_strength_category=tags.get("primary_strength_category"),
+        regime_at_entry=tags.get("regime_at_entry"),
+        session_at_entry=tags.get("session_at_entry"),
+        lesson=tags.get("lesson"),
         autonomous=suggestion_tracker.is_autonomous_suggestion_row(suggestion_row),
     )

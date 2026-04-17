@@ -21,8 +21,10 @@ See MEMORY.md ("Autonomous Fillmore" planning notes) for the design discussion.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
+import hashlib
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
@@ -30,6 +32,8 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 
 import pandas as pd
+
+from api import autonomous_performance
 
 # -----------------------------------------------------------------------------
 # Config defaults + types
@@ -54,6 +58,7 @@ _MODEL_COST_PER_1M: dict[str, tuple[float, float]] = {
 # pessimistic-ish so the budget stats trend slightly conservative.
 _ASSUMED_INPUT_TOKENS = 4000
 _ASSUMED_OUTPUT_TOKENS = 350
+AUTONOMOUS_PROMPT_VERSION = "autonomous_phase_a_v1"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": False,
@@ -90,6 +95,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "event_blackout_minutes": 30,
     "multi_trade_enabled": True,         # LLM can propose 0-2 setups per call instead of exactly 1
     "max_suggestions_per_call": 2,
+    "streak_scratch_threshold_pips": 1.0,
+    "min_lot_size": 0.01,
 }
 
 # Per-mode gate thresholds. Lower = easier to pass = more LLM calls.
@@ -140,6 +147,11 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
 _AUTONOMOUS_LIMIT_NEAR_TOUCH_MIN_PIPS = 0.1
 _AUTONOMOUS_LIMIT_NEAR_TOUCH_MAX_PIPS = 0.5
 _AUTONOMOUS_LIMIT_MAX_SNAP_PIPS = 1.5
+_AUTONOMOUS_PROMPT_SKELETON_ID = "autonomous_decision_request_v1"
+
+
+def _autonomous_prompt_hash() -> str:
+    return hashlib.sha256(_AUTONOMOUS_PROMPT_SKELETON_ID.encode("utf-8")).hexdigest()[:12]
 
 
 @dataclass
@@ -241,6 +253,7 @@ def set_config(state_path: Path, patch: dict[str, Any]) -> dict[str, Any]:
         "limit_gtd_minutes",
         "correlation_distance_pips", "repeat_setup_window_min", "repeat_setup_bucket_pips",
         "event_blackout_minutes", "max_suggestions_per_call",
+        "streak_scratch_threshold_pips", "min_lot_size",
     ):
         if numkey in clean:
             try:
@@ -291,6 +304,7 @@ def _runtime_block(state: dict[str, Any]) -> dict[str, Any]:
         "consecutive_errors": 0,
         "consecutive_no_trade_replies": 0,
         "consecutive_losses": 0,
+        "consecutive_wins": 0,
         "throttle_until_utc": None,
         "throttle_reason": None,
         "loss_streak_last_throttled_day_utc": None,
@@ -299,6 +313,17 @@ def _runtime_block(state: dict[str, Any]) -> dict[str, Any]:
         "last_placed_order_id": None,
         "daily_pnl_usd": 0.0,
         "pnl_day_utc": None,
+        "previous_regime_label": "normal",
+        "regime_entered_trade_id": None,
+        "risk_regime_override": None,
+        "risk_regime_override_until_utc": None,
+        "recent_gate_blocks": {},
+        "last_gate_pass_utc": None,
+        "last_tick_utc": None,
+        "last_stats_recompute_utc": None,
+        "last_terminal_event_utc": None,
+        "consecutive_llm_errors": 0,
+        "consecutive_broker_rejects": 0,
     })
     return runtime
 
@@ -311,11 +336,30 @@ def log_decision(state_path: Path, decision: GateDecision) -> None:
     if len(lst) > _DECISIONS_MAX:
         lst = lst[-_DECISIONS_MAX:]
     rt["decisions"] = lst
+    if decision.result == "pass":
+        rt["last_gate_pass_utc"] = decision.timestamp_utc
+    recent_blocks: dict[str, int] = {}
+    for item in lst[-200:]:
+        if item.get("r") != "block":
+            continue
+        reason = str(item.get("why") or "?")
+        recent_blocks[reason] = recent_blocks.get(reason, 0) + 1
+    rt["recent_gate_blocks"] = recent_blocks
     _save_state(state_path, state)
 
 
 def _today_utc_key() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _rollover_daily_counters(rt: dict[str, Any]) -> None:
@@ -375,6 +419,7 @@ def record_llm_invocation(state_path: Path, model: str) -> None:
     rt["last_llm_call_utc"] = datetime.now(timezone.utc).isoformat()
     rt["llm_calls_today"] = int(rt.get("llm_calls_today") or 0) + 1
     rt["llm_spend_today_usd"] = float(rt.get("llm_spend_today_usd") or 0.0) + _estimated_call_cost_usd(model)
+    rt["consecutive_llm_errors"] = 0
     _save_state(state_path, state)
 
 
@@ -387,6 +432,7 @@ def record_trade_placed(state_path: Path, order_id: Any, suggestion_id: Optional
     rt["last_suggestion_id"] = suggestion_id
     rt["consecutive_errors"] = 0
     rt["consecutive_no_trade_replies"] = 0
+    rt["consecutive_broker_rejects"] = 0
     _save_state(state_path, state)
 
 
@@ -406,6 +452,7 @@ def record_error(state_path: Path, cfg: dict[str, Any], err_msg: str) -> None:
     state = _load_state(state_path)
     rt = _runtime_block(state)
     rt["consecutive_errors"] = int(rt.get("consecutive_errors") or 0) + 1
+    rt["consecutive_llm_errors"] = int(rt.get("consecutive_llm_errors") or 0) + 1
     if rt["consecutive_errors"] >= int(cfg.get("max_consecutive_errors") or 5):
         # Kill switch — flip autonomous off.
         auto = state.setdefault("autonomous_fillmore", {})
@@ -413,6 +460,13 @@ def record_error(state_path: Path, cfg: dict[str, Any], err_msg: str) -> None:
         cur_cfg["mode"] = "off"
         cur_cfg["enabled"] = False
         rt["throttle_reason"] = f"error_kill_switch: {err_msg[:120]}"
+    _save_state(state_path, state)
+
+
+def record_broker_reject(state_path: Path) -> None:
+    state = _load_state(state_path)
+    rt = _runtime_block(state)
+    rt["consecutive_broker_rejects"] = int(rt.get("consecutive_broker_rejects") or 0) + 1
     _save_state(state_path, state)
 
 
@@ -424,12 +478,33 @@ def record_trade_outcome(state_path: Path, pnl_usd: float, cfg: dict[str, Any]) 
     rt["daily_pnl_usd"] = float(rt.get("daily_pnl_usd") or 0.0) + float(pnl_usd or 0.0)
     if pnl_usd is not None and float(pnl_usd) < 0:
         rt["consecutive_losses"] = int(rt.get("consecutive_losses") or 0) + 1
-        streak = int(rt["consecutive_losses"])
-        _maybe_arm_loss_streak_throttle(rt, cfg, streak)
+        rt["consecutive_wins"] = 0
     elif pnl_usd is not None and float(pnl_usd) > 0:
         rt["consecutive_losses"] = 0
-        _clear_loss_streak_marker(rt)
+        rt["consecutive_wins"] = int(rt.get("consecutive_wins") or 0) + 1
     _save_state(state_path, state)
+
+
+CONFIDENCE_ORDINAL = {"low": 0, "medium": 1, "high": 2}
+
+
+def _confidence_rank(label: str) -> int:
+    return CONFIDENCE_ORDINAL.get(str(label).lower(), -1)
+
+
+def _confidence_gte(actual: str, minimum: str) -> bool:
+    return _confidence_rank(actual) >= _confidence_rank(minimum)
+
+
+def _bump_confidence(base: str, levels: int) -> str:
+    levels = max(0, int(levels))
+    names = ["low", "medium", "high"]
+    idx = max(0, min(len(names) - 1, _confidence_rank(base)))
+    return names[min(idx + levels, len(names) - 1)]
+
+
+def _regime_rank(label: str) -> int:
+    return {"normal": 0, "defensive_soft": 1, "defensive_hard": 2}.get(str(label or "normal"), 0)
 
 
 # -----------------------------------------------------------------------------
@@ -711,12 +786,18 @@ def evaluate_gate(
     cfg: dict[str, Any],
     rt: dict[str, Any],
     inputs: GateInputs,
+    risk_regime: Optional[dict[str, Any]] = None,
     now_utc: Optional[datetime] = None,
 ) -> GateDecision:
     """Run all three gate layers. Returns the decision (does NOT mutate state)."""
     now_utc = now_utc or datetime.now(timezone.utc)
     mode = str(cfg.get("mode") or "off")
     agg = str(cfg.get("aggressiveness") or "balanced")
+    risk_regime = risk_regime or {
+        "label": "normal",
+        "effective_min_llm_cooldown_sec": int(cfg.get("min_llm_cooldown_sec") or 60),
+        "effective_max_open_ai_trades": int(cfg.get("max_open_ai_trades") or 2),
+    }
 
     def _block(layer: str, reason: str, extras: Optional[dict[str, Any]] = None) -> GateDecision:
         return GateDecision(
@@ -748,8 +829,12 @@ def evaluate_gate(
                 continue
             if isinstance(mins, (int, float)) and 0 <= mins <= blackout_min:
                 return _block("hard", f"event_blackout:{ev.get('event', '?')}_{mins}m")
-    if inputs.open_ai_trade_count >= int(cfg.get("max_open_ai_trades") or 2):
-        return _block("hard", f"max_open_ai_trades:{inputs.open_ai_trade_count}")
+    if inputs.open_ai_trade_count >= int(risk_regime.get("effective_max_open_ai_trades") or cfg.get("max_open_ai_trades") or 2):
+        return _block(
+            "hard",
+            f"max_open_ai_trades:{inputs.open_ai_trade_count}",
+            {"effective_limit": int(risk_regime.get("effective_max_open_ai_trades") or 0)},
+        )
     # Daily loss cap
     if float(rt.get("daily_pnl_usd") or 0.0) <= -float(cfg.get("max_daily_loss_usd") or 50.0):
         return _block("hard", f"daily_loss_cap:{rt.get('daily_pnl_usd')}")
@@ -768,21 +853,23 @@ def evaluate_gate(
             if last.tzinfo is None:
                 last = last.replace(tzinfo=timezone.utc)
             elapsed = (now_utc - last).total_seconds()
-            if elapsed < float(cfg.get("min_llm_cooldown_sec") or 60):
-                return _block("hard", f"llm_cooldown:{elapsed:.0f}s")
+            effective_cooldown = float(risk_regime.get("effective_min_llm_cooldown_sec") or cfg.get("min_llm_cooldown_sec") or 60)
+            if elapsed < effective_cooldown:
+                return _block("hard", f"llm_cooldown:{elapsed:.0f}s", {"effective_cooldown_sec": effective_cooldown})
         except Exception:
             pass
 
     # ---- Layer 3: adaptive throttle (checked before signal gate so we
     #     don't pay the signal-compute cost during a cooldown) ----
     throttle_until = rt.get("throttle_until_utc")
-    if throttle_until:
+    throttle_reason = str(rt.get("throttle_reason") or "")
+    if throttle_until and not throttle_reason.startswith("loss_streak="):
         try:
             tu = datetime.fromisoformat(throttle_until)
             if tu.tzinfo is None:
                 tu = tu.replace(tzinfo=timezone.utc)
             if tu > now_utc:
-                return _block("throttle", f"{rt.get('throttle_reason') or 'adaptive'}_until_{tu.isoformat()}")
+                return _block("throttle", f"{throttle_reason or 'adaptive'}_until_{tu.isoformat()}")
         except Exception:
             pass
 
@@ -854,7 +941,7 @@ def evaluate_gate(
     return GateDecision(
         timestamp_utc=now_utc.isoformat(),
         result="pass", layer="pass", reason="ok",
-        mode=mode, aggressiveness=agg, extras=extras,
+        mode=mode, aggressiveness=agg, extras={**extras, "risk_regime": risk_regime.get("label")},
     )
 
 
@@ -867,6 +954,7 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
     state = _load_state(state_path)
     rt = (state.get("autonomous_fillmore") or {}).get("runtime") or {}
     _rollover_daily_counters(rt)  # in-memory only, we don't persist here
+    risk_regime = _compute_risk_regime(rt, cfg)
 
     decisions = list(rt.get("decisions") or [])
     # Break down by result + layer over last N.
@@ -893,6 +981,55 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
             throttled = tu > datetime.now(timezone.utc)
         except Exception:
             pass
+
+    suggestions_db, _assistant_db = _db_paths_from_state(state_path)
+    try:
+        perf_rows = autonomous_performance.get_materialized_stats(suggestions_db)
+    except Exception:
+        perf_rows = {}
+    for row in perf_rows.values():
+        for key in (
+            "win_rate_by_confidence_json",
+            "win_rate_by_side_json",
+            "win_rate_by_session_json",
+            "prompt_version_breakdown_json",
+        ):
+            if key in row:
+                try:
+                    row[key] = json.loads(row[key]) if row[key] else {}
+                except Exception:
+                    row[key] = {}
+
+    health_alerts: list[dict[str, Any]] = []
+    last_tick = _parse_iso(rt.get("last_tick_utc"))
+    if cfg.get("enabled") and last_tick is not None:
+        age = (datetime.now(timezone.utc) - last_tick).total_seconds()
+        if age > 120:
+            health_alerts.append({
+                "level": "error",
+                "code": "loop_stale",
+                "msg": f"Last autonomous tick was {age:.0f}s ago.",
+            })
+    if thr := dict(rt.get("recent_gate_blocks") or {}):
+        top_reason = max(thr.items(), key=lambda kv: kv[1])[0] if thr else None
+        if top_reason and passes == 0 and total >= 20:
+            health_alerts.append({
+                "level": "warning",
+                "code": "gate_stagnation",
+                "msg": f"Recent gate blocks are dominated by {top_reason}.",
+            })
+    if int(rt.get("consecutive_llm_errors") or 0) >= 3:
+        health_alerts.append({
+            "level": "error",
+            "code": "llm_errors",
+            "msg": f"{int(rt.get('consecutive_llm_errors') or 0)} consecutive LLM errors.",
+        })
+    if int(rt.get("consecutive_broker_rejects") or 0) >= 3:
+        health_alerts.append({
+            "level": "error",
+            "code": "broker_errors",
+            "msg": f"{int(rt.get('consecutive_broker_rejects') or 0)} consecutive broker placement errors.",
+        })
 
     return {
         "config": cfg,
@@ -923,8 +1060,17 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
             "reason": rt.get("throttle_reason") if throttled else None,
             "consecutive_no_trade_replies": int(rt.get("consecutive_no_trade_replies") or 0),
             "consecutive_losses": int(rt.get("consecutive_losses") or 0),
+            "consecutive_wins": int(rt.get("consecutive_wins") or 0),
             "consecutive_errors": int(rt.get("consecutive_errors") or 0),
         },
+        "risk_regime": {
+            **risk_regime,
+            "override_until_utc": rt.get("risk_regime_override_until_utc"),
+        },
+        "recent_gate_blocks": dict(sorted((rt.get("recent_gate_blocks") or {}).items(), key=lambda kv: -kv[1])[:8]),
+        "health_alerts": health_alerts,
+        "performance": perf_rows,
+        "last_tick_utc": rt.get("last_tick_utc"),
         "last_llm_call_utc": rt.get("last_llm_call_utc"),
         "last_placed_order_id": rt.get("last_placed_order_id"),
         "last_suggestion_id": rt.get("last_suggestion_id"),
@@ -935,10 +1081,6 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
 # -----------------------------------------------------------------------------
 # Engine — called from run_loop each tick
 # -----------------------------------------------------------------------------
-
-def _confidence_rank(label: str) -> int:
-    return {"low": 1, "medium": 2, "high": 3}.get(str(label).lower(), 0)
-
 
 def _count_open_ai_trades(store, profile_name: str) -> int:
     try:
@@ -967,6 +1109,152 @@ def _refresh_daily_pnl(store, profile_name: str, rt: dict[str, Any], cfg: Option
             return
     except Exception:
         return
+
+
+def _db_paths_from_state(state_path: Path) -> tuple[Path, Path]:
+    base = state_path.parent
+    return base / "ai_suggestions.sqlite", base / "assistant.db"
+
+
+def _refresh_autonomous_runtime_from_history(
+    *,
+    state_path: Path,
+    rt: dict[str, Any],
+    cfg: dict[str, Any],
+) -> dict[str, Any]:
+    suggestions_db, assistant_db = _db_paths_from_state(state_path)
+    try:
+        latest_terminal = autonomous_performance.get_last_terminal_event_utc(suggestions_db)
+    except Exception:
+        latest_terminal = None
+    rt["last_terminal_event_utc"] = latest_terminal
+
+    stale = False
+    if latest_terminal:
+        last_stats = _parse_iso(rt.get("last_stats_recompute_utc"))
+        term_dt = _parse_iso(latest_terminal)
+        stale = term_dt is not None and (last_stats is None or term_dt > last_stats)
+    elif rt.get("last_stats_recompute_utc") is None:
+        stale = True
+
+    if stale:
+        try:
+            autonomous_performance.recompute_performance_stats(
+                profile=state_path.parent.name,
+                suggestions_db_path=suggestions_db,
+                assistant_db_path=assistant_db,
+            )
+            rt["last_stats_recompute_utc"] = datetime.now(timezone.utc).isoformat()
+        except Exception:
+            pass
+
+    scratch_thr = float(cfg.get("streak_scratch_threshold_pips") or 1.0)
+    try:
+        outcomes = autonomous_performance.load_autonomous_closed_outcomes(
+            suggestions_db,
+            scratch_threshold_pips=scratch_thr,
+        )
+    except Exception:
+        outcomes = []
+
+    today = _today_utc_key()
+    daily_pnl = 0.0
+    consecutive_losses = 0
+    consecutive_wins = 0
+    latest_trade_id: str | None = None
+    for row in outcomes:
+        latest_trade_id = str(row.get("trade_id") or latest_trade_id or "")
+        if str(row.get("closed_at") or "").startswith(today):
+            daily_pnl += float(row.get("pnl") or 0.0)
+        streak_outcome = str(row.get("streak_outcome") or "")
+        if streak_outcome == "loss":
+            consecutive_losses += 1
+            consecutive_wins = 0
+        elif streak_outcome == "win":
+            consecutive_wins += 1
+            consecutive_losses = 0
+        elif streak_outcome == "scratch":
+            consecutive_losses = 0
+            consecutive_wins = 0
+    rt["daily_pnl_usd"] = float(daily_pnl)
+    rt["consecutive_losses"] = consecutive_losses
+    rt["consecutive_wins"] = consecutive_wins
+    if latest_trade_id:
+        rt["latest_closed_trade_id"] = latest_trade_id
+    return {
+        "outcomes": outcomes,
+        "stats_stale": stale,
+    }
+
+
+def _compute_risk_regime(rt: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
+    base_min_conf = str(cfg.get("min_confidence") or "high").lower()
+    label = "normal"
+    prev = str(rt.get("previous_regime_label") or "normal")
+    losses = int(rt.get("consecutive_losses") or 0)
+    wins = int(rt.get("consecutive_wins") or 0)
+    latest_trade_id = rt.get("latest_closed_trade_id")
+
+    if losses >= 3:
+        streak_label = "defensive_hard"
+    elif losses >= 2:
+        streak_label = "defensive_soft"
+    elif prev == "defensive_hard":
+        if wins >= 2:
+            streak_label = "normal"
+        elif wins >= 1:
+            streak_label = "defensive_soft"
+        else:
+            streak_label = "defensive_hard"
+    elif prev == "defensive_soft":
+        streak_label = "normal" if wins >= 1 else "defensive_soft"
+    else:
+        streak_label = "normal"
+
+    daily_drawdown_active = float(rt.get("daily_pnl_usd") or 0.0) <= -(
+        float(cfg.get("max_daily_loss_usd") or 50.0) * 0.6
+    )
+    if daily_drawdown_active:
+        label = "defensive_hard"
+    else:
+        label = streak_label
+
+    override_label = None
+    override_until = _parse_iso(rt.get("risk_regime_override_until_utc"))
+    if rt.get("risk_regime_override") and override_until and override_until > datetime.now(timezone.utc):
+        override_label = str(rt.get("risk_regime_override"))
+        label = override_label
+
+    if label != prev:
+        rt["previous_regime_label"] = label
+        rt["regime_entered_trade_id"] = latest_trade_id
+
+    if label == "defensive_hard":
+        risk_multiplier = 0.5
+        effective_cooldown = int(cfg.get("min_llm_cooldown_sec") or 60) * 2
+        effective_max_open = 1
+    elif label == "defensive_soft":
+        risk_multiplier = 0.75
+        effective_cooldown = int(math.ceil(float(cfg.get("min_llm_cooldown_sec") or 60) * 1.5))
+        effective_max_open = min(int(cfg.get("max_open_ai_trades") or 2), 1)
+    else:
+        risk_multiplier = 1.0
+        effective_cooldown = int(cfg.get("min_llm_cooldown_sec") or 60)
+        effective_max_open = int(cfg.get("max_open_ai_trades") or 2)
+
+    return {
+        "label": label,
+        "streak_label": streak_label,
+        "daily_drawdown_active": daily_drawdown_active,
+        "risk_multiplier": risk_multiplier,
+        "effective_min_llm_cooldown_sec": effective_cooldown,
+        "effective_max_open_ai_trades": effective_max_open,
+        "effective_min_confidence": base_min_conf,
+        "override_label": override_label,
+        "previous_regime_label": prev,
+        "recovery_wins": wins,
+        "regime_entered_trade_id": rt.get("regime_entered_trade_id"),
+    }
     try:
         df = rows.copy()
         # Filter to ai_manual entries that closed today.
@@ -1062,16 +1350,13 @@ def tick_autonomous_fillmore(
     state = _load_state(state_path)
     rt = _runtime_block(state)
     _rollover_daily_counters(rt)
-    # Refresh daily P&L + loss streak from the trades store so the daily loss
-    # cap + loss-streak throttle stay honest without needing a close-path hook.
-    _refresh_daily_pnl(store, profile_name, rt, cfg)
-    # Apply loss-streak throttle if needed (fresh computation each tick).
-    streak = int(rt.get("consecutive_losses") or 0)
-    _maybe_arm_loss_streak_throttle(rt, cfg, streak)
+    rt["last_tick_utc"] = datetime.now(timezone.utc).isoformat()
+    _refresh_autonomous_runtime_from_history(state_path=state_path, rt=rt, cfg=cfg)
+    risk_regime = _compute_risk_regime(rt, cfg)
     state["autonomous_fillmore"]["runtime"] = rt
     _save_state(state_path, state)
 
-    decision = evaluate_gate(cfg, rt, inputs)
+    decision = evaluate_gate(cfg, rt, inputs, risk_regime=risk_regime)
     log_decision(state_path, decision)
 
     if decision.result != "pass":
@@ -1082,7 +1367,7 @@ def tick_autonomous_fillmore(
     print(f"[{profile_name}] autonomous Fillmore: gate passed ({cfg.get('aggressiveness')}, {mode}); invoking LLM")
 
     try:
-        suggestions = _invoke_suggest(profile, profile_name, cfg)
+        suggestions = _invoke_suggest(profile, profile_name, cfg, risk_regime=risk_regime)
     except Exception as e:
         print(f"[{profile_name}] autonomous Fillmore: LLM error: {e}")
         record_error(state_path, cfg, str(e))
@@ -1092,12 +1377,13 @@ def tick_autonomous_fillmore(
     record_llm_invocation(state_path, str(cfg.get("model") or "gpt-5.4-mini"))
 
     # Process each suggestion from the LLM (1 in single mode, up to max_suggestions in multi).
-    min_conf = str(cfg.get("min_confidence") or "medium").lower()
+    min_conf = str(risk_regime.get("effective_min_confidence") or cfg.get("min_confidence") or "medium").lower()
     order_type = str(cfg.get("order_type") or "market").lower()
     max_lots = float(cfg.get("max_lots_per_trade") or 15.0)
+    min_lot_size = float(cfg.get("min_lot_size") or 0.01)
     placed_any = False
     agg_label = str(cfg.get("aggressiveness") or "balanced")
-    max_open = int(cfg.get("max_open_ai_trades") or 2)
+    max_open = int(risk_regime.get("effective_max_open_ai_trades") or cfg.get("max_open_ai_trades") or 2)
 
     for suggestion in suggestions:
         # Respect max_open_ai_trades across the batch — count may change after each placement.
@@ -1107,7 +1393,7 @@ def tick_autonomous_fillmore(
             break
 
         conf = str(suggestion.get("confidence") or "low").lower()
-        if _confidence_rank(conf) < _confidence_rank(min_conf):
+        if not _confidence_gte(conf, min_conf):
             print(f"[{profile_name}] autonomous Fillmore: suggestion confidence {conf} < min {min_conf}; skipping")
             continue
 
@@ -1153,6 +1439,34 @@ def tick_autonomous_fillmore(
             placed_any = True
             continue
 
+        requested_lots = float(suggestion.get("lots") or 0.0)
+        scaled_lots = requested_lots * float(risk_regime.get("risk_multiplier") or 1.0)
+        scaled_lots = min(max_lots, scaled_lots)
+        if scaled_lots < min_lot_size:
+            print(
+                f"[{profile_name}] autonomous Fillmore: risk regime veto — scaled lots "
+                f"{scaled_lots:.4f} below minimum {min_lot_size:.2f}"
+            )
+            log_decision(
+                state_path,
+                GateDecision(
+                    timestamp_utc=datetime.now(timezone.utc).isoformat(),
+                    result="block",
+                    layer="hard",
+                    reason="risk_regime_lot_veto",
+                    mode=mode,
+                    aggressiveness=agg_label,
+                    extras={
+                        "requested_lots": requested_lots,
+                        "scaled_lots": scaled_lots,
+                        "min_lot_size": min_lot_size,
+                        "risk_regime": risk_regime.get("label"),
+                    },
+                ),
+            )
+            continue
+        suggestion["lots"] = max(min_lot_size, scaled_lots)
+
         # Safety cap on lots.
         if float(suggestion.get("lots") or 0) > max_lots:
             print(f"[{profile_name}] autonomous Fillmore: clipping lots {suggestion.get('lots')} -> {max_lots}")
@@ -1185,10 +1499,11 @@ def tick_autonomous_fillmore(
             placed_any = True
         except Exception as e:
             print(f"[{profile_name}] autonomous Fillmore: place error: {e}")
+            record_broker_reject(state_path)
             record_error(state_path, cfg, str(e))
 
     if not placed_any and suggestions:
-        all_low = all(_confidence_rank(str(s.get("confidence") or "low").lower()) < _confidence_rank(min_conf) for s in suggestions)
+        all_low = all(not _confidence_gte(str(s.get("confidence") or "low").lower(), min_conf) for s in suggestions)
         if all_low:
             record_no_trade_reply(state_path, cfg)
     elif placed_any and mode == "shadow":
@@ -1389,7 +1704,12 @@ def _enforce_autonomous_limit_snap_guard(
     return normalized
 
 
-def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> list[dict[str, Any]]:
+def _invoke_suggest(
+    profile,
+    profile_name: str,
+    cfg: dict[str, Any],
+    risk_regime: Optional[dict[str, Any]] = None,
+) -> list[dict[str, Any]]:
     """Invoke the LLM for autonomous Fillmore.
 
     Reason-then-commit flow: the user prompt asks for a plain-text ANALYSIS
@@ -1420,6 +1740,11 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> list[dic
     ctx = build_trading_context(profile, profile_name)
     model = resolve_ai_suggest_model(cfg.get("model"))
     system = autonomous_system_prompt_from_context(ctx, model)
+    risk_regime = risk_regime or {
+        "label": "normal",
+        "effective_min_confidence": str(cfg.get("min_confidence") or "high").lower(),
+        "risk_multiplier": 1.0,
+    }
     # Best-effort news enrichment; swallow errors.
     try:
         news_block = build_trade_suggestion_news_block(
@@ -1445,6 +1770,12 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> list[dic
             autonomous_only=True,
         )
         system = f"{system}\n\n{reflection_block}"
+        perf_block = autonomous_performance.build_performance_memory_block(
+            db_path,
+            risk_regime=risk_regime,
+        )
+        if perf_block:
+            system = f"{system}\n\n{perf_block}"
         today_block = suggestion_tracker.build_autonomous_today_block(db_path, max_items=10)
         system = f"{system}\n\n{today_block}"
     except Exception:
@@ -1455,7 +1786,7 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> list[dic
     max_lots = float(cfg.get("max_lots_per_trade") or 15.0)
     mode = str(cfg.get("mode") or "off")
     limit_gtd_min = int(cfg.get("limit_gtd_minutes") or 45)
-    min_conf = str(cfg.get("min_confidence") or "high").lower()
+    min_conf = str(risk_regime.get("effective_min_confidence") or cfg.get("min_confidence") or "high").lower()
 
     if order_type == "market":
         exec_note = (
@@ -1514,6 +1845,15 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> list[dic
         multi_note = ""
         decision_format = "2. DECISION (single fenced JSON code block). Use this exact schema:\n"
 
+    defensive_prompt = ""
+    if str(risk_regime.get("label") or "normal") != "normal":
+        defensive_prompt = (
+            "\n"
+            f"RISK REGIME: {str(risk_regime.get('label') or '').upper()}\n"
+            "You are in a defensive drawdown state. Only return confidence='high' if the setup is exceptional. "
+            "If the setup is merely decent, return 'medium' or 'low' so the system skips it.\n"
+        )
+
     suggest_prompt = (
         f"=== AUTONOMOUS DECISION REQUEST ===\n"
         f"Gate mode: {agg}. Execution mode: {mode}.{paper_note}\n"
@@ -1570,6 +1910,7 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> list[dic
         "- low = weak tape, mid-range, correlated to existing book, or imminent event risk. "
         "Returning low will skip placement — this is the preferred answer when in doubt.\n"
         "\n"
+        + defensive_prompt
         + _exit_catalog_text
     )
 
@@ -1638,6 +1979,8 @@ def _invoke_suggest(profile, profile_name: str, cfg: dict[str, Any]) -> list[dic
             )
         # exit_plan: free-text field for the thesis monitor to reason about mid-trade.
         suggestion["exit_plan"] = str(suggestion.get("exit_plan") or "default").strip()
+        suggestion["prompt_version"] = AUTONOMOUS_PROMPT_VERSION
+        suggestion["prompt_hash"] = _autonomous_prompt_hash()
 
         raw_exit = suggestion.get("exit_strategy")
         raw_exit_s = str(raw_exit).strip().lower() if raw_exit is not None else ""
