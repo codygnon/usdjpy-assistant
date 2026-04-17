@@ -41,7 +41,7 @@ from api import autonomous_performance
 
 AutonomousMode = Literal["off", "shadow", "paper", "live"]
 Aggressiveness = Literal["conservative", "balanced", "aggressive", "very_aggressive"]
-OrderType = Literal["market", "limit"]
+OrderType = Literal["market", "limit"]  # kept for _place_from_suggestion; LLM chooses per-suggestion
 
 # Rough cost per 1M tokens (input/output) for the default model. Used to estimate
 # budget spend from tokens — not authoritative, just directional.
@@ -64,7 +64,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": False,
     "mode": "off",                      # off|shadow|paper|live — paper = real OANDA practice orders (not in-app sim)
     "aggressiveness": "balanced",
-    "order_type": "limit",              # market|limit — limit default so LLM's named level actually becomes the entry (not current tick)
     "limit_gtd_minutes": 45,            # autonomous limit orders expire if not filled; keep stale ideas from resting forever
     "daily_budget_usd": 2.00,
     "min_llm_cooldown_sec": 60,
@@ -148,9 +147,6 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
     },
 }
 
-_AUTONOMOUS_LIMIT_NEAR_TOUCH_MIN_PIPS = 0.1
-_AUTONOMOUS_LIMIT_NEAR_TOUCH_MAX_PIPS = 0.5
-_AUTONOMOUS_LIMIT_MAX_SNAP_PIPS = 1.5
 _AUTONOMOUS_PROMPT_SKELETON_ID = "autonomous_decision_request_v1"
 _AUTONOMOUS_AUX_MEMORY_BUDGET_WORDS = 650
 _USDJPY_SPREAD_LIMITS_PIPS = {
@@ -303,11 +299,7 @@ def set_config(state_path: Path, patch: dict[str, Any]) -> dict[str, Any]:
         if mc not in ("low", "medium", "high"):
             mc = "medium"
         clean["min_confidence"] = mc
-    if "order_type" in clean:
-        ot = str(clean["order_type"]).lower()
-        if ot not in ("market", "limit"):
-            ot = "market"
-        clean["order_type"] = ot
+    clean.pop("order_type", None)  # LLM chooses order type per-suggestion; no config knob
     for numkey in (
         "daily_budget_usd", "min_llm_cooldown_sec", "max_lots_per_trade",
         "max_open_ai_trades", "max_daily_loss_usd", "max_consecutive_errors",
@@ -1540,7 +1532,6 @@ def tick_autonomous_fillmore(
 
     # Process each suggestion from the LLM (1 in single mode, up to max_suggestions in multi).
     min_conf = str(risk_regime.get("effective_min_confidence") or cfg.get("min_confidence") or "medium").lower()
-    order_type = str(cfg.get("order_type") or "market").lower()
     max_lots = float(cfg.get("max_lots_per_trade") or 15.0)
     min_lot_size = float(cfg.get("min_lot_size") or 0.01)
     placed_any = False
@@ -1649,11 +1640,12 @@ def tick_autonomous_fillmore(
                     )
                     continue
         try:
+            sug_order_type = str(suggestion.get("order_type") or "market").lower()
             placed = _place_from_suggestion(
-                profile, profile_name, state_path, suggestion, order_type, store,
+                profile, profile_name, state_path, suggestion, sug_order_type, store,
             )
             record_trade_placed(state_path, placed.get("order_id"), suggestion.get("suggestion_id"))
-            kind = "MKT" if order_type == "market" else "LMT"
+            kind = "MKT" if sug_order_type == "market" else "LMT"
             print(
                 f"[{profile_name}] autonomous Fillmore: placed {kind} {suggestion.get('side')} "
                 f"{suggestion.get('lots')} @ {suggestion.get('price')} (order {placed.get('order_id')})"
@@ -1772,100 +1764,6 @@ def _apply_autonomous_exit_calibration(
     return calibrated
 
 
-def _apply_autonomous_limit_price_policy(
-    profile,
-    suggestion: dict[str, Any],
-    ctx: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """Snap autonomous limit prices into a near-touch passive-entry band.
-
-    Manual Fillmore can still reason about deeper structure entries. Autonomous
-    mode is intentionally more execution-focused here: if it wants to participate,
-    the resting limit should usually sit just outside the spread rather than 5-10
-    pips away.
-    """
-    if not isinstance(suggestion, dict):
-        return suggestion
-    side = str(suggestion.get("side") or "").strip().lower()
-    if side not in ("buy", "sell"):
-        return suggestion
-
-    spot = ((ctx or {}).get("spot_price") or {}) if isinstance(ctx, dict) else {}
-    try:
-        bid = float(spot.get("bid") or 0.0)
-        ask = float(spot.get("ask") or 0.0)
-    except (TypeError, ValueError):
-        return suggestion
-    if bid <= 0 or ask <= 0:
-        return suggestion
-
-    pip = float(getattr(profile, "pip_size", 0.01) or 0.01)
-    if pip <= 0:
-        pip = 0.01
-    near_min = _AUTONOMOUS_LIMIT_NEAR_TOUCH_MIN_PIPS * pip
-    near_max = _AUTONOMOUS_LIMIT_NEAR_TOUCH_MAX_PIPS * pip
-
-    try:
-        requested = float(suggestion.get("price") or 0.0)
-    except (TypeError, ValueError):
-        requested = 0.0
-    if requested <= 0:
-        requested = bid if side == "buy" else ask
-
-    normalized = dict(suggestion)
-    normalized["requested_price"] = requested
-
-    if side == "buy":
-        lower = bid - near_max
-        upper = bid - near_min
-        normalized["price"] = round(min(max(requested, lower), upper), 3)
-    else:
-        lower = ask + near_min
-        upper = ask + near_max
-        normalized["price"] = round(max(min(requested, upper), lower), 3)
-    return normalized
-
-
-def _enforce_autonomous_limit_snap_guard(
-    profile,
-    suggestion: dict[str, Any],
-    *,
-    max_snap_pips: float = _AUTONOMOUS_LIMIT_MAX_SNAP_PIPS,
-) -> dict[str, Any]:
-    """Reject limit ideas whose snapped working price no longer matches the thesis.
-
-    Near-touch snapping is useful as an execution constraint, but if the snapped
-    entry drifts too far from the model's intended structural level, we should
-    pass rather than place a materially different trade.
-    """
-    normalized = dict(suggestion or {})
-    pip = float(getattr(profile, "pip_size", 0.01) or 0.01)
-    if pip <= 0:
-        pip = 0.01
-    try:
-        requested = float(normalized.get("requested_price") or normalized.get("price") or 0.0)
-        working = float(normalized.get("price") or 0.0)
-    except (TypeError, ValueError):
-        return normalized
-    if requested <= 0 or working <= 0:
-        return normalized
-
-    snap_pips = abs(working - requested) / pip
-    normalized["snap_distance_pips"] = round(float(snap_pips), 1)
-    if snap_pips <= float(max_snap_pips):
-        return normalized
-
-    normalized["confidence"] = "low"
-    reason = (
-        f"Autonomous pass: requested entry {requested:.3f} would snap to {working:.3f} "
-        f"({snap_pips:.1f}p), which is too far from the original thesis."
-    )
-    rationale = str(normalized.get("rationale") or "").strip()
-    if reason.lower() not in rationale.lower():
-        normalized["rationale"] = f"{rationale}\n\n{reason}".strip() if rationale else reason
-    return normalized
-
-
 def _invoke_suggest(
     profile,
     profile_name: str,
@@ -1952,33 +1850,22 @@ def _invoke_suggest(
         pass
 
     agg = cfg.get("aggressiveness") or "balanced"
-    order_type = str(cfg.get("order_type") or "limit").lower()
     max_lots = float(cfg.get("max_lots_per_trade") or 15.0)
     mode = str(cfg.get("mode") or "off")
     limit_gtd_min = int(cfg.get("limit_gtd_minutes") or 45)
     min_conf = str(risk_regime.get("effective_min_confidence") or cfg.get("min_confidence") or "high").lower()
 
-    if order_type == "market":
-        exec_note = (
-            "ORDER EXECUTION: MARKET — fills at current bid/ask the instant placement happens. "
-            "Your 'price' field is informational; only side/lots/SL/TP matter. "
-            "Because you can't anchor on a specific level for the fill, require tight alignment "
-            "between current tape and your thesis."
-        )
-        price_instr = "Put your expected fill reference (current mid is fine)."
-    else:
-        exec_note = (
-            f"ORDER EXECUTION: LIMIT — rests at the 'price' you set; fills only if the market reaches it. "
-            f"Default expiry {limit_gtd_min} minutes (GTD). If the market moves away, the order dies harmlessly. "
-            "BUY LIMIT must be BELOW current bid; SELL LIMIT must be ABOVE current ask. Autonomous limit mode is "
-            "near-touch by design: entries should usually sit just outside the spread, not 5-10 pips away at a deep pullback level."
-        )
-        price_instr = (
-            "Use a near-touch passive entry. BUY LIMIT should usually be 0.1-0.5 pips below current bid; "
-            "SELL LIMIT should usually be 0.1-0.5 pips above current ask. Anchor the thesis on structure, "
-            "but do not park the actual autonomous order 5-10 pips away unless explicitly justified. "
-            f"If the edge only appears at a level more than about {_AUTONOMOUS_LIMIT_MAX_SNAP_PIPS:.1f} pips away from the near-touch executable band, pass with confidence='low' instead of forcing it."
-        )
+    exec_note = (
+        "ORDER TYPE: You choose — 'market' or 'limit'.\n"
+        "  MARKET: fills instantly at current bid/ask. Use when the tape is moving and you want in now.\n"
+        f"  LIMIT: rests at the 'price' you set; fills only if the market reaches it. Default expiry {limit_gtd_min} min (GTD). "
+        "BUY LIMIT must be BELOW current bid; SELL LIMIT must be ABOVE current ask. "
+        "Use limit when you see a structural level worth waiting for — the order dies harmlessly if it doesn't fill."
+    )
+    price_instr = (
+        "For MARKET: 'price' is informational (current mid is fine). "
+        "For LIMIT: 'price' is the exact level where the order rests. Place it where your thesis says the edge is."
+    )
 
     paper_note = (
         " Paper mode sends real orders to OANDA practice (real fills on demo funds)."
@@ -2041,8 +1928,9 @@ def _invoke_suggest(
         + decision_format +
         "```json\n"
         "{\n"
+        '  "order_type": "market" | "limit",\n'
         '  "side": "buy" | "sell",\n'
-        f'  "price": <{order_type} entry price as number>,\n'
+        '  "price": <entry price as number>,\n'
         '  "sl": <stop loss price as number>,\n'
         '  "tp": <take profit price as number>,\n'
         f'  "lots": <position size 1-{int(max_lots)}>,\n'
@@ -2120,19 +2008,21 @@ def _invoke_suggest(
 
         # Normalize fields.
         suggestion["side"] = str(suggestion.get("side") or "buy").lower()
+        sug_order_type = str(suggestion.get("order_type") or "market").lower()
+        if sug_order_type not in ("market", "limit"):
+            sug_order_type = "market"
+        suggestion["order_type"] = sug_order_type
         suggestion["price"] = float(suggestion.get("price") or 0)
         suggestion["sl"] = float(suggestion.get("sl") or 0)
         suggestion["tp"] = float(suggestion.get("tp") or 0)
         suggestion["lots"] = float(suggestion.get("lots") or 0)
-        if order_type == "limit":
-            suggestion = _apply_autonomous_limit_price_policy(profile, suggestion, ctx)
-            suggestion = _enforce_autonomous_limit_snap_guard(profile, suggestion)
-        tif = str(suggestion.get("time_in_force") or "GTD").upper()
+        default_tif = "GTD" if sug_order_type == "limit" else "GTC"
+        tif = str(suggestion.get("time_in_force") or default_tif).upper()
         if tif not in ("GTC", "GTD"):
-            tif = "GTD"
+            tif = default_tif
         suggestion["time_in_force"] = tif
         if tif == "GTD" and not suggestion.get("gtd_time_utc"):
-            gtd_min = limit_gtd_min if order_type == "limit" else 60
+            gtd_min = limit_gtd_min if sug_order_type == "limit" else 60
             suggestion["gtd_time_utc"] = (
                 (datetime.now(timezone.utc) + timedelta(minutes=gtd_min))
                 .replace(microsecond=0).isoformat().replace("+00:00", "Z")

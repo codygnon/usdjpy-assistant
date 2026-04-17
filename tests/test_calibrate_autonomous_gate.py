@@ -71,3 +71,67 @@ def test_build_pass_mask_blocks_spread_and_low_volatility() -> None:
     )
 
     assert mask.tolist() == [False, False]
+
+
+def test_split_frame_train_test_uses_requested_recent_window() -> None:
+    frame = pd.DataFrame({"x": np.arange(1000)})
+
+    train, test = cag.split_frame_train_test(frame, train_bars=700, test_bars=200)
+
+    assert len(train) == 700
+    assert len(test) == 200
+    assert train["x"].iloc[0] == 100
+    assert test["x"].iloc[0] == 800
+
+
+def test_choose_recommendation_prefers_positive_out_of_sample_candidate() -> None:
+    mode_payload = {
+        "datasets": {
+            "1000k": {
+                "train": {
+                    "baseline_summary": {"pass_count": 100},
+                    "candidates": [
+                        {
+                            "params": {"spread_scale": 1.0},
+                            "summary": {"pass_count": 90, "positive_splits": 3},
+                            "delta_net_pips": 20.0,
+                            "delta_profit_factor": 0.2,
+                            "trade_retention_pct": 90.0,
+                        },
+                        {
+                            "params": {"spread_scale": 0.85},
+                            "summary": {"pass_count": 80, "positive_splits": 2},
+                            "delta_net_pips": 50.0,
+                            "delta_profit_factor": 0.4,
+                            "trade_retention_pct": 80.0,
+                        },
+                    ],
+                },
+                "test": {
+                    "baseline_summary": {"pass_count": 40},
+                    "candidates": [
+                        {
+                            "params": {"spread_scale": 1.0},
+                            "summary": {"pass_count": 30, "positive_splits": 2},
+                            "delta_net_pips": 18.0,
+                            "delta_profit_factor": 0.15,
+                            "trade_retention_pct": 75.0,
+                        },
+                        {
+                            "params": {"spread_scale": 0.85},
+                            "summary": {"pass_count": 6, "positive_splits": 1},
+                            "delta_net_pips": -10.0,
+                            "delta_profit_factor": -0.2,
+                            "trade_retention_pct": 15.0,
+                        },
+                    ],
+                },
+            }
+        }
+    }
+
+    recommendation = cag.choose_recommendation(mode_payload)
+
+    assert recommendation is not None
+    assert recommendation["primary_dataset"] == "1000k"
+    assert recommendation["selected"]["params"]["spread_scale"] == 1.0

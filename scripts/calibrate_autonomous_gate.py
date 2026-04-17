@@ -86,6 +86,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--stop-pips", type=float, default=10.0, help="Forward outcome stop proxy")
     p.add_argument("--horizon-bars", type=int, default=30, help="Forward outcome horizon in M1 bars")
     p.add_argument(
+        "--train-bars",
+        type=int,
+        default=700000,
+        help="Number of most-recent historical bars to use for the train slice before the test slice.",
+    )
+    p.add_argument(
+        "--test-bars",
+        type=int,
+        default=300000,
+        help="Number of most-recent historical bars to reserve for the out-of-sample test slice.",
+    )
+    p.add_argument(
         "--assume-spread-pips",
         type=float,
         default=1.2,
@@ -478,6 +490,28 @@ def summarize_mask(frame: pd.DataFrame, mask: pd.Series) -> MaskSummary:
     )
 
 
+def split_frame_train_test(frame: pd.DataFrame, *, train_bars: int, test_bars: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+    total = len(frame)
+    if total < 1000:
+        raise ValueError("Need at least 1000 rows to build a meaningful train/test split.")
+    requested_test = max(0, int(test_bars))
+    if requested_test <= 0:
+        raise ValueError("test_bars must be > 0.")
+    requested_train = max(0, int(train_bars))
+    if requested_train <= 0:
+        raise ValueError("train_bars must be > 0.")
+    max_test_size = max(total - 500, 1)
+    test_size = min(requested_test, max_test_size)
+    remaining = total - test_size
+    train_size = min(requested_train, remaining)
+    if train_size < 500:
+        raise ValueError("Train split too small after reserving test bars.")
+    start = total - (train_size + test_size)
+    train = frame.iloc[start : start + train_size].reset_index(drop=True)
+    test = frame.iloc[start + train_size : start + train_size + test_size].reset_index(drop=True)
+    return train, test
+
+
 def _score_candidate(candidate: dict[str, Any]) -> float:
     ds_rows = list((candidate.get("datasets") or {}).values())
     if not ds_rows:
@@ -585,6 +619,8 @@ def run_dataset_mode(
 def aggregate_mode_results(
     dataset_results: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
+    if not dataset_results:
+        return {"top_candidates": []}
     candidate_count = min(len(v["candidates"]) for v in dataset_results.values())
     aggregated: list[dict[str, Any]] = []
     for idx in range(candidate_count):
@@ -615,6 +651,74 @@ def aggregate_mode_results(
     }
 
 
+def choose_recommendation(mode_payload: dict[str, Any]) -> dict[str, Any] | None:
+    datasets = mode_payload.get("datasets") or {}
+    if not datasets:
+        return None
+    primary_key = "1000k" if "1000k" in datasets else next(iter(datasets.keys()))
+    primary = datasets.get(primary_key) or {}
+    train = primary.get("train") or {}
+    test = primary.get("test") or {}
+    train_candidates = list(train.get("candidates") or [])
+    test_candidates = list(test.get("candidates") or [])
+    if not train_candidates or not test_candidates:
+        return None
+
+    baseline_train = train.get("baseline_summary") or {}
+    baseline_passes = max(int(baseline_train.get("pass_count") or 0), 1)
+    ranked: list[dict[str, Any]] = []
+    for idx, train_cand in enumerate(train_candidates):
+        if idx >= len(test_candidates):
+            break
+        test_cand = test_candidates[idx]
+        train_delta_net = float(train_cand.get("delta_net_pips") or 0.0)
+        test_delta_net = float(test_cand.get("delta_net_pips") or 0.0)
+        train_delta_pf = float(train_cand.get("delta_profit_factor") or 0.0)
+        test_delta_pf = float(test_cand.get("delta_profit_factor") or 0.0)
+        train_ret = float(train_cand.get("trade_retention_pct") or 0.0)
+        test_ret = float(test_cand.get("trade_retention_pct") or 0.0)
+        train_positive = int((train_cand.get("summary") or {}).get("positive_splits") or 0)
+        test_positive = int((test_cand.get("summary") or {}).get("positive_splits") or 0)
+        retention_floor = min(train_ret, test_ret)
+        train_pass_count = int((train_cand.get("summary") or {}).get("pass_count") or 0)
+        test_pass_count = int((test_cand.get("summary") or {}).get("pass_count") or 0)
+
+        score = (
+            (train_delta_net * 0.7)
+            + (test_delta_net * 1.3)
+            + ((train_delta_pf + test_delta_pf) * 120.0)
+            + ((train_positive + test_positive) * 25.0)
+        )
+        if train_delta_net > 0.0 and test_delta_net > 0.0:
+            score += 250.0
+        if test_delta_pf > 0.0:
+            score += 100.0
+        if retention_floor < 35.0:
+            score -= (35.0 - retention_floor) * 18.0
+        if test_pass_count < max(10, math.ceil(baseline_passes * 0.2)):
+            score -= 250.0
+        if train_pass_count <= 0 or test_pass_count <= 0:
+            score -= 1000.0
+
+        ranked.append(
+            {
+                "params": dict(train_cand.get("params") or {}),
+                "train": train_cand,
+                "test": test_cand,
+                "score": round(score, 4),
+            }
+        )
+
+    if not ranked:
+        return None
+    ranked.sort(key=lambda row: row["score"], reverse=True)
+    return {
+        "primary_dataset": primary_key,
+        "selected": ranked[0],
+        "top_ranked": ranked[:10],
+    }
+
+
 def build_markdown_report(payload: dict[str, Any]) -> str:
     lines = [
         "# Autonomous Gate Calibration",
@@ -626,6 +730,8 @@ def build_markdown_report(payload: dict[str, Any]) -> str:
         f"- target pips: `{payload['config']['target_pips']}`",
         f"- stop pips: `{payload['config']['stop_pips']}`",
         f"- horizon bars: `{payload['config']['horizon_bars']}`",
+        f"- train bars: `{payload['config']['train_bars']}`",
+        f"- test bars: `{payload['config']['test_bars']}`",
         f"- assumed spread fallback: `{payload['config']['assumed_spread_pips']}`",
         "",
     ]
@@ -637,12 +743,43 @@ def build_markdown_report(payload: dict[str, Any]) -> str:
             "",
         ])
         for ds_key, ds_result in mode_payload["datasets"].items():
-            base = ds_result["baseline_summary"]
+            train_base = (ds_result.get("train") or {}).get("baseline_summary") or {}
+            test_base = (ds_result.get("test") or {}).get("baseline_summary") or {}
             lines.append(
-                f"- `{ds_key}`: {base['pass_count']} passes | {base['win_rate_pct']}% WR | "
-                f"avg {base['avg_pips']}p | net {base['net_pips']}p | PF {base['profit_factor']}"
+                f"- `{ds_key}` train: {train_base.get('pass_count', 0)} passes | "
+                f"{train_base.get('win_rate_pct', 0.0)}% WR | avg {train_base.get('avg_pips', 0.0)}p | "
+                f"net {train_base.get('net_pips', 0.0)}p | PF {train_base.get('profit_factor')}"
             )
-        lines.extend(["", "### Top Candidates", ""])
+            lines.append(
+                f"- `{ds_key}` test: {test_base.get('pass_count', 0)} passes | "
+                f"{test_base.get('win_rate_pct', 0.0)}% WR | avg {test_base.get('avg_pips', 0.0)}p | "
+                f"net {test_base.get('net_pips', 0.0)}p | PF {test_base.get('profit_factor')}"
+            )
+
+        recommendation = mode_payload.get("recommendation")
+        if recommendation and recommendation.get("selected"):
+            selected = recommendation["selected"]
+            params = selected["params"]
+            train_row = selected["train"]
+            test_row = selected["test"]
+            lines.extend(
+                [
+                    "",
+                    "### Recommended Gates",
+                    "",
+                    f"- primary dataset: `{recommendation['primary_dataset']}`",
+                    f"- score: `{selected['score']}`",
+                    f"- spread scale: `{params['spread_scale']}`",
+                    f"- min M5 ATR: `{params['min_m5_atr_pips']}`",
+                    f"- structure proximity: `{params['level_proximity_pips']}`",
+                    f"- pullback zone min: `{params['pullback_zone_min_pips']}`",
+                    f"- pullback lookback: `{params['pullback_lookback_bars']}`",
+                    f"- train delta: `{train_row['delta_net_pips']}`p | delta PF `{train_row['delta_profit_factor']}` | retention `{train_row['trade_retention_pct']}%`",
+                    f"- test delta: `{test_row['delta_net_pips']}`p | delta PF `{test_row['delta_profit_factor']}` | retention `{test_row['trade_retention_pct']}%`",
+                ]
+            )
+
+        lines.extend(["", "### Top Train Candidates", ""])
         for idx, cand in enumerate(mode_payload["aggregate"]["top_candidates"][:8], start=1):
             params = cand["params"]
             lines.append(
@@ -681,6 +818,8 @@ def main() -> int:
             "target_pips": args.target_pips,
             "stop_pips": args.stop_pips,
             "horizon_bars": args.horizon_bars,
+            "train_bars": args.train_bars,
+            "test_bars": args.test_bars,
             "assumed_spread_pips": args.assume_spread_pips,
             "spread_scales": spread_scales,
             "atr_floors": atr_floors,
@@ -702,8 +841,13 @@ def main() -> int:
                 stop_pips=float(args.stop_pips),
                 horizon_bars=int(args.horizon_bars),
             )
-            ds_result = evaluate_mode_on_dataset(
+            train_frame, test_frame = split_frame_train_test(
                 frame,
+                train_bars=int(args.train_bars),
+                test_bars=int(args.test_bars),
+            )
+            train_result = evaluate_mode_on_dataset(
+                train_frame,
                 mode=mode,
                 spread_scales=spread_scales,
                 atr_floors=atr_floors,
@@ -711,9 +855,25 @@ def main() -> int:
                 pullback_zone_mins=pullback_zone_mins,
                 pullback_lookbacks=pullback_lookbacks,
             )
-            ds_result["dataset_meta"] = meta
-            mode_payload["datasets"][_dataset_key(dataset_path)] = ds_result
-        mode_payload["aggregate"] = aggregate_mode_results(mode_payload["datasets"])
+            test_result = evaluate_mode_on_dataset(
+                test_frame,
+                mode=mode,
+                spread_scales=spread_scales,
+                atr_floors=atr_floors,
+                level_thresholds=level_thresholds,
+                pullback_zone_mins=pullback_zone_mins,
+                pullback_lookbacks=pullback_lookbacks,
+            )
+            mode_payload["datasets"][_dataset_key(dataset_path)] = {
+                "dataset_meta": meta,
+                "train_meta": {"bars": int(len(train_frame))},
+                "test_meta": {"bars": int(len(test_frame))},
+                "train": train_result,
+                "test": test_result,
+            }
+        train_slice_results = {k: v["train"] for k, v in mode_payload["datasets"].items()}
+        mode_payload["aggregate"] = aggregate_mode_results(train_slice_results)
+        mode_payload["recommendation"] = choose_recommendation(mode_payload)
         payload["modes"][mode] = mode_payload
 
     json_path = Path(args.output_json)

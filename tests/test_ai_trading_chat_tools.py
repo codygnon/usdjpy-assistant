@@ -236,7 +236,6 @@ def test_exec_get_fillmore_system_info_includes_autonomous_runtime_snapshot(tmp_
         {
             "mode": "paper",
             "enabled": True,
-            "order_type": "market",
             "aggressiveness": "balanced",
             "min_confidence": "medium",
             "model": "gpt-5.4-mini",
@@ -256,7 +255,7 @@ def test_exec_get_fillmore_system_info_includes_autonomous_runtime_snapshot(tmp_
 
     assert "AUTONOMOUS FILLMORE" in out
     assert "CURRENT AUTONOMOUS SNAPSHOT" in out
-    assert "mode=paper enabled=True order_type=market" in out
+    assert "mode=paper enabled=True aggressiveness=balanced" in out
     assert "aggressiveness=balanced" in out
     assert "daily_budget=$3.50" in out
     assert "max_open_ai_trades=3" in out

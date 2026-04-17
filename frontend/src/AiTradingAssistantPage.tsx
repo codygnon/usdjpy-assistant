@@ -607,32 +607,6 @@ function AutonomousFillmorePanel({
         )}
       </div>
 
-      {/* Order type */}
-      <div className="autonomous-panel__field">
-        <label className="autonomous-panel__label">Order Type</label>
-        <div className="autonomous-panel__segmented">
-          {(['market', 'limit'] as const).map((t) => {
-            const active = cfg.order_type === t;
-            return (
-              <button
-                key={t}
-                type="button"
-                disabled={busy}
-                onClick={() => void save({ order_type: t })}
-                className={`autonomous-panel__segment ${active ? 'is-active' : ''}`}
-              >
-                {t}
-              </button>
-            );
-          })}
-        </div>
-        <div className="autonomous-panel__hint">
-          {cfg.order_type === 'market'
-            ? 'Fills immediately at best available price.'
-            : `Near-touch passive entry: autonomous limits rest just outside the spread and expire after ${cfg.limit_gtd_minutes}m by default.`}
-        </div>
-      </div>
-
       <div className="autonomous-panel__feature-grid">
         {featurePill(
           'Event Blackout',

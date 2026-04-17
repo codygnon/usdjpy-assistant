@@ -1144,7 +1144,6 @@ export interface AutonomousConfig {
   enabled: boolean;
   mode: 'off' | 'shadow' | 'paper' | 'live';
   aggressiveness: 'conservative' | 'balanced' | 'aggressive' | 'very_aggressive';
-  order_type: 'market' | 'limit';
   limit_gtd_minutes: number;
   daily_budget_usd: number;
   min_llm_cooldown_sec: number;

@@ -127,11 +127,12 @@ def test_invoke_suggest_persists_autonomous_suggestion_history(tmp_path: Path, m
     out = autonomous_fillmore._invoke_suggest(
         profile,
         "kumatora2",
-        {"model": "gpt-5.4-mini", "order_type": "market", "aggressiveness": "balanced", "mode": "paper"},
+        {"model": "gpt-5.4-mini", "aggressiveness": "balanced", "mode": "paper"},
     )
     out0 = out[0]
 
     assert out0["suggestion_id"]
+    assert out0["order_type"] in ("market", "limit")
     history = suggestion_tracker.get_history(db_path, limit=10, offset=0)
     assert history["total"] == 1
     row = history["items"][0]
@@ -223,7 +224,7 @@ def test_invoke_suggest_stage4_sharpens_confidence_prompt_and_exit_calibration(t
     out = autonomous_fillmore._invoke_suggest(
         SimpleNamespace(symbol="USDJPY"),
         "kumatora2",
-        {"model": "gpt-5.4-mini", "order_type": "limit", "aggressiveness": "balanced", "mode": "paper", "min_confidence": "high"},
+        {"model": "gpt-5.4-mini", "aggressiveness": "balanced", "mode": "paper", "min_confidence": "high"},
     )
     out0 = out[0]
 
@@ -252,7 +253,6 @@ def test_autonomous_system_prompt_aligns_with_near_touch_execution() -> None:
     )
 
     assert "commit to UP TO 2 well-reasoned trades" in prompt
-    assert "snapped to within 0.1-0.5 pips" in prompt
     assert "within ~10 pips of your proposed entry" in prompt
     assert "~$6.66/pip/lot at 150.123" in prompt
     assert "RISK REGIME: DEFENSIVE_SOFT" in prompt
@@ -275,7 +275,8 @@ def test_fit_aux_memory_blocks_keeps_required_and_drops_low_priority_when_budget
     assert "reflections" in packed or "today" in packed
 
 
-def test_invoke_suggest_snaps_limit_price_into_near_spread_band(tmp_path: Path, monkeypatch) -> None:
+def test_invoke_suggest_preserves_llm_order_type_choice(tmp_path: Path, monkeypatch) -> None:
+    """LLM chooses market or limit per-suggestion; price is used as-is (no snap)."""
     db_path = tmp_path / "ai_suggestions.sqlite"
     captured: dict[str, object] = {}
 
@@ -298,7 +299,8 @@ def test_invoke_suggest_snaps_limit_price_into_near_spread_band(tmp_path: Path, 
             captured["messages"] = kwargs["messages"]
             content = json.dumps({
                 **_suggestion(),
-                "price": 159.250,
+                "order_type": "limit",
+                "price": 159.050,
                 "confidence": "high",
             })
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
@@ -311,28 +313,21 @@ def test_invoke_suggest_snaps_limit_price_into_near_spread_band(tmp_path: Path, 
     out = autonomous_fillmore._invoke_suggest(
         SimpleNamespace(symbol="USDJPY", pip_size=0.01),
         "kumatora2",
-        {"model": "gpt-5.4-mini", "order_type": "limit", "aggressiveness": "balanced", "mode": "paper"},
+        {"model": "gpt-5.4-mini", "aggressiveness": "balanced", "mode": "paper"},
     )
     out0 = out[0]
 
     user_prompt = str((captured.get("messages") or [{}, {}])[1]["content"])
-    assert "0.1-0.5 pips below current bid" in user_prompt
-    assert out0["requested_price"] == 159.250
-    assert out0["price"] == 159.120
-
-    history = suggestion_tracker.get_history(db_path, limit=10, offset=0)
-    row = history["items"][0]
-    assert row["requested_price"] == 159.250
-    assert row["limit_price"] == 159.120
+    assert '"order_type": "market" | "limit"' in user_prompt
+    assert out0["order_type"] == "limit"
+    assert out0["price"] == 159.050  # no snap — LLM's price preserved exactly
 
 
-def test_limit_snap_guard_downgrades_far_requested_entry_to_pass(tmp_path: Path, monkeypatch) -> None:
+def test_invoke_suggest_defaults_market_order_type_when_omitted(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "ai_suggestions.sqlite"
+
     fake_chat = ModuleType("api.ai_trading_chat")
-    fake_chat.build_trading_context = lambda profile, profile_name: {
-        **_ctx(),
-        "spot_price": {"mid": 159.123, "bid": 159.121, "ask": 159.125, "spread_pips": 0.4},
-    }
+    fake_chat.build_trading_context = lambda profile, profile_name: _ctx()
     fake_chat.build_trade_suggestion_news_block = lambda **kwargs: "NEWS BLOCK"
     fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
     fake_chat.autonomous_system_prompt_from_context = lambda ctx, model, **kwargs: "AUTONOMOUS SYSTEM PROMPT"
@@ -344,13 +339,7 @@ def test_limit_snap_guard_downgrades_far_requested_entry_to_pass(tmp_path: Path,
             self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
 
         def _create(self, **kwargs):
-            content = json.dumps({
-                **_suggestion(),
-                "side": "sell",
-                "price": 159.451,
-                "confidence": "high",
-                "rationale": "Sell the 159.45 supply wall after rejection.",
-            })
+            content = json.dumps({**_suggestion(), "confidence": "high"})
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
 
     fake_openai = ModuleType("openai")
@@ -359,17 +348,11 @@ def test_limit_snap_guard_downgrades_far_requested_entry_to_pass(tmp_path: Path,
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
     out = autonomous_fillmore._invoke_suggest(
-        SimpleNamespace(symbol="USDJPY", pip_size=0.01),
+        SimpleNamespace(symbol="USDJPY"),
         "kumatora2",
-        {"model": "gpt-5.4-mini", "order_type": "limit", "aggressiveness": "balanced", "mode": "paper"},
+        {"model": "gpt-5.4-mini", "aggressiveness": "balanced", "mode": "paper"},
     )
-    out0 = out[0]
-
-    assert out0["requested_price"] == 159.451
-    assert out0["price"] == 159.130
-    assert out0["snap_distance_pips"] == 32.1
-    assert out0["confidence"] == "low"
-    assert "too far from the original thesis" in str(out0["rationale"])
+    assert out[0]["order_type"] == "market"
 
 
 def test_market_order_with_no_exit_strategy_still_links_trade_and_fill(tmp_path: Path, monkeypatch) -> None:

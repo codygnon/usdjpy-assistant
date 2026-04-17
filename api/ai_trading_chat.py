@@ -2675,11 +2675,11 @@ def autonomous_system_prompt_from_context(
         "Prefer passing over forcing a trade.",
         "",
         "Critical discipline:",
-        "- ENTRY PRICING: The system executes entries near current market price. "
-        "For limit orders, your price is snapped to within 0.1-0.5 pips of current bid (buys) or ask (sells). "
-        "Your setup thesis should be about why price AT ITS CURRENT LEVEL is actionable — not about a structural "
-        "level price has not reached yet. If the nearest relevant structure is not within about 1-2 pips of "
-        "current price, pass with confidence='low'. For market orders, the price field is informational.",
+        "- ENTRY PRICING: You choose 'market' or 'limit' per trade. "
+        "Market fills instantly at current bid/ask — use when the tape is moving and you want in now. "
+        "Limit rests at the price you set — use when you see a structural level worth waiting for. "
+        "For limit orders: BUY LIMIT must be below current bid, SELL LIMIT must be above current ask. "
+        "The price you set is the exact price the order rests at — no adjustment is applied.",
         "- Check the OPEN POSITIONS block below. If you already have a position open in the same direction "
         f"within ~{corr_pips:g} pips of your proposed entry, DOWNGRADE to confidence='low' unless this is a genuinely "
         "new setup at a different level. Don't stack correlated ideas.",
@@ -3290,7 +3290,7 @@ def _fillmore_autonomous_help(profile_name: str, *, include_runtime: bool) -> st
         "- If the gate passes, Autonomous Fillmore calls the same suggestion pipeline as manual suggestions, including live context, news enrichment, and learning memory.",
         "- Then it compares returned confidence vs min_confidence. Low-confidence ideas can be skipped even after the gate passed.",
         "- Mode behavior: OFF disables it, SHADOW logs would-have-traded decisions without placing, PAPER places to the OANDA practice environment, and LIVE places to the real broker account.",
-        "- Order type behavior: MARKET sends immediately at the broker, LIMIT registers a resting pending order.",
+        "- Order type: the LLM chooses per-suggestion — MARKET fills immediately, LIMIT rests at the named price.",
         "- When a trade is placed, the order id and suggestion id are written back into autonomous runtime stats. Suggestion history and later trade results are meant to feed the same learning loop as manual suggestions.",
     ]
 
@@ -3305,7 +3305,7 @@ def _fillmore_autonomous_help(profile_name: str, *, include_runtime: bool) -> st
             throttle = stats.get("throttle") or {}
             lines.extend([
                 "CURRENT AUTONOMOUS SNAPSHOT",
-                f"- mode={cfg.get('mode')} enabled={bool(cfg.get('enabled'))} order_type={cfg.get('order_type')} aggressiveness={cfg.get('aggressiveness')} min_confidence={cfg.get('min_confidence')} model={cfg.get('model')}",
+                f"- mode={cfg.get('mode')} enabled={bool(cfg.get('enabled'))} aggressiveness={cfg.get('aggressiveness')} min_confidence={cfg.get('min_confidence')} model={cfg.get('model')}",
                 f"- budgets/caps: daily_budget=${float(cfg.get('daily_budget_usd') or 0):.2f}, max_open_ai_trades={int(cfg.get('max_open_ai_trades') or 0)}, max_daily_loss=${float(cfg.get('max_daily_loss_usd') or 0):.2f}, max_lots={float(cfg.get('max_lots_per_trade') or 0):.2f}",
                 f"- activity today: llm_calls={int(today.get('llm_calls') or 0)}, trades_placed={int(today.get('trades_placed') or 0)}, spend=${float(today.get('spend_usd') or 0):.4f}, pnl=${float(today.get('pnl_usd') or 0):.2f}",
                 f"- throttle: active={bool(throttle.get('active'))}, reason={throttle.get('reason') or 'none'}, no_trade_streak={int(throttle.get('consecutive_no_trade_replies') or 0)}, loss_streak={int(throttle.get('consecutive_losses') or 0)}, consecutive_errors={int(throttle.get('consecutive_errors') or 0)}",
