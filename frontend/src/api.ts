@@ -1145,6 +1145,7 @@ export interface AutonomousConfig {
   mode: 'off' | 'shadow' | 'paper' | 'live';
   aggressiveness: 'conservative' | 'balanced' | 'aggressive' | 'very_aggressive';
   order_type: 'market' | 'limit';
+  limit_gtd_minutes: number;
   daily_budget_usd: number;
   min_llm_cooldown_sec: number;
   trading_hours: { tokyo: boolean; london: boolean; ny: boolean };
@@ -1158,6 +1159,15 @@ export interface AutonomousConfig {
   throttle_no_trade_cooldown_sec: number;
   throttle_loss_streak: number;
   throttle_loss_cooldown_sec: number;
+  correlation_veto_enabled: boolean;
+  correlation_distance_pips: number;
+  repeat_setup_dedupe_enabled: boolean;
+  repeat_setup_window_min: number;
+  repeat_setup_bucket_pips: number;
+  event_blackout_enabled: boolean;
+  event_blackout_minutes: number;
+  multi_trade_enabled: boolean;
+  max_suggestions_per_call: number;
 }
 
 export interface AutonomousGateMode {
@@ -1242,6 +1252,7 @@ export interface ReasoningSuggestion {
   suggestion_id: string;
   created_utc: string;
   side: string;
+  requested_price: number | null;
   price: number;
   lots: number;
   confidence: string;
@@ -1266,7 +1277,7 @@ export interface ReasoningThesisCheck {
   confidence: string;
   requested_new_sl: number | null;
   requested_scale_out_pct: number | null;
-  execution_succeeded: number | null;
+  execution_succeeded: boolean | null;
 }
 
 export interface ReasoningReflection {
@@ -1278,7 +1289,7 @@ export interface ReasoningReflection {
   what_read_right: string;
   what_missed: string;
   summary_text: string;
-  autonomous: number;
+  autonomous: boolean;
 }
 
 export interface ReasoningFeed {

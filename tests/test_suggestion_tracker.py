@@ -85,6 +85,7 @@ def test_init_db_adds_learning_columns(tmp_path: Path) -> None:
 
     assert "placed_order_json" in cols
     assert "trade_id" in cols
+    assert "requested_price" in cols
     assert "ai_thesis_checks" in tables
     assert "ai_reflections" in tables
 
@@ -455,7 +456,32 @@ def test_get_history_returns_row_level_details_with_parsed_json(tmp_path: Path) 
     row = history["items"][0]
     assert row["suggestion_id"] == sid
     assert row["profile"] == "kumatora2"
+    assert row["requested_price"] == 150.45
     assert row["market_snapshot"]["macro_bias"]["combined_bias"] == "bearish"
     assert row["edited_fields"]["price"]["after"] == 150.5
     assert row["placed_order"]["exit_strategy"] == "tp1_be_only"
     assert row["trade_id"] == "ai_manual:301:1"
+
+
+def test_log_generated_persists_requested_price_when_distinct_from_limit_price(tmp_path: Path) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+    sugg = _suggestion(side="buy", price=150.12)
+    sugg["requested_price"] = 150.00
+
+    sid = suggestion_tracker.log_generated(
+        db_path,
+        profile="kumatora2",
+        model="gpt-5.4-mini",
+        suggestion=sugg,
+        ctx=_ctx(bias="bullish", session="London", vol="compressed"),
+    )
+
+    history = suggestion_tracker.get_history(db_path, limit=10, offset=0)
+    row = history["items"][0]
+    assert row["suggestion_id"] == sid
+    assert row["requested_price"] == 150.00
+    assert row["limit_price"] == 150.12
+
+    feed = suggestion_tracker.get_reasoning_feed(db_path, suggestions_limit=5)
+    assert feed["suggestions"][0]["requested_price"] == 150.00
+    assert feed["suggestions"][0]["price"] == 150.12

@@ -282,6 +282,11 @@ def test_invoke_suggest_snaps_limit_price_into_near_spread_band(tmp_path: Path, 
     assert out0["requested_price"] == 159.250
     assert out0["price"] == 159.120
 
+    history = suggestion_tracker.get_history(db_path, limit=10, offset=0)
+    row = history["items"][0]
+    assert row["requested_price"] == 159.250
+    assert row["limit_price"] == 159.120
+
 
 def test_market_order_with_no_exit_strategy_still_links_trade_and_fill(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "ai_suggestions.sqlite"

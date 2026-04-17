@@ -301,6 +301,44 @@ function countdownLabel(minutesToEvent: number): string {
   return `${h}h ${m}m`;
 }
 
+function formatAutonomousReason(reason: string | null | undefined): string {
+  const raw = String(reason || '').trim();
+  if (!raw) return 'n/a';
+  return raw
+    .replace(/^event_blackout:/, 'event blackout: ')
+    .replace(/^repeat_setup_within_/, 'repeat setup within ')
+    .replace(/^correlation_veto_within_/, 'correlation veto within ')
+    .replace(/^loss_streak=/, 'loss streak=')
+    .replace(/_/g, ' ');
+}
+
+function featurePill(label: string, active: boolean, detail?: string): ReactNode {
+  return (
+    <div
+      key={`${label}-${detail || ''}`}
+      style={{
+        padding: '6px 8px',
+        borderRadius: 8,
+        border: active ? '1px solid rgba(74,222,128,0.35)' : '1px solid rgba(255,255,255,0.08)',
+        background: active ? 'rgba(74,222,128,0.08)' : 'rgba(255,255,255,0.03)',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <span style={{ fontSize: '0.75rem', color: '#e2e8f0', fontWeight: 600 }}>{label}</span>
+        <span style={{ fontSize: '0.68rem', color: active ? '#4ade80' : 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+          {active ? 'on' : 'off'}
+        </span>
+      </div>
+      {detail && <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: 3, lineHeight: 1.35 }}>{detail}</div>}
+    </div>
+  );
+}
+
+function snapDeltaPips(requestedPrice: number | null | undefined, workingPrice: number | null | undefined): number | null {
+  if (requestedPrice == null || workingPrice == null || !Number.isFinite(requestedPrice) || !Number.isFinite(workingPrice)) return null;
+  return Math.abs(workingPrice - requestedPrice) / 0.01;
+}
+
 // ===========================================================================
 // Autonomous Fillmore panel
 // ===========================================================================
@@ -360,6 +398,22 @@ function AutonomousFillmorePanel({
     return () => { cancelled = true; window.clearInterval(id); };
   }, [profileName]);
 
+  useEffect(() => {
+    if (!showReasoning) return undefined;
+    let cancelled = false;
+    const tick = () => {
+      api.getAutonomousReasoning(profileName).then((r) => {
+        if (!cancelled) setReasoning(r);
+      }).catch(() => { /* silent */ });
+    };
+    tick();
+    const id = window.setInterval(tick, 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [profileName, showReasoning]);
+
   const save = useCallback(async (patch: Partial<api.AutonomousConfig>) => {
     setBusy(true); setErr(null);
     try {
@@ -386,9 +440,9 @@ function AutonomousFillmorePanel({
 
   if (!cfg) {
     return (
-      <div className="card">
-        <div className="card-heading">Autonomous Fillmore</div>
-        <div className="card-row" style={{ color: 'var(--text-secondary)' }}>Loading…</div>
+      <div className="card autonomous-panel autonomous-panel--loading">
+        <div className="card-heading autonomous-panel__title">Autonomous Fillmore</div>
+        <div className="card-row autonomous-panel__muted">Loading…</div>
         {err && <div style={{ color: '#f87171', fontSize: '0.82rem', marginTop: 6 }}>{err}</div>}
       </div>
     );
@@ -409,16 +463,30 @@ function AutonomousFillmorePanel({
   // Budget bar color
   const budgetPct = today ? Math.min(100, today.budget_used_pct) : 0;
   const budgetColor = budgetPct >= 90 ? '#f87171' : budgetPct >= 60 ? '#facc15' : '#4ade80';
+  const topReasons = Object.entries(window_?.top_block_reasons || {}).slice(0, 3);
+  const reasoningCounts = reasoning
+    ? {
+        suggestions: reasoning.suggestions.length,
+        thesisChecks: reasoning.thesis_checks.length,
+        reflections: reasoning.reflections.length,
+      }
+    : null;
 
   return (
-    <div className="card">
-      <div className="card-heading" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span>Autonomous Fillmore</span>
+    <div className="card autonomous-panel">
+      <div className="card-heading autonomous-panel__header">
+        <div>
+          <div className="autonomous-panel__eyebrow">Execution Engine</div>
+          <span className="autonomous-panel__title">Autonomous Fillmore</span>
+          <div className="autonomous-panel__subtitle">
+            Continuous trade engine with event gating, defensive thesis review, and self-reflection memory.
+          </div>
+        </div>
         <span style={{
           fontSize: '0.72rem',
           padding: '2px 8px',
           borderRadius: 999,
-          background: 'rgba(255,255,255,0.06)',
+          background: 'rgba(255,255,255,0.05)',
           color: modeMeta.color,
           fontWeight: 700,
           letterSpacing: 0.5,
@@ -430,7 +498,7 @@ function AutonomousFillmorePanel({
       {err && <div style={{ color: '#f87171', fontSize: '0.82rem', marginBottom: 8 }}>{err}</div>}
 
       {cfg.mode === 'paper' && (
-        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8, lineHeight: 1.35 }}>
+        <div className="autonomous-panel__notice">
           Paper mode sends real orders to your OANDA <strong>practice</strong> account (profile must have{' '}
           <code style={{ fontSize: '0.72rem' }}>oanda_environment: &quot;practice&quot;</code>
           {' '}and a practice API token). Fills and outcomes are normal broker trades and feed Fillmore learning.
@@ -438,30 +506,30 @@ function AutonomousFillmorePanel({
       )}
 
       {/* Master mode + enabled toggle */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
-        <div>
-          <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Mode</label>
+      <div className="autonomous-panel__grid autonomous-panel__grid--two">
+        <div className="autonomous-panel__field">
+          <label className="autonomous-panel__label">Mode</label>
           <select
             value={cfg.mode}
             disabled={busy}
             onChange={(e) => void save({ mode: e.target.value as api.AutonomousConfig['mode'], enabled: e.target.value !== 'off' })}
-            style={{ width: '100%', padding: '4px 6px', fontSize: '0.85rem' }}
+            className="autonomous-panel__control"
           >
             {MODE_LABELS.map((m) => (
               <option key={m.value} value={m.value}>{m.label}</option>
             ))}
           </select>
         </div>
-        <div>
-          <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Enabled</label>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, height: 26 }}>
+        <div className="autonomous-panel__field">
+          <label className="autonomous-panel__label">Enabled</label>
+          <div className="autonomous-panel__toggle">
             <input
               type="checkbox"
               checked={cfg.enabled && canEnable}
               disabled={busy || !canEnable}
               onChange={(e) => void save({ enabled: e.target.checked })}
             />
-            <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+            <span className="autonomous-panel__muted">
               {cfg.enabled && canEnable ? 'running' : 'paused'}
             </span>
           </div>
@@ -469,11 +537,11 @@ function AutonomousFillmorePanel({
       </div>
 
       {/* Aggressiveness */}
-      <div style={{ marginBottom: 10 }}>
-        <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between' }}>
+      <div className="autonomous-panel__field">
+        <label className="autonomous-panel__label autonomous-panel__label--split">
           <span>Gate Aggressiveness</span>
           {expectedPct != null && (
-            <span style={{ color: 'var(--text-secondary)' }}>
+            <span className="autonomous-panel__muted">
               ~{expectedPct}% pass rate
             </span>
           )}
@@ -482,23 +550,23 @@ function AutonomousFillmorePanel({
           value={cfg.aggressiveness}
           disabled={busy}
           onChange={(e) => void save({ aggressiveness: e.target.value as api.AutonomousConfig['aggressiveness'] })}
-          style={{ width: '100%', padding: '4px 6px', fontSize: '0.85rem' }}
+          className="autonomous-panel__control"
         >
           {AGG_LABELS.map((a) => (
             <option key={a.value} value={a.value}>{a.label}</option>
           ))}
         </select>
         {aggDesc && (
-          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+          <div className="autonomous-panel__hint">
             {aggDesc}
           </div>
         )}
       </div>
 
       {/* Order type */}
-      <div style={{ marginBottom: 10 }}>
-        <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Order Type</label>
-        <div style={{ display: 'flex', gap: 6 }}>
+      <div className="autonomous-panel__field">
+        <label className="autonomous-panel__label">Order Type</label>
+        <div className="autonomous-panel__segmented">
           {(['market', 'limit'] as const).map((t) => {
             const active = cfg.order_type === t;
             return (
@@ -507,59 +575,77 @@ function AutonomousFillmorePanel({
                 type="button"
                 disabled={busy}
                 onClick={() => void save({ order_type: t })}
-                style={{
-                  flex: 1,
-                  padding: '4px 8px',
-                  fontSize: '0.82rem',
-                  background: active ? 'rgba(74,222,128,0.18)' : 'rgba(255,255,255,0.04)',
-                  color: active ? '#4ade80' : 'var(--text-secondary)',
-                  border: active ? '1px solid rgba(74,222,128,0.5)' : '1px solid rgba(255,255,255,0.08)',
-                  borderRadius: 6,
-                  fontWeight: active ? 700 : 400,
-                  cursor: busy ? 'not-allowed' : 'pointer',
-                  textTransform: 'uppercase',
-                  letterSpacing: 0.5,
-                }}
+                className={`autonomous-panel__segment ${active ? 'is-active' : ''}`}
               >
                 {t}
               </button>
             );
           })}
         </div>
-        <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+        <div className="autonomous-panel__hint">
           {cfg.order_type === 'market'
             ? 'Fills immediately at best available price.'
-            : 'Rests as a pending order; fills only at the LLM-specified price.'}
+            : `Near-touch passive entry: autonomous limits rest just outside the spread and expire after ${cfg.limit_gtd_minutes}m by default.`}
         </div>
       </div>
 
+      <div className="autonomous-panel__feature-grid">
+        {featurePill(
+          'Event Blackout',
+          cfg.event_blackout_enabled,
+          cfg.event_blackout_enabled ? `Blocks high-impact USD/JPY events inside ${cfg.event_blackout_minutes}m.` : 'LLM may still fire near scheduled events.',
+        )}
+        {featurePill(
+          'Multi-Trade',
+          cfg.multi_trade_enabled,
+          cfg.multi_trade_enabled ? `Can return up to ${cfg.max_suggestions_per_call} ideas per call.` : 'One idea max per LLM call.',
+        )}
+        {featurePill(
+          'Correlation Veto',
+          cfg.correlation_veto_enabled,
+          cfg.correlation_veto_enabled ? `Blocks same-side stacking within ${cfg.correlation_distance_pips}p.` : 'No same-side proximity veto.',
+        )}
+        {featurePill(
+          'Repeat Dedupe',
+          cfg.repeat_setup_dedupe_enabled,
+          cfg.repeat_setup_dedupe_enabled ? `Avoids repeat setups inside ${cfg.repeat_setup_bucket_pips}p over ${cfg.repeat_setup_window_min}m.` : 'Allows repeat-firing same bucket.',
+        )}
+        {featurePill(
+          'Thesis Monitor',
+          true,
+          'Runs every ~3 minutes on open Fillmore trades and can only reduce risk.',
+        )}
+        {featurePill(
+          'Reflection Memory',
+          true,
+          'Closed Fillmore trades generate short postmortems that feed autonomous prompts.',
+        )}
+      </div>
+
       {/* Budget + activity today */}
-      <div style={{
-        background: 'rgba(255,255,255,0.04)',
-        borderRadius: 8,
-        padding: 10,
-        marginBottom: 10,
-        display: 'grid',
-        gap: 6,
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem' }}>
-          <span style={{ color: 'var(--text-secondary)' }}>Today's spend</span>
+      <div className="autonomous-panel__section autonomous-panel__section--soft">
+        <div className="autonomous-panel__section-head">
+          <span className="autonomous-panel__section-title">Today</span>
+          <span className="autonomous-panel__muted">live runtime</span>
+        </div>
+        <div className="autonomous-panel__metric-row">
+          <span className="autonomous-panel__muted">Today's spend</span>
           <strong>${today?.spend_usd?.toFixed(3) ?? '0.000'} / ${cfg.daily_budget_usd.toFixed(2)}</strong>
         </div>
-        <div style={{ height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3, overflow: 'hidden' }}>
+        <div className="autonomous-panel__bar">
           <div style={{ width: `${budgetPct}%`, height: '100%', background: budgetColor, transition: 'width 0.3s' }} />
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4, fontSize: '0.78rem', marginTop: 4 }}>
-          <div>
-            <div style={{ color: 'var(--text-secondary)' }}>LLM calls</div>
+        <div className="autonomous-panel__stats-grid">
+          <div className="autonomous-panel__stat">
+            <div className="autonomous-panel__stat-label">LLM calls</div>
             <strong>{today?.llm_calls ?? 0}</strong>
           </div>
-          <div>
-            <div style={{ color: 'var(--text-secondary)' }}>Trades placed</div>
+          <div className="autonomous-panel__stat">
+            <div className="autonomous-panel__stat-label">Trades placed</div>
             <strong>{today?.trades_placed ?? 0}</strong>
           </div>
-          <div>
-            <div style={{ color: 'var(--text-secondary)' }}>P&L</div>
+          <div className="autonomous-panel__stat">
+            <div className="autonomous-panel__stat-label">P&L</div>
             <strong style={{ color: (today?.pnl_usd ?? 0) >= 0 ? '#4ade80' : '#f87171' }}>
               ${today?.pnl_usd?.toFixed(2) ?? '0.00'}
             </strong>
@@ -569,25 +655,29 @@ function AutonomousFillmorePanel({
 
       {/* Gate window stats */}
       {window_ && window_.total > 0 && (
-        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 10 }}>
-          Last {window_.total} ticks: <strong style={{ color: 'var(--text-primary)' }}>{window_.pass_rate_pct}%</strong> passed
-          {window_.blocks > 0 && Object.keys(window_.top_block_reasons).length > 0 && (
-            <span> · top blocks: {Object.keys(window_.top_block_reasons).slice(0, 2).join(', ')}</span>
+        <div className="autonomous-panel__section">
+          <div className="autonomous-panel__section-head">
+            <span className="autonomous-panel__section-title">Gate Window</span>
+            <span className="autonomous-panel__muted">recent activity</span>
+          </div>
+          <div className="autonomous-panel__hint">
+            Last {window_.total} ticks: <strong style={{ color: 'var(--text-primary)' }}>{window_.pass_rate_pct}%</strong> passed
+          </div>
+          {topReasons.length > 0 && (
+            <div className="autonomous-panel__chip-row">
+              {topReasons.map(([reason, count]) => (
+                <div key={reason} className="autonomous-panel__chip">
+                  {formatAutonomousReason(reason)} · {count}
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}
 
       {/* Throttle indicator */}
       {thr?.active && (
-        <div style={{
-          fontSize: '0.78rem',
-          background: 'rgba(248, 113, 113, 0.1)',
-          border: '1px solid rgba(248, 113, 113, 0.3)',
-          color: '#f87171',
-          padding: 6,
-          borderRadius: 6,
-          marginBottom: 10,
-        }}>
+        <div className="autonomous-panel__throttle">
           Throttled: {thr.reason || 'adaptive cooldown'}
           {thr.until_utc && <span> until {new Date(thr.until_utc).toLocaleTimeString()}</span>}
         </div>
@@ -605,15 +695,15 @@ function AutonomousFillmorePanel({
       )}
 
       {/* Model + confidence */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
-        <div>
-          <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Model</label>
+      <div className="autonomous-panel__grid autonomous-panel__grid--two">
+        <div className="autonomous-panel__field">
+          <label className="autonomous-panel__label">Model</label>
           {autonomousModelOptions.length > 0 ? (
             <select
               value={cfg.model}
               disabled={busy}
               onChange={(e) => void save({ model: e.target.value })}
-              style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem' }}
+              className="autonomous-panel__control"
             >
               {autonomousModelOptions.map((modelId) => (
                 <option key={modelId} value={modelId}>{modelId}</option>
@@ -626,17 +716,17 @@ function AutonomousFillmorePanel({
               disabled={busy}
               onChange={(e) => setCfg({ ...cfg, model: e.target.value })}
               onBlur={(e) => void save({ model: e.target.value })}
-              style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem' }}
+              className="autonomous-panel__control"
             />
           )}
         </div>
-        <div>
-          <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Min confidence</label>
+        <div className="autonomous-panel__field">
+          <label className="autonomous-panel__label">Min confidence</label>
           <select
             value={cfg.min_confidence}
             disabled={busy}
             onChange={(e) => void save({ min_confidence: e.target.value as api.AutonomousConfig['min_confidence'] })}
-            style={{ width: '100%', padding: '4px 6px', fontSize: '0.85rem' }}
+            className="autonomous-panel__control"
           >
             <option value="low">low</option>
             <option value="medium">medium</option>
@@ -648,77 +738,169 @@ function AutonomousFillmorePanel({
       {/* Advanced controls */}
       <button
         type="button"
-        className="btn btn-secondary"
-        style={{ width: '100%', fontSize: '0.8rem', padding: '6px 10px', marginBottom: 6 }}
+        className="btn btn-secondary autonomous-panel__toggle-btn"
         onClick={() => setShowAdvanced((v) => !v)}
       >
         {showAdvanced ? 'Hide' : 'Show'} advanced settings
       </button>
 
       {showAdvanced && (
-        <div style={{ display: 'grid', gap: 8, marginBottom: 10, padding: 8, background: 'rgba(255,255,255,0.03)', borderRadius: 6 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <div>
-              <label style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Daily budget ($)</label>
+        <div className="autonomous-panel__advanced">
+          <div className="autonomous-panel__grid autonomous-panel__grid--two">
+            <div className="autonomous-panel__field">
+              <label className="autonomous-panel__label">Daily budget ($)</label>
               <input
                 type="number" step="0.5" min="0.1"
                 defaultValue={cfg.daily_budget_usd}
                 onBlur={(e) => void save({ daily_budget_usd: Number(e.target.value) })}
-                style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem' }}
+                className="autonomous-panel__control"
               />
             </div>
-            <div>
-              <label style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Min cooldown (s)</label>
+            <div className="autonomous-panel__field">
+              <label className="autonomous-panel__label">Min cooldown (s)</label>
               <input
                 type="number" step="10" min="10"
                 defaultValue={cfg.min_llm_cooldown_sec}
                 onBlur={(e) => void save({ min_llm_cooldown_sec: Number(e.target.value) })}
-                style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem' }}
+                className="autonomous-panel__control"
               />
             </div>
-            <div>
-              <label style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Max lots / trade</label>
+            <div className="autonomous-panel__field">
+              <label className="autonomous-panel__label">Max lots / trade</label>
               <input
                 type="number" step="0.01" min="0.01"
                 defaultValue={cfg.max_lots_per_trade}
                 onBlur={(e) => void save({ max_lots_per_trade: Number(e.target.value) })}
-                style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem' }}
+                className="autonomous-panel__control"
               />
             </div>
-            <div>
-              <label style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Max open AI trades</label>
+            <div className="autonomous-panel__field">
+              <label className="autonomous-panel__label">Max open AI trades</label>
               <input
                 type="number" step="1" min="1"
                 defaultValue={cfg.max_open_ai_trades}
                 onBlur={(e) => void save({ max_open_ai_trades: Number(e.target.value) })}
-                style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem' }}
+                className="autonomous-panel__control"
               />
             </div>
-            <div>
-              <label style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Max daily loss ($)</label>
+            <div className="autonomous-panel__field">
+              <label className="autonomous-panel__label">Max daily loss ($)</label>
               <input
                 type="number" step="5" min="1"
                 defaultValue={cfg.max_daily_loss_usd}
                 onBlur={(e) => void save({ max_daily_loss_usd: Number(e.target.value) })}
-                style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem' }}
+                className="autonomous-panel__control"
               />
             </div>
-            <div>
-              <label style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Error kill threshold</label>
+            <div className="autonomous-panel__field">
+              <label className="autonomous-panel__label">Error kill threshold</label>
               <input
                 type="number" step="1" min="1"
                 defaultValue={cfg.max_consecutive_errors}
                 onBlur={(e) => void save({ max_consecutive_errors: Number(e.target.value) })}
-                style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem' }}
+                className="autonomous-panel__control"
+              />
+            </div>
+            <div className="autonomous-panel__field">
+              <label className="autonomous-panel__label">Limit expiry (min)</label>
+              <input
+                type="number" step="5" min="1"
+                defaultValue={cfg.limit_gtd_minutes}
+                onBlur={(e) => void save({ limit_gtd_minutes: Number(e.target.value) })}
+                className="autonomous-panel__control"
+              />
+            </div>
+            <div className="autonomous-panel__field">
+              <label className="autonomous-panel__label">Event blackout (min)</label>
+              <input
+                type="number" step="5" min="0"
+                defaultValue={cfg.event_blackout_minutes}
+                onBlur={(e) => void save({ event_blackout_minutes: Number(e.target.value) })}
+                className="autonomous-panel__control"
+              />
+            </div>
+            <div className="autonomous-panel__field">
+              <label className="autonomous-panel__label">Correlation veto (pips)</label>
+              <input
+                type="number" step="1" min="0"
+                defaultValue={cfg.correlation_distance_pips}
+                onBlur={(e) => void save({ correlation_distance_pips: Number(e.target.value) })}
+                className="autonomous-panel__control"
+              />
+            </div>
+            <div className="autonomous-panel__field">
+              <label className="autonomous-panel__label">Repeat window (min)</label>
+              <input
+                type="number" step="5" min="1"
+                defaultValue={cfg.repeat_setup_window_min}
+                onBlur={(e) => void save({ repeat_setup_window_min: Number(e.target.value) })}
+                className="autonomous-panel__control"
+              />
+            </div>
+            <div className="autonomous-panel__field">
+              <label className="autonomous-panel__label">Repeat bucket (pips)</label>
+              <input
+                type="number" step="1" min="1"
+                defaultValue={cfg.repeat_setup_bucket_pips}
+                onBlur={(e) => void save({ repeat_setup_bucket_pips: Number(e.target.value) })}
+                className="autonomous-panel__control"
+              />
+            </div>
+            <div className="autonomous-panel__field">
+              <label className="autonomous-panel__label">Max ideas / call</label>
+              <input
+                type="number" step="1" min="1" max="2"
+                defaultValue={cfg.max_suggestions_per_call}
+                onBlur={(e) => void save({ max_suggestions_per_call: Number(e.target.value) })}
+                className="autonomous-panel__control"
               />
             </div>
           </div>
 
-          <div>
-            <label style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Trading sessions (UTC)</label>
-            <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+          <div className="autonomous-panel__grid autonomous-panel__grid--two">
+            <label className="autonomous-panel__checkbox">
+              <input
+                type="checkbox"
+                checked={cfg.event_blackout_enabled}
+                disabled={busy}
+                onChange={(e) => void save({ event_blackout_enabled: e.target.checked })}
+              />
+              Event blackout enabled
+            </label>
+            <label className="autonomous-panel__checkbox">
+              <input
+                type="checkbox"
+                checked={cfg.multi_trade_enabled}
+                disabled={busy}
+                onChange={(e) => void save({ multi_trade_enabled: e.target.checked })}
+              />
+              Multi-trade planning enabled
+            </label>
+            <label className="autonomous-panel__checkbox">
+              <input
+                type="checkbox"
+                checked={cfg.correlation_veto_enabled}
+                disabled={busy}
+                onChange={(e) => void save({ correlation_veto_enabled: e.target.checked })}
+              />
+              Correlation veto enabled
+            </label>
+            <label className="autonomous-panel__checkbox">
+              <input
+                type="checkbox"
+                checked={cfg.repeat_setup_dedupe_enabled}
+                disabled={busy}
+                onChange={(e) => void save({ repeat_setup_dedupe_enabled: e.target.checked })}
+              />
+              Repeat-setup dedupe enabled
+            </label>
+          </div>
+
+          <div className="autonomous-panel__field">
+            <label className="autonomous-panel__label">Trading sessions (UTC)</label>
+            <div className="autonomous-panel__session-row">
               {(['tokyo', 'london', 'ny'] as const).map((sess) => (
-                <label key={sess} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.82rem' }}>
+                <label key={sess} className="autonomous-panel__checkbox">
                   <input
                     type="checkbox"
                     checked={cfg.trading_hours?.[sess] ?? true}
@@ -733,7 +915,7 @@ function AutonomousFillmorePanel({
             </div>
           </div>
 
-          <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+          <div className="autonomous-panel__footer-note">
             Est. cost per LLM call: ${stats?.est_cost_per_llm_call_usd?.toFixed(5) ?? '-'}
           </div>
         </div>
@@ -742,24 +924,14 @@ function AutonomousFillmorePanel({
       {/* Recent decisions (diagnostic) */}
       <button
         type="button"
-        className="btn btn-secondary"
-        style={{ width: '100%', fontSize: '0.8rem', padding: '6px 10px' }}
+        className="btn btn-secondary autonomous-panel__toggle-btn"
         onClick={() => setShowDecisions((v) => !v)}
       >
         {showDecisions ? 'Hide' : 'Show'} recent gate decisions
       </button>
 
       {showDecisions && stats?.recent_decisions && (
-        <div style={{
-          marginTop: 8,
-          maxHeight: 180,
-          overflowY: 'auto',
-          fontSize: '0.74rem',
-          fontFamily: 'monospace',
-          background: 'rgba(0,0,0,0.25)',
-          borderRadius: 6,
-          padding: 6,
-        }}>
+        <div className="autonomous-panel__log">
           {stats.recent_decisions.length === 0 ? (
             <div style={{ color: 'var(--text-secondary)' }}>no decisions yet</div>
           ) : (
@@ -779,8 +951,7 @@ function AutonomousFillmorePanel({
       {/* Fillmore's Reasoning panel — displays stored analysis, thesis checks, reflections */}
       <button
         type="button"
-        className="btn btn-secondary"
-        style={{ width: '100%', fontSize: '0.8rem', padding: '6px 10px', marginTop: 6 }}
+        className="btn btn-secondary autonomous-panel__toggle-btn autonomous-panel__toggle-btn--spaced"
         onClick={() => {
           const next = !showReasoning;
           setShowReasoning(next);
@@ -790,18 +961,18 @@ function AutonomousFillmorePanel({
         }}
       >
         {showReasoning ? 'Hide' : 'Show'} Fillmore&apos;s reasoning
+        {reasoningCounts ? ` (${reasoningCounts.suggestions}/${reasoningCounts.thesisChecks}/${reasoningCounts.reflections})` : ''}
       </button>
 
       {showReasoning && reasoning && (
-        <div style={{
-          marginTop: 8,
-          maxHeight: 400,
-          overflowY: 'auto',
-          fontSize: '0.76rem',
-          background: 'rgba(0,0,0,0.25)',
-          borderRadius: 6,
-          padding: 8,
-        }}>
+        <div className="autonomous-panel__reasoning">
+          <div className="autonomous-panel__chip-row autonomous-panel__chip-row--legend">
+            <div className="autonomous-panel__legend-chip autonomous-panel__legend-chip--suggestions">Suggestions</div>
+            <div className="autonomous-panel__legend-chip autonomous-panel__legend-chip--thesis">Thesis monitor</div>
+            <div className="autonomous-panel__legend-chip autonomous-panel__legend-chip--reflections">Reflections</div>
+            <div className="autonomous-panel__legend-note">Auto-refreshes every 10s while open</div>
+          </div>
+
           {/* Recent suggestions with analysis */}
           {reasoning.suggestions.length > 0 && (
             <>
@@ -816,6 +987,7 @@ function AutonomousFillmorePanel({
                 const shortRationale = analysisMatch
                   ? (s.rationale || '').slice(0, (s.rationale || '').indexOf('\n\nANALYSIS:')).trim()
                   : (s.rationale || '').trim();
+                const snapped = snapDeltaPips(s.requested_price, s.price);
                 return (
                   <div key={s.suggestion_id} style={{ marginBottom: 10, borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 8 }}>
                     <div>
@@ -826,6 +998,22 @@ function AutonomousFillmorePanel({
                       {outcomeLabel && <span style={{ color: outcomeColor }}>{outcomeLabel}{s.pips != null ? ` (${s.pips > 0 ? '+' : ''}${s.pips.toFixed(1)}p)` : ''}</span>}
                     </div>
                     {shortRationale && <div style={{ color: '#cbd5e1', marginTop: 2 }}>{shortRationale}</div>}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                        working @{s.price?.toFixed(3)}
+                      </div>
+                      {s.requested_price != null && (
+                        <div style={{ fontSize: '0.7rem', color: snapped && snapped >= 0.1 ? '#fbbf24' : 'var(--text-secondary)' }}>
+                          requested @{s.requested_price.toFixed(3)}
+                          {snapped != null && snapped >= 0.1 ? ` · snapped ${snapped.toFixed(1)}p` : ''}
+                        </div>
+                      )}
+                      {s.exit_strategy && (
+                        <div style={{ fontSize: '0.7rem', color: '#a5b4fc' }}>
+                          exit {s.exit_strategy}
+                        </div>
+                      )}
+                    </div>
                     {s.exit_plan && s.exit_plan !== 'default' && (
                       <div style={{ color: '#a5b4fc', marginTop: 2, fontStyle: 'italic' }}>Exit plan: {s.exit_plan}</div>
                     )}
@@ -855,6 +1043,12 @@ function AutonomousFillmorePanel({
                     <span style={{ color: '#94a3b8' }}>{tc.reason}</span>
                     {tc.requested_new_sl != null && <span style={{ color: '#facc15' }}> SL→{tc.requested_new_sl.toFixed(3)}</span>}
                     {tc.requested_scale_out_pct != null && <span style={{ color: '#facc15' }}> scale {tc.requested_scale_out_pct}%</span>}
+                    {tc.confidence && <span style={{ color: 'var(--text-secondary)' }}> · {tc.confidence}</span>}
+                    {tc.execution_succeeded != null && (
+                      <span style={{ color: tc.execution_succeeded ? '#4ade80' : '#f87171' }}>
+                        {tc.execution_succeeded ? ' · executed' : ' · not executed'}
+                      </span>
+                    )}
                   </div>
                 );
               })}
@@ -873,6 +1067,9 @@ function AutonomousFillmorePanel({
                     {r.summary_text && <div style={{ color: '#cbd5e1' }}>{r.summary_text}</div>}
                     {r.what_read_right && <div style={{ color: '#4ade80', fontSize: '0.72rem' }}>Right: {r.what_read_right}</div>}
                     {r.what_missed && <div style={{ color: '#f87171', fontSize: '0.72rem' }}>Missed: {r.what_missed}</div>}
+                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.68rem' }}>
+                      {r.autonomous ? 'autonomous memory' : 'manual Fillmore memory'}
+                    </div>
                   </div>
                 );
               })}

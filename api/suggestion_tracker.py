@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS ai_suggestions (
 
     -- Suggestion output (what the model returned)
     side TEXT NOT NULL,
+    requested_price REAL,
     limit_price REAL NOT NULL,
     sl REAL,
     tp REAL,
@@ -140,6 +141,7 @@ def init_db(db_path: Path) -> None:
         _ensure_column(conn, "ai_suggestions", "placed_order_json", "TEXT")
         _ensure_column(conn, "ai_suggestions", "trade_id", "TEXT")
         _ensure_column(conn, "ai_suggestions", "exit_plan", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "requested_price", "REAL")
         conn.commit()
 
 
@@ -270,6 +272,7 @@ def log_generated(
         "profile": profile,
         "model": model,
         "side": str(suggestion.get("side") or "").lower(),
+        "requested_price": _fnum("requested_price") if _fnum("requested_price") is not None else (_fnum("price") or 0.0),
         "limit_price": _fnum("price") or 0.0,
         "sl": _fnum("sl"),
         "tp": _fnum("tp"),
@@ -289,12 +292,12 @@ def log_generated(
             """
             INSERT INTO ai_suggestions (
                 suggestion_id, created_utc, profile, model,
-                side, limit_price, sl, tp, lots, time_in_force, gtd_time_utc,
+                side, requested_price, limit_price, sl, tp, lots, time_in_force, gtd_time_utc,
                 confidence, rationale, exit_strategy, exit_params_json,
                 exit_plan, market_snapshot_json
             ) VALUES (
                 :suggestion_id, :created_utc, :profile, :model,
-                :side, :limit_price, :sl, :tp, :lots, :time_in_force, :gtd_time_utc,
+                :side, :requested_price, :limit_price, :sl, :tp, :lots, :time_in_force, :gtd_time_utc,
                 :confidence, :rationale, :exit_strategy, :exit_params_json,
                 :exit_plan, :market_snapshot_json
             )
@@ -778,6 +781,7 @@ def get_reasoning_feed(
             "suggestion_id": row.get("suggestion_id"),
             "created_utc": row.get("created_utc"),
             "side": row.get("side"),
+            "requested_price": row.get("requested_price"),
             "price": row.get("limit_price"),
             "lots": row.get("lots"),
             "confidence": row.get("confidence"),

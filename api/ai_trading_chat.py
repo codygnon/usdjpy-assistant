@@ -3091,6 +3091,7 @@ def _format_ai_suggestion_rows(rows: list[dict[str, Any]], *, heading: str) -> s
     for row in rows:
         created = str(row.get("created_utc") or "")[:16]
         side = str(row.get("side") or "?").upper()
+        requested_px = row.get("requested_price")
         limit_px = row.get("limit_price")
         sl = row.get("sl")
         tp = row.get("tp")
@@ -3107,6 +3108,11 @@ def _format_ai_suggestion_rows(rows: list[dict[str, Any]], *, heading: str) -> s
         lines.append(head)
 
         meta: list[str] = [f"id={row.get('suggestion_id')}"]
+        try:
+            if requested_px is not None and limit_px is not None and abs(float(requested_px) - float(limit_px)) >= 0.0005:
+                meta.append(f"requested={float(requested_px):.3f}")
+        except Exception:
+            pass
         if order_id:
             meta.append(f"order={order_id}")
         if trade_id:
