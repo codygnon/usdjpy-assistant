@@ -7,11 +7,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
+import pandas as pd
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from api import autonomous_fillmore, autonomous_performance, suggestion_tracker
+from api import ai_trading_chat, autonomous_fillmore, autonomous_performance, suggestion_tracker
 
 
 def _ctx() -> dict:
@@ -104,7 +106,7 @@ def test_invoke_suggest_persists_autonomous_suggestion_history(tmp_path: Path, m
     fake_chat.build_trade_suggestion_news_block = lambda **kwargs: "NEWS BLOCK"
     fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
     fake_chat.system_prompt_from_context = lambda ctx, model: "SYSTEM PROMPT"
-    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model: "AUTONOMOUS SYSTEM PROMPT"
+    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model, **kwargs: "AUTONOMOUS SYSTEM PROMPT"
     monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
     _install_fake_main(monkeypatch, db_path)
 
@@ -195,7 +197,7 @@ def test_invoke_suggest_stage4_sharpens_confidence_prompt_and_exit_calibration(t
     fake_chat.build_trading_context = lambda profile, profile_name: _ctx()
     fake_chat.build_trade_suggestion_news_block = lambda **kwargs: "NEWS BLOCK"
     fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
-    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model: "AUTONOMOUS SYSTEM PROMPT"
+    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model, **kwargs: "AUTONOMOUS SYSTEM PROMPT"
     monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
     _install_fake_main(monkeypatch, db_path)
 
@@ -237,6 +239,42 @@ def test_invoke_suggest_stage4_sharpens_confidence_prompt_and_exit_calibration(t
     assert out0["exit_params"]["tp1_close_pct"] == 33.0
 
 
+def test_autonomous_system_prompt_aligns_with_near_touch_execution() -> None:
+    prompt = ai_trading_chat.autonomous_system_prompt_from_context(
+        _ctx(),
+        "gpt-5.4-mini",
+        autonomous_config={
+            "multi_trade_enabled": True,
+            "max_suggestions_per_call": 2,
+            "correlation_distance_pips": 10,
+        },
+        risk_regime={"label": "defensive_soft"},
+    )
+
+    assert "commit to UP TO 2 well-reasoned trades" in prompt
+    assert "snapped to within 0.1-0.5 pips" in prompt
+    assert "within ~10 pips of your proposed entry" in prompt
+    assert "~$6.66/pip/lot at 150.123" in prompt
+    assert "RISK REGIME: DEFENSIVE_SOFT" in prompt
+
+
+def test_fit_aux_memory_blocks_keeps_required_and_drops_low_priority_when_budget_tight() -> None:
+    packed = autonomous_fillmore._fit_aux_memory_blocks(
+        [
+            ("learning", "LEARNING " * 120, True),
+            ("performance", "PERFORMANCE " * 80, True),
+            ("reflections", "REFLECTIONS " * 140, False),
+            ("today", "TODAY " * 140, False),
+        ],
+        budget_words=260,
+    )
+
+    assert "LEARNING" in packed
+    assert "PERFORMANCE" in packed
+    assert "Some lower-priority history blocks were omitted" in packed
+    assert "reflections" in packed or "today" in packed
+
+
 def test_invoke_suggest_snaps_limit_price_into_near_spread_band(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "ai_suggestions.sqlite"
     captured: dict[str, object] = {}
@@ -248,7 +286,7 @@ def test_invoke_suggest_snaps_limit_price_into_near_spread_band(tmp_path: Path, 
     }
     fake_chat.build_trade_suggestion_news_block = lambda **kwargs: "NEWS BLOCK"
     fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
-    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model: "AUTONOMOUS SYSTEM PROMPT"
+    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model, **kwargs: "AUTONOMOUS SYSTEM PROMPT"
     monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
     _install_fake_main(monkeypatch, db_path)
 
@@ -297,7 +335,7 @@ def test_limit_snap_guard_downgrades_far_requested_entry_to_pass(tmp_path: Path,
     }
     fake_chat.build_trade_suggestion_news_block = lambda **kwargs: "NEWS BLOCK"
     fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
-    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model: "AUTONOMOUS SYSTEM PROMPT"
+    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model, **kwargs: "AUTONOMOUS SYSTEM PROMPT"
     monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
     _install_fake_main(monkeypatch, db_path)
 
@@ -976,7 +1014,7 @@ def test_compute_risk_regime_hysteresis_and_daily_drawdown() -> None:
         "consecutive_losses": 3,
         "consecutive_wins": 0,
         "daily_pnl_usd": 0.0,
-        "previous_regime_label": "normal",
+        "previous_streak_regime_label": "normal",
     }
     hard = autonomous_fillmore._compute_risk_regime(rt, cfg)
     assert hard["label"] == "defensive_hard"
@@ -986,7 +1024,7 @@ def test_compute_risk_regime_hysteresis_and_daily_drawdown() -> None:
         "consecutive_losses": 0,
         "consecutive_wins": 1,
         "daily_pnl_usd": 0.0,
-        "previous_regime_label": "defensive_hard",
+        "previous_streak_regime_label": "defensive_hard",
     }
     soft = autonomous_fillmore._compute_risk_regime(recovering, cfg)
     assert soft["label"] == "defensive_soft"
@@ -995,7 +1033,7 @@ def test_compute_risk_regime_hysteresis_and_daily_drawdown() -> None:
         "consecutive_losses": 0,
         "consecutive_wins": 2,
         "daily_pnl_usd": 0.0,
-        "previous_regime_label": "defensive_hard",
+        "previous_streak_regime_label": "defensive_hard",
     }
     normal = autonomous_fillmore._compute_risk_regime(recovered, cfg)
     assert normal["label"] == "normal"
@@ -1004,11 +1042,120 @@ def test_compute_risk_regime_hysteresis_and_daily_drawdown() -> None:
         "consecutive_losses": 0,
         "consecutive_wins": 2,
         "daily_pnl_usd": -31.0,
-        "previous_regime_label": "normal",
+        "previous_streak_regime_label": "normal",
     }
     drawdown = autonomous_fillmore._compute_risk_regime(dd, cfg)
     assert drawdown["label"] == "defensive_hard"
     assert drawdown["daily_drawdown_active"] is True
+
+    drawdown_cleared = {
+        "consecutive_losses": 0,
+        "consecutive_wins": 0,
+        "daily_pnl_usd": 0.0,
+        "previous_streak_regime_label": "normal",
+        "previous_regime_label": "defensive_hard",
+    }
+    cleared = autonomous_fillmore._compute_risk_regime(drawdown_cleared, cfg)
+    assert cleared["label"] == "normal"
+    assert cleared["streak_label"] == "normal"
+
+
+def test_m1_pullback_or_zone_accepts_recent_pullback_touch() -> None:
+    base = [100.0 + (i * 0.01) for i in range(40)]
+    close = pd.Series(base, dtype=float)
+    low = close.copy()
+    high = close + 0.01
+
+    e13 = float(close.ewm(span=13, adjust=False).mean().iloc[-1])
+    low.iloc[-3] = e13 - 0.005
+
+    df = pd.DataFrame({
+        "close": close,
+        "low": low,
+        "high": high,
+    })
+
+    assert autonomous_fillmore._m1_pullback_or_zone({"M1": df}, "bull") is True
+
+
+def test_evaluate_gate_blocks_on_malformed_cooldown_timestamp(monkeypatch) -> None:
+    _force_allowed_session(monkeypatch)
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+
+    decision = autonomous_fillmore.evaluate_gate(
+        _gate_cfg("balanced"),
+        {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0, "last_llm_call_utc": "not-a-timestamp"},
+        autonomous_fillmore.GateInputs(
+            spread_pips=0.8,
+            tick_mid=159.03,
+            open_ai_trade_count=0,
+            data_by_tf={},
+            ntz_active=False,
+        ),
+    )
+
+    assert decision.result == "block"
+    assert decision.reason == "llm_cooldown:malformed_timestamp"
+
+
+def test_evaluate_gate_uses_session_aware_spread_limit(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_session_flag_now", lambda trading_hours: (True, "london/ny"))
+
+    decision = autonomous_fillmore.evaluate_gate(
+        _gate_cfg("balanced"),
+        {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0, "last_llm_call_utc": None},
+        autonomous_fillmore.GateInputs(
+            spread_pips=1.6,
+            tick_mid=159.03,
+            open_ai_trade_count=0,
+            data_by_tf={},
+            ntz_active=False,
+        ),
+    )
+
+    assert decision.result == "block"
+    assert decision.reason == "spread_too_wide:1.6"
+    assert decision.extras.get("max_spread_pips") == 1.5
+
+
+def test_evaluate_gate_blocks_low_volatility(monkeypatch) -> None:
+    _force_allowed_session(monkeypatch)
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_nearest_structure_pips", lambda tick_mid, data_by_tf: {
+        "nearest_pips": 2.0,
+        "overhead_pips": 2.0,
+        "underfoot_pips": 4.0,
+    })
+
+    base = 159.000
+    rows = []
+    for i in range(25):
+        close = base + (i * 0.001)
+        rows.append({
+            "open": close - 0.0005,
+            "high": close + 0.002,
+            "low": close - 0.002,
+            "close": close,
+        })
+    m5 = pd.DataFrame(rows)
+
+    decision = autonomous_fillmore.evaluate_gate(
+        _gate_cfg("balanced"),
+        {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0, "last_llm_call_utc": None},
+        autonomous_fillmore.GateInputs(
+            spread_pips=0.8,
+            tick_mid=159.03,
+            open_ai_trade_count=0,
+            data_by_tf={"M5": m5},
+            ntz_active=False,
+        ),
+    )
+
+    assert decision.result == "block"
+    assert decision.layer == "signal"
+    assert decision.reason == "low_volatility"
 
 
 def test_evaluate_gate_uses_risk_regime_effective_limits(monkeypatch) -> None:
@@ -1164,7 +1311,7 @@ def test_tick_autonomous_fillmore_blocks_below_floor_risk_scaled_lot(tmp_path: P
         "kumatora2",
         state_path,
         _TickStore(),
-        SimpleNamespace(bid=159.02, ask=159.04),
+        SimpleNamespace(bid=159.020, ask=159.036),
         data_by_tf={},
         ntz_active=False,
     )

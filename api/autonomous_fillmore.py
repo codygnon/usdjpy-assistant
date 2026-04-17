@@ -109,6 +109,7 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
         "require_pullback_or_zone": True,
         "require_daily_hl_buffer_pips": 5.0,
         "require_level_proximity_pips": 5.0,
+        "require_min_m5_atr_pips": 3.0,
         "expected_pass_rate_pct": 1.5,
     },
     "balanced": {
@@ -118,6 +119,7 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
         "require_pullback_or_zone": False,
         "require_daily_hl_buffer_pips": 0.0,
         "require_level_proximity_pips": 8.0,
+        "require_min_m5_atr_pips": 3.0,
         "expected_pass_rate_pct": 3.5,
     },
     "aggressive": {
@@ -129,6 +131,7 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
         "require_any_trend_signal": True,
         "reject_m3_m1_mismatch_if_both_present": True,
         "require_level_proximity_pips": 12.0,
+        "require_min_m5_atr_pips": 3.0,
         "expected_pass_rate_pct": 2.5,
     },
     "very_aggressive": {
@@ -140,6 +143,7 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
         "require_any_trend_signal": True,
         "reject_m3_m1_mismatch_if_both_present": True,
         "require_level_proximity_pips": 0.0,
+        "require_min_m5_atr_pips": 2.5,
         "expected_pass_rate_pct": 8.0,
     },
 }
@@ -148,10 +152,69 @@ _AUTONOMOUS_LIMIT_NEAR_TOUCH_MIN_PIPS = 0.1
 _AUTONOMOUS_LIMIT_NEAR_TOUCH_MAX_PIPS = 0.5
 _AUTONOMOUS_LIMIT_MAX_SNAP_PIPS = 1.5
 _AUTONOMOUS_PROMPT_SKELETON_ID = "autonomous_decision_request_v1"
+_AUTONOMOUS_AUX_MEMORY_BUDGET_WORDS = 650
+_USDJPY_SPREAD_LIMITS_PIPS = {
+    "tokyo": 2.2,
+    "london": 1.8,
+    "ny": 1.8,
+    "london/ny": 1.5,
+    "off-hours": 1.5,
+}
 
 
 def _autonomous_prompt_hash() -> str:
     return hashlib.sha256(_AUTONOMOUS_PROMPT_SKELETON_ID.encode("utf-8")).hexdigest()[:12]
+
+
+def _word_count(text: str) -> int:
+    return len(str(text or "").split())
+
+
+def _fit_aux_memory_blocks(
+    blocks: list[tuple[str, str, bool]],
+    *,
+    budget_words: int = _AUTONOMOUS_AUX_MEMORY_BUDGET_WORDS,
+) -> str:
+    """Fit overlapping memory/history blocks into a bounded auxiliary budget.
+
+    Keep the higher-signal quantitative / cohort blocks first, then add optional
+    narrative blocks only if they fit. This prevents recent-history views from
+    silently crowding out current-context reasoning as the databases grow.
+    """
+    budget_words = max(100, int(budget_words))
+    selected: list[str] = []
+    used = 0
+    optional: list[tuple[str, str]] = []
+    omitted: list[str] = []
+
+    for name, text, required in blocks:
+        block = str(text or "").strip()
+        if not block:
+            continue
+        words = _word_count(block)
+        if required:
+            selected.append(block)
+            used += words
+        else:
+            optional.append((name, block))
+
+    remaining = max(0, budget_words - used)
+    for name, block in optional:
+        words = _word_count(block)
+        if words <= remaining:
+            selected.append(block)
+            remaining -= words
+        else:
+            omitted.append(name)
+
+    if omitted:
+        selected.append(
+            "=== PROMPT MEMORY BUDGET NOTE ===\n"
+            "Some lower-priority history blocks were omitted to keep the prompt focused: "
+            + ", ".join(omitted)
+            + "."
+        )
+    return "\n\n".join(selected)
 
 
 @dataclass
@@ -314,6 +377,7 @@ def _runtime_block(state: dict[str, Any]) -> dict[str, Any]:
         "daily_pnl_usd": 0.0,
         "pnl_day_utc": None,
         "previous_regime_label": "normal",
+        "previous_streak_regime_label": "normal",
         "regime_entered_trade_id": None,
         "risk_regime_override": None,
         "risk_regime_override_until_utc": None,
@@ -325,6 +389,8 @@ def _runtime_block(state: dict[str, Any]) -> dict[str, Any]:
         "consecutive_llm_errors": 0,
         "consecutive_broker_rejects": 0,
     })
+    if "previous_streak_regime_label" not in runtime:
+        runtime["previous_streak_regime_label"] = str(runtime.get("previous_regime_label") or "normal")
     return runtime
 
 
@@ -538,65 +604,144 @@ def _session_flag_now(trading_hours: dict[str, Any]) -> tuple[bool, str]:
     return allowed, "/".join(labels) if labels else "off-hours"
 
 
+def _session_spread_limit_pips(session_label: str) -> float:
+    label = str(session_label or "off-hours").strip().lower()
+    if "london" in label and "ny" in label:
+        return float(_USDJPY_SPREAD_LIMITS_PIPS["london/ny"])
+    if "london" in label:
+        return float(_USDJPY_SPREAD_LIMITS_PIPS["london"])
+    if "ny" in label:
+        return float(_USDJPY_SPREAD_LIMITS_PIPS["ny"])
+    if "tokyo" in label:
+        return float(_USDJPY_SPREAD_LIMITS_PIPS["tokyo"])
+    return float(_USDJPY_SPREAD_LIMITS_PIPS["off-hours"])
+
+
 def _ema(series: pd.Series, span: int) -> pd.Series:
     return series.ewm(span=span, adjust=False).mean()
 
 
+def _atr_pips(data_by_tf: dict[str, pd.DataFrame], timeframe: str, period: int = 14, pip_size: float = 0.01) -> Optional[float]:
+    df = data_by_tf.get(timeframe) if data_by_tf else None
+    if df is None or len(df) < max(period + 1, 20):
+        return None
+    try:
+        highs = df["high"].astype(float)
+        lows = df["low"].astype(float)
+        closes = df["close"].astype(float)
+        prev_close = closes.shift(1)
+        tr = pd.concat([
+            highs - lows,
+            (highs - prev_close).abs(),
+            (lows - prev_close).abs(),
+        ], axis=1).max(axis=1)
+        atr = float(tr.rolling(period).mean().iloc[-1])
+        if not math.isfinite(atr):
+            return None
+        pip = pip_size or 0.01
+        if pip <= 0:
+            pip = 0.01
+        return atr / pip
+    except Exception:
+        return None
+
+
+def _sufficient_volatility(
+    data_by_tf: dict[str, pd.DataFrame],
+    *,
+    min_atr_pips: float,
+    timeframe: str = "M5",
+    pip_size: float = 0.01,
+) -> bool:
+    atr_pips = _atr_pips(data_by_tf, timeframe, period=14, pip_size=pip_size)
+    if atr_pips is None:
+        return True
+    return atr_pips >= float(min_atr_pips)
+
+
 def _m3_trend(data_by_tf: dict[str, pd.DataFrame]) -> Optional[str]:
     """Return 'bull'|'bear'|None based on M3 EMA stack (close > EMA9 > EMA21)."""
-    df = data_by_tf.get("M3") if data_by_tf else None
-    if df is None or len(df) < 25:
+    try:
+        df = data_by_tf.get("M3") if data_by_tf else None
+        if df is None or len(df) < 25:
+            return None
+        close = df["close"].astype(float)
+        e9 = float(_ema(close, 9).iloc[-1])
+        e21 = float(_ema(close, 21).iloc[-1])
+        c = float(close.iloc[-1])
+        if not all(math.isfinite(v) for v in (c, e9, e21)):
+            return None
+        if c > e9 > e21:
+            return "bull"
+        if c < e9 < e21:
+            return "bear"
         return None
-    close = df["close"].astype(float)
-    e9 = _ema(close, 9).iloc[-1]
-    e21 = _ema(close, 21).iloc[-1]
-    c = float(close.iloc[-1])
-    if c > e9 > e21:
-        return "bull"
-    if c < e9 < e21:
-        return "bear"
-    return None
+    except Exception:
+        return None
 
 
 def _m1_stack(data_by_tf: dict[str, pd.DataFrame]) -> Optional[str]:
     """M1 EMA5/9/21 stack alignment."""
-    df = data_by_tf.get("M1") if data_by_tf else None
-    if df is None or len(df) < 25:
+    try:
+        df = data_by_tf.get("M1") if data_by_tf else None
+        if df is None or len(df) < 25:
+            return None
+        close = df["close"].astype(float)
+        e5 = float(_ema(close, 5).iloc[-1])
+        e9 = float(_ema(close, 9).iloc[-1])
+        e21 = float(_ema(close, 21).iloc[-1])
+        if not all(math.isfinite(v) for v in (e5, e9, e21)):
+            return None
+        if e5 > e9 > e21:
+            return "bull"
+        if e5 < e9 < e21:
+            return "bear"
         return None
-    close = df["close"].astype(float)
-    e5 = _ema(close, 5).iloc[-1]
-    e9 = _ema(close, 9).iloc[-1]
-    e21 = _ema(close, 21).iloc[-1]
-    if e5 > e9 > e21:
-        return "bull"
-    if e5 < e9 < e21:
-        return "bear"
-    return None
+    except Exception:
+        return None
 
 
 def _m1_pullback_or_zone(data_by_tf: dict[str, pd.DataFrame], trend: Optional[str]) -> bool:
     """True if price is at/near EMA9 (zone) or touched EMA13-17 (pullback) aligned with trend."""
-    if trend is None:
+    try:
+        if trend is None:
+            return False
+        df = data_by_tf.get("M1") if data_by_tf else None
+        if df is None or len(df) < 30:
+            return False
+        close = df["close"].astype(float)
+        last = float(close.iloc[-1])
+        e9 = float(_ema(close, 9).iloc[-1])
+        e13 = float(_ema(close, 13).iloc[-1])
+        e17 = float(_ema(close, 17).iloc[-1])
+        if not all(math.isfinite(v) for v in (last, e9, e13, e17)):
+            return False
+        m1_atr_pips = _atr_pips(data_by_tf, "M1", period=14, pip_size=0.01)
+        if m1_atr_pips is not None:
+            zone_width_pips = max(1.5, min(4.0, m1_atr_pips * 0.5))
+        else:
+            zone_width_pips = 2.5
+        zone_width = zone_width_pips * 0.01
+
+        # Zone: dynamic EMA9 proximity scaled to recent M1 volatility.
+        if abs(last - e9) < zone_width:
+            return True
+
+        lows = df["low"].astype(float)
+        highs = df["high"].astype(float)
+        lookback = min(3, len(df))
+        for i in range(-lookback, 0):
+            bar_low = float(lows.iloc[i])
+            bar_high = float(highs.iloc[i])
+            if not all(math.isfinite(v) for v in (bar_low, bar_high)):
+                continue
+            if trend == "bull" and (bar_low <= e13 or bar_low <= e17):
+                return True
+            if trend == "bear" and (bar_high >= e13 or bar_high >= e17):
+                return True
         return False
-    df = data_by_tf.get("M1") if data_by_tf else None
-    if df is None or len(df) < 30:
+    except Exception:
         return False
-    close = df["close"].astype(float)
-    last = float(close.iloc[-1])
-    e9 = float(_ema(close, 9).iloc[-1])
-    e13 = float(_ema(close, 13).iloc[-1])
-    e17 = float(_ema(close, 17).iloc[-1])
-    # Zone: within 1.5 pips of EMA9
-    if abs(last - e9) < 0.015:
-        return True
-    # Pullback: last bar low <= EMA13..17 for bull (or high >= for bear)
-    last_low = float(df["low"].astype(float).iloc[-1])
-    last_high = float(df["high"].astype(float).iloc[-1])
-    if trend == "bull" and (last_low <= e13 or last_low <= e17):
-        return True
-    if trend == "bear" and (last_high >= e13 or last_high >= e17):
-        return True
-    return False
 
 
 def _nearest_structure_pips(
@@ -812,8 +957,16 @@ def evaluate_gate(
         return _block("hard", "autonomous_disabled")
     if mode == "off":
         return _block("hard", "mode_off")
-    if inputs.spread_pips is None or inputs.spread_pips > 3.0:
-        return _block("hard", f"spread_too_wide:{inputs.spread_pips}")
+    allowed, session_label = _session_flag_now(cfg.get("trading_hours") or {})
+    if not allowed:
+        return _block("hard", f"out_of_session:{session_label}")
+    max_spread_pips = _session_spread_limit_pips(session_label)
+    if inputs.spread_pips is None or inputs.spread_pips > max_spread_pips:
+        return _block(
+            "hard",
+            f"spread_too_wide:{inputs.spread_pips}",
+            {"max_spread_pips": max_spread_pips, "session": session_label},
+        )
     if inputs.ntz_active:
         return _block("hard", "ntz_active")
     # Event blackout: block when a high-impact USD/JPY event is imminent.
@@ -841,10 +994,6 @@ def evaluate_gate(
     # Budget cap
     if float(rt.get("llm_spend_today_usd") or 0.0) >= float(cfg.get("daily_budget_usd") or 2.0):
         return _block("hard", f"budget_cap:${rt.get('llm_spend_today_usd'):.3f}")
-    # Trading hours
-    allowed, session_label = _session_flag_now(cfg.get("trading_hours") or {})
-    if not allowed:
-        return _block("hard", f"out_of_session:{session_label}")
     # Min LLM cooldown
     last_call = rt.get("last_llm_call_utc")
     if last_call:
@@ -857,9 +1006,9 @@ def evaluate_gate(
             if elapsed < effective_cooldown:
                 return _block("hard", f"llm_cooldown:{elapsed:.0f}s", {"effective_cooldown_sec": effective_cooldown})
         except Exception:
-            pass
+            return _block("hard", "llm_cooldown:malformed_timestamp")
 
-    # ---- Layer 3: adaptive throttle (checked before signal gate so we
+    # ---- Layer 2: adaptive throttle (checked before signal gate so we
     #     don't pay the signal-compute cost during a cooldown) ----
     throttle_until = rt.get("throttle_until_utc")
     throttle_reason = str(rt.get("throttle_reason") or "")
@@ -873,12 +1022,19 @@ def evaluate_gate(
         except Exception:
             pass
 
-    # ---- Layer 2: signal gate (mode-dependent) ----
+    # ---- Layer 3: signal gate (mode-dependent) ----
     thresholds = GATE_THRESHOLDS.get(agg) or GATE_THRESHOLDS["balanced"]
 
     m3 = _m3_trend(inputs.data_by_tf)
     m1 = _m1_stack(inputs.data_by_tf)
     extras: dict[str, Any] = {"m3": m3, "m1": m1, "spread": inputs.spread_pips, "session": session_label}
+
+    min_m5_atr_pips = float(thresholds.get("require_min_m5_atr_pips") or 0.0)
+    if min_m5_atr_pips > 0:
+        m5_atr_pips = _atr_pips(inputs.data_by_tf, "M5", period=14, pip_size=0.01)
+        extras["m5_atr_pips"] = round(m5_atr_pips, 2) if isinstance(m5_atr_pips, (int, float)) else None
+        if not _sufficient_volatility(inputs.data_by_tf, min_atr_pips=min_m5_atr_pips, timeframe="M5", pip_size=0.01):
+            return _block("signal", "low_volatility", extras)
 
     if thresholds.get("require_m3_trend") and m3 is None:
         return _block("signal", "no_m3_trend", extras)
@@ -980,7 +1136,7 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
                 tu = tu.replace(tzinfo=timezone.utc)
             throttled = tu > datetime.now(timezone.utc)
         except Exception:
-            pass
+            return _block("hard", "llm_cooldown:malformed_timestamp")
 
     suggestions_db, _assistant_db = _db_paths_from_state(state_path)
     try:
@@ -1190,7 +1346,11 @@ def _refresh_autonomous_runtime_from_history(
 def _compute_risk_regime(rt: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
     base_min_conf = str(cfg.get("min_confidence") or "high").lower()
     label = "normal"
-    prev = str(rt.get("previous_regime_label") or "normal")
+    prev_streak = str(
+        rt.get("previous_streak_regime_label")
+        or rt.get("previous_regime_label")
+        or "normal"
+    )
     losses = int(rt.get("consecutive_losses") or 0)
     wins = int(rt.get("consecutive_wins") or 0)
     latest_trade_id = rt.get("latest_closed_trade_id")
@@ -1199,14 +1359,14 @@ def _compute_risk_regime(rt: dict[str, Any], cfg: dict[str, Any]) -> dict[str, A
         streak_label = "defensive_hard"
     elif losses >= 2:
         streak_label = "defensive_soft"
-    elif prev == "defensive_hard":
+    elif prev_streak == "defensive_hard":
         if wins >= 2:
             streak_label = "normal"
         elif wins >= 1:
             streak_label = "defensive_soft"
         else:
             streak_label = "defensive_hard"
-    elif prev == "defensive_soft":
+    elif prev_streak == "defensive_soft":
         streak_label = "normal" if wins >= 1 else "defensive_soft"
     else:
         streak_label = "normal"
@@ -1225,9 +1385,10 @@ def _compute_risk_regime(rt: dict[str, Any], cfg: dict[str, Any]) -> dict[str, A
         override_label = str(rt.get("risk_regime_override"))
         label = override_label
 
-    if label != prev:
-        rt["previous_regime_label"] = label
+    if streak_label != prev_streak:
+        rt["previous_streak_regime_label"] = streak_label
         rt["regime_entered_trade_id"] = latest_trade_id
+    rt["previous_regime_label"] = label
 
     if label == "defensive_hard":
         risk_multiplier = 0.5
@@ -1251,7 +1412,8 @@ def _compute_risk_regime(rt: dict[str, Any], cfg: dict[str, Any]) -> dict[str, A
         "effective_max_open_ai_trades": effective_max_open,
         "effective_min_confidence": base_min_conf,
         "override_label": override_label,
-        "previous_regime_label": prev,
+        "previous_regime_label": label,
+        "previous_streak_regime_label": prev_streak,
         "recovery_wins": wins,
         "regime_entered_trade_id": rt.get("regime_entered_trade_id"),
     }
@@ -1739,7 +1901,12 @@ def _invoke_suggest(
 
     ctx = build_trading_context(profile, profile_name)
     model = resolve_ai_suggest_model(cfg.get("model"))
-    system = autonomous_system_prompt_from_context(ctx, model)
+    system = autonomous_system_prompt_from_context(
+        ctx,
+        model,
+        autonomous_config=cfg,
+        risk_regime=risk_regime,
+    )
     risk_regime = risk_regime or {
         "label": "normal",
         "effective_min_confidence": str(cfg.get("min_confidence") or "high").lower(),
@@ -1761,23 +1928,26 @@ def _invoke_suggest(
         from api.main import _suggestions_db_path
         db_path = _suggestions_db_path(profile_name)
         learning = suggestion_tracker.build_learning_prompt_block(
-            db_path, days_back=180, max_recent_examples=8, current_ctx=ctx,
+            db_path, days_back=180, max_recent_examples=6, current_ctx=ctx,
         )
-        system = f"{system}\n\n{learning}"
         reflection_block = suggestion_tracker.build_autonomous_reflection_prompt_block(
             db_path,
-            limit=10,
+            limit=8,
             autonomous_only=True,
         )
-        system = f"{system}\n\n{reflection_block}"
         perf_block = autonomous_performance.build_performance_memory_block(
             db_path,
             risk_regime=risk_regime,
         )
-        if perf_block:
-            system = f"{system}\n\n{perf_block}"
         today_block = suggestion_tracker.build_autonomous_today_block(db_path, max_items=10)
-        system = f"{system}\n\n{today_block}"
+        aux_memory = _fit_aux_memory_blocks([
+            ("learning", learning, True),
+            ("performance", perf_block, True),
+            ("reflections", reflection_block, False),
+            ("today", today_block, False),
+        ])
+        if aux_memory:
+            system = f"{system}\n\n{aux_memory}"
     except Exception:
         pass
 
@@ -1845,15 +2015,6 @@ def _invoke_suggest(
         multi_note = ""
         decision_format = "2. DECISION (single fenced JSON code block). Use this exact schema:\n"
 
-    defensive_prompt = ""
-    if str(risk_regime.get("label") or "normal") != "normal":
-        defensive_prompt = (
-            "\n"
-            f"RISK REGIME: {str(risk_regime.get('label') or '').upper()}\n"
-            "You are in a defensive drawdown state. Only return confidence='high' if the setup is exceptional. "
-            "If the setup is merely decent, return 'medium' or 'low' so the system skips it.\n"
-        )
-
     suggest_prompt = (
         f"=== AUTONOMOUS DECISION REQUEST ===\n"
         f"Gate mode: {agg}. Execution mode: {mode}.{paper_note}\n"
@@ -1910,7 +2071,6 @@ def _invoke_suggest(
         "- low = weak tape, mid-range, correlated to existing book, or imminent event risk. "
         "Returning low will skip placement — this is the preferred answer when in doubt.\n"
         "\n"
-        + defensive_prompt
         + _exit_catalog_text
     )
 

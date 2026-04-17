@@ -2610,7 +2610,12 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
     return "\n".join(lines)
 
 
-def autonomous_system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str:
+def autonomous_system_prompt_from_context(
+    ctx: dict[str, Any],
+    effective_model: str,
+    autonomous_config: dict[str, Any] | None = None,
+    risk_regime: dict[str, Any] | None = None,
+) -> str:
     """Lean system prompt for Autonomous Fillmore — strips chat persona/delivery/tool blocks.
 
     Keeps the LIVE TRADING CONTEXT sections intact (sessions, price structure, TA,
@@ -2624,27 +2629,68 @@ def autonomous_system_prompt_from_context(ctx: dict[str, Any], effective_model: 
     if idx < 0:
         return full  # safety fallback — shouldn't happen in practice
 
+    cfg = autonomous_config or {}
+    multi_enabled = bool(cfg.get("multi_trade_enabled"))
+    max_suggestions = int(cfg.get("max_suggestions_per_call") or 1)
+    if multi_enabled and max_suggestions > 1:
+        commit_line = (
+            f"evaluate the live context below and commit to UP TO {max_suggestions} "
+            "well-reasoned trades OR return confidence='low' on any idea you would not take."
+        )
+    else:
+        commit_line = (
+            "evaluate the live context below and either commit to ONE well-reasoned trade OR "
+            "return confidence='low' to pass."
+        )
+
+    corr_pips = float(cfg.get("correlation_distance_pips") or 15.0)
+    spot = (ctx.get("spot_price") or {}) if isinstance(ctx, dict) else {}
+    try:
+        current_mid = float(spot.get("mid") or 0.0)
+    except (TypeError, ValueError):
+        current_mid = 0.0
+    if current_mid > 0:
+        pip_value = 100000.0 * 0.01 / current_mid
+        sizing_line = (
+            f"SIZING: USDJPY — 1 lot = 100,000 units, ~${pip_value:.2f}/pip/lot at {current_mid:.3f}."
+        )
+    else:
+        sizing_line = "SIZING: USDJPY — 1 lot = 100,000 units."
+
+    regime_append = ""
+    if str((risk_regime or {}).get("label") or "normal") != "normal":
+        regime_append = "\n".join([
+            "",
+            f"RISK REGIME: {str((risk_regime or {}).get('label') or '').upper()}",
+            "You are in a defensive drawdown state. Be more selective than usual.",
+            "Only return confidence='high' if the setup is exceptional. If the setup is merely decent,",
+            "return 'medium' or 'low' and let the system skip it.",
+        ])
+
     lean_preamble = "\n".join([
         "You are a disciplined USDJPY scalping analyst operating in AUTONOMOUS mode.",
         "The signal gate has already verified basic conditions (spread/session/cooldown/trend/level-proximity) "
         "and woke you because a setup *may* exist near actionable structure. "
-        "Your job: evaluate the live context below and either commit to ONE well-reasoned trade OR "
-        "return confidence='low' to pass. Unattended: the trader is NOT reviewing each call, so be selective. "
+        f"Your job: {commit_line} Unattended: the trader is NOT reviewing each call, so be selective. "
         "Prefer passing over forcing a trade.",
         "",
         "Critical discipline:",
-        "- Your price field is the INTENDED ENTRY and when order_type=limit it WILL be the fill price. "
-        "Set it at the actual structure level you want (PDH/PDL, round, cluster) — not the current mid.",
+        "- ENTRY PRICING: The system executes entries near current market price. "
+        "For limit orders, your price is snapped to within 0.1-0.5 pips of current bid (buys) or ask (sells). "
+        "Your setup thesis should be about why price AT ITS CURRENT LEVEL is actionable — not about a structural "
+        "level price has not reached yet. If the nearest relevant structure is not within about 1-2 pips of "
+        "current price, pass with confidence='low'. For market orders, the price field is informational.",
         "- Check the OPEN POSITIONS block below. If you already have a position open in the same direction "
-        "within ~15 pips of your proposed entry, DOWNGRADE to confidence='low' unless this is a genuinely "
+        f"within ~{corr_pips:g} pips of your proposed entry, DOWNGRADE to confidence='low' unless this is a genuinely "
         "new setup at a different level. Don't stack correlated ideas.",
         "- Check YOUR MOST RECENT SUGGESTION and recent closed trades. If the same side+level has been "
         "firing repeatedly without working, step back — the tape is eating that idea.",
         "- No persona, no narration, no desk voice. Just clear analysis and a clean commit.",
         "",
         f"MODEL: You are '{effective_model}'.",
-        "SIZING: USDJPY — 1 lot = 100,000 units, ~$3,000 margin/lot, ~$6.30/pip/lot at 158-160.",
+        sizing_line,
         "PRICE AUTHORITY: The LIVE PRICE section below is authoritative.",
+        regime_append,
         "",
     ])
     return lean_preamble + full[idx:]
