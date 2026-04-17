@@ -832,6 +832,47 @@ def get_recent_thesis_checks(
         return [_deserialize_thesis_check(dict(row)) for row in cur.fetchall()]
 
 
+def get_confidence_distribution(
+    db_path: Path,
+    *,
+    days: int = 1,
+) -> dict[str, Any]:
+    """Count generated suggestions by confidence level over the last N days."""
+    init_db(db_path)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            SELECT
+                LOWER(COALESCE(confidence, 'unknown')) AS conf,
+                COUNT(*) AS cnt,
+                SUM(CASE WHEN action = 'placed' THEN 1 ELSE 0 END) AS placed
+            FROM ai_suggestions
+            WHERE created_utc >= ?
+            GROUP BY conf
+            ORDER BY cnt DESC
+            """,
+            (cutoff,),
+        )
+        dist: dict[str, dict[str, int]] = {}
+        total = 0
+        total_placed = 0
+        for row in cur.fetchall():
+            conf = str(row["conf"] or "unknown").strip() or "unknown"
+            cnt = int(row["cnt"])
+            placed = int(row["placed"])
+            dist[conf] = {"generated": cnt, "placed": placed}
+            total += cnt
+            total_placed += placed
+    return {
+        "days": days,
+        "total_generated": total,
+        "total_placed": total_placed,
+        "placement_rate_pct": round(total_placed / max(total, 1) * 100, 1),
+        "by_confidence": dist,
+    }
+
+
 def get_reasoning_feed(
     db_path: Path,
     *,

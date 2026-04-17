@@ -1126,7 +1126,7 @@ def test_evaluate_gate_uses_session_aware_spread_limit(monkeypatch) -> None:
         _gate_cfg("balanced"),
         {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0, "last_llm_call_utc": None},
         autonomous_fillmore.GateInputs(
-            spread_pips=1.6,
+            spread_pips=3.0,
             tick_mid=159.03,
             open_ai_trade_count=0,
             data_by_tf={},
@@ -1135,8 +1135,8 @@ def test_evaluate_gate_uses_session_aware_spread_limit(monkeypatch) -> None:
     )
 
     assert decision.result == "block"
-    assert decision.reason == "spread_too_wide:1.6"
-    assert decision.extras.get("max_spread_pips") == 1.25
+    assert decision.reason == "spread_too_wide:3.0"
+    assert decision.extras.get("max_spread_pips") == 2.5
 
 
 def test_evaluate_gate_blocks_low_volatility(monkeypatch) -> None:

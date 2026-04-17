@@ -154,11 +154,11 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
 _AUTONOMOUS_PROMPT_SKELETON_ID = "autonomous_decision_request_v1"
 _AUTONOMOUS_AUX_MEMORY_BUDGET_WORDS = 650
 _USDJPY_SPREAD_LIMITS_PIPS = {
-    "tokyo": 1.9,
-    "london": 1.5,
-    "ny": 1.5,
-    "london/ny": 1.25,
-    "off-hours": 1.25,
+    "tokyo": 2.5,
+    "london": 2.5,
+    "ny": 2.5,
+    "london/ny": 2.5,
+    "off-hours": 2.5,
 }
 
 
@@ -1150,6 +1150,11 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
         perf_rows = autonomous_performance.get_materialized_stats(suggestions_db)
     except Exception:
         perf_rows = {}
+    try:
+        from api import suggestion_tracker as _st
+        confidence_dist = _st.get_confidence_distribution(suggestions_db, days=1)
+    except Exception:
+        confidence_dist = {}
     for row in perf_rows.values():
         for key in (
             "win_rate_by_confidence_json",
@@ -1233,6 +1238,7 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
         "recent_gate_blocks": dict(sorted((rt.get("recent_gate_blocks") or {}).items(), key=lambda kv: -kv[1])[:8]),
         "health_alerts": health_alerts,
         "performance": perf_rows,
+        "confidence_distribution": confidence_dist,
         "last_tick_utc": rt.get("last_tick_utc"),
         "last_llm_call_utc": rt.get("last_llm_call_utc"),
         "last_placed_order_id": rt.get("last_placed_order_id"),
@@ -1296,7 +1302,7 @@ def _refresh_autonomous_runtime_from_history(
     if latest_terminal:
         last_stats = _parse_iso(rt.get("last_stats_recompute_utc"))
         term_dt = _parse_iso(latest_terminal)
-        stale = term_dt is not None and (last_stats is None or term_dt > last_stats)
+        stale = term_dt is not None and (last_stats is None or term_dt >= last_stats)
     elif rt.get("last_stats_recompute_utc") is None:
         stale = True
 
@@ -1308,8 +1314,8 @@ def _refresh_autonomous_runtime_from_history(
                 assistant_db_path=assistant_db,
             )
             rt["last_stats_recompute_utc"] = datetime.now(timezone.utc).isoformat()
-        except Exception:
-            pass
+        except Exception as _recompute_err:
+            print(f"[{state_path.parent.name}] autonomous performance recompute error: {_recompute_err}")
 
     scratch_thr = float(cfg.get("streak_scratch_threshold_pips") or 1.0)
     try:
