@@ -141,8 +141,13 @@ def test_invoke_suggest_persists_autonomous_suggestion_history(tmp_path: Path, m
     assert row["market_snapshot"]["macro_bias"]["combined_bias"] == "bearish"
 
 
-def test_default_min_confidence_is_medium() -> None:
-    assert autonomous_fillmore.DEFAULT_CONFIG["min_confidence"] == "medium"
+def test_min_confidence_removed_from_default_config() -> None:
+    assert "min_confidence" not in autonomous_fillmore.DEFAULT_CONFIG
+
+
+def test_default_config_has_base_lot_size_and_deviation() -> None:
+    assert autonomous_fillmore.DEFAULT_CONFIG["base_lot_size"] == 5.0
+    assert autonomous_fillmore.DEFAULT_CONFIG["lot_deviation"] == 4.0
 
 
 def test_autonomous_exit_calibration_uses_tokyo_tighter_tp1() -> None:
@@ -229,9 +234,10 @@ def test_invoke_suggest_stage4_sharpens_confidence_prompt_and_exit_calibration(t
     out0 = out[0]
 
     user_prompt = str((captured.get("messages") or [{}, {}])[1]["content"])
-    assert "Current placement threshold is 'high'" in user_prompt
-    assert "the setup is there and you would take it" in user_prompt
-    assert "edge exists but one meaningful element is working against you" in user_prompt
+    assert "LOT SIZING" in user_prompt
+    assert "YOUR LOTS ARE YOUR CONVICTION" in user_prompt
+    assert "0 lots: there is no trade" in user_prompt
+    assert '"quality": "A" | "B" | "C"' in user_prompt
     assert "London/NY trend profile" in user_prompt
     system_prompt = str((captured.get("messages") or [{}, {}])[0]["content"])
     assert "SELF-REFLECTION MEMORY" in system_prompt
@@ -321,6 +327,71 @@ def test_invoke_suggest_preserves_llm_order_type_choice(tmp_path: Path, monkeypa
     assert '"order_type": "market" | "limit"' in user_prompt
     assert out0["order_type"] == "limit"
     assert out0["price"] == 159.050  # no snap — LLM's price preserved exactly
+
+
+def test_invoke_suggest_maps_quality_tag_to_confidence_for_db(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+
+    fake_chat = ModuleType("api.ai_trading_chat")
+    fake_chat.build_trading_context = lambda profile, profile_name: _ctx()
+    fake_chat.build_trade_suggestion_news_block = lambda **kwargs: ""
+    fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
+    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model, **kwargs: "SYS"
+    monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
+    _install_fake_main(monkeypatch, db_path)
+
+    class _Client:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+        def _create(self, **kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                content=json.dumps({**_suggestion(), "quality": "B", "lots": 5}),
+            ))])
+
+    fake_openai = ModuleType("openai")
+    fake_openai.OpenAI = _Client
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+
+    out = autonomous_fillmore._invoke_suggest(
+        SimpleNamespace(symbol="USDJPY"), "p1",
+        {"model": "gpt-5.4-mini", "aggressiveness": "balanced", "mode": "paper"},
+    )
+    assert out[0]["quality"] == "B"
+    assert out[0]["confidence"] == "medium"
+
+
+def test_invoke_suggest_zero_lots_maps_to_quality_c(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+
+    fake_chat = ModuleType("api.ai_trading_chat")
+    fake_chat.build_trading_context = lambda profile, profile_name: _ctx()
+    fake_chat.build_trade_suggestion_news_block = lambda **kwargs: ""
+    fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
+    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model, **kwargs: "SYS"
+    monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
+    _install_fake_main(monkeypatch, db_path)
+
+    class _Client:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+        def _create(self, **kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                content=json.dumps({**_suggestion(), "quality": "C", "lots": 0}),
+            ))])
+
+    fake_openai = ModuleType("openai")
+    fake_openai.OpenAI = _Client
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+
+    out = autonomous_fillmore._invoke_suggest(
+        SimpleNamespace(symbol="USDJPY"), "p1",
+        {"model": "gpt-5.4-mini", "aggressiveness": "balanced", "mode": "paper"},
+    )
+    assert out[0]["lots"] == 0
+    assert out[0]["quality"] == "C"
+    assert out[0]["confidence"] == "low"
 
 
 def test_invoke_suggest_defaults_market_order_type_when_omitted(tmp_path: Path, monkeypatch) -> None:
@@ -1128,8 +1199,32 @@ def test_evaluate_gate_uses_aggressive_pullback_calibration(monkeypatch) -> None
     )
 
     assert decision.result == "pass"
-    assert captured["zone_min_pips"] == 2.0
-    assert captured["lookback_bars"] == 2
+    assert captured["zone_min_pips"] == 1.5
+    assert captured["lookback_bars"] == 1
+
+
+def test_resolve_gate_thresholds_session_overrides() -> None:
+    # NY balanced: ATR 3.5, structure 12.0 (overrides base 3.0, 8.0)
+    bal_ny = autonomous_fillmore._resolve_gate_thresholds("balanced", "ny")
+    assert bal_ny["require_min_m5_atr_pips"] == 3.5
+    assert bal_ny["require_level_proximity_pips"] == 12.0
+    assert bal_ny["require_m3_trend"] is True  # inherited from base
+
+    # London balanced: no override, uses base
+    bal_lon = autonomous_fillmore._resolve_gate_thresholds("balanced", "london")
+    assert bal_lon["require_min_m5_atr_pips"] == 3.0
+    assert bal_lon["require_level_proximity_pips"] == 8.0
+
+    # Aggressive London: structure 10.0, pullback 2.0, lookback 1
+    agg_lon = autonomous_fillmore._resolve_gate_thresholds("aggressive", "london")
+    assert agg_lon["require_level_proximity_pips"] == 10.0
+    assert agg_lon["pullback_zone_min_pips"] == 2.0
+    assert agg_lon["pullback_lookback_bars"] == 1
+
+    # very_aggressive: no session overrides, always returns base
+    va_ny = autonomous_fillmore._resolve_gate_thresholds("very_aggressive", "ny")
+    assert va_ny["require_min_m5_atr_pips"] == 2.5
+    assert va_ny["require_level_proximity_pips"] == 0.0
 
 
 def test_evaluate_gate_blocks_on_malformed_cooldown_timestamp(monkeypatch) -> None:

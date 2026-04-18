@@ -2635,12 +2635,12 @@ def autonomous_system_prompt_from_context(
     if multi_enabled and max_suggestions > 1:
         commit_line = (
             f"evaluate the live context below and commit to UP TO {max_suggestions} "
-            "well-reasoned trades OR return confidence='low' on any idea you would not take."
+            "well-reasoned trades — size each to match your conviction. Set lots=0 on any idea you would skip."
         )
     else:
         commit_line = (
-            "evaluate the live context below and either commit to ONE well-reasoned trade OR "
-            "return confidence='low' to pass."
+            "evaluate the live context below and commit to ONE trade — size it to match your conviction. "
+            "Set lots=0 only if there is genuinely no edge."
         )
 
     corr_pips = float(cfg.get("correlation_distance_pips") or 15.0)
@@ -2662,17 +2662,17 @@ def autonomous_system_prompt_from_context(
         regime_append = "\n".join([
             "",
             f"RISK REGIME: {str((risk_regime or {}).get('label') or '').upper()}",
-            "You are in a defensive drawdown state. Be more selective than usual.",
-            "Only return confidence='high' if the setup is exceptional. If the setup is merely decent,",
-            "return 'medium' or 'low' and let the system skip it.",
+            "You are in a defensive drawdown state. Size down across the board.",
+            "Halve your normal lot size. Only take the cleanest setups at full conviction.",
         ])
 
     lean_preamble = "\n".join([
         "You are a disciplined USDJPY scalping analyst operating in AUTONOMOUS mode.",
-        "The signal gate has already verified basic conditions (spread/session/cooldown/trend/level-proximity) "
-        "and woke you because a setup *may* exist near actionable structure. "
-        f"Your job: {commit_line} Unattended: the trader is NOT reviewing each call, so be selective. "
-        "Prefer passing over forcing a trade.",
+        "The signal gate has already verified conditions are worth looking at — trend, spread, session, structure. "
+        "A setup likely exists. "
+        f"Your job: {commit_line} "
+        "You are a trader. Find the trade, size it to match the setup quality, and take it. "
+        "The only reason to return 0 lots is if there is genuinely no trade — not because you are unsure.",
         "",
         "Critical discipline:",
         "- ENTRY PRICING: You choose 'market' or 'limit' per trade. "
@@ -2681,7 +2681,7 @@ def autonomous_system_prompt_from_context(
         "For limit orders: BUY LIMIT must be below current bid, SELL LIMIT must be above current ask. "
         "The price you set is the exact price the order rests at — no adjustment is applied.",
         "- Check the OPEN POSITIONS block below. If you already have a position open in the same direction "
-        f"within ~{corr_pips:g} pips of your proposed entry, DOWNGRADE to confidence='low' unless this is a genuinely "
+        f"within ~{corr_pips:g} pips of your proposed entry, set lots=0 unless this is a genuinely "
         "new setup at a different level. Don't stack correlated ideas.",
         "- Check YOUR MOST RECENT SUGGESTION and recent closed trades. If the same side+level has been "
         "firing repeatedly without working, step back — the tape is eating that idea.",
@@ -3288,7 +3288,7 @@ def _fillmore_autonomous_help(profile_name: str, *, include_runtime: bool) -> st
         "- Layer 2 adaptive throttle: if Fillmore is in a cooldown from repeated no-trade replies, a loss streak, or too many consecutive errors, it blocks before calling the model.",
         "- Layer 3 signal gate: this depends on aggressiveness. Conservative wants M3 trend + M1 stack + pullback/zone + daily high/low buffer. Balanced wants aligned M3 and M1. Aggressive only needs some trend evidence. Very aggressive is close to hard-filters-only.",
         "- If the gate passes, Autonomous Fillmore calls the same suggestion pipeline as manual suggestions, including live context, news enrichment, and learning memory.",
-        "- Then it compares returned confidence vs min_confidence. Low-confidence ideas can be skipped even after the gate passed.",
+        "- The LLM expresses conviction via lot sizing: lots=0 skips, lots>0 places at that size. No separate confidence gate.",
         "- Mode behavior: OFF disables it, SHADOW logs would-have-traded decisions without placing, PAPER places to the OANDA practice environment, and LIVE places to the real broker account.",
         "- Order type: the LLM chooses per-suggestion — MARKET fills immediately, LIMIT rests at the named price.",
         "- When a trade is placed, the order id and suggestion id are written back into autonomous runtime stats. Suggestion history and later trade results are meant to feed the same learning loop as manual suggestions.",
@@ -3305,7 +3305,7 @@ def _fillmore_autonomous_help(profile_name: str, *, include_runtime: bool) -> st
             throttle = stats.get("throttle") or {}
             lines.extend([
                 "CURRENT AUTONOMOUS SNAPSHOT",
-                f"- mode={cfg.get('mode')} enabled={bool(cfg.get('enabled'))} aggressiveness={cfg.get('aggressiveness')} min_confidence={cfg.get('min_confidence')} model={cfg.get('model')}",
+                f"- mode={cfg.get('mode')} enabled={bool(cfg.get('enabled'))} aggressiveness={cfg.get('aggressiveness')} model={cfg.get('model')}",
                 f"- budgets/caps: daily_budget=${float(cfg.get('daily_budget_usd') or 0):.2f}, max_open_ai_trades={int(cfg.get('max_open_ai_trades') or 0)}, max_daily_loss=${float(cfg.get('max_daily_loss_usd') or 0):.2f}, max_lots={float(cfg.get('max_lots_per_trade') or 0):.2f}",
                 f"- activity today: llm_calls={int(today.get('llm_calls') or 0)}, trades_placed={int(today.get('trades_placed') or 0)}, spend=${float(today.get('spend_usd') or 0):.4f}, pnl=${float(today.get('pnl_usd') or 0):.2f}",
                 f"- throttle: active={bool(throttle.get('active'))}, reason={throttle.get('reason') or 'none'}, no_trade_streak={int(throttle.get('consecutive_no_trade_replies') or 0)}, loss_streak={int(throttle.get('consecutive_losses') or 0)}, consecutive_errors={int(throttle.get('consecutive_errors') or 0)}",

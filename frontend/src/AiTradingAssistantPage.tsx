@@ -536,7 +536,7 @@ function AutonomousFillmorePanel({
               <div>lots {regime.risk_multiplier.toFixed(2)}x</div>
               <div>cooldown {regime.effective_min_llm_cooldown_sec}s</div>
               <div>max open {regime.effective_max_open_ai_trades}</div>
-              <div>min conf {regime.effective_min_confidence}</div>
+              <div>sizing {regime.risk_multiplier < 1 ? 'reduced' : 'normal'}</div>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8, fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
@@ -770,45 +770,72 @@ function AutonomousFillmorePanel({
         </div>
       )}
 
-      {/* Model + confidence */}
-      <div className="autonomous-panel__grid autonomous-panel__grid--two">
-        <div className="autonomous-panel__field">
-          <label className="autonomous-panel__label">Model</label>
-          {autonomousModelOptions.length > 0 ? (
-            <select
-              value={cfg.model}
-              disabled={busy}
-              onChange={(e) => void save({ model: e.target.value })}
-              className="autonomous-panel__control"
-            >
-              {autonomousModelOptions.map((modelId) => (
-                <option key={modelId} value={modelId}>{modelId}</option>
-              ))}
-            </select>
-          ) : (
+      {/* Lot sizing — primary controls */}
+      <div className="autonomous-panel__section autonomous-panel__section--soft">
+        <div className="autonomous-panel__section-head">
+          <span className="autonomous-panel__section-title">Lot Sizing</span>
+          <span className="autonomous-panel__muted">
+            range {Math.max(1, Math.round((cfg.base_lot_size ?? 5) - (cfg.lot_deviation ?? 4)))}-{Math.min(Math.round(cfg.max_lots_per_trade), Math.round((cfg.base_lot_size ?? 5) + (cfg.lot_deviation ?? 4)))} lots
+          </span>
+        </div>
+        <div className="autonomous-panel__grid autonomous-panel__grid--three">
+          <div className="autonomous-panel__field">
+            <label className="autonomous-panel__label">Base size</label>
             <input
-              type="text"
-              value={cfg.model}
-              disabled={busy}
-              onChange={(e) => setCfg({ ...cfg, model: e.target.value })}
-              onBlur={(e) => void save({ model: e.target.value })}
+              type="number" step="1" min="1" max={cfg.max_lots_per_trade}
+              defaultValue={cfg.base_lot_size ?? 5}
+              onBlur={(e) => void save({ base_lot_size: Number(e.target.value) })}
               className="autonomous-panel__control"
             />
-          )}
+          </div>
+          <div className="autonomous-panel__field">
+            <label className="autonomous-panel__label">Deviation</label>
+            <input
+              type="number" step="1" min="0" max={cfg.max_lots_per_trade}
+              defaultValue={cfg.lot_deviation ?? 4}
+              onBlur={(e) => void save({ lot_deviation: Number(e.target.value) })}
+              className="autonomous-panel__control"
+            />
+          </div>
+          <div className="autonomous-panel__field">
+            <label className="autonomous-panel__label">Hard ceiling</label>
+            <input
+              type="number" step="1" min="1"
+              defaultValue={cfg.max_lots_per_trade}
+              onBlur={(e) => void save({ max_lots_per_trade: Number(e.target.value) })}
+              className="autonomous-panel__control"
+            />
+          </div>
         </div>
-        <div className="autonomous-panel__field">
-          <label className="autonomous-panel__label">Min confidence</label>
+        <div className="autonomous-panel__hint">
+          LLM sizes each trade to match conviction: {Math.max(1, Math.round((cfg.base_lot_size ?? 5) - (cfg.lot_deviation ?? 4)))} = thin edge, {Math.round(cfg.base_lot_size ?? 5)} = normal, {Math.min(Math.round(cfg.max_lots_per_trade), Math.round((cfg.base_lot_size ?? 5) + (cfg.lot_deviation ?? 4)))} = full send, 0 = skip.
+        </div>
+      </div>
+
+      {/* Model */}
+      <div className="autonomous-panel__field">
+        <label className="autonomous-panel__label">Model</label>
+        {autonomousModelOptions.length > 0 ? (
           <select
-            value={cfg.min_confidence}
+            value={cfg.model}
             disabled={busy}
-            onChange={(e) => void save({ min_confidence: e.target.value as api.AutonomousConfig['min_confidence'] })}
+            onChange={(e) => void save({ model: e.target.value })}
             className="autonomous-panel__control"
           >
-            <option value="low">low</option>
-            <option value="medium">medium</option>
-            <option value="high">high</option>
+            {autonomousModelOptions.map((modelId) => (
+              <option key={modelId} value={modelId}>{modelId}</option>
+            ))}
           </select>
-        </div>
+        ) : (
+          <input
+            type="text"
+            value={cfg.model}
+            disabled={busy}
+            onChange={(e) => setCfg({ ...cfg, model: e.target.value })}
+            onBlur={(e) => void save({ model: e.target.value })}
+            className="autonomous-panel__control"
+          />
+        )}
       </div>
 
       {/* Advanced controls */}
@@ -838,15 +865,6 @@ function AutonomousFillmorePanel({
                 type="number" step="10" min="10"
                 defaultValue={cfg.min_llm_cooldown_sec}
                 onBlur={(e) => void save({ min_llm_cooldown_sec: Number(e.target.value) })}
-                className="autonomous-panel__control"
-              />
-            </div>
-            <div className="autonomous-panel__field">
-              <label className="autonomous-panel__label">Max lots / trade</label>
-              <input
-                type="number" step="0.01" min="0.01"
-                defaultValue={cfg.max_lots_per_trade}
-                onBlur={(e) => void save({ max_lots_per_trade: Number(e.target.value) })}
                 className="autonomous-panel__control"
               />
             </div>

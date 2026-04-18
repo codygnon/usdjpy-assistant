@@ -1027,6 +1027,10 @@ tr:hover td {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.autonomous-panel__grid--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .autonomous-panel__field {
   min-width: 0;
 }
@@ -1402,6 +1406,7 @@ tr:hover td {
 
   .autonomous-panel__feature-grid,
   .autonomous-panel__grid--two,
+  .autonomous-panel__grid--three,
   .autonomous-panel__stats-grid {
     grid-template-columns: 1fr;
   }

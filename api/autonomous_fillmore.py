@@ -72,11 +72,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "london": True,
         "ny": True,
     },
-    "max_lots_per_trade": 15.0,          # matches manual Fillmore (1-15 lot guidance)
+    "max_lots_per_trade": 15.0,          # hard ceiling — LLM cannot exceed this
+    "base_lot_size": 5.0,                # anchor for LLM lot sizing — "normal" trade size
+    "lot_deviation": 4.0,                # LLM sizes from (base - dev) to (base + dev), clamped to [1, max_lots]
     "max_open_ai_trades": 2,
     "max_daily_loss_usd": 50.0,
     "max_consecutive_errors": 5,
-    "min_confidence": "medium",         # low|medium|high — medium lets the LLM place when it sees edge; high for live mode later
     "model": "gpt-5.4-mini",
     # adaptive throttle
     "throttle_no_trade_streak": 5,       # after N "no trade" LLM replies, pause
@@ -150,6 +151,51 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
         "expected_pass_rate_pct": 8.0,
     },
 }
+
+# Session-specific calibrated overrides (train/test validated).
+# Keys: (aggressiveness, session_label). Values: partial dicts merged onto the
+# base GATE_THRESHOLDS for that mode.  Only "safe non-regressive" candidates
+# are adopted here — see research_out/autonomous_gate_calibration_1000k_sessions.md.
+SESSION_GATE_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
+    # ── balanced ──
+    ("balanced", "tokyo"): {
+        "require_min_m5_atr_pips": 3.0,
+        "require_level_proximity_pips": 8.0,
+    },
+    ("balanced", "ny"): {
+        "require_min_m5_atr_pips": 3.5,
+        "require_level_proximity_pips": 12.0,
+    },
+    ("balanced", "london/ny"): {
+        "require_min_m5_atr_pips": 3.0,
+        "require_level_proximity_pips": 8.0,
+    },
+    # balanced london: no safe candidate — uses base thresholds
+    # ── aggressive ──
+    ("aggressive", "ny"): {
+        "require_min_m5_atr_pips": 3.0,
+        "require_level_proximity_pips": 12.0,
+        "pullback_zone_min_pips": 1.5,
+        "pullback_lookback_bars": 1,
+    },
+    ("aggressive", "london"): {
+        "require_min_m5_atr_pips": 3.0,
+        "require_level_proximity_pips": 10.0,
+        "pullback_zone_min_pips": 2.0,
+        "pullback_lookback_bars": 1,
+    },
+    # aggressive tokyo: no safe candidate — uses base thresholds
+    # aggressive london/ny: no safe candidate — uses base thresholds
+}
+
+
+def _resolve_gate_thresholds(agg: str, session_label: str) -> dict[str, Any]:
+    base = dict(GATE_THRESHOLDS.get(agg) or GATE_THRESHOLDS["balanced"])
+    overrides = SESSION_GATE_OVERRIDES.get((agg, session_label))
+    if overrides:
+        base.update(overrides)
+    return base
+
 
 _AUTONOMOUS_PROMPT_SKELETON_ID = "autonomous_decision_request_v1"
 _AUTONOMOUS_AUX_MEMORY_BUDGET_WORDS = 650
@@ -298,14 +344,11 @@ def set_config(state_path: Path, patch: dict[str, Any]) -> dict[str, Any]:
         if m not in ("off", "shadow", "paper", "live"):
             m = "off"
         clean["mode"] = m
-    if "min_confidence" in clean:
-        mc = str(clean["min_confidence"]).lower()
-        if mc not in ("low", "medium", "high"):
-            mc = "medium"
-        clean["min_confidence"] = mc
     clean.pop("order_type", None)  # LLM chooses order type per-suggestion; no config knob
+    clean.pop("min_confidence", None)  # replaced by lot-sizing — LLM expresses conviction via lots
     for numkey in (
         "daily_budget_usd", "min_llm_cooldown_sec", "max_lots_per_trade",
+        "base_lot_size", "lot_deviation",
         "max_open_ai_trades", "max_daily_loss_usd", "max_consecutive_errors",
         "throttle_no_trade_streak", "throttle_no_trade_cooldown_sec",
         "throttle_loss_streak", "throttle_loss_cooldown_sec",
@@ -1045,8 +1088,8 @@ def evaluate_gate(
         except Exception:
             pass
 
-    # ---- Layer 3: signal gate (mode-dependent) ----
-    thresholds = GATE_THRESHOLDS.get(agg) or GATE_THRESHOLDS["balanced"]
+    # ---- Layer 3: signal gate (mode-dependent, session-calibrated) ----
+    thresholds = _resolve_gate_thresholds(agg, session_label)
 
     m3 = _m3_trend(inputs.data_by_tf)
     m1 = _m1_stack(inputs.data_by_tf)
@@ -1378,7 +1421,6 @@ def _refresh_autonomous_runtime_from_history(
 
 
 def _compute_risk_regime(rt: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
-    base_min_conf = str(cfg.get("min_confidence") or "high").lower()
     label = "normal"
     prev_streak = str(
         rt.get("previous_streak_regime_label")
@@ -1444,7 +1486,7 @@ def _compute_risk_regime(rt: dict[str, Any], cfg: dict[str, Any]) -> dict[str, A
         "risk_multiplier": risk_multiplier,
         "effective_min_llm_cooldown_sec": effective_cooldown,
         "effective_max_open_ai_trades": effective_max_open,
-        "effective_min_confidence": base_min_conf,
+        "effective_min_confidence": "low",
         "override_label": override_label,
         "previous_regime_label": label,
         "previous_streak_regime_label": prev_streak,
@@ -1576,7 +1618,6 @@ def tick_autonomous_fillmore(
     record_llm_invocation(state_path, str(cfg.get("model") or "gpt-5.4-mini"))
 
     # Process each suggestion from the LLM (1 in single mode, up to max_suggestions in multi).
-    min_conf = str(risk_regime.get("effective_min_confidence") or cfg.get("min_confidence") or "medium").lower()
     max_lots = float(cfg.get("max_lots_per_trade") or 15.0)
     min_lot_size = float(cfg.get("min_lot_size") or 0.01)
     placed_any = False
@@ -1590,9 +1631,10 @@ def tick_autonomous_fillmore(
             print(f"[{profile_name}] autonomous Fillmore: max open trades reached ({current_open}); skipping remaining suggestions")
             break
 
-        conf = str(suggestion.get("confidence") or "low").lower()
-        if not _confidence_gte(conf, min_conf):
-            print(f"[{profile_name}] autonomous Fillmore: suggestion confidence {conf} < min {min_conf}; skipping")
+        sug_lots = float(suggestion.get("lots") or 0)
+        if sug_lots <= 0:
+            quality = str(suggestion.get("quality") or "C")
+            print(f"[{profile_name}] autonomous Fillmore: LLM returned 0 lots (quality={quality}); skipping")
             continue
 
         # Book-correlation veto: don't stack a same-side trade near an existing fill.
@@ -1702,8 +1744,8 @@ def tick_autonomous_fillmore(
             record_error(state_path, cfg, str(e))
 
     if not placed_any and suggestions:
-        all_low = all(not _confidence_gte(str(s.get("confidence") or "low").lower(), min_conf) for s in suggestions)
-        if all_low:
+        all_zero = all(float(s.get("lots") or 0) <= 0 for s in suggestions)
+        if all_zero:
             record_no_trade_reply(state_path, cfg)
     elif placed_any and mode == "shadow":
         state = _load_state(state_path)
@@ -1852,7 +1894,7 @@ def _invoke_suggest(
     )
     risk_regime = risk_regime or {
         "label": "normal",
-        "effective_min_confidence": str(cfg.get("min_confidence") or "high").lower(),
+        "effective_min_confidence": "low",
         "risk_multiplier": 1.0,
     }
     # Best-effort news enrichment; swallow errors.
@@ -1898,8 +1940,6 @@ def _invoke_suggest(
     max_lots = float(cfg.get("max_lots_per_trade") or 15.0)
     mode = str(cfg.get("mode") or "off")
     limit_gtd_min = int(cfg.get("limit_gtd_minutes") or 45)
-    min_conf = str(risk_regime.get("effective_min_confidence") or cfg.get("min_confidence") or "high").lower()
-
     exec_note = (
         "ORDER TYPE: You choose — 'market' or 'limit'.\n"
         "  MARKET: fills instantly at current bid/ask. Use when the tape is moving and you want in now.\n"
@@ -1947,11 +1987,17 @@ def _invoke_suggest(
         multi_note = ""
         decision_format = "2. DECISION (single fenced JSON code block). Use this exact schema:\n"
 
+    base_lots = float(cfg.get("base_lot_size") or 5.0)
+    lot_dev = float(cfg.get("lot_deviation") or 4.0)
+    lot_lo = max(1, int(base_lots - lot_dev))
+    lot_hi = min(int(max_lots), int(base_lots + lot_dev))
+    lot_mid = int(base_lots)
+
     suggest_prompt = (
         f"=== AUTONOMOUS DECISION REQUEST ===\n"
         f"Gate mode: {agg}. Execution mode: {mode}.{paper_note}\n"
         f"{exec_note}\n"
-        f"LOT CEILING: {max_lots:.0f} lots. Typical range 1-{int(max_lots)} proportional to conviction.\n"
+        f"LOT RANGE: {lot_lo}-{lot_hi} lots (base {lot_mid}). Hard ceiling: {int(max_lots)}.\n"
         + (f"\n{multi_note}\n" if multi_note else "") +
         "\n"
         "RESPONSE FORMAT (two parts, in this exact order):\n"
@@ -1962,13 +2008,13 @@ def _invoke_suggest(
         "   - Nearest PRICE STRUCTURE level(s) + order-book clusters. Name the level you'd anchor the entry on.\n"
         "   - Relevant bar patterns / recent candle streak.\n"
         "   - M5/M15 ATR — does it justify a wider or tighter SL?\n"
-        "   - OPEN POSITIONS + YOUR MOST RECENT SUGGESTION — are you about to stack a correlated idea? "
-        "If you already have a same-side position near this level, downgrade confidence or pass.\n"
-        "   - Imminent events / session warnings that should cap confidence.\n"
+        "   - OPEN POSITIONS + YOUR MOST RECENT SUGGESTION — are you stacking? "
+        "Same side, same level = size down or skip. Different level = new trade.\n"
+        "   - Imminent events / session risk — factor into size, not into whether to trade.\n"
         "   - EXIT STRATEGY + EXIT PLAN: Choose a strategy and briefly describe your conditional exit logic "
         "(e.g., 'trail on M1 21 EMA after TP1' or 'exit if M3 trend flips bearish within 10 min'). "
         "The thesis monitor will use your exit_plan to judge mid-trade.\n"
-        "   - Final call: commit or pass? Be honest — low confidence is a valid answer.\n"
+        "   - Final call: what direction, what size? Be direct.\n"
         "\n"
         + decision_format +
         "```json\n"
@@ -1978,14 +2024,14 @@ def _invoke_suggest(
         '  "price": <entry price as number>,\n'
         '  "sl": <stop loss price as number>,\n'
         '  "tp": <take profit price as number>,\n'
-        f'  "lots": <position size 1-{int(max_lots)}>,\n'
+        f'  "lots": <0 to skip, or {lot_lo}-{lot_hi} — this IS your conviction>,\n'
         '  "time_in_force": "GTC" | "GTD",\n'
         '  "gtd_time_utc": <ISO datetime string if GTD, else null>,\n'
         '  "exit_strategy": one of [' + _strategy_ids + '],\n'
         '  "exit_params": {<optional numeric overrides>} or null,\n'
         '  "exit_plan": "<1-2 sentence custom exit logic for the thesis monitor>",\n'
         '  "rationale": "<1-2 sentence concise summary of the decision>",\n'
-        '  "confidence": "low" | "medium" | "high"\n'
+        '  "quality": "A" | "B" | "C"\n'
         "}\n"
         "```\n"
         "\n"
@@ -1997,17 +2043,21 @@ def _invoke_suggest(
         "and can hold, tighten SL, scale out, or exit. Give it clear conditions: 'exit if M3 flips bear', "
         "'tighten SL to BE after +5p', 'scale 50% at TP1 then trail on M1 21 EMA'. If you have no custom plan, "
         'write "default" and the template strategy handles it.\n'
-        "CONFIDENCE CALIBRATION:\n"
-        f"- Current placement threshold is '{min_conf}'. Anything below that will be skipped.\n"
-        "- high = the setup is there and you would take it. Multi-TF trend lines up, price is at or near a named level, "
-        "invalidation is clean, and nothing obvious argues against it. Not everything has to be perfect — one soft element "
-        "(e.g. crosses slightly lagging, ATR a touch wide) is fine as long as the core thesis is solid. "
-        "If a competent trader would put it on, it is high.\n"
-        "- medium = edge exists but one meaningful element is working against you — conflicting TF, weak structure, "
-        "session risk, or the entry is slightly chased. You see why it could work but you also see why it could fail. "
-        "Worth taking at smaller size or with a tighter leash.\n"
-        "- low = no real edge. Choppy tape, mid-range, stacking onto existing book, or the setup already fired and missed. "
-        "Returning low skips placement.\n"
+        "LOT SIZING — YOUR LOTS ARE YOUR CONVICTION:\n"
+        "You are a trader. You see a setup, you size it, you take it. Do not second-guess yourself. "
+        "Do not talk yourself out of trades. The gate already confirmed conditions are worth looking at — "
+        "your job is to find the trade and size it.\n"
+        f"- {lot_hi} lots: everything lines up. Trend, structure, invalidation, session — put it on.\n"
+        f"- {lot_mid} lots: the trade is there but one thing is not perfect. Take it at base size.\n"
+        f"- {lot_lo} lots: edge is thin but real. Small size, tight stop, take it.\n"
+        "- 0 lots: there is no trade. Price is mid-range with no structure, or you are stacking into an "
+        "existing position at the same level. 0 is for 'there is literally nothing here' — not for 'I am unsure'.\n"
+        "If you can identify a direction and a level, you have a trade. Size it and go.\n"
+        "\n"
+        "QUALITY TAG (logged for analytics, does NOT affect placement):\n"
+        '- "A" = textbook. You sized it up.\n'
+        '- "B" = solid. One soft element, you sized it down.\n'
+        '- "C" = thin or skip.\n'
         "\n"
         + _exit_catalog_text
     )
@@ -2044,7 +2094,7 @@ def _invoke_suggest(
         raw_suggestions = [parsed]
 
     if not raw_suggestions:
-        raw_suggestions = [{"confidence": "low", "rationale": "empty response", "side": "buy", "price": 0}]
+        raw_suggestions = [{"lots": 0, "quality": "C", "rationale": "empty response", "side": "buy", "price": 0}]
 
     suggestions_out: list[dict[str, Any]] = []
     for suggestion in raw_suggestions[:max_suggestions]:
@@ -2066,6 +2116,12 @@ def _invoke_suggest(
         suggestion["sl"] = float(suggestion.get("sl") or 0)
         suggestion["tp"] = float(suggestion.get("tp") or 0)
         suggestion["lots"] = float(suggestion.get("lots") or 0)
+        quality = str(suggestion.get("quality") or "C").upper()
+        if quality not in ("A", "B", "C"):
+            quality = "C"
+        suggestion["quality"] = quality
+        _QUALITY_TO_CONFIDENCE = {"A": "high", "B": "medium", "C": "low"}
+        suggestion["confidence"] = _QUALITY_TO_CONFIDENCE[quality]
         default_tif = "GTD" if sug_order_type == "limit" else "GTC"
         tif = str(suggestion.get("time_in_force") or default_tif).upper()
         if tif not in ("GTC", "GTD"):

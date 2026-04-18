@@ -1149,10 +1149,11 @@ export interface AutonomousConfig {
   min_llm_cooldown_sec: number;
   trading_hours: { tokyo: boolean; london: boolean; ny: boolean };
   max_lots_per_trade: number;
+  base_lot_size: number;
+  lot_deviation: number;
   max_open_ai_trades: number;
   max_daily_loss_usd: number;
   max_consecutive_errors: number;
-  min_confidence: 'low' | 'medium' | 'high';
   model: string;
   throttle_no_trade_streak: number;
   throttle_no_trade_cooldown_sec: number;
