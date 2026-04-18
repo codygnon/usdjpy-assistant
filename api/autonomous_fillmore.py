@@ -154,11 +154,11 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
 _AUTONOMOUS_PROMPT_SKELETON_ID = "autonomous_decision_request_v1"
 _AUTONOMOUS_AUX_MEMORY_BUDGET_WORDS = 650
 _USDJPY_SPREAD_LIMITS_PIPS = {
-    "tokyo": 2.5,
-    "london": 2.5,
-    "ny": 2.5,
-    "london/ny": 2.5,
-    "off-hours": 2.5,
+    "tokyo": 3.0,
+    "london": 3.0,
+    "ny": 3.0,
+    "london/ny": 3.0,
+    "off-hours": 3.0,
 }
 
 
@@ -498,6 +498,26 @@ def record_trade_placed(state_path: Path, order_id: Any, suggestion_id: Optional
     _save_state(state_path, state)
 
 
+def _clear_expired_no_trade_throttle(rt: dict[str, Any]) -> None:
+    """Reset no-trade streak when its throttle cooldown has expired."""
+    reason = str(rt.get("throttle_reason") or "")
+    if not reason.startswith("no_trade_streak="):
+        return
+    throttle_until = rt.get("throttle_until_utc")
+    if not throttle_until:
+        return
+    try:
+        tu = datetime.fromisoformat(throttle_until)
+        if tu.tzinfo is None:
+            tu = tu.replace(tzinfo=timezone.utc)
+    except Exception:
+        return
+    if tu <= datetime.now(timezone.utc):
+        rt["consecutive_no_trade_replies"] = 0
+        rt["throttle_until_utc"] = None
+        rt["throttle_reason"] = None
+
+
 def record_no_trade_reply(state_path: Path, cfg: dict[str, Any]) -> None:
     state = _load_state(state_path)
     rt = _runtime_block(state)
@@ -515,8 +535,9 @@ def record_error(state_path: Path, cfg: dict[str, Any], err_msg: str) -> None:
     rt = _runtime_block(state)
     rt["consecutive_errors"] = int(rt.get("consecutive_errors") or 0) + 1
     rt["consecutive_llm_errors"] = int(rt.get("consecutive_llm_errors") or 0) + 1
+    rt["last_error_msg"] = str(err_msg)[:300]
+    rt["last_error_utc"] = datetime.now(timezone.utc).isoformat()
     if rt["consecutive_errors"] >= int(cfg.get("max_consecutive_errors") or 5):
-        # Kill switch — flip autonomous off.
         auto = state.setdefault("autonomous_fillmore", {})
         cur_cfg = auto.setdefault("config", {})
         cur_cfg["mode"] = "off"
@@ -1190,7 +1211,7 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
         health_alerts.append({
             "level": "error",
             "code": "llm_errors",
-            "msg": f"{int(rt.get('consecutive_llm_errors') or 0)} consecutive LLM errors.",
+            "msg": f"{int(rt.get('consecutive_llm_errors') or 0)} consecutive LLM errors. Last: {rt.get('last_error_msg', '?')[:100]}",
         })
     if int(rt.get("consecutive_broker_rejects") or 0) >= 3:
         health_alerts.append({
@@ -1528,6 +1549,9 @@ def tick_autonomous_fillmore(
     rt["last_tick_utc"] = datetime.now(timezone.utc).isoformat()
     _refresh_autonomous_runtime_from_history(state_path=state_path, rt=rt, cfg=cfg)
     risk_regime = _compute_risk_regime(rt, cfg)
+
+    _clear_expired_no_trade_throttle(rt)
+
     state["autonomous_fillmore"]["runtime"] = rt
     _save_state(state_path, state)
 

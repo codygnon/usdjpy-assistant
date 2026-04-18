@@ -672,6 +672,40 @@ def test_clear_throttle_resets_runtime_cooldown_fields(tmp_path: Path) -> None:
     assert rt.get("loss_streak_last_throttled_value") == 0
 
 
+def test_no_trade_streak_resets_after_throttle_cooldown_expires() -> None:
+    rt = {
+        "consecutive_no_trade_replies": 47,
+        "throttle_until_utc": (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat(),
+        "throttle_reason": "no_trade_streak=47",
+    }
+    autonomous_fillmore._clear_expired_no_trade_throttle(rt)
+    assert rt["consecutive_no_trade_replies"] == 0
+    assert rt["throttle_until_utc"] is None
+    assert rt["throttle_reason"] is None
+
+
+def test_no_trade_streak_not_reset_while_throttle_still_active() -> None:
+    rt = {
+        "consecutive_no_trade_replies": 10,
+        "throttle_until_utc": (datetime.now(timezone.utc) + timedelta(seconds=300)).isoformat(),
+        "throttle_reason": "no_trade_streak=10",
+    }
+    autonomous_fillmore._clear_expired_no_trade_throttle(rt)
+    assert rt["consecutive_no_trade_replies"] == 10
+    assert rt["throttle_until_utc"] is not None
+
+
+def test_no_trade_streak_reset_does_not_touch_loss_streak_throttle() -> None:
+    rt = {
+        "consecutive_no_trade_replies": 20,
+        "throttle_until_utc": (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat(),
+        "throttle_reason": "loss_streak=4",
+    }
+    autonomous_fillmore._clear_expired_no_trade_throttle(rt)
+    assert rt["consecutive_no_trade_replies"] == 20
+    assert rt["throttle_reason"] == "loss_streak=4"
+
+
 # -----------------------------------------------------------------------------
 # Stage 3: dedupe gate + correlation veto + today-block prompt helper
 # -----------------------------------------------------------------------------
@@ -1126,7 +1160,7 @@ def test_evaluate_gate_uses_session_aware_spread_limit(monkeypatch) -> None:
         _gate_cfg("balanced"),
         {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0, "last_llm_call_utc": None},
         autonomous_fillmore.GateInputs(
-            spread_pips=3.0,
+            spread_pips=3.1,
             tick_mid=159.03,
             open_ai_trade_count=0,
             data_by_tf={},
@@ -1135,8 +1169,8 @@ def test_evaluate_gate_uses_session_aware_spread_limit(monkeypatch) -> None:
     )
 
     assert decision.result == "block"
-    assert decision.reason == "spread_too_wide:3.0"
-    assert decision.extras.get("max_spread_pips") == 2.5
+    assert decision.reason == "spread_too_wide:3.1"
+    assert decision.extras.get("max_spread_pips") == 3.0
 
 
 def test_evaluate_gate_blocks_low_volatility(monkeypatch) -> None:
