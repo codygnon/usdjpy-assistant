@@ -1978,7 +1978,7 @@ def _invoke_suggest(
         multi_note = (
             f"You may propose 0 to {max_suggestions} trade ideas. If the tape has two distinct, uncorrelated setups "
             f"at different levels/sides you may return an array of {max_suggestions} objects. If only one setup is clear, "
-            "return a single object. If nothing is worth taking, return a single object with confidence='low'."
+            "return a single object. If nothing is worth taking, return a single object with lots=0."
         )
         decision_format = (
             f"2. DECISION (single fenced JSON code block containing one object OR an array of up to {max_suggestions} objects).\n"
@@ -2115,7 +2115,20 @@ def _invoke_suggest(
         suggestion["price"] = float(suggestion.get("price") or 0)
         suggestion["sl"] = float(suggestion.get("sl") or 0)
         suggestion["tp"] = float(suggestion.get("tp") or 0)
-        suggestion["lots"] = float(suggestion.get("lots") or 0)
+        raw_lots = suggestion.get("lots")
+        lots_explicitly_set = raw_lots is not None and raw_lots != ""
+        raw_lots_f = float(raw_lots) if lots_explicitly_set else 0.0
+        # Backward compat: if model omitted lots but returned old-format confidence, infer lots.
+        if not lots_explicitly_set and suggestion.get("confidence"):
+            _base = float(cfg.get("base_lot_size") or 5.0)
+            _dev = float(cfg.get("lot_deviation") or 4.0)
+            _conf_to_lots = {
+                "high": min(int(max_lots), int(_base + _dev)),
+                "medium": int(_base),
+                "low": 0,
+            }
+            raw_lots_f = float(_conf_to_lots.get(str(suggestion["confidence"]).lower(), 0))
+        suggestion["lots"] = raw_lots_f
         quality = str(suggestion.get("quality") or "C").upper()
         if quality not in ("A", "B", "C"):
             quality = "C"

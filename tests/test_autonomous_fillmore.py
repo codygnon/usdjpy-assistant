@@ -394,6 +394,43 @@ def test_invoke_suggest_zero_lots_maps_to_quality_c(tmp_path: Path, monkeypatch)
     assert out[0]["confidence"] == "low"
 
 
+def test_invoke_suggest_infers_lots_from_confidence_when_lots_missing(tmp_path: Path, monkeypatch) -> None:
+    """Backward compat: if model returns old-format confidence but no lots field, infer lots."""
+    db_path = tmp_path / "ai_suggestions.sqlite"
+
+    fake_chat = ModuleType("api.ai_trading_chat")
+    fake_chat.build_trading_context = lambda profile, profile_name: _ctx()
+    fake_chat.build_trade_suggestion_news_block = lambda **kwargs: ""
+    fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
+    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model, **kwargs: "SYS"
+    monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
+    _install_fake_main(monkeypatch, db_path)
+
+    old_format = {**_suggestion()}
+    del old_format["lots"]  # Model omitted lots entirely
+    old_format["confidence"] = "medium"
+
+    class _Client:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+        def _create(self, **kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                content=json.dumps(old_format),
+            ))])
+
+    fake_openai = ModuleType("openai")
+    fake_openai.OpenAI = _Client
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+
+    out = autonomous_fillmore._invoke_suggest(
+        SimpleNamespace(symbol="USDJPY"), "p1",
+        {"model": "gpt-5.4-mini", "aggressiveness": "balanced", "mode": "paper",
+         "base_lot_size": 5.0, "lot_deviation": 4.0},
+    )
+    assert out[0]["lots"] == 5.0  # medium -> base lot size
+
+
 def test_invoke_suggest_defaults_market_order_type_when_omitted(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "ai_suggestions.sqlite"
 
