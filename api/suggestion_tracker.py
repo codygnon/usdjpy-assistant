@@ -895,6 +895,7 @@ def get_reasoning_feed(
             "requested_price": row.get("requested_price"),
             "price": row.get("limit_price"),
             "lots": row.get("lots"),
+            "quality": row.get("quality") or row.get("confidence"),
             "confidence": row.get("confidence"),
             "rationale": row.get("rationale"),
             "exit_plan": row.get("exit_plan"),

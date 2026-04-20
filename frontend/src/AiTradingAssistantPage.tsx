@@ -1073,7 +1073,8 @@ function AutonomousFillmorePanel({
               <div style={{ fontWeight: 600, marginBottom: 4, color: '#93c5fd' }}>Recent Suggestions</div>
               {reasoning.suggestions.map((s) => {
                 const time = s.created_utc ? new Date(s.created_utc).toLocaleTimeString() : '?';
-                const confColor = s.confidence === 'high' ? '#4ade80' : s.confidence === 'medium' ? '#facc15' : '#94a3b8';
+                const lotsVal = s.lots ?? 0;
+                const lotsColor = lotsVal >= 7 ? '#4ade80' : lotsVal >= 3 ? '#facc15' : '#94a3b8';
                 const outcomeLabel = s.win_loss || s.outcome_status || s.action || '';
                 const outcomeColor = s.win_loss === 'win' ? '#4ade80' : s.win_loss === 'loss' ? '#f87171' : 'var(--text-secondary)';
                 const analysisMatch = (s.rationale || '').match(/ANALYSIS:\n([\s\S]*)/);
@@ -1088,7 +1089,7 @@ function AutonomousFillmorePanel({
                       <span style={{ color: '#e2e8f0' }}>{time}</span>{' '}
                       <span style={{ fontWeight: 600 }}>{(s.side || '').toUpperCase()}</span>{' '}
                       @{s.price?.toFixed(3)}{' '}
-                      <span style={{ color: confColor }}>{s.confidence}</span>{' '}
+                      <span style={{ color: lotsColor }}>{lotsVal > 0 ? `${lotsVal} lots` : 'skip'}</span>{' '}
                       {outcomeLabel && <span style={{ color: outcomeColor }}>{outcomeLabel}{s.pips != null ? ` (${s.pips > 0 ? '+' : ''}${s.pips.toFixed(1)}p)` : ''}</span>}
                     </div>
                     {shortRationale && <div style={{ color: '#cbd5e1', marginTop: 2 }}>{shortRationale}</div>}

@@ -1297,6 +1297,7 @@ export interface ReasoningSuggestion {
   requested_price: number | null;
   price: number;
   lots: number;
+  quality: string | null;
   confidence: string;
   rationale: string | null;
   exit_plan: string | null;
