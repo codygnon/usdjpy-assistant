@@ -1057,7 +1057,7 @@ def _get_latest_suggestion_for_chat(db_path: Any) -> dict[str, Any] | None:
         tp = row.get("tp")
         lots = row.get("lots")
         model = str(row.get("model") or "?")
-        confidence = str(row.get("confidence") or "?")
+        quality = str(row.get("quality") or row.get("confidence") or "?")
         rationale = str(row.get("rationale") or "")
         action = str(row.get("action") or "none")
         exit_strategy = str(
@@ -1082,7 +1082,7 @@ def _get_latest_suggestion_for_chat(db_path: Any) -> dict[str, Any] | None:
             "sl": sl,
             "tp": tp,
             "lots": lots,
-            "confidence": confidence,
+            "quality": quality,
             "rationale": rationale,
             "action": action,
             "exit_strategy": exit_strategy,
@@ -2356,9 +2356,9 @@ def system_prompt_from_context(ctx: dict[str, Any], effective_model: str) -> str
         sl = latest_sug.get("sl")
         tp = latest_sug.get("tp")
         lots = latest_sug.get("lots")
-        conf = latest_sug.get("confidence", "?")
+        quality = latest_sug.get("quality") or latest_sug.get("confidence") or "?"
         lines.append(
-            f"  {side} @ {price} | SL {sl} | TP {tp} | {lots} lots | confidence={conf} "
+            f"  {side} @ {price} | SL {sl} | TP {tp} | {lots} lots | quality={quality} "
             f"| model={latest_sug.get('model', '?')} | {latest_sug.get('created', '?')}"
         )
         exit_strat = latest_sug.get("exit_strategy")
@@ -3143,14 +3143,14 @@ def _format_ai_suggestion_rows(rows: list[dict[str, Any]], *, heading: str) -> s
         tp = row.get("tp")
         lots = row.get("lots")
         model = str(row.get("model") or "?")
-        confidence = str(row.get("confidence") or "?")
+        quality = str(row.get("quality") or row.get("confidence") or "?")
         action = str(row.get("action") or "none")
         outcome = str(row.get("resolved_outcome") or row.get("outcome_status") or row.get("win_loss") or "open")
         order_id = row.get("oanda_order_id")
         trade_id = row.get("trade_id")
         exit_strategy = str((row.get("placed_order") or {}).get("exit_strategy") or row.get("exit_strategy") or "")
 
-        head = f"  {created} | {model} | {side} {limit_px} SL {sl} TP {tp} lots {lots} | {confidence} | action={action} | outcome={outcome}"
+        head = f"  {created} | {model} | {side} {limit_px} SL {sl} TP {tp} lots {lots} | quality={quality} | action={action} | outcome={outcome}"
         lines.append(head)
 
         meta: list[str] = [f"id={row.get('suggestion_id')}"]
@@ -3269,7 +3269,7 @@ def _fillmore_trade_suggestion_help() -> str:
         "- This is the manual/operator-assisted flow from the Trade Suggestion card in the Fillmore UI.",
         "- When you generate a suggestion, the server builds live trading context first: account state, spot price/spread, open positions, recent trades, session context, volatility, TA snapshot, price structure, upcoming events, and OANDA-specific extras like macro bias, order book, pending orders, and JPY cross bias when available.",
         "- The suggest prompt also appends a prefetched external news block and a learning-memory block built from prior Fillmore suggestion outcomes.",
-        "- The model returns one structured JSON idea with side, price, stop, target, lots, time-in-force, expiration, exit_strategy, exit_params, rationale, and confidence.",
+        "- The model returns one structured JSON idea with side, price, stop, target, lots, time-in-force, expiration, exit_strategy, exit_params, rationale, and quality (A/B/C).",
         "- That generated idea is persisted immediately into ai_suggestions.sqlite with a suggestion_id, market snapshot, and the original suggestion fields.",
         "- In the UI, the user can edit side/price/SL/TP/lots/expiration/exit strategy before placement. Those edits are diffed and logged.",
         "- If the user places the order, the suggestion row is updated with action=placed, the placed order payload, and the broker order ID. If the user rejects it, action=rejected is stored instead.",
