@@ -1600,10 +1600,15 @@ def tick_autonomous_fillmore(
     max_open = int(risk_regime.get("effective_max_open_ai_trades") or cfg.get("max_open_ai_trades") or 2)
 
     for suggestion in suggestions:
+        print(
+            f"[{profile_name}] autonomous Fillmore: processing suggestion — "
+            f"side={suggestion.get('side')} lots={suggestion.get('lots')} "
+            f"quality={suggestion.get('quality')} mode={mode}"
+        )
         # Respect max_open_ai_trades across the batch — count may change after each placement.
         current_open = _count_open_ai_trades(store, profile_name)
         if current_open >= max_open:
-            print(f"[{profile_name}] autonomous Fillmore: max open trades reached ({current_open}); skipping remaining suggestions")
+            print(f"[{profile_name}] autonomous Fillmore: max open trades reached ({current_open}/{max_open}); skipping remaining suggestions")
             break
 
         sug_lots = float(suggestion.get("lots") or 0)
