@@ -8,8 +8,8 @@ Architecture (three layers):
                  └── block early ────────┴── decides whether to wake up the LLM ──┘
 
 Only when all three layers pass do we call OpenAI via the existing
-`ai_suggest_trade` endpoint logic, and if the model returns confidence>=min we
-auto-place the limit through `place_limit_order_endpoint`.
+`ai_suggest_trade` endpoint logic, and if the model returns lots>0 we
+auto-place through `place_limit_order_endpoint`.
 
 All config and the rolling decisions log live in `runtime_state.json` under the
 `autonomous_fillmore` key so the run loop and the HTTP API share one source of
@@ -611,24 +611,6 @@ def record_trade_outcome(state_path: Path, pnl_usd: float, cfg: dict[str, Any]) 
     _save_state(state_path, state)
 
 
-CONFIDENCE_ORDINAL = {"low": 0, "medium": 1, "high": 2}
-
-
-def _confidence_rank(label: str) -> int:
-    return CONFIDENCE_ORDINAL.get(str(label).lower(), -1)
-
-
-def _confidence_gte(actual: str, minimum: str) -> bool:
-    return _confidence_rank(actual) >= _confidence_rank(minimum)
-
-
-def _bump_confidence(base: str, levels: int) -> str:
-    levels = max(0, int(levels))
-    names = ["low", "medium", "high"]
-    idx = max(0, min(len(names) - 1, _confidence_rank(base)))
-    return names[min(idx + levels, len(names) - 1)]
-
-
 def _regime_rank(label: str) -> int:
     return {"normal": 0, "defensive_soft": 1, "defensive_hard": 2}.get(str(label or "normal"), 0)
 
@@ -935,8 +917,8 @@ def _recent_setup_already_fired(
     bucket — captures repeat fades at the same level regardless of side).
     Returns None if no match or the lookup fails.
 
-    Skipping rejected/non-placed suggestions is intentional: an LLM "low
-    confidence pass" doesn't burn the level the way a real placement does.
+    Skipping rejected/non-placed suggestions is intentional: an LLM skip
+    (lots=0) doesn't burn the level the way a real placement does.
     """
     if db_path is None or window_min <= 0 or bucket_pips <= 0:
         return None
@@ -1214,11 +1196,6 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
         perf_rows = autonomous_performance.get_materialized_stats(suggestions_db)
     except Exception:
         perf_rows = {}
-    try:
-        from api import suggestion_tracker as _st
-        confidence_dist = _st.get_confidence_distribution(suggestions_db, days=1)
-    except Exception:
-        confidence_dist = {}
     for row in perf_rows.values():
         for key in (
             "win_rate_by_confidence_json",
@@ -1302,7 +1279,6 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
         "recent_gate_blocks": dict(sorted((rt.get("recent_gate_blocks") or {}).items(), key=lambda kv: -kv[1])[:8]),
         "health_alerts": health_alerts,
         "performance": perf_rows,
-        "confidence_distribution": confidence_dist,
         "last_tick_utc": rt.get("last_tick_utc"),
         "last_llm_call_utc": rt.get("last_llm_call_utc"),
         "last_placed_order_id": rt.get("last_placed_order_id"),
@@ -1486,7 +1462,6 @@ def _compute_risk_regime(rt: dict[str, Any], cfg: dict[str, Any]) -> dict[str, A
         "risk_multiplier": risk_multiplier,
         "effective_min_llm_cooldown_sec": effective_cooldown,
         "effective_max_open_ai_trades": effective_max_open,
-        "effective_min_confidence": "low",
         "override_label": override_label,
         "previous_regime_label": label,
         "previous_streak_regime_label": prev_streak,
@@ -1894,7 +1869,6 @@ def _invoke_suggest(
     )
     risk_regime = risk_regime or {
         "label": "normal",
-        "effective_min_confidence": "low",
         "risk_multiplier": 1.0,
     }
     # Best-effort news enrichment; swallow errors.
@@ -2116,25 +2090,12 @@ def _invoke_suggest(
         suggestion["sl"] = float(suggestion.get("sl") or 0)
         suggestion["tp"] = float(suggestion.get("tp") or 0)
         raw_lots = suggestion.get("lots")
-        lots_explicitly_set = raw_lots is not None and raw_lots != ""
-        raw_lots_f = float(raw_lots) if lots_explicitly_set else 0.0
-        # Backward compat: if model omitted lots but returned old-format confidence, infer lots.
-        if not lots_explicitly_set and suggestion.get("confidence"):
-            _base = float(cfg.get("base_lot_size") or 5.0)
-            _dev = float(cfg.get("lot_deviation") or 4.0)
-            _conf_to_lots = {
-                "high": min(int(max_lots), int(_base + _dev)),
-                "medium": int(_base),
-                "low": 0,
-            }
-            raw_lots_f = float(_conf_to_lots.get(str(suggestion["confidence"]).lower(), 0))
-        suggestion["lots"] = raw_lots_f
+        suggestion["lots"] = float(raw_lots) if raw_lots is not None and raw_lots != "" else 0.0
+        suggestion.pop("confidence", None)
         quality = str(suggestion.get("quality") or "C").upper()
         if quality not in ("A", "B", "C"):
             quality = "C"
         suggestion["quality"] = quality
-        _QUALITY_TO_CONFIDENCE = {"A": "high", "B": "medium", "C": "low"}
-        suggestion["confidence"] = _QUALITY_TO_CONFIDENCE[quality]
         default_tif = "GTD" if sug_order_type == "limit" else "GTC"
         tif = str(suggestion.get("time_in_force") or default_tif).upper()
         if tif not in ("GTC", "GTD"):

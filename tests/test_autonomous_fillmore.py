@@ -35,7 +35,7 @@ def _suggestion(*, exit_strategy: str = "none") -> dict:
         "lots": 1.0,
         "time_in_force": "GTC",
         "gtd_time_utc": None,
-        "confidence": "high",
+        "quality": "A",
         "rationale": "Autonomous test setup.",
         "exit_strategy": exit_strategy,
         "exit_params": {},
@@ -217,7 +217,6 @@ def test_invoke_suggest_stage4_sharpens_confidence_prompt_and_exit_calibration(t
                 **_suggestion(exit_strategy="tp1_be_m5_trail"),
                 "exit_strategy": "tp1_be_m5_trail",
                 "exit_params": {"tp1_pips": 4.0, "tp1_close_pct": 80.0},
-                "confidence": "high",
             })
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
 
@@ -307,7 +306,6 @@ def test_invoke_suggest_preserves_llm_order_type_choice(tmp_path: Path, monkeypa
                 **_suggestion(),
                 "order_type": "limit",
                 "price": 159.050,
-                "confidence": "high",
             })
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
 
@@ -329,7 +327,7 @@ def test_invoke_suggest_preserves_llm_order_type_choice(tmp_path: Path, monkeypa
     assert out0["price"] == 159.050  # no snap — LLM's price preserved exactly
 
 
-def test_invoke_suggest_maps_quality_tag_to_confidence_for_db(tmp_path: Path, monkeypatch) -> None:
+def test_invoke_suggest_sets_quality_and_strips_confidence(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "ai_suggestions.sqlite"
 
     fake_chat = ModuleType("api.ai_trading_chat")
@@ -358,7 +356,7 @@ def test_invoke_suggest_maps_quality_tag_to_confidence_for_db(tmp_path: Path, mo
         {"model": "gpt-5.4-mini", "aggressiveness": "balanced", "mode": "paper"},
     )
     assert out[0]["quality"] == "B"
-    assert out[0]["confidence"] == "medium"
+    assert "confidence" not in out[0]
 
 
 def test_invoke_suggest_zero_lots_maps_to_quality_c(tmp_path: Path, monkeypatch) -> None:
@@ -391,44 +389,7 @@ def test_invoke_suggest_zero_lots_maps_to_quality_c(tmp_path: Path, monkeypatch)
     )
     assert out[0]["lots"] == 0
     assert out[0]["quality"] == "C"
-    assert out[0]["confidence"] == "low"
-
-
-def test_invoke_suggest_infers_lots_from_confidence_when_lots_missing(tmp_path: Path, monkeypatch) -> None:
-    """Backward compat: if model returns old-format confidence but no lots field, infer lots."""
-    db_path = tmp_path / "ai_suggestions.sqlite"
-
-    fake_chat = ModuleType("api.ai_trading_chat")
-    fake_chat.build_trading_context = lambda profile, profile_name: _ctx()
-    fake_chat.build_trade_suggestion_news_block = lambda **kwargs: ""
-    fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
-    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model, **kwargs: "SYS"
-    monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
-    _install_fake_main(monkeypatch, db_path)
-
-    old_format = {**_suggestion()}
-    del old_format["lots"]  # Model omitted lots entirely
-    old_format["confidence"] = "medium"
-
-    class _Client:
-        def __init__(self):
-            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
-        def _create(self, **kwargs):
-            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
-                content=json.dumps(old_format),
-            ))])
-
-    fake_openai = ModuleType("openai")
-    fake_openai.OpenAI = _Client
-    monkeypatch.setitem(sys.modules, "openai", fake_openai)
-    monkeypatch.setenv("OPENAI_API_KEY", "k")
-
-    out = autonomous_fillmore._invoke_suggest(
-        SimpleNamespace(symbol="USDJPY"), "p1",
-        {"model": "gpt-5.4-mini", "aggressiveness": "balanced", "mode": "paper",
-         "base_lot_size": 5.0, "lot_deviation": 4.0},
-    )
-    assert out[0]["lots"] == 5.0  # medium -> base lot size
+    assert "confidence" not in out[0]
 
 
 def test_invoke_suggest_defaults_market_order_type_when_omitted(tmp_path: Path, monkeypatch) -> None:
@@ -447,7 +408,7 @@ def test_invoke_suggest_defaults_market_order_type_when_omitted(tmp_path: Path, 
             self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
 
         def _create(self, **kwargs):
-            content = json.dumps({**_suggestion(), "confidence": "high"})
+            content = json.dumps({**_suggestion()})
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
 
     fake_openai = ModuleType("openai")
@@ -842,7 +803,7 @@ def _seed_placed_suggestion(
             "lots": 2.0,
             "time_in_force": "GTC",
             "gtd_time_utc": None,
-            "confidence": "high",
+            "quality": "A",
             "rationale": "seed",
             "exit_strategy": "none",
             "exit_params": {},
@@ -1482,7 +1443,6 @@ def test_tick_autonomous_fillmore_blocks_below_floor_risk_scaled_lot(tmp_path: P
         lambda profile, profile_name, cfg, risk_regime=None: [{
             **_suggestion(),
             "lots": 0.01,
-            "confidence": "high",
         }],
     )
     monkeypatch.setattr(

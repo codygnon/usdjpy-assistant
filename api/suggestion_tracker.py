@@ -324,7 +324,7 @@ def log_generated(
         "lots": _fnum("lots") or 0.0,
         "time_in_force": suggestion.get("time_in_force"),
         "gtd_time_utc": suggestion.get("gtd_time_utc"),
-        "confidence": suggestion.get("confidence"),
+        "confidence": suggestion.get("quality") or suggestion.get("confidence"),
         "rationale": suggestion.get("rationale"),
         "exit_strategy": suggestion.get("exit_strategy"),
         "exit_params_json": json.dumps(suggestion.get("exit_params") or {}),
@@ -895,8 +895,7 @@ def get_reasoning_feed(
             "requested_price": row.get("requested_price"),
             "price": row.get("limit_price"),
             "lots": row.get("lots"),
-            "quality": row.get("quality") or row.get("confidence"),
-            "confidence": row.get("confidence"),
+            "quality": row.get("confidence"),
             "rationale": row.get("rationale"),
             "exit_plan": row.get("exit_plan"),
             "exit_strategy": row.get("exit_strategy"),
@@ -1118,7 +1117,7 @@ def build_autonomous_today_block(
         ts = ts_raw[11:16] if len(ts_raw) >= 16 else ts_raw
         side = str(r.get("side") or "?").upper()
         price = r.get("limit_price")
-        conf = str(r.get("confidence") or "?")
+        lots = r.get("lots") or 0
         action = str(r.get("action") or "none")
         outcome = str(r.get("outcome_status") or "")
         win_loss = str(r.get("win_loss") or "")
@@ -1132,7 +1131,7 @@ def build_autonomous_today_block(
         if action == "rejected":
             tail = "REJECTED by user"
         elif action != "placed":
-            tail = f"NOT PLACED ({conf} confidence)"
+            tail = f"NOT PLACED (lots={_to_float(lots):.0f})"
         elif win_loss in ("win", "loss", "breakeven"):
             tail = f"CLOSED {win_loss} ({_to_float(pips):+.1f}p, ${_to_float(pnl):+.2f})"
         elif outcome == "filled":

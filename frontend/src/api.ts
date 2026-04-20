@@ -1222,7 +1222,6 @@ export interface AutonomousStats {
     risk_multiplier: number;
     effective_min_llm_cooldown_sec: number;
     effective_max_open_ai_trades: number;
-    effective_min_confidence: 'low' | 'medium' | 'high' | string;
     override_label?: string | null;
     override_until_utc?: string | null;
     previous_regime_label?: string;
@@ -1298,7 +1297,6 @@ export interface ReasoningSuggestion {
   price: number;
   lots: number;
   quality: string | null;
-  confidence: string;
   rationale: string | null;
   exit_plan: string | null;
   exit_strategy: string | null;
