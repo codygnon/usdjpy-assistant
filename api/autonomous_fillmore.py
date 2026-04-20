@@ -640,11 +640,11 @@ def _regime_rank(label: str) -> int:
 def _session_flag_now(trading_hours: dict[str, Any]) -> tuple[bool, str]:
     """Return (in_allowed_session, label). Uses UTC hour bands.
 
-    Tokyo: 00-09 UTC.  London: 07-16 UTC.  NY: 12-21 UTC.
+    Tokyo: 23-09 UTC (wraps midnight).  London: 07-16 UTC.  NY: 12-21 UTC.
     If *any* enabled session overlaps the current hour, we allow.
     """
     now_h = datetime.now(timezone.utc).hour
-    in_tokyo = 0 <= now_h < 9
+    in_tokyo = now_h >= 23 or now_h < 9
     in_london = 7 <= now_h < 16
     in_ny = 12 <= now_h < 21
     allowed = False
