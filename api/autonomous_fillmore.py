@@ -1719,7 +1719,9 @@ def tick_autonomous_fillmore(
             )
             placed_any = True
         except Exception as e:
+            import traceback
             print(f"[{profile_name}] autonomous Fillmore: place error: {e}")
+            traceback.print_exc()
             record_broker_reject(state_path)
             record_error(state_path, cfg, str(e))
 
@@ -2142,7 +2144,9 @@ def _invoke_suggest(
             )
             suggestion["suggestion_id"] = sid
         except Exception as e:
+            import traceback
             print(f"[{profile_name}] autonomous Fillmore: log_generated failed: {e}")
+            traceback.print_exc()
         suggestions_out.append(suggestion)
 
     return suggestions_out
