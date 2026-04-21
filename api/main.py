@@ -3197,6 +3197,14 @@ def _sync_open_trades_with_broker(profile: ProfileV1, store: SqliteStore) -> int
                     _closed_trade = dict(trade_row)
                     _closed_trade.update(updates)
                     _closed_trade["profit"] = profit
+                    try:
+                        from api import autonomous_fillmore as _autonomous_fillmore
+
+                        _autonomous_fillmore.refresh_runtime_from_history(
+                            _runtime_state_path(profile.profile_name)
+                        )
+                    except Exception as _af_refresh_e:
+                        print(f"[api] autonomous refresh after close failed for {trade_id}: {_af_refresh_e}")
                     maybe_generate_trade_reflection(
                         profile_name=profile.profile_name,
                         trade_row=_closed_trade,
@@ -3611,6 +3619,14 @@ def _aggressive_sync_with_broker(profile: ProfileV1, store: SqliteStore) -> int:
                     _closed_trade = dict(trade_row)
                     _closed_trade.update(updates)
                     _closed_trade["profit"] = profit
+                    try:
+                        from api import autonomous_fillmore as _autonomous_fillmore
+
+                        _autonomous_fillmore.refresh_runtime_from_history(
+                            _runtime_state_path(profile.profile_name)
+                        )
+                    except Exception as _af_refresh_e:
+                        print(f"[api] aggressive sync autonomous refresh failed for {trade_id}: {_af_refresh_e}")
                     maybe_generate_trade_reflection(
                         profile_name=profile.profile_name,
                         trade_row=_closed_trade,

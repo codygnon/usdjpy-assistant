@@ -1928,6 +1928,99 @@ def test_recompute_performance_stats_materializes_prompt_and_mae_metrics(tmp_pat
     assert breakdown["autonomous_phase_a_v1"]["count"] == 1
 
 
+def test_build_stats_refreshes_runtime_and_materialized_performance_from_history(tmp_path: Path) -> None:
+    from storage.sqlite_store import SqliteStore
+
+    state_path = tmp_path / "kumatora2" / "runtime_state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "autonomous_fillmore": {
+                    "config": {
+                        **autonomous_fillmore.DEFAULT_CONFIG,
+                        "enabled": True,
+                        "mode": "paper",
+                    },
+                    "runtime": {
+                        "daily_pnl_usd": 0.0,
+                        "last_stats_recompute_utc": None,
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    suggestions_db = state_path.parent / "ai_suggestions.sqlite"
+    assistant_db = state_path.parent / "assistant.db"
+    store = SqliteStore(assistant_db)
+    store.init_db()
+
+    now = datetime.now(timezone.utc)
+    opened = now - timedelta(minutes=12)
+    closed = now - timedelta(minutes=4)
+
+    sugg = _suggestion(exit_strategy="tp1_be_m5_trail")
+    sugg["prompt_version"] = "autonomous_phase_a_v1"
+    sugg["prompt_hash"] = "abc123hash"
+    sid = suggestion_tracker.log_generated(
+        suggestions_db,
+        profile="kumatora2",
+        model="gpt-5.4-mini",
+        suggestion=sugg,
+        ctx=_ctx(),
+    )
+    suggestion_tracker.log_action(
+        suggestions_db,
+        suggestion_id=sid,
+        action="placed",
+        edited_fields=None,
+        placed_order={"order_type": "market", "autonomous": True, "side": "buy", "price": 159.25},
+        oanda_order_id="701",
+    )
+    suggestion_tracker.mark_filled(
+        suggestions_db,
+        oanda_order_id="701",
+        fill_price=159.25,
+        filled_at=opened.isoformat(),
+        trade_id="ai_manual:701:1",
+    )
+    suggestion_tracker.mark_closed(
+        suggestions_db,
+        oanda_order_id="701",
+        exit_price=159.31,
+        pnl=12.5,
+        pips=6.0,
+        closed_at=closed.isoformat(),
+    )
+    store.insert_trade(
+        {
+            "trade_id": "ai_manual:701:1",
+            "timestamp_utc": opened.isoformat(),
+            "exit_timestamp_utc": closed.isoformat(),
+            "profile": "kumatora2",
+            "symbol": "USDJPY",
+            "side": "buy",
+            "entry_price": 159.25,
+            "exit_price": 159.31,
+            "profit": 12.5,
+            "pips": 6.0,
+            "max_adverse_pips": 1.4,
+            "max_favorable_pips": 7.2,
+            "mae_mfe_estimated": 0,
+        }
+    )
+
+    stats = autonomous_fillmore.build_stats(state_path)
+
+    assert stats["today"]["pnl_usd"] == 12.5
+    assert stats["throttle"]["consecutive_wins"] == 1
+    assert stats["performance"]["rolling_20"]["closed_count"] == 1
+    assert stats["performance"]["rolling_20"]["avg_mae_pips"] == 1.4
+    assert stats["performance"]["rolling_20"]["avg_mfe_pips"] == 7.2
+
+
 def test_tick_autonomous_fillmore_blocks_below_floor_risk_scaled_lot(tmp_path: Path, monkeypatch) -> None:
     state_path = tmp_path / "kumatora2" / "runtime_state.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)

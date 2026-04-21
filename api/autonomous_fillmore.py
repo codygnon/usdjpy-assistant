@@ -554,6 +554,25 @@ def clear_throttle(state_path: Path) -> dict[str, Any]:
     return build_stats(state_path, cfg=get_config(state_path))
 
 
+def refresh_runtime_from_history(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """Best-effort refresh of autonomous runtime/performance state from DB history."""
+    state = _load_state(state_path)
+    rt = _runtime_block(state)
+    cfg = cfg or get_config(state_path)
+    _rollover_daily_counters(rt)
+    try:
+        _refresh_autonomous_runtime_from_history(
+            state_path=state_path,
+            rt=rt,
+            cfg=cfg,
+        )
+    except Exception:
+        return rt
+    state["autonomous_fillmore"]["runtime"] = rt
+    _save_state(state_path, state)
+    return rt
+
+
 # -----------------------------------------------------------------------------
 # Decisions log + runtime counters
 # -----------------------------------------------------------------------------
@@ -1948,9 +1967,7 @@ def evaluate_gate(
 
 def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     cfg = cfg or get_config(state_path)
-    state = _load_state(state_path)
-    rt = (state.get("autonomous_fillmore") or {}).get("runtime") or {}
-    _rollover_daily_counters(rt)  # in-memory only, we don't persist here
+    rt = refresh_runtime_from_history(state_path, cfg=cfg)
     risk_regime = _compute_risk_regime(rt, cfg)
 
     decisions = list(rt.get("decisions") or [])
