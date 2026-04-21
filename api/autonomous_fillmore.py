@@ -534,6 +534,7 @@ def set_config(state_path: Path, patch: dict[str, Any]) -> dict[str, Any]:
         runtime = _runtime_block(state)
         runtime["throttle_until_utc"] = None
         runtime["throttle_reason"] = None
+        _clear_llm_error_alert_state(runtime)
     state["autonomous_fillmore"] = auto
     _save_state(state_path, state)
     return get_config(state_path)
@@ -656,6 +657,13 @@ def _rollover_daily_counters(rt: dict[str, Any]) -> None:
 def _clear_loss_streak_marker(rt: dict[str, Any]) -> None:
     rt["loss_streak_last_throttled_day_utc"] = None
     rt["loss_streak_last_throttled_value"] = 0
+
+
+def _clear_llm_error_alert_state(rt: dict[str, Any]) -> None:
+    """Clear persisted LLM error streak state so stale health alerts disappear."""
+    rt["consecutive_llm_errors"] = 0
+    rt["last_error_msg"] = None
+    rt["last_error_utc"] = None
 
 
 def _maybe_arm_loss_streak_throttle(rt: dict[str, Any], cfg: dict[str, Any], streak: int) -> bool:

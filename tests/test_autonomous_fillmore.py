@@ -804,6 +804,34 @@ def test_set_config_turning_autonomous_off_clears_active_throttle(tmp_path: Path
     assert rt.get("throttle_reason") is None
 
 
+def test_set_config_turning_autonomous_off_clears_stale_llm_error_alert_state(tmp_path: Path) -> None:
+    state_path = tmp_path / "kumatora2" / "runtime_state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "autonomous_fillmore": {
+                    "config": {"enabled": True, "mode": "paper"},
+                    "runtime": {
+                        "consecutive_llm_errors": 8,
+                        "last_error_msg": "Error code: 429 - quota exceeded",
+                        "last_error_utc": "2026-04-21T12:34:56+00:00",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    autonomous_fillmore.set_config(state_path, {"enabled": False, "mode": "off"})
+
+    state = autonomous_fillmore._load_state(state_path)
+    rt = (state.get("autonomous_fillmore") or {}).get("runtime") or {}
+    assert rt.get("consecutive_llm_errors") == 0
+    assert rt.get("last_error_msg") is None
+    assert rt.get("last_error_utc") is None
+
+
 def test_get_config_sanitizes_dangerous_saved_autonomous_settings(tmp_path: Path) -> None:
     state_path = tmp_path / "newera8" / "runtime_state.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
