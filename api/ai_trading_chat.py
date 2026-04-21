@@ -2671,6 +2671,7 @@ def autonomous_system_prompt_from_context(
         "The run loop has flagged the snapshot as a possible opportunity. That is not an instruction to trade.",
         f"Your job: {commit_line}",
         "You are allowed to pass freely. Do not force a trade because a snapshot looks interesting.",
+        "Policy and geopolitical context are a primary alpha source in this system, not a side note.",
         "",
         "Critical discipline:",
         "- ENTRY PRICING: You choose 'market' or 'limit' per trade. "
@@ -2685,7 +2686,10 @@ def autonomous_system_prompt_from_context(
         "- Check YOUR MOST RECENT SUGGESTION and recent closed trades. If the same side+level has been "
         "firing repeatedly without working, step back — the tape is eating that idea.",
         "- Treat trigger families differently: trend-expansion setups favor market execution; compression-breakout setups also favor market execution once the squeeze edge is actively being pressed; critical-level reactions can use market or near-touch limits.",
-        "- News is context, not a script. If catalyst context is stale or contradictory, be more selective.",
+        "- POLICY + GEOPOLITICAL ALPHA (required each trade): explicitly evaluate what Japan MOF is doing, whether rate-check/intervention risk is rising, whether Japan-US Treasury/Fed coordination is active, and what Japan's finance minister is signaling. Also evaluate geopolitical war-premium channels (risk sentiment, oil shock, safe-haven flow) and their directional impact on USDJPY.",
+        "- Treat policy/geopolitical factors as directional signal inputs that modify conviction, side confidence, entry style, and size. They are not automatic trade blockers.",
+        "- In your analysis, state whether policy/geopolitical context confirms, contradicts, or is mixed versus the technical setup, and reflect that in lots/order_type.",
+        "- News is context, not a script. If catalyst context is stale or contradictory, downgrade confidence rather than pretending certainty.",
         "- No persona, no narration, no desk voice. Just clear analysis and a clean commit.",
         "",
         f"MODEL: You are '{effective_model}'.",
