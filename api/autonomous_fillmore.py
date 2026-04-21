@@ -76,7 +76,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "max_lots_per_trade": 15.0,          # hard ceiling — LLM cannot exceed this
     "base_lot_size": 5.0,                # anchor for LLM lot sizing — "normal" trade size
     "lot_deviation": 4.0,                # LLM sizes from (base - dev) to (base + dev), clamped to [1, max_lots]
-    "max_open_ai_trades": 2,
+    "max_open_ai_trades": 6,
     "max_daily_loss_usd": 50.0,
     "max_consecutive_errors": 5,
     "model": "gpt-5.4-mini",
@@ -86,13 +86,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "throttle_loss_streak": 2,
     "throttle_loss_cooldown_sec": 900,
     # Stage 3: book-correlation veto + same-setup dedupe
-    "correlation_veto_enabled": True,    # post-LLM: block placement if same-side position open within distance
+    "correlation_veto_enabled": False,   # discretionary mode: allow stacking/hedging decisions by the model
     "correlation_distance_pips": 15.0,
-    "repeat_setup_dedupe_enabled": True, # pre-LLM: block tick if a placed suggestion in same price bucket fired within window
+    "repeat_setup_dedupe_enabled": False,# discretionary mode: allow repeat-firing when model still sees edge
     "repeat_setup_window_min": 30,
     "repeat_setup_bucket_pips": 25.0,
     # Stage 6: event blackout + multi-trade planning
-    "event_blackout_enabled": True,      # gate blocks when high-impact USD/JPY event within N minutes
+    "event_blackout_enabled": False,     # discretionary mode: let model trade event windows if edge is present
     "event_blackout_minutes": 30,
     "multi_trade_enabled": True,         # LLM can propose 0-2 setups per call instead of exactly 1
     "max_suggestions_per_call": 2,
@@ -331,6 +331,10 @@ def _sanitize_autonomous_config(cfg: dict[str, Any]) -> dict[str, Any]:
     # Tokyo is disabled for autonomous USDJPY by policy; liquidity is too poor.
     trading_hours["tokyo"] = False
     out["trading_hours"] = trading_hours
+    # Discretion-first policy: AI should decide stacking/hedging/event behavior.
+    out["correlation_veto_enabled"] = False
+    out["repeat_setup_dedupe_enabled"] = False
+    out["event_blackout_enabled"] = False
     return out
 
 
@@ -2967,8 +2971,8 @@ def _invoke_suggest(
         "   - Nearest PRICE STRUCTURE level(s) + order-book clusters. Name the level you'd anchor the entry on.\n"
         "   - Relevant bar patterns / recent candle streak.\n"
         "   - M5/M15 ATR — does it justify a wider or tighter SL?\n"
-        "   - OPEN POSITIONS + YOUR MOST RECENT SUGGESTION — are you stacking? "
-        "Same side, same level = size down or skip. Different level = new trade.\n"
+        "   - OPEN POSITIONS + YOUR MOST RECENT SUGGESTION — stacking/hedging is allowed, but justify it. "
+        "If adding near same-side exposure, explain why this is not just a duplicate level.\n"
         "   - Imminent events / session risk — include MOF/BOJ/US event timing and fold it into conviction, execution style, and size.\n"
         "   - EXIT STRATEGY + EXIT PLAN: Choose a strategy and briefly describe your conditional exit logic "
         "(e.g., 'trail on M1 21 EMA after TP1' or 'exit if M3 trend flips bearish within 10 min'). "

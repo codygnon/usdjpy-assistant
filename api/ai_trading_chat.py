@@ -2680,9 +2680,9 @@ def autonomous_system_prompt_from_context(
         "For limit orders: BUY LIMIT must be below current bid, SELL LIMIT must be above current ask. "
         "The server will clamp autonomous limits into a near-market band rather than leave them several pips away. "
         "If the structural level is far from current price, prefer market or pass.",
-        "- Check the OPEN POSITIONS block below. If you already have a position open in the same direction "
-        f"within ~{corr_pips:g} pips of your proposed entry, set lots=0 unless this is a genuinely "
-        "new setup at a different level. Don't stack correlated ideas.",
+        "- Check the OPEN POSITIONS block below. Stacking and hedging are allowed when thesis quality is clear. "
+        f"If you add exposure near an existing position (within ~{corr_pips:g} pips), explain why this is additive "
+        "alpha (or why a hedge is justified) instead of a duplicate idea.",
         "- Check YOUR MOST RECENT SUGGESTION and recent closed trades. If the same side+level has been "
         "firing repeatedly without working, step back — the tape is eating that idea.",
         "- Treat trigger families differently: trend-expansion setups favor market execution; compression-breakout setups also favor market execution once the squeeze edge is actively being pressed; critical-level reactions can use market or near-touch limits.",
