@@ -246,6 +246,22 @@ def _window_rows(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
     return rows
 
 
+def get_today_activity_counters(db_path: Path) -> dict[str, int]:
+    rows = load_autonomous_suggestions(db_path)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    llm_calls_today = sum(1 for row in rows if str(row.get("created_utc") or "").startswith(today))
+    trades_placed_today = sum(
+        1
+        for row in rows
+        if str(row.get("action") or "") == "placed"
+        and str(row.get("action_utc") or row.get("created_utc") or "").startswith(today)
+    )
+    return {
+        "llm_calls_today": llm_calls_today,
+        "trades_placed_today": trades_placed_today,
+    }
+
+
 def _compute_window_stats(
     rows: list[dict[str, Any]],
     thesis_checks_by_trade: dict[str, list[dict[str, Any]]],

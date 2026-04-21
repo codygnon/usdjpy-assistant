@@ -2239,6 +2239,15 @@ def _refresh_autonomous_runtime_from_history(
     except Exception:
         pass
     try:
+        today_activity = autonomous_performance.get_today_activity_counters(suggestions_db)
+        rt["llm_calls_today"] = int(today_activity.get("llm_calls_today") or 0)
+        rt["trades_placed_today"] = int(today_activity.get("trades_placed_today") or 0)
+        rt["llm_spend_today_usd"] = (
+            float(rt["llm_calls_today"]) * _estimated_call_cost_usd(str(cfg.get("model") or "gpt-5.4-mini"))
+        )
+    except Exception:
+        pass
+    try:
         latest_terminal = autonomous_performance.get_last_terminal_event_utc(suggestions_db)
     except Exception:
         latest_terminal = None

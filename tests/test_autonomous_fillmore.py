@@ -2107,6 +2107,55 @@ def test_build_stats_backfills_missing_closed_autonomous_suggestion_from_trade_h
     assert stats["performance"]["rolling_20"]["closed_count"] == 1
 
 
+def test_build_stats_rebuilds_today_call_and_placement_counters_from_history(tmp_path: Path) -> None:
+    state_path = tmp_path / "kumatora2" / "runtime_state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "autonomous_fillmore": {
+                    "config": {
+                        **autonomous_fillmore.DEFAULT_CONFIG,
+                        "enabled": True,
+                        "mode": "paper",
+                        "model": "gpt-5.4-mini",
+                    },
+                    "runtime": {
+                        "llm_calls_today": 0,
+                        "llm_spend_today_usd": 0.0,
+                        "trades_placed_today": 0,
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    suggestions_db = state_path.parent / "ai_suggestions.sqlite"
+    sugg = _suggestion()
+    sid = suggestion_tracker.log_generated(
+        suggestions_db,
+        profile="kumatora2",
+        model="gpt-5.4-mini",
+        suggestion=sugg,
+        ctx=_ctx(),
+    )
+    suggestion_tracker.log_action(
+        suggestions_db,
+        suggestion_id=sid,
+        action="placed",
+        edited_fields=None,
+        placed_order={"order_type": "market", "autonomous": True, "side": "buy", "price": 159.25},
+        oanda_order_id="701",
+    )
+
+    stats = autonomous_fillmore.build_stats(state_path)
+
+    assert stats["today"]["llm_calls"] == 1
+    assert stats["today"]["trades_placed"] == 1
+    assert stats["today"]["spend_usd"] > 0
+
+
 def test_tick_autonomous_fillmore_blocks_below_floor_risk_scaled_lot(tmp_path: Path, monkeypatch) -> None:
     state_path = tmp_path / "kumatora2" / "runtime_state.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
