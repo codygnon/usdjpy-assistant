@@ -314,6 +314,12 @@ def _sanitize_autonomous_config(cfg: dict[str, Any]) -> dict[str, Any]:
         out["limit_gtd_minutes"] = min(int(out.get("limit_gtd_minutes") or _AUTONOMOUS_MAX_LIMIT_GTD_MINUTES), _AUTONOMOUS_MAX_LIMIT_GTD_MINUTES)
     except (TypeError, ValueError):
         out["limit_gtd_minutes"] = _AUTONOMOUS_MAX_LIMIT_GTD_MINUTES
+    try:
+        saved_max_open = int(out.get("max_open_ai_trades") or DEFAULT_CONFIG.get("max_open_ai_trades") or 6)
+    except (TypeError, ValueError):
+        saved_max_open = int(DEFAULT_CONFIG.get("max_open_ai_trades") or 6)
+    # Normalize stale saved profile configs back to the shared validated autonomous envelope.
+    out["max_open_ai_trades"] = max(saved_max_open, int(DEFAULT_CONFIG.get("max_open_ai_trades") or 6))
 
     try:
         out["base_lot_size"] = max(1.0, min(float(out.get("base_lot_size") or 5.0), float(out["max_lots_per_trade"])))

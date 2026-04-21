@@ -865,6 +865,7 @@ def test_get_config_sanitizes_dangerous_saved_autonomous_settings(tmp_path: Path
     assert cfg["max_lots_per_trade"] == 15.0
     assert cfg["max_consecutive_errors"] == 5
     assert cfg["limit_gtd_minutes"] == 15
+    assert cfg["max_open_ai_trades"] == 6
 
 
 def test_set_config_sanitizes_patch_into_safe_autonomous_envelope(tmp_path: Path) -> None:
@@ -890,6 +891,31 @@ def test_set_config_sanitizes_patch_into_safe_autonomous_envelope(tmp_path: Path
     assert cfg["max_lots_per_trade"] == 15.0
     assert cfg["max_consecutive_errors"] == 5
     assert cfg["limit_gtd_minutes"] == 15
+    assert cfg["max_open_ai_trades"] == 6
+
+
+def test_get_config_lifts_stale_lower_open_trade_cap_to_shared_default(tmp_path: Path) -> None:
+    state_path = tmp_path / "newera8" / "runtime_state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "autonomous_fillmore": {
+                    "config": {
+                        "enabled": True,
+                        "mode": "paper",
+                        "aggressiveness": "balanced",
+                        "max_open_ai_trades": 2,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = autonomous_fillmore.get_config(state_path)
+
+    assert cfg["max_open_ai_trades"] == 6
 
 
 def test_extract_json_object_prefers_fenced_block_and_keeps_analysis(monkeypatch=None) -> None:
