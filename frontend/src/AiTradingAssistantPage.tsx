@@ -456,6 +456,26 @@ function AutonomousFillmorePanel({
   const window_ = stats?.window;
   const regime = stats?.risk_regime;
   const perf20 = stats?.performance?.rolling_20;
+  const perf20View = perf20 ?? {
+    trade_count: 0,
+    closed_count: 0,
+    win_rate: null,
+    avg_win_pips: null,
+    avg_loss_pips: null,
+    profit_factor: null,
+    avg_hold_minutes: null,
+    fill_rate_limits: null,
+    avg_time_to_fill_sec: null,
+    avg_fill_vs_requested_pips: null,
+    thesis_intervention_rate: null,
+    avg_mae_pips: null,
+    avg_mfe_pips: null,
+    win_rate_by_confidence_json: {},
+    win_rate_by_side_json: {},
+    win_rate_by_session_json: {},
+    prompt_version_breakdown_json: {},
+    updated_utc: null,
+  };
   const alerts = stats?.health_alerts || [];
   const orderMetrics = stats?.order_metrics;
   const autonomousModelOptions = modelOptions.includes(cfg.model)
@@ -672,33 +692,38 @@ function AutonomousFillmorePanel({
         </div>
       </div>
 
-      {perf20 && (
+      {stats && (
         <div className="autonomous-panel__section">
           <div className="autonomous-panel__section-head">
             <span className="autonomous-panel__section-title">Rolling Performance</span>
             <span className="autonomous-panel__muted">last 20 autonomous closes</span>
           </div>
+          {!perf20 && (
+            <div className="autonomous-panel__hint">
+              Waiting for rolling performance stats to materialize.
+            </div>
+          )}
           <div className="autonomous-panel__stats-grid">
             <div className="autonomous-panel__stat">
               <div className="autonomous-panel__stat-label">Win rate</div>
-              <strong>{perf20.win_rate != null ? `${(perf20.win_rate * 100).toFixed(0)}%` : '–'}</strong>
+              <strong>{perf20View.win_rate != null ? `${(perf20View.win_rate * 100).toFixed(0)}%` : '–'}</strong>
             </div>
             <div className="autonomous-panel__stat">
               <div className="autonomous-panel__stat-label">Profit factor</div>
-              <strong>{perf20.profit_factor != null ? perf20.profit_factor.toFixed(2) : '–'}</strong>
+              <strong>{perf20View.profit_factor != null ? perf20View.profit_factor.toFixed(2) : '–'}</strong>
             </div>
             <div className="autonomous-panel__stat">
               <div className="autonomous-panel__stat-label">Avg hold</div>
-              <strong>{perf20.avg_hold_minutes != null ? `${perf20.avg_hold_minutes.toFixed(0)}m` : '–'}</strong>
+              <strong>{perf20View.avg_hold_minutes != null ? `${perf20View.avg_hold_minutes.toFixed(0)}m` : '–'}</strong>
             </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8, marginTop: 10 }}>
-            <div className="autonomous-panel__chip">avg win {perf20.avg_win_pips != null ? `${perf20.avg_win_pips > 0 ? '+' : ''}${perf20.avg_win_pips.toFixed(1)}p` : '–'}</div>
-            <div className="autonomous-panel__chip">avg loss {perf20.avg_loss_pips != null ? `${perf20.avg_loss_pips.toFixed(1)}p` : '–'}</div>
-            <div className="autonomous-panel__chip">limit fill {perf20.fill_rate_limits != null ? `${(perf20.fill_rate_limits * 100).toFixed(0)}%` : '–'}</div>
-            <div className="autonomous-panel__chip">market fill vs req {perf20.avg_fill_vs_requested_pips != null ? `${perf20.avg_fill_vs_requested_pips > 0 ? '+' : ''}${perf20.avg_fill_vs_requested_pips.toFixed(2)}p` : '–'}</div>
-            <div className="autonomous-panel__chip">avg MAE {perf20.avg_mae_pips != null ? `${perf20.avg_mae_pips.toFixed(1)}p` : '–'}</div>
-            <div className="autonomous-panel__chip">avg MFE {perf20.avg_mfe_pips != null ? `${perf20.avg_mfe_pips.toFixed(1)}p` : '–'}</div>
+            <div className="autonomous-panel__chip">avg win {perf20View.avg_win_pips != null ? `${perf20View.avg_win_pips > 0 ? '+' : ''}${perf20View.avg_win_pips.toFixed(1)}p` : '–'}</div>
+            <div className="autonomous-panel__chip">avg loss {perf20View.avg_loss_pips != null ? `${perf20View.avg_loss_pips.toFixed(1)}p` : '–'}</div>
+            <div className="autonomous-panel__chip">limit fill {perf20View.fill_rate_limits != null ? `${(perf20View.fill_rate_limits * 100).toFixed(0)}%` : '–'}</div>
+            <div className="autonomous-panel__chip">market fill vs req {perf20View.avg_fill_vs_requested_pips != null ? `${perf20View.avg_fill_vs_requested_pips > 0 ? '+' : ''}${perf20View.avg_fill_vs_requested_pips.toFixed(2)}p` : '–'}</div>
+            <div className="autonomous-panel__chip">avg MAE {perf20View.avg_mae_pips != null ? `${perf20View.avg_mae_pips.toFixed(1)}p` : '–'}</div>
+            <div className="autonomous-panel__chip">avg MFE {perf20View.avg_mfe_pips != null ? `${perf20View.avg_mfe_pips.toFixed(1)}p` : '–'}</div>
           </div>
         </div>
       )}

@@ -1965,6 +1965,29 @@ def evaluate_gate(
 # Stats for the UI
 # -----------------------------------------------------------------------------
 
+def _default_performance_row() -> dict[str, Any]:
+    return {
+        "trade_count": 0,
+        "closed_count": 0,
+        "win_rate": None,
+        "avg_win_pips": None,
+        "avg_loss_pips": None,
+        "profit_factor": None,
+        "avg_hold_minutes": None,
+        "fill_rate_limits": None,
+        "avg_time_to_fill_sec": None,
+        "avg_fill_vs_requested_pips": None,
+        "thesis_intervention_rate": None,
+        "avg_mae_pips": None,
+        "avg_mfe_pips": None,
+        "win_rate_by_confidence_json": {},
+        "win_rate_by_side_json": {},
+        "win_rate_by_session_json": {},
+        "prompt_version_breakdown_json": {},
+        "updated_utc": None,
+    }
+
+
 def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     cfg = cfg or get_config(state_path)
     rt = refresh_runtime_from_history(state_path, cfg=cfg)
@@ -2009,6 +2032,19 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
         perf_rows = autonomous_performance.get_materialized_stats(suggestions_db)
     except Exception:
         perf_rows = {}
+    if not perf_rows or "rolling_20" not in perf_rows:
+        try:
+            autonomous_performance.recompute_performance_stats(
+                profile=state_path.parent.name,
+                suggestions_db_path=suggestions_db,
+                assistant_db_path=_assistant_db,
+            )
+            perf_rows = autonomous_performance.get_materialized_stats(suggestions_db)
+        except Exception:
+            perf_rows = perf_rows or {}
+    for key in ("rolling_20", "rolling_50", "today", "week"):
+        if key not in perf_rows:
+            perf_rows[key] = _default_performance_row()
     for row in perf_rows.values():
         for key in (
             "win_rate_by_confidence_json",
