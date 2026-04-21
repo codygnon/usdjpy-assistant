@@ -2232,6 +2232,13 @@ def _refresh_autonomous_runtime_from_history(
 ) -> dict[str, Any]:
     suggestions_db, assistant_db = _db_paths_from_state(state_path)
     try:
+        autonomous_performance.reconcile_closed_outcomes(
+            suggestions_db_path=suggestions_db,
+            assistant_db_path=assistant_db,
+        )
+    except Exception:
+        pass
+    try:
         latest_terminal = autonomous_performance.get_last_terminal_event_utc(suggestions_db)
     except Exception:
         latest_terminal = None

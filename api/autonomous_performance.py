@@ -146,13 +146,54 @@ def _load_trade_map(assistant_db_path: Path, trade_ids: list[str]) -> dict[str, 
         cur = conn.execute(
             f"""
             SELECT trade_id, timestamp_utc, exit_timestamp_utc, entry_price, exit_price, side,
-                   max_adverse_pips, max_favorable_pips, mae_mfe_estimated
+                   profit, pips, max_adverse_pips, max_favorable_pips, mae_mfe_estimated
             FROM trades
             WHERE trade_id IN ({placeholders})
             """,
             trade_ids,
         )
         return {str(r["trade_id"]): dict(r) for r in cur.fetchall()}
+
+
+def reconcile_closed_outcomes(
+    *,
+    suggestions_db_path: Path,
+    assistant_db_path: Path,
+) -> int:
+    """Backfill missing closed outcomes on autonomous suggestion rows from assistant.db."""
+    rows = load_autonomous_suggestions(suggestions_db_path)
+    pending = [
+        row for row in rows
+        if row.get("trade_id") and row.get("filled_at") and not row.get("closed_at")
+    ]
+    if not pending:
+        return 0
+
+    trade_map = _load_trade_map(
+        assistant_db_path,
+        [str(row.get("trade_id") or "") for row in pending],
+    )
+    updated = 0
+    for row in pending:
+        trade = trade_map.get(str(row.get("trade_id") or ""))
+        if not trade:
+            continue
+        closed_at = trade.get("exit_timestamp_utc")
+        exit_price = _safe_float(trade.get("exit_price"))
+        pnl = _safe_float(trade.get("profit"))
+        pips = _safe_float(trade.get("pips"))
+        if not closed_at or exit_price is None or pnl is None or pips is None:
+            continue
+        if suggestion_tracker.mark_closed_by_suggestion_id(
+            suggestions_db_path,
+            suggestion_id=str(row.get("suggestion_id") or ""),
+            exit_price=float(exit_price),
+            pnl=float(pnl),
+            pips=float(pips),
+            closed_at=str(closed_at),
+        ):
+            updated += 1
+    return updated
 
 
 def _hold_minutes(row: dict[str, Any], trade: dict[str, Any] | None) -> float | None:
