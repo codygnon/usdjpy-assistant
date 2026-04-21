@@ -72,7 +72,12 @@ def test_build_pass_mask_blocks_spread_and_low_volatility() -> None:
             "direction": [1, 1],
             "m3_trend": ["bull", "bull"],
             "m1_stack": ["bull", "bull"],
+            "m5_stack": ["bull", "bull"],
             "m5_atr_pips": [4.0, 2.0],
+            "m5_adx": [25.0, 18.0],
+            "m15_adx": [25.0, 18.0],
+            "m5_atr_ratio": [1.2, 0.8],
+            "m5_extension_pips": [1.0, 5.0],
             "nearest_structure_pips": [3.0, 3.0],
             "near_daily_hl_pips": [10.0, 10.0],
             "close": [159.00, 159.01],
@@ -90,9 +95,10 @@ def test_build_pass_mask_blocks_spread_and_low_volatility() -> None:
         mode="balanced",
         spread_scale=1.0,
         min_m5_atr_pips=3.0,
-        level_proximity_pips=8.0,
-        pullback_zone_min_pips=1.5,
-        pullback_lookback_bars=3,
+        critical_level_max_pips=6.0,
+        trend_adx_min=23.0,
+        micro_confirmation_bars=3,
+        extension_atr_mult=1.0,
     )
 
     assert mask.tolist() == [False, False]
@@ -349,9 +355,10 @@ def test_build_session_calibration_returns_per_session_payloads(monkeypatch: pyt
                         "params": {
                             "spread_scale": 0.85,
                             "min_m5_atr_pips": 3.0,
-                            "level_proximity_pips": 8.0,
-                            "pullback_zone_min_pips": 1.5,
-                            "pullback_lookback_bars": 3,
+                            "critical_level_max_pips": 6.0,
+                            "trend_adx_min": 23.0,
+                            "micro_confirmation_bars": 3,
+                            "extension_atr_mult": 1.0,
                         },
                         "summary": {
                             "pass_count": max(passes - 1, 1),
@@ -402,9 +409,10 @@ def test_build_session_calibration_returns_per_session_payloads(monkeypatch: pyt
         optimal_quantile=0.85,
         spread_scales=[0.85],
         atr_floors=[3.0],
-        level_thresholds=[8.0],
-        pullback_zone_mins=[1.5],
-        pullback_lookbacks=[3],
+        critical_level_thresholds=[6.0],
+        trend_adx_thresholds=[23.0],
+        micro_confirmation_windows=[3],
+        extension_atr_multipliers=[1.0],
     )
 
     tokyo = payload["tokyo"]

@@ -2634,13 +2634,13 @@ def autonomous_system_prompt_from_context(
     max_suggestions = int(cfg.get("max_suggestions_per_call") or 1)
     if multi_enabled and max_suggestions > 1:
         commit_line = (
-            f"evaluate the live context below and commit to UP TO {max_suggestions} "
-            "well-reasoned trades — size each to match your conviction. Set lots=0 on any idea you would skip."
+            f"evaluate the live context below and return UP TO {max_suggestions} trade objects, "
+            "but only when the edge is clear. Returning 0 lots is normal whenever the opportunity is not clean enough."
         )
     else:
         commit_line = (
-            "evaluate the live context below and commit to ONE trade — size it to match your conviction. "
-            "Set lots=0 only if there is genuinely no edge."
+            "evaluate the live context below and return at most ONE trade object. "
+            "Passing with 0 lots is normal whenever the edge is not clean enough."
         )
 
     corr_pips = float(cfg.get("correlation_distance_pips") or 15.0)
@@ -2662,29 +2662,30 @@ def autonomous_system_prompt_from_context(
         regime_append = "\n".join([
             "",
             f"RISK REGIME: {str((risk_regime or {}).get('label') or '').upper()}",
-            "You are in a defensive drawdown state. Size down across the board.",
-            "Halve your normal lot size. Only take the cleanest setups at full conviction.",
+            "You are in a defensive drawdown state.",
+            "Be more selective than usual and downgrade marginal setups rather than forcing action.",
         ])
 
     lean_preamble = "\n".join([
-        "You are a disciplined USDJPY scalping analyst operating in AUTONOMOUS mode.",
-        "The signal gate has already verified conditions are worth looking at — trend, spread, session, structure. "
-        "A setup likely exists. "
-        f"Your job: {commit_line} "
-        "You are a trader. Find the trade, size it to match the setup quality, and take it. "
-        "The only reason to return 0 lots is if there is genuinely no trade — not because you are unsure.",
+        "You are a neutral USDJPY autonomous trader operating in AUTONOMOUS mode.",
+        "The run loop has flagged the snapshot as a possible opportunity. That is not an instruction to trade.",
+        f"Your job: {commit_line}",
+        "You are allowed to pass freely. Do not force a trade because a snapshot looks interesting.",
         "",
         "Critical discipline:",
         "- ENTRY PRICING: You choose 'market' or 'limit' per trade. "
         "Market fills instantly at current bid/ask — use when the tape is moving and you want in now. "
-        "Limit rests at the price you set — use when you see a structural level worth waiting for. "
+        "Limit is for near-touch passive entries only. "
         "For limit orders: BUY LIMIT must be below current bid, SELL LIMIT must be above current ask. "
-        "The price you set is the exact price the order rests at — no adjustment is applied.",
+        "The server will clamp autonomous limits into a near-market band rather than leave them several pips away. "
+        "If the structural level is far from current price, prefer market or pass.",
         "- Check the OPEN POSITIONS block below. If you already have a position open in the same direction "
         f"within ~{corr_pips:g} pips of your proposed entry, set lots=0 unless this is a genuinely "
         "new setup at a different level. Don't stack correlated ideas.",
         "- Check YOUR MOST RECENT SUGGESTION and recent closed trades. If the same side+level has been "
         "firing repeatedly without working, step back — the tape is eating that idea.",
+        "- Treat trigger families differently: trend-expansion setups favor market execution; compression-breakout setups also favor market execution once the squeeze edge is actively being pressed; critical-level reactions can use market or near-touch limits.",
+        "- News is context, not a script. If catalyst context is stale or contradictory, be more selective.",
         "- No persona, no narration, no desk voice. Just clear analysis and a clean commit.",
         "",
         f"MODEL: You are '{effective_model}'.",
@@ -3758,6 +3759,49 @@ def _format_headlines(headlines: list[dict[str, str]], count: int) -> str:
     return "\n".join(lines)
 
 
+def _headline_freshness_summary(headlines: list[dict[str, str]]) -> tuple[str, list[str]]:
+    from email.utils import parsedate_to_datetime
+
+    if not headlines:
+        return "unavailable", ["No recent headlines were fetched. Treat catalyst awareness as degraded."]
+
+    now_utc = datetime.now(timezone.utc)
+    newest_age_hours: float | None = None
+    notes: list[str] = []
+    for h in headlines:
+        raw_date = str(h.get("date") or "").strip()
+        if not raw_date:
+            continue
+        try:
+            dt = parsedate_to_datetime(raw_date)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            age_hours = max(0.0, (now_utc - dt.astimezone(timezone.utc)).total_seconds() / 3600.0)
+            newest_age_hours = age_hours if newest_age_hours is None else min(newest_age_hours, age_hours)
+        except Exception:
+            continue
+
+    joined_titles = " | ".join(str(h.get("title") or "") for h in headlines).lower()
+    if newest_age_hours is None:
+        freshness = "unknown"
+        notes.append("Headline timestamps were missing or unparsable. Treat catalyst timing as uncertain.")
+    elif newest_age_hours <= 4:
+        freshness = f"fresh (~{newest_age_hours:.1f}h)"
+    elif newest_age_hours <= 24:
+        freshness = f"aging (~{newest_age_hours:.1f}h)"
+        notes.append("Latest headline is not fresh intraday. Check whether the catalyst is already priced.")
+    else:
+        freshness = f"stale (~{newest_age_hours:.1f}h)"
+        notes.append("Headline flow is stale relative to current session. Be careful with narrative-driven trades.")
+
+    if any(
+        token in joined_titles
+        for token in ("weekend", "strait of hormuz", "hormuz", "iran", "israel", "missile", "oil spike", "middle east")
+    ):
+        notes.append("Major geopolitical headline detected. Verify recency and whether this is weekend carryover rather than fresh intraday information.")
+    return freshness, notes
+
+
 # ---------------------------------------------------------------------------
 # 3d. Web search (Brave Search API — free tier: 2,000 queries/month)
 # ---------------------------------------------------------------------------
@@ -3846,9 +3890,19 @@ def build_trade_suggestion_news_block(
 
     rss_text = ""
     web_text = ""
+    rss_headlines: list[dict[str, str]] = []
 
     def _rss() -> str:
-        return _exec_get_news_headlines({"count": rss_n})
+        nonlocal rss_headlines
+        now = _time.time()
+        cached = _NEWS_CACHE.get("news")
+        if cached and now - cached[0] < _NEWS_CACHE_TTL:
+            rss_headlines = list(cached[1])
+            return _format_headlines(rss_headlines, rss_n)
+        _exec_get_news_headlines({"count": rss_n})
+        cached = _NEWS_CACHE.get("news")
+        rss_headlines = list((cached or (0, []))[1])
+        return _format_headlines(rss_headlines, rss_n)
 
     def _web() -> str:
         return _exec_web_search({"query": web_query, "count": web_n})
@@ -3878,10 +3932,17 @@ def build_trade_suggestion_news_block(
     if not web_text:
         web_text = "Web search unavailable: timed out"
 
+    freshness, freshness_notes = _headline_freshness_summary(rss_headlines)
+    freshness_lines = "\n".join(f"- {note}" for note in freshness_notes) if freshness_notes else "- No special freshness warnings."
+
     return (
         "=== TRADE SUGGESTION — EXTERNAL MARKET NEWS (prefetched for this request only) ===\n"
         "Use for catalysts and narratives only; live price, spread, and levels in "
-        "LIVE TRADING CONTEXT above are authoritative.\n\n"
+        "LIVE TRADING CONTEXT above are authoritative.\n"
+        f"PREFETCHED_AT_UTC: {datetime.now(timezone.utc).replace(microsecond=0).isoformat()}\n"
+        f"NEWS_FRESHNESS: {freshness}\n"
+        "FRESHNESS_NOTES:\n"
+        f"{freshness_lines}\n\n"
         "[RSS HEADLINES]\n"
         + rss_text
         + "\n\n[WEB SEARCH]\n"

@@ -1037,6 +1037,92 @@ def _maybe_run_fillmore_thesis_monitor(
                 executed = True
                 out["skip_rest"] = True
                 note = "closed_full_position"
+
+                # --- Immediately close local trade row + stamp suggestion outcome ---
+                try:
+                    exit_price = float(tick.bid) if side == "buy" else float(tick.ask)
+                    entry_price = float(trade_row.get("entry_price") or 0.0)
+                    pip_size = float(profile.pip_size)
+                    pips = ((exit_price - entry_price) / pip_size) if side == "buy" else ((entry_price - exit_price) / pip_size)
+                    mid = (float(tick.bid) + float(tick.ask)) / 2.0
+                    profit = float(pips * pip_size * 100_000.0 * current_lots / mid) if mid > 0 else 0.0
+                    now_utc = pd.Timestamp.now(tz="UTC").isoformat()
+
+                    store.close_trade(
+                        trade_id=trade_id,
+                        updates={
+                            "exit_price": round(exit_price, 5),
+                            "exit_timestamp_utc": now_utc,
+                            "exit_reason": "thesis_exit_now",
+                            "pips": round(pips, 2),
+                            "profit": round(profit, 4),
+                            "duration_minutes": round(_trade_open_age_seconds(trade_row) / 60.0, 2),
+                        },
+                    )
+
+                    mt5_oid = trade_row.get("mt5_order_id")
+                    sid = str(suggestion_row.get("suggestion_id") or "").strip()
+                    closed_ok = False
+                    if mt5_oid is not None:
+                        try:
+                            closed_ok = suggestion_tracker.mark_closed(
+                                db_path,
+                                oanda_order_id=str(int(mt5_oid)),
+                                exit_price=exit_price,
+                                pnl=profit,
+                                pips=pips,
+                                closed_at=now_utc,
+                            )
+                        except Exception:
+                            pass
+                    if not closed_ok and sid:
+                        try:
+                            suggestion_tracker.mark_closed_by_suggestion_id(
+                                db_path,
+                                suggestion_id=sid,
+                                exit_price=exit_price,
+                                pnl=profit,
+                                pips=pips,
+                                closed_at=now_utc,
+                            )
+                        except Exception:
+                            pass
+
+                    # Record outcome for throttle/regime tracking
+                    try:
+                        from api.autonomous_fillmore import get_config, record_trade_outcome
+                        state_path = Path(db_path).parent / "runtime_state.json"
+                        cfg = get_config(state_path)
+                        record_trade_outcome(state_path, profit, cfg)
+                    except Exception:
+                        pass
+
+                    # Generate post-trade reflection
+                    try:
+                        from api.fillmore_learning import maybe_generate_trade_reflection
+                        closed_row = dict(trade_row)
+                        closed_row.update({
+                            "exit_price": exit_price,
+                            "exit_timestamp_utc": now_utc,
+                            "exit_reason": "thesis_exit_now",
+                            "pips": round(pips, 2),
+                            "profit": round(profit, 4),
+                        })
+                        maybe_generate_trade_reflection(
+                            profile_name=profile.profile_name,
+                            trade_row=closed_row,
+                            db_path=db_path,
+                        )
+                    except Exception:
+                        pass
+
+                    print(
+                        f"[{profile.profile_name}] thesis exit_now: {trade_id} "
+                        f"exit={exit_price:.3f} pips={pips:+.1f} pnl=${profit:+.2f}"
+                    )
+                except Exception as close_err:
+                    print(f"[{profile.profile_name}] thesis exit_now outcome tracking error: {close_err}")
+
             except Exception as e:
                 note = f"exit_now_error:{e}"
     else:

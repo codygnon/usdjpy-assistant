@@ -1,0 +1,20 @@
+{
+  "autonomous_fillmore": {
+    "config": {
+      "enabled": true,
+      "mode": "paper",
+      "aggressiveness": "balanced",
+      "max_daily_loss_usd": 50.0,
+      "max_lots_per_trade": 15.0,
+      "max_consecutive_errors": 5,
+      "limit_gtd_minutes": 15,
+      "base_lot_size": 5.0,
+      "lot_deviation": 4.0,
+      "trading_hours": {
+        "tokyo": false,
+        "london": true,
+        "ny": true
+      }
+    }
+  }
+}

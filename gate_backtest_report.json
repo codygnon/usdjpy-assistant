@@ -1,0 +1,1427 @@
+{
+  "config": {
+    "aggressiveness": "balanced",
+    "tp_pips": 8.0,
+    "sl_pips": 12.0,
+    "timeout_min": 60,
+    "limit_fill_min": 10,
+    "data_start_utc": "2023-06-20T18:28:00+00:00",
+    "data_end_utc": "2026-04-03T20:58:00+00:00"
+  },
+  "overall": {
+    "bars_processed": 1031491,
+    "wake_events": 42930,
+    "wake_rate_per_hour": 1.756942028688944,
+    "wake_rate_per_day": 42.12953876349362,
+    "wake_rate_by_session": {
+      "london": {
+        "wake_count": 4403,
+        "wake_rate_per_day": 4.32090284592738
+      },
+      "london/newyork": {
+        "wake_count": 15637,
+        "wake_rate_per_day": 15.345436702649657
+      },
+      "newyork": {
+        "wake_count": 5002,
+        "wake_rate_per_day": 4.908734052993131
+      },
+      "tokyo": {
+        "wake_count": 12793,
+        "wake_rate_per_day": 12.554465161923455
+      },
+      "tokyo/london": {
+        "wake_count": 5095,
+        "wake_rate_per_day": 5.0
+      }
+    },
+    "trigger_family_breakdown": {
+      "compression_breakout": {
+        "count": 167,
+        "pct": 0.0038900535755881666
+      },
+      "critical_level_reaction": {
+        "count": 36315,
+        "pct": 0.8459119496855346
+      },
+      "trend_expansion": {
+        "count": 6448,
+        "pct": 0.15019799673887724
+      }
+    },
+    "top_trigger_reasons": [
+      [
+        "adx_trend_expansion:buy",
+        3441
+      ],
+      [
+        "adx_trend_expansion:sell",
+        3007
+      ],
+      [
+        "support_reclaim:LOCAL_RANGE_HIGH",
+        2687
+      ],
+      [
+        "resistance_reject:LOCAL_RANGE_LOW",
+        2403
+      ],
+      [
+        "resistance_reject:LONDON/NY_SESSION_HIGH",
+        1730
+      ],
+      [
+        "support_reclaim:LONDON/NY_SESSION_LOW",
+        1613
+      ],
+      [
+        "resistance_reject:TOKYO_SESSION_HIGH",
+        1512
+      ],
+      [
+        "resistance_reject:LOCAL_RANGE_HIGH",
+        1502
+      ],
+      [
+        "support_reclaim:TOKYO_SESSION_LOW",
+        1498
+      ],
+      [
+        "support_reclaim:LOCAL_RANGE_LOW",
+        1303
+      ]
+    ],
+    "block_reason_counts": {
+      "no_hybrid_trigger": 540022,
+      "low_volatility": 115022,
+      "trigger_still_active": 104573,
+      "trigger_setup_cooldown": 89718,
+      "out_of_session:off-hours": 78114,
+      "no_hybrid_trigger:no_trend_signal": 46490,
+      "spread_too_wide:3.0000000000001137": 369,
+      "spread_too_wide:3.100000000000591": 288,
+      "spread_too_wide:3.2000000000010687": 172,
+      "spread_too_wide:9.999999999999432": 134,
+      "spread_too_wide:3.499999999999659": 132,
+      "spread_too_wide:3.3999999999991815": 130,
+      "spread_too_wide:3.6000000000001364": 117,
+      "spread_too_wide:3.299999999998704": 99,
+      "spread_too_wide:3.300000000001546": 97,
+      "spread_too_wide:3.1999999999982265": 90,
+      "spread_too_wide:3.700000000000614": 85,
+      "spread_too_wide:3.099999999997749": 59,
+      "spread_too_wide:4.099999999999682": 58,
+      "spread_too_wide:3.999999999999204": 55
+    }
+  },
+  "per_trigger_family": {
+    "compression_breakout": {
+      "count": 167,
+      "strategy_a": {
+        "trades": 167,
+        "fill_rate": 1.0,
+        "no_fill_rate": 0.0,
+        "win_rate": 0.437125748502994,
+        "avg_pnl_pips": -0.07604790419161687,
+        "median_pnl_pips": 1.7,
+        "total_pnl_pips": -12.700000000000017,
+        "profit_factor": 0.9804585320818588,
+        "avg_time_to_fill_min": 0.0
+      },
+      "strategy_b": {
+        "trades": 167,
+        "fill_rate": 1.0,
+        "no_fill_rate": 0.0,
+        "win_rate": 0.437125748502994,
+        "avg_pnl_pips": -0.07604790419161687,
+        "median_pnl_pips": 1.7,
+        "total_pnl_pips": -12.700000000000017,
+        "profit_factor": 0.9804585320818588,
+        "avg_time_to_fill_min": 0.0
+      },
+      "strategy_c": {
+        "trades": 150,
+        "fill_rate": 0.8982035928143712,
+        "no_fill_rate": 0.10179640718562874,
+        "win_rate": 0.44,
+        "avg_pnl_pips": 0.015333333333333504,
+        "median_pnl_pips": 1.75,
+        "total_pnl_pips": 2.3000000000000256,
+        "profit_factor": 1.0040223854494579,
+        "avg_time_to_fill_min": 1.7333333333333334
+      },
+      "mfe_5m": {
+        "mean": 3.1239520958083835,
+        "median": 1.9
+      },
+      "mae_5m": {
+        "mean": 2.8784431137724553,
+        "median": 2.3
+      },
+      "net_5m": {
+        "mean": 0.29221556886227545,
+        "median": -0.2
+      },
+      "mfe_10m": {
+        "mean": 4.244910179640719,
+        "median": 2.7
+      },
+      "mae_10m": {
+        "mean": 4.3095808383233525,
+        "median": 2.9
+      },
+      "net_10m": {
+        "mean": -0.39101796407185635,
+        "median": -0.5
+      },
+      "mfe_15m": {
+        "mean": 4.723353293413174,
+        "median": 3.2
+      },
+      "mae_15m": {
+        "mean": 5.265269461077844,
+        "median": 3.8
+      },
+      "net_15m": {
+        "mean": -0.7107784431137724,
+        "median": -0.6
+      },
+      "mfe_30m": {
+        "mean": 7.17185628742515,
+        "median": 4.8
+      },
+      "mae_30m": {
+        "mean": 7.527544910179642,
+        "median": 5.5
+      },
+      "net_30m": {
+        "mean": -0.19760479041916168,
+        "median": -0.6
+      },
+      "mfe_60m": {
+        "mean": 10.529940119760479,
+        "median": 7.0
+      },
+      "mae_60m": {
+        "mean": 10.089221556886228,
+        "median": 8.1
+      },
+      "net_60m": {
+        "mean": 0.4401197604790414,
+        "median": -1.1
+      }
+    },
+    "critical_level_reaction": {
+      "count": 36315,
+      "strategy_a": {
+        "trades": 36315,
+        "fill_rate": 1.0,
+        "no_fill_rate": 0.0,
+        "win_rate": 0.5212446647390885,
+        "avg_pnl_pips": -0.07980173482032218,
+        "median_pnl_pips": 8.0,
+        "total_pnl_pips": -2898.0,
+        "profit_factor": 0.9818526116458892,
+        "avg_time_to_fill_min": 0.0
+      },
+      "strategy_b": {
+        "trades": 27306,
+        "fill_rate": 0.7519206939281289,
+        "no_fill_rate": 0.24807930607187112,
+        "win_rate": 0.512012012012012,
+        "avg_pnl_pips": -0.2649295000915583,
+        "median_pnl_pips": 8.0,
+        "total_pnl_pips": -7233.9,
+        "profit_factor": 0.9412896649228087,
+        "avg_time_to_fill_min": 2.448123054385644
+      },
+      "strategy_c": {
+        "trades": 0,
+        "fill_rate": 0.0,
+        "no_fill_rate": 0.0,
+        "win_rate": null,
+        "avg_pnl_pips": null,
+        "median_pnl_pips": null,
+        "total_pnl_pips": 0.0,
+        "profit_factor": null,
+        "avg_time_to_fill_min": NaN
+      },
+      "mfe_5m": {
+        "mean": 4.218851714167699,
+        "median": 2.9
+      },
+      "mae_5m": {
+        "mean": 4.220352471430538,
+        "median": 2.9
+      },
+      "net_5m": {
+        "mean": -0.028638303731240527,
+        "median": 0.0
+      },
+      "mfe_10m": {
+        "mean": 5.974401762357152,
+        "median": 4.2
+      },
+      "mae_10m": {
+        "mean": 5.978793886823627,
+        "median": 4.2
+      },
+      "net_10m": {
+        "mean": -0.026014043783560526,
+        "median": 0.0
+      },
+      "mfe_15m": {
+        "mean": 7.30450777915462,
+        "median": 5.1
+      },
+      "mae_15m": {
+        "mean": 7.333605947955391,
+        "median": 5.2
+      },
+      "net_15m": {
+        "mean": -0.029106429849924256,
+        "median": 0.0
+      },
+      "mfe_30m": {
+        "mean": 10.451978521272201,
+        "median": 7.2
+      },
+      "mae_30m": {
+        "mean": 10.484449951810547,
+        "median": 7.4
+      },
+      "net_30m": {
+        "mean": -0.04117306897976045,
+        "median": 0.0
+      },
+      "mfe_60m": {
+        "mean": 14.668051769241362,
+        "median": 10.3
+      },
+      "mae_60m": {
+        "mean": 14.76180916976456,
+        "median": 10.4
+      },
+      "net_60m": {
+        "mean": -0.06392950571389235,
+        "median": -0.1
+      }
+    },
+    "trend_expansion": {
+      "count": 6448,
+      "strategy_a": {
+        "trades": 6448,
+        "fill_rate": 1.0,
+        "no_fill_rate": 0.0,
+        "win_rate": 0.5462158808933002,
+        "avg_pnl_pips": -0.20739764267990077,
+        "median_pnl_pips": 8.0,
+        "total_pnl_pips": -1337.3000000000002,
+        "profit_factor": 0.9554552570657695,
+        "avg_time_to_fill_min": 0.0
+      },
+      "strategy_b": {
+        "trades": 6448,
+        "fill_rate": 1.0,
+        "no_fill_rate": 0.0,
+        "win_rate": 0.5462158808933002,
+        "avg_pnl_pips": -0.20739764267990077,
+        "median_pnl_pips": 8.0,
+        "total_pnl_pips": -1337.3000000000002,
+        "profit_factor": 0.9554552570657695,
+        "avg_time_to_fill_min": 0.0
+      },
+      "strategy_c": {
+        "trades": 0,
+        "fill_rate": 0.0,
+        "no_fill_rate": 0.0,
+        "win_rate": null,
+        "avg_pnl_pips": null,
+        "median_pnl_pips": null,
+        "total_pnl_pips": 0.0,
+        "profit_factor": null,
+        "avg_time_to_fill_min": NaN
+      },
+      "mfe_5m": {
+        "mean": 4.790120967741935,
+        "median": 3.3
+      },
+      "mae_5m": {
+        "mean": 4.729264888337469,
+        "median": 3.4
+      },
+      "net_5m": {
+        "mean": 0.0022952853598014688,
+        "median": -0.1
+      },
+      "mfe_10m": {
+        "mean": 6.936631513647643,
+        "median": 4.8
+      },
+      "mae_10m": {
+        "mean": 6.922177419354838,
+        "median": 4.8
+      },
+      "net_10m": {
+        "mean": -0.06927729528535985,
+        "median": 0.0
+      },
+      "mfe_15m": {
+        "mean": 8.620766129032258,
+        "median": 6.0
+      },
+      "mae_15m": {
+        "mean": 8.728489454094293,
+        "median": 6.1
+      },
+      "net_15m": {
+        "mean": -0.2419199751861042,
+        "median": -0.2
+      },
+      "mfe_30m": {
+        "mean": 12.520362903225807,
+        "median": 8.7
+      },
+      "mae_30m": {
+        "mean": 12.522425558312657,
+        "median": 8.8
+      },
+      "net_30m": {
+        "mean": -0.07183622828784111,
+        "median": -0.05
+      },
+      "mfe_60m": {
+        "mean": 17.354047766749378,
+        "median": 12.5
+      },
+      "mae_60m": {
+        "mean": 17.599534739454096,
+        "median": 12.6
+      },
+      "net_60m": {
+        "mean": -0.24860421836228275,
+        "median": -0.15000000000000002
+      }
+    }
+  },
+  "compression_breakout": {
+    "false_breakout_rate": 0.9221556886227545,
+    "expansion_follow_through_rate": 0.11377245508982035,
+    "retest_rate": 0.9940119760479041,
+    "strategy_market": {
+      "trades": 167,
+      "fill_rate": 1.0,
+      "no_fill_rate": 0.0,
+      "win_rate": 0.437125748502994,
+      "avg_pnl_pips": -0.07604790419161687,
+      "median_pnl_pips": 1.7,
+      "total_pnl_pips": -12.700000000000017,
+      "profit_factor": 0.9804585320818588,
+      "avg_time_to_fill_min": 0.0
+    },
+    "strategy_pullback_limit": {
+      "trades": 150,
+      "fill_rate": 0.8982035928143712,
+      "no_fill_rate": 0.10179640718562874,
+      "win_rate": 0.44,
+      "avg_pnl_pips": 0.015333333333333504,
+      "median_pnl_pips": 1.75,
+      "total_pnl_pips": 2.3000000000000256,
+      "profit_factor": 1.0040223854494579,
+      "avg_time_to_fill_min": 1.7333333333333334
+    },
+    "avg_squeeze_duration_bars": 4.3053892215568865,
+    "squeeze_duration_distribution": {
+      "mean": 4.3053892215568865,
+      "median": 3.0
+    },
+    "breakout_bar_atr_multiple_distribution": {
+      "mean": 1.0080282560971754,
+      "median": 1.0,
+      "p25": 0.721882049629752,
+      "p75": 1.2429883520427965
+    },
+    "false_breakout_rate_by_session": {
+      "london": {
+        "count": 34,
+        "false_breakout_rate": 0.9117647058823529
+      },
+      "london/newyork": {
+        "count": 35,
+        "false_breakout_rate": 0.8
+      },
+      "newyork": {
+        "count": 31,
+        "false_breakout_rate": 0.967741935483871
+      },
+      "tokyo": {
+        "count": 36,
+        "false_breakout_rate": 0.9722222222222222
+      },
+      "tokyo/london": {
+        "count": 31,
+        "false_breakout_rate": 0.967741935483871
+      }
+    },
+    "win_rate_by_squeeze_duration_bucket": {
+      "medium": 0.11764705882352941,
+      "short": 0.47333333333333333
+    }
+  },
+  "session_x_trigger_family": {
+    "london__compression_breakout": {
+      "wake_count": 34,
+      "strategy_a_win_rate": 0.47058823529411764,
+      "avg_mfe_15m_pips": 4.302941176470589,
+      "avg_mae_15m_pips": 5.508823529411765,
+      "avg_strategy_a_pnl_pips": -0.7558823529411766,
+      "false_breakout_rate": 0.9117647058823529
+    },
+    "london__critical_level_reaction": {
+      "wake_count": 4369,
+      "strategy_a_win_rate": 0.4911879148546578,
+      "avg_mfe_15m_pips": 5.881872281986725,
+      "avg_mae_15m_pips": 6.078095674067292,
+      "avg_strategy_a_pnl_pips": -0.16195925841153583,
+      "false_breakout_rate": null
+    },
+    "london/newyork__compression_breakout": {
+      "wake_count": 35,
+      "strategy_a_win_rate": 0.5428571428571428,
+      "avg_mfe_15m_pips": 7.534285714285716,
+      "avg_mae_15m_pips": 5.868571428571428,
+      "avg_strategy_a_pnl_pips": 0.8028571428571429,
+      "false_breakout_rate": 0.8
+    },
+    "london/newyork__critical_level_reaction": {
+      "wake_count": 9154,
+      "strategy_a_win_rate": 0.5521083679265895,
+      "avg_mfe_15m_pips": 8.737480882674241,
+      "avg_mae_15m_pips": 8.686628796154686,
+      "avg_strategy_a_pnl_pips": -0.11260651081494431,
+      "false_breakout_rate": null
+    },
+    "london/newyork__trend_expansion": {
+      "wake_count": 6448,
+      "strategy_a_win_rate": 0.5462158808933002,
+      "avg_mfe_15m_pips": 8.620766129032258,
+      "avg_mae_15m_pips": 8.728489454094293,
+      "avg_strategy_a_pnl_pips": -0.20739764267990077,
+      "false_breakout_rate": null
+    },
+    "newyork__compression_breakout": {
+      "wake_count": 31,
+      "strategy_a_win_rate": 0.3870967741935484,
+      "avg_mfe_15m_pips": 3.4612903225806453,
+      "avg_mae_15m_pips": 4.72258064516129,
+      "avg_strategy_a_pnl_pips": 0.6387096774193547,
+      "false_breakout_rate": 0.967741935483871
+    },
+    "newyork__critical_level_reaction": {
+      "wake_count": 4971,
+      "strategy_a_win_rate": 0.4584590625628646,
+      "avg_mfe_15m_pips": 6.442365721182861,
+      "avg_mae_15m_pips": 6.548782941058137,
+      "avg_strategy_a_pnl_pips": -0.1292295312814323,
+      "false_breakout_rate": null
+    },
+    "tokyo__compression_breakout": {
+      "wake_count": 36,
+      "strategy_a_win_rate": 0.2777777777777778,
+      "avg_mfe_15m_pips": 4.036111111111111,
+      "avg_mae_15m_pips": 4.736111111111111,
+      "avg_strategy_a_pnl_pips": -1.7000000000000004,
+      "false_breakout_rate": 0.9722222222222222
+    },
+    "tokyo__critical_level_reaction": {
+      "wake_count": 12757,
+      "strategy_a_win_rate": 0.5266912283452222,
+      "avg_mfe_15m_pips": 7.022426902876853,
+      "avg_mae_15m_pips": 7.059590812887042,
+      "avg_strategy_a_pnl_pips": -0.09120482872148625,
+      "false_breakout_rate": null
+    },
+    "tokyo/london__compression_breakout": {
+      "wake_count": 31,
+      "strategy_a_win_rate": 0.5161290322580645,
+      "avg_mfe_15m_pips": 4.070967741935484,
+      "avg_mae_15m_pips": 5.474193548387097,
+      "avg_strategy_a_pnl_pips": 0.8483870967741934,
+      "false_breakout_rate": 0.967741935483871
+    },
+    "tokyo/london__critical_level_reaction": {
+      "wake_count": 5064,
+      "strategy_a_win_rate": 0.5392969984202212,
+      "avg_mfe_15m_pips": 7.498479462875198,
+      "avg_mae_15m_pips": 7.431694312796208,
+      "avg_strategy_a_pnl_pips": 0.12762638230647708,
+      "false_breakout_rate": null
+    }
+  },
+  "trigger_family_overlap_and_sequencing": {
+    "compression_breakout_before_trend_expansion_same_side_30m": 19,
+    "compression_breakout_before_critical_level_reaction_opposite_side_30m": 122,
+    "multiple_trigger_families_within_5m": 3005
+  },
+  "worst_wake_analysis": {
+    "worst_by_mae_15m": [
+      {
+        "timestamp_utc": "2023-12-07T17:34:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "support_reclaim:WHOLE_YEN:144.00",
+        "session": "newyork",
+        "price": 144.038,
+        "direction": "buy",
+        "mfe_15m_pips": 2.6,
+        "mae_15m_pips": 241.2,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "WHOLE_YEN:144.00",
+        "trigger_level_price": 144.0
+      },
+      {
+        "timestamp_utc": "2024-07-11T12:32:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "support_reclaim:PDL",
+        "session": "london/newyork",
+        "price": 160.789,
+        "direction": "buy",
+        "mfe_15m_pips": 24.3,
+        "mae_15m_pips": 229.1,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "PDL",
+        "trigger_level_price": 160.74
+      },
+      {
+        "timestamp_utc": "2024-08-02T12:24:00+00:00",
+        "trigger_family": "trend_expansion",
+        "trigger_reason": "adx_trend_expansion:buy",
+        "session": "london/newyork",
+        "price": 149.064,
+        "direction": "buy",
+        "mfe_15m_pips": 1.6,
+        "mae_15m_pips": 195.0,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": NaN,
+        "trigger_level_price": NaN
+      },
+      {
+        "timestamp_utc": "2023-12-07T17:45:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "support_reclaim:HALF_YEN:143.50",
+        "session": "newyork",
+        "price": 143.534,
+        "direction": "buy",
+        "mfe_15m_pips": 5.8,
+        "mae_15m_pips": 190.8,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "HALF_YEN:143.50",
+        "trigger_level_price": 143.5
+      },
+      {
+        "timestamp_utc": "2024-04-29T07:00:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "support_reclaim:TOKYO/LONDON_SESSION_LOW",
+        "session": "tokyo/london",
+        "price": 157.036,
+        "direction": "buy",
+        "mfe_15m_pips": 14.8,
+        "mae_15m_pips": 173.6,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "TOKYO/LONDON_SESSION_LOW",
+        "trigger_level_price": 157.006
+      },
+      {
+        "timestamp_utc": "2024-07-11T12:55:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "support_reclaim:WHOLE_YEN:159.00",
+        "session": "london/newyork",
+        "price": 159.033,
+        "direction": "buy",
+        "mfe_15m_pips": 16.4,
+        "mae_15m_pips": 160.5,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "WHOLE_YEN:159.00",
+        "trigger_level_price": 159.0
+      },
+      {
+        "timestamp_utc": "2023-07-28T03:36:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "support_reclaim:WHOLE_YEN:141.00",
+        "session": "tokyo",
+        "price": 141.014,
+        "direction": "buy",
+        "mfe_15m_pips": -0.1,
+        "mae_15m_pips": 157.0,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "WHOLE_YEN:141.00",
+        "trigger_level_price": 141.0
+      },
+      {
+        "timestamp_utc": "2024-08-07T01:41:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:PDH",
+        "session": "tokyo",
+        "price": 145.944,
+        "direction": "sell",
+        "mfe_15m_pips": 1.6,
+        "mae_15m_pips": 155.4,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "PDH",
+        "trigger_level_price": 145.964
+      },
+      {
+        "timestamp_utc": "2024-05-01T20:00:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "support_reclaim:HALF_YEN:157.50",
+        "session": "newyork",
+        "price": 157.525,
+        "direction": "buy",
+        "mfe_15m_pips": 6.4,
+        "mae_15m_pips": 144.0,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "HALF_YEN:157.50",
+        "trigger_level_price": 157.5
+      },
+      {
+        "timestamp_utc": "2025-04-09T17:57:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:WHOLE_YEN:147.00",
+        "session": "newyork",
+        "price": 146.931,
+        "direction": "sell",
+        "mfe_15m_pips": 0.4,
+        "mae_15m_pips": 135.3,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "WHOLE_YEN:147.00",
+        "trigger_level_price": 147.0
+      },
+      {
+        "timestamp_utc": "2026-01-27T09:43:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "support_reclaim:HALF_YEN:154.50",
+        "session": "london",
+        "price": 154.507,
+        "direction": "buy",
+        "mfe_15m_pips": 4.3,
+        "mae_15m_pips": 133.3,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "HALF_YEN:154.50",
+        "trigger_level_price": 154.5
+      },
+      {
+        "timestamp_utc": "2025-08-01T12:20:00+00:00",
+        "trigger_family": "trend_expansion",
+        "trigger_reason": "adx_trend_expansion:buy",
+        "session": "london/newyork",
+        "price": 150.523,
+        "direction": "buy",
+        "mfe_15m_pips": 7.6,
+        "mae_15m_pips": 130.4,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": NaN,
+        "trigger_level_price": NaN
+      },
+      {
+        "timestamp_utc": "2025-07-16T15:09:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "support_reclaim:LONDON/NY_SESSION_LOW",
+        "session": "london/newyork",
+        "price": 148.272,
+        "direction": "buy",
+        "mfe_15m_pips": 0.2,
+        "mae_15m_pips": 126.0,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "LONDON/NY_SESSION_LOW",
+        "trigger_level_price": 148.231
+      },
+      {
+        "timestamp_utc": "2024-09-18T17:53:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "support_reclaim:WHOLE_YEN:142.00",
+        "session": "newyork",
+        "price": 142.001,
+        "direction": "buy",
+        "mfe_15m_pips": 6.7,
+        "mae_15m_pips": 122.1,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "WHOLE_YEN:142.00",
+        "trigger_level_price": 142.0
+      },
+      {
+        "timestamp_utc": "2024-07-12T12:57:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "support_reclaim:PWL",
+        "session": "london/newyork",
+        "price": 158.746,
+        "direction": "buy",
+        "mfe_15m_pips": 10.0,
+        "mae_15m_pips": 119.6,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "PWL",
+        "trigger_level_price": 158.742
+      },
+      {
+        "timestamp_utc": "2024-05-03T12:22:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "support_reclaim:LONDON/NY_SESSION_LOW",
+        "session": "london/newyork",
+        "price": 153.138,
+        "direction": "buy",
+        "mfe_15m_pips": 10.6,
+        "mae_15m_pips": 114.2,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "LONDON/NY_SESSION_LOW",
+        "trigger_level_price": 153.1
+      },
+      {
+        "timestamp_utc": "2025-08-01T12:18:00+00:00",
+        "trigger_family": "trend_expansion",
+        "trigger_reason": "adx_trend_expansion:buy",
+        "session": "london/newyork",
+        "price": 150.475,
+        "direction": "buy",
+        "mfe_15m_pips": 12.4,
+        "mae_15m_pips": 111.1,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": NaN,
+        "trigger_level_price": NaN
+      },
+      {
+        "timestamp_utc": "2024-05-01T20:15:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "support_reclaim:NY_SESSION_LOW",
+        "session": "newyork",
+        "price": 156.104,
+        "direction": "buy",
+        "mfe_15m_pips": 66.6,
+        "mae_15m_pips": 110.6,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "NY_SESSION_LOW",
+        "trigger_level_price": 156.085
+      },
+      {
+        "timestamp_utc": "2025-04-11T13:31:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:HALF_YEN:142.50",
+        "session": "london/newyork",
+        "price": 142.484,
+        "direction": "sell",
+        "mfe_15m_pips": 13.6,
+        "mae_15m_pips": 109.8,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "HALF_YEN:142.50",
+        "trigger_level_price": 142.5
+      },
+      {
+        "timestamp_utc": "2024-02-13T13:28:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:PDH",
+        "session": "london/newyork",
+        "price": 149.314,
+        "direction": "sell",
+        "mfe_15m_pips": 5.2,
+        "mae_15m_pips": 106.5,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "PDH",
+        "trigger_level_price": 149.316
+      }
+    ],
+    "best_by_mfe_15m": [
+      {
+        "timestamp_utc": "2023-10-03T14:08:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:LONDON/NY_SESSION_HIGH",
+        "session": "london/newyork",
+        "price": 150.126,
+        "direction": "sell",
+        "mfe_15m_pips": 279.0,
+        "mae_15m_pips": 1.1,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "LONDON/NY_SESSION_HIGH",
+        "trigger_level_price": 150.16
+      },
+      {
+        "timestamp_utc": "2024-07-11T12:36:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:WHOLE_YEN:161.00",
+        "session": "london/newyork",
+        "price": 160.949,
+        "direction": "sell",
+        "mfe_15m_pips": 258.3,
+        "mae_15m_pips": 5.7,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "WHOLE_YEN:161.00",
+        "trigger_level_price": 161.0
+      },
+      {
+        "timestamp_utc": "2024-07-11T12:38:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:LOCAL_RANGE_LOW",
+        "session": "london/newyork",
+        "price": 160.838,
+        "direction": "sell",
+        "mfe_15m_pips": 247.2,
+        "mae_15m_pips": 16.8,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "LOCAL_RANGE_LOW",
+        "trigger_level_price": 160.85
+      },
+      {
+        "timestamp_utc": "2023-12-07T17:37:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:WHOLE_YEN:144.00",
+        "session": "newyork",
+        "price": 143.984,
+        "direction": "sell",
+        "mfe_15m_pips": 235.8,
+        "mae_15m_pips": 0.8,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "WHOLE_YEN:144.00",
+        "trigger_level_price": 144.0
+      },
+      {
+        "timestamp_utc": "2024-08-07T01:33:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "support_reclaim:LOCAL_RANGE_HIGH",
+        "session": "tokyo",
+        "price": 145.274,
+        "direction": "buy",
+        "mfe_15m_pips": 222.4,
+        "mae_15m_pips": 2.8,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "LOCAL_RANGE_HIGH",
+        "trigger_level_price": 145.259
+      },
+      {
+        "timestamp_utc": "2024-04-29T07:03:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:TOKYO/LONDON_SESSION_HIGH",
+        "session": "tokyo/london",
+        "price": 157.134,
+        "direction": "sell",
+        "mfe_15m_pips": 183.4,
+        "mae_15m_pips": 5.0,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "TOKYO/LONDON_SESSION_HIGH",
+        "trigger_level_price": 157.148
+      },
+      {
+        "timestamp_utc": "2024-07-11T23:16:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:LOCAL_RANGE_HIGH",
+        "session": "tokyo",
+        "price": 159.444,
+        "direction": "sell",
+        "mfe_15m_pips": 169.6,
+        "mae_15m_pips": 0.6,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "LOCAL_RANGE_HIGH",
+        "trigger_level_price": 159.45
+      },
+      {
+        "timestamp_utc": "2024-05-01T20:20:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:WHOLE_YEN:156.00",
+        "session": "newyork",
+        "price": 155.988,
+        "direction": "sell",
+        "mfe_15m_pips": 164.8,
+        "mae_15m_pips": 29.4,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "WHOLE_YEN:156.00",
+        "trigger_level_price": 156.0
+      },
+      {
+        "timestamp_utc": "2025-04-09T17:20:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "support_reclaim:TODAY_LOW",
+        "session": "newyork",
+        "price": 145.637,
+        "direction": "buy",
+        "mfe_15m_pips": 161.8,
+        "mae_15m_pips": 0.1,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "TODAY_LOW",
+        "trigger_level_price": 145.6
+      },
+      {
+        "timestamp_utc": "2026-02-11T13:34:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:LOCAL_RANGE_HIGH",
+        "session": "london/newyork",
+        "price": 154.464,
+        "direction": "sell",
+        "mfe_15m_pips": 161.1,
+        "mae_15m_pips": 3.9,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "LOCAL_RANGE_HIGH",
+        "trigger_level_price": 154.478
+      },
+      {
+        "timestamp_utc": "2024-04-29T01:34:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "support_reclaim:LOCAL_RANGE_HIGH",
+        "session": "tokyo",
+        "price": 158.652,
+        "direction": "buy",
+        "mfe_15m_pips": 158.1,
+        "mae_15m_pips": 1.0,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "LOCAL_RANGE_HIGH",
+        "trigger_level_price": 158.617
+      },
+      {
+        "timestamp_utc": "2024-05-01T20:25:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:HALF_YEN:155.50",
+        "session": "newyork",
+        "price": 155.462,
+        "direction": "sell",
+        "mfe_15m_pips": 157.7,
+        "mae_15m_pips": 31.8,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "HALF_YEN:155.50",
+        "trigger_level_price": 155.5
+      },
+      {
+        "timestamp_utc": "2024-05-01T20:35:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:HALF_YEN:154.50",
+        "session": "newyork",
+        "price": 154.494,
+        "direction": "sell",
+        "mfe_15m_pips": 149.2,
+        "mae_15m_pips": 40.9,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "HALF_YEN:154.50",
+        "trigger_level_price": 154.5
+      },
+      {
+        "timestamp_utc": "2024-08-07T01:40:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "support_reclaim:WHOLE_YEN:146.00",
+        "session": "tokyo",
+        "price": 146.018,
+        "direction": "buy",
+        "mfe_15m_pips": 148.0,
+        "mae_15m_pips": 11.5,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "WHOLE_YEN:146.00",
+        "trigger_level_price": 146.0
+      },
+      {
+        "timestamp_utc": "2026-01-27T09:41:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:HALF_YEN:154.50",
+        "session": "london",
+        "price": 154.493,
+        "direction": "sell",
+        "mfe_15m_pips": 131.9,
+        "mae_15m_pips": 5.7,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "HALF_YEN:154.50",
+        "trigger_level_price": 154.5
+      },
+      {
+        "timestamp_utc": "2025-07-16T15:04:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:LOCAL_RANGE_LOW",
+        "session": "london/newyork",
+        "price": 148.296,
+        "direction": "sell",
+        "mfe_15m_pips": 128.4,
+        "mae_15m_pips": 3.4,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "LOCAL_RANGE_LOW",
+        "trigger_level_price": 148.302
+      },
+      {
+        "timestamp_utc": "2024-08-02T12:15:00+00:00",
+        "trigger_family": "trend_expansion",
+        "trigger_reason": "adx_trend_expansion:sell",
+        "session": "london/newyork",
+        "price": 148.902,
+        "direction": "sell",
+        "mfe_15m_pips": 128.0,
+        "mae_15m_pips": 17.8,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": NaN,
+        "trigger_level_price": NaN
+      },
+      {
+        "timestamp_utc": "2024-05-01T20:13:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:HALF_YEN:156.50",
+        "session": "newyork",
+        "price": 156.43,
+        "direction": "sell",
+        "mfe_15m_pips": 127.0,
+        "mae_15m_pips": 34.0,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "HALF_YEN:156.50",
+        "trigger_level_price": 156.5
+      },
+      {
+        "timestamp_utc": "2024-07-11T12:58:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:PWL",
+        "session": "london/newyork",
+        "price": 158.694,
+        "direction": "sell",
+        "mfe_15m_pips": 126.6,
+        "mae_15m_pips": 10.2,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "PWL",
+        "trigger_level_price": 158.742
+      },
+      {
+        "timestamp_utc": "2024-09-18T17:56:00+00:00",
+        "trigger_family": "critical_level_reaction",
+        "trigger_reason": "resistance_reject:NY_SESSION_HIGH",
+        "session": "newyork",
+        "price": 142.024,
+        "direction": "sell",
+        "mfe_15m_pips": 124.4,
+        "mae_15m_pips": 3.7,
+        "outcome_60m": "win",
+        "strategy_a_pnl_pips": 8.0,
+        "trigger_level_label": "NY_SESSION_HIGH",
+        "trigger_level_price": 142.068
+      }
+    ],
+    "worst_compression_breakouts": [
+      {
+        "timestamp_utc": "2024-09-24T13:53:00+00:00",
+        "trigger_family": "compression_breakout",
+        "trigger_reason": "compression_press:LONDON/NY_SESSION_HIGH",
+        "session": "london/newyork",
+        "price": 144.2,
+        "direction": "buy",
+        "mfe_15m_pips": 1.0,
+        "mae_15m_pips": 61.4,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "LONDON/NY_SESSION_HIGH",
+        "trigger_level_price": 144.202,
+        "squeeze_duration_bars": 2.0,
+        "bollinger_bandwidth": 0.0011126216457664376,
+        "breakout_bar_atr_multiple": 1.2237037037036311,
+        "false_breakout": true
+      },
+      {
+        "timestamp_utc": "2024-12-11T10:10:00+00:00",
+        "trigger_family": "compression_breakout",
+        "trigger_reason": "compression_press:LONDON_SESSION_HIGH",
+        "session": "london",
+        "price": 152.768,
+        "direction": "buy",
+        "mfe_15m_pips": 0.8,
+        "mae_15m_pips": 22.8,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "LONDON_SESSION_HIGH",
+        "trigger_level_price": 152.8,
+        "squeeze_duration_bars": 7.0,
+        "bollinger_bandwidth": 0.0015514728285469016,
+        "breakout_bar_atr_multiple": 1.3163913595935532,
+        "false_breakout": true
+      },
+      {
+        "timestamp_utc": "2024-12-11T10:09:00+00:00",
+        "trigger_family": "compression_breakout",
+        "trigger_reason": "compression_press:LONDON_SESSION_HIGH",
+        "session": "london",
+        "price": 152.738,
+        "direction": "buy",
+        "mfe_15m_pips": 6.2,
+        "mae_15m_pips": 19.8,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "LONDON_SESSION_HIGH",
+        "trigger_level_price": 152.746,
+        "squeeze_duration_bars": 6.0,
+        "bollinger_bandwidth": 0.001698081178440327,
+        "breakout_bar_atr_multiple": 0.7433628318584115,
+        "false_breakout": true
+      },
+      {
+        "timestamp_utc": "2023-08-25T14:58:00+00:00",
+        "trigger_family": "compression_breakout",
+        "trigger_reason": "compression_press:LONDON/NY_SESSION_HIGH",
+        "session": "london/newyork",
+        "price": 146.608,
+        "direction": "buy",
+        "mfe_15m_pips": 0.0,
+        "mae_15m_pips": 19.5,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "LONDON/NY_SESSION_HIGH",
+        "trigger_level_price": 146.636,
+        "squeeze_duration_bars": 3.0,
+        "bollinger_bandwidth": 0.0017115016732732525,
+        "breakout_bar_atr_multiple": 0.6170212765962308,
+        "false_breakout": true
+      },
+      {
+        "timestamp_utc": "2025-04-18T00:51:00+00:00",
+        "trigger_family": "compression_breakout",
+        "trigger_reason": "compression_press:TOKYO_SESSION_LOW",
+        "session": "tokyo",
+        "price": 142.249,
+        "direction": "sell",
+        "mfe_15m_pips": 0.0,
+        "mae_15m_pips": 17.5,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "TOKYO_SESSION_LOW",
+        "trigger_level_price": 142.216,
+        "squeeze_duration_bars": 1.0,
+        "bollinger_bandwidth": 0.00047459717001915365,
+        "breakout_bar_atr_multiple": 2.3247232472319412,
+        "false_breakout": true
+      },
+      {
+        "timestamp_utc": "2025-08-01T01:58:00+00:00",
+        "trigger_family": "compression_breakout",
+        "trigger_reason": "compression_press:TOKYO_SESSION_HIGH",
+        "session": "tokyo",
+        "price": 150.906,
+        "direction": "buy",
+        "mfe_15m_pips": 1.2,
+        "mae_15m_pips": 15.2,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "TOKYO_SESSION_HIGH",
+        "trigger_level_price": 150.918,
+        "squeeze_duration_bars": 6.0,
+        "bollinger_bandwidth": 0.0009337130400576499,
+        "breakout_bar_atr_multiple": 0.7599164926934854,
+        "false_breakout": true
+      },
+      {
+        "timestamp_utc": "2023-12-04T16:03:00+00:00",
+        "trigger_family": "compression_breakout",
+        "trigger_reason": "compression_press:PWL",
+        "session": "newyork",
+        "price": 147.144,
+        "direction": "buy",
+        "mfe_15m_pips": 3.8,
+        "mae_15m_pips": 15.0,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "PWL",
+        "trigger_level_price": 147.152,
+        "squeeze_duration_bars": 15.0,
+        "bollinger_bandwidth": 0.0006988589180784837,
+        "breakout_bar_atr_multiple": 1.0835913312695233,
+        "false_breakout": true
+      },
+      {
+        "timestamp_utc": "2024-12-03T09:19:00+00:00",
+        "trigger_family": "compression_breakout",
+        "trigger_reason": "compression_press:LONDON_SESSION_LOW",
+        "session": "london",
+        "price": 149.812,
+        "direction": "sell",
+        "mfe_15m_pips": 2.2,
+        "mae_15m_pips": 14.6,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "LONDON_SESSION_LOW",
+        "trigger_level_price": 149.776,
+        "squeeze_duration_bars": 6.0,
+        "bollinger_bandwidth": 0.00046177362474821514,
+        "breakout_bar_atr_multiple": 1.2280701754382288,
+        "false_breakout": true
+      },
+      {
+        "timestamp_utc": "2025-03-14T15:17:00+00:00",
+        "trigger_family": "compression_breakout",
+        "trigger_reason": "compression_press:TODAY_HIGH",
+        "session": "london/newyork",
+        "price": 148.395,
+        "direction": "sell",
+        "mfe_15m_pips": 2.4,
+        "mae_15m_pips": 14.3,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "TODAY_HIGH",
+        "trigger_level_price": 148.374,
+        "squeeze_duration_bars": 1.0,
+        "bollinger_bandwidth": 0.0013361434555657868,
+        "breakout_bar_atr_multiple": 1.0542907180387937,
+        "false_breakout": true
+      },
+      {
+        "timestamp_utc": "2025-02-13T16:25:00+00:00",
+        "trigger_family": "compression_breakout",
+        "trigger_reason": "compression_press:NY_SESSION_LOW",
+        "session": "newyork",
+        "price": 152.994,
+        "direction": "sell",
+        "mfe_15m_pips": 7.0,
+        "mae_15m_pips": 13.4,
+        "outcome_60m": "loss",
+        "strategy_a_pnl_pips": -12.0,
+        "trigger_level_label": "NY_SESSION_LOW",
+        "trigger_level_price": 152.986,
+        "squeeze_duration_bars": 3.0,
+        "bollinger_bandwidth": 0.0007500116669339823,
+        "breakout_bar_atr_multiple": 1.192982456139976,
+        "false_breakout": true
+      }
+    ]
+  },
+  "time_distribution": {
+    "wakes_by_hour_utc": {
+      "0": 2867,
+      "1": 1951,
+      "2": 1401,
+      "3": 1182,
+      "4": 1185,
+      "5": 1289,
+      "6": 1615,
+      "7": 3157,
+      "8": 1938,
+      "9": 1783,
+      "10": 1295,
+      "11": 1325,
+      "12": 4668,
+      "13": 3783,
+      "14": 3744,
+      "15": 3442,
+      "16": 1653,
+      "17": 1083,
+      "18": 963,
+      "19": 783,
+      "20": 520,
+      "23": 1303
+    },
+    "wakes_by_day_of_week": {
+      "Friday": 8318,
+      "Monday": 8376,
+      "Sunday": 355,
+      "Thursday": 8655,
+      "Tuesday": 8799,
+      "Wednesday": 8427
+    },
+    "wakes_by_hour_utc_by_trigger_family": {
+      "compression_breakout": {
+        "0": 3,
+        "1": 13,
+        "2": 9,
+        "3": 6,
+        "4": 3,
+        "5": 1,
+        "7": 15,
+        "8": 16,
+        "9": 16,
+        "10": 12,
+        "11": 6,
+        "12": 2,
+        "13": 12,
+        "14": 9,
+        "15": 12,
+        "16": 13,
+        "17": 9,
+        "18": 2,
+        "19": 3,
+        "20": 4,
+        "23": 1
+      },
+      "critical_level_reaction": {
+        "0": 2864,
+        "1": 1938,
+        "2": 1392,
+        "3": 1176,
+        "4": 1182,
+        "5": 1288,
+        "6": 1615,
+        "7": 3142,
+        "8": 1922,
+        "9": 1767,
+        "10": 1283,
+        "11": 1319,
+        "12": 3076,
+        "13": 2195,
+        "14": 2075,
+        "15": 1808,
+        "16": 1640,
+        "17": 1074,
+        "18": 961,
+        "19": 780,
+        "20": 516,
+        "23": 1302
+      },
+      "trend_expansion": {
+        "12": 1590,
+        "13": 1576,
+        "14": 1660,
+        "15": 1622
+      }
+    },
+    "wakes_by_day_of_week_by_trigger_family": {
+      "compression_breakout": {
+        "Friday": 35,
+        "Monday": 28,
+        "Thursday": 25,
+        "Tuesday": 45,
+        "Wednesday": 34
+      },
+      "critical_level_reaction": {
+        "Friday": 6960,
+        "Monday": 7121,
+        "Sunday": 355,
+        "Thursday": 7317,
+        "Tuesday": 7483,
+        "Wednesday": 7079
+      },
+      "trend_expansion": {
+        "Friday": 1323,
+        "Monday": 1227,
+        "Thursday": 1313,
+        "Tuesday": 1271,
+        "Wednesday": 1314
+      }
+    }
+  }
+}

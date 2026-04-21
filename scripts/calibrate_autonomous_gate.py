@@ -3,9 +3,9 @@
 Autonomous Fillmore gate calibration harness.
 
 This is a research tool, not a live-trading component. It replays the current
-autonomous gate logic over historical USDJPY M1 data, simulates simple
-trend-follow outcomes from each candidate bar, and sweeps threshold grids to
-identify gate settings that look stronger than the current defaults.
+autonomous hybrid opportunity gate over historical USDJPY M1 data, simulates
+simple first-touch outcomes from each candidate bar, and sweeps trigger-family
+threshold grids to identify settings that look stronger than the current defaults.
 
 Why this exists:
   - Autonomous Fillmore's gate is currently hand-tuned.
@@ -13,19 +13,21 @@ Why this exists:
     research convention under research_out/.
   - Before changing live gate thresholds, we want cross-dataset evidence.
 
-Scope of this first pass:
+Scope of this hybrid pass:
   - Session-aware spread scaling
   - Minimum M5 ATR floor
-  - Structure proximity threshold
-  - Pullback-zone minimum width
-  - Pullback lookback bars
+  - Critical-level proximity threshold
+  - Trend-expansion ADX floor
+  - Micro-confirmation window
+  - Extension cap so expansion triggers do not wake after the move is spent
 
 It intentionally does NOT attempt to emulate the full LLM or exit manager.
 Instead it uses a first-touch forward outcome proxy:
   - gate picks a direction from the same trend signals it already uses
   - bar "wins" if +target_pips is hit before -stop_pips inside horizon bars
 
-That makes this harness fast, repeatable, and useful for threshold selection.
+That makes this harness fast, repeatable, and useful for USDJPY-specific
+threshold selection without pretending to simulate the full LLM.
 """
 from __future__ import annotations
 
@@ -204,6 +206,36 @@ def _atr_pips_df(df: pd.DataFrame, period: int, pip_size: float = PIP_SIZE) -> p
     return atr / pip_size
 
 
+def _adx_df(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    highs = df["high"].astype(float)
+    lows = df["low"].astype(float)
+    closes = df["close"].astype(float)
+    up_move = highs.diff()
+    down_move = -lows.diff()
+    plus_dm = pd.Series(
+        np.where((up_move > down_move) & (up_move > 0), up_move, 0.0),
+        index=df.index,
+    )
+    minus_dm = pd.Series(
+        np.where((down_move > up_move) & (down_move > 0), down_move, 0.0),
+        index=df.index,
+    )
+    prev_close = closes.shift(1)
+    tr = pd.concat(
+        [
+            highs - lows,
+            (highs - prev_close).abs(),
+            (lows - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    atr = tr.rolling(period).mean()
+    plus_di = 100.0 * (plus_dm.rolling(period).mean() / atr.replace(0, np.nan))
+    minus_di = 100.0 * (minus_dm.rolling(period).mean() / atr.replace(0, np.nan))
+    dx = (100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)).fillna(0.0)
+    return dx.rolling(period).mean()
+
+
 def _merge_asof_feature(base: pd.DataFrame, source: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     return pd.merge_asof(
         base.sort_values("time"),
@@ -247,8 +279,23 @@ def build_feature_frame(df: pd.DataFrame) -> pd.DataFrame:
     work = _merge_asof_feature(work, m3, ["m3_trend"])
 
     m5 = _resample_ohlc(work, "5min")
+    m5["m5_e9"] = _ema(m5["close"].astype(float), 9)
+    m5["m5_e21"] = _ema(m5["close"].astype(float), 21)
     m5["m5_atr_pips"] = _atr_pips_df(m5, 14)
-    work = _merge_asof_feature(work, m5, ["m5_atr_pips"])
+    m5["m5_adx"] = _adx_df(m5, 14)
+    m5["m5_stack"] = np.select(
+        [
+            (m5["close"] > m5["m5_e9"]) & (m5["m5_e9"] > m5["m5_e21"]),
+            (m5["close"] < m5["m5_e9"]) & (m5["m5_e9"] < m5["m5_e21"]),
+        ],
+        ["bull", "bear"],
+        default="none",
+    )
+    work = _merge_asof_feature(work, m5, ["m5_atr_pips", "m5_adx", "m5_e9", "m5_stack"])
+
+    m15 = _resample_ohlc(work, "15min")
+    m15["m15_adx"] = _adx_df(m15, 14)
+    work = _merge_asof_feature(work, m15, ["m15_adx"])
 
     work["day"] = work["time"].dt.floor("D")
     work["today_high"] = work.groupby("day")["high"].cummax()
@@ -258,8 +305,18 @@ def build_feature_frame(df: pd.DataFrame) -> pd.DataFrame:
     daily["prev_day_low"] = daily["day_low"].shift(1)
     work = work.merge(daily[["day", "prev_day_high", "prev_day_low"]], on="day", how="left")
 
+    week = work["time"].dt.to_period("W").dt.start_time.dt.tz_localize("UTC")
+    work["week"] = week
+    weekly = work.groupby("week").agg(week_high=("high", "max"), week_low=("low", "min")).reset_index()
+    weekly["prev_week_high"] = weekly["week_high"].shift(1)
+    weekly["prev_week_low"] = weekly["week_low"].shift(1)
+    work = work.merge(weekly[["week", "prev_week_high", "prev_week_low"]], on="week", how="left")
+
     round_floor = np.floor(work["close"] * 2.0) / 2.0
     round_ceil = np.ceil(work["close"] * 2.0) / 2.0
+    whole_floor = np.floor(work["close"])
+    whole_ceil = np.ceil(work["close"])
+    whole_dist_pips = np.minimum((work["close"] - whole_floor).abs(), (whole_ceil - work["close"]).abs()) / PIP_SIZE
     round_dist_pips = np.minimum((work["close"] - round_floor).abs(), (round_ceil - work["close"]).abs()) / PIP_SIZE
     structure_candidates = pd.concat(
         [
@@ -267,6 +324,9 @@ def build_feature_frame(df: pd.DataFrame) -> pd.DataFrame:
             ((work["today_low"] - work["close"]).abs() / PIP_SIZE),
             ((work["prev_day_high"] - work["close"]).abs() / PIP_SIZE),
             ((work["prev_day_low"] - work["close"]).abs() / PIP_SIZE),
+            ((work["prev_week_high"] - work["close"]).abs() / PIP_SIZE),
+            ((work["prev_week_low"] - work["close"]).abs() / PIP_SIZE),
+            whole_dist_pips,
             round_dist_pips,
         ],
         axis=1,
@@ -279,6 +339,10 @@ def build_feature_frame(df: pd.DataFrame) -> pd.DataFrame:
         ],
         axis=1,
     ).min(axis=1, skipna=True)
+    work["m5_extension_pips"] = ((work["close"] - work["m5_e9"]).abs() / PIP_SIZE).fillna(999.0)
+    work["m5_atr_ratio"] = (
+        work["m5_atr_pips"] / work["m5_atr_pips"].rolling(24, min_periods=6).mean().replace(0, np.nan)
+    ).fillna(1.0)
     return work
 
 
@@ -457,9 +521,10 @@ def build_pass_mask(
     mode: str,
     spread_scale: float,
     min_m5_atr_pips: float,
-    level_proximity_pips: float,
-    pullback_zone_min_pips: float,
-    pullback_lookback_bars: int,
+    critical_level_max_pips: float,
+    trend_adx_min: float,
+    micro_confirmation_bars: int,
+    extension_atr_mult: float,
 ) -> pd.Series:
     thresholds = autonomous_fillmore.GATE_THRESHOLDS[mode]
     session_cap = frame["session_label"].map(
@@ -481,17 +546,43 @@ def build_pass_mask(
 
     if float(min_m5_atr_pips) > 0:
         mask &= frame["m5_atr_pips"].fillna(float(min_m5_atr_pips)) >= float(min_m5_atr_pips)
-    if float(level_proximity_pips) > 0:
-        mask &= frame["nearest_structure_pips"].fillna(9999.0) <= float(level_proximity_pips)
-    if float(thresholds.get("require_daily_hl_buffer_pips") or 0.0) > 0:
-        mask &= frame["near_daily_hl_pips"].fillna(9999.0) > float(thresholds["require_daily_hl_buffer_pips"])
-    if thresholds.get("require_pullback_or_zone", False):
-        pullback = compute_pullback_flag(
-            frame,
-            lookback_bars=pullback_lookback_bars,
-            zone_min_pips=pullback_zone_min_pips,
-        )
-        mask &= pullback
+    lookback = max(1, int(micro_confirmation_bars))
+    recent_low = frame["low"].rolling(lookback, min_periods=1).min()
+    recent_high = frame["high"].rolling(lookback, min_periods=1).max()
+    touch_width = 0.8 * PIP_SIZE
+    critical_pass = (
+        (frame["direction"] > 0)
+        & (frame["nearest_structure_pips"].fillna(9999.0) <= float(critical_level_max_pips))
+        & (recent_low <= (frame["close"] + touch_width))
+        & (frame["close"] >= frame["close"].shift(1))
+    ) | (
+        (frame["direction"] < 0)
+        & (frame["nearest_structure_pips"].fillna(9999.0) <= float(critical_level_max_pips))
+        & (recent_high >= (frame["close"] - touch_width))
+        & (frame["close"] <= frame["close"].shift(1))
+    )
+
+    adx = frame["m5_adx"].fillna(frame["m15_adx"]).fillna(0.0)
+    extension_cap = frame["m5_atr_pips"].fillna(0.0) * float(extension_atr_mult)
+    trend_alignment = pd.Series(True, index=frame.index)
+    if thresholds.get("require_m3_trend", False):
+        trend_alignment &= frame["m3_trend"].isin(["bull", "bear"])
+    if thresholds.get("require_m1_stack", False):
+        trend_alignment &= frame["m1_stack"].isin(["bull", "bear"])
+    if thresholds.get("reject_m3_m1_mismatch_if_both_present", False):
+        both = frame["m3_trend"].isin(["bull", "bear"]) & frame["m1_stack"].isin(["bull", "bear"])
+        trend_alignment &= ~(both & (frame["m3_trend"] != frame["m1_stack"]))
+    trend_pass = (
+        trend_alignment
+        & frame["direction"].isin([-1, 1])
+        & (adx >= float(trend_adx_min))
+        & (frame["m5_atr_pips"].fillna(0.0) >= float(min_m5_atr_pips))
+        & (frame["m5_atr_ratio"].fillna(0.0) >= 1.0)
+        & (frame["m5_extension_pips"].fillna(9999.0) <= extension_cap.replace(0, np.nan).fillna(9999.0))
+        & frame["m5_stack"].replace("none", np.nan).fillna(frame["m1_stack"]).isin(["bull", "bear"])
+    )
+    mask &= (critical_pass | trend_pass)
+    frame["trigger_family"] = np.where(critical_pass, "critical_level_reaction", np.where(trend_pass, "trend_expansion", "none"))
     return mask.fillna(False)
 
 
@@ -756,52 +847,53 @@ def evaluate_mode_on_dataset(
     mode: str,
     spread_scales: list[float],
     atr_floors: list[float],
-    level_thresholds: list[float],
-    pullback_zone_mins: list[float],
-    pullback_lookbacks: list[int],
+    critical_level_thresholds: list[float],
+    trend_adx_thresholds: list[float],
+    micro_confirmation_windows: list[int],
+    extension_atr_multipliers: list[float],
 ) -> dict[str, Any]:
     thresholds = autonomous_fillmore.GATE_THRESHOLDS[mode]
     base = {
         "spread_scale": 1.0,
         "min_m5_atr_pips": float(thresholds.get("require_min_m5_atr_pips") or 0.0),
-        "level_proximity_pips": float(thresholds.get("require_level_proximity_pips") or 0.0),
-        "pullback_zone_min_pips": 1.5,
-        "pullback_lookback_bars": 3,
+        "critical_level_max_pips": float(thresholds.get("critical_level_max_pips") or 0.0),
+        "trend_adx_min": float(thresholds.get("trend_adx_min") or 0.0),
+        "micro_confirmation_bars": int(thresholds.get("critical_micro_window_bars") or 3),
+        "extension_atr_mult": float(thresholds.get("trend_extension_atr_mult") or 1.0),
     }
     baseline_mask = build_pass_mask(frame, mode=mode, **base)
     baseline = summarize_mask(frame, baseline_mask)
     candidates: list[dict[str, Any]] = []
 
-    zone_grid = pullback_zone_mins if thresholds.get("require_pullback_or_zone", False) else [base["pullback_zone_min_pips"]]
-    lookback_grid = pullback_lookbacks if thresholds.get("require_pullback_or_zone", False) else [base["pullback_lookback_bars"]]
-
     for spread_scale in spread_scales:
         for atr_floor in atr_floors:
-            for prox in level_thresholds:
-                for zone_min in zone_grid:
-                    for lookback in lookback_grid:
-                        params = {
-                            "spread_scale": float(spread_scale),
-                            "min_m5_atr_pips": float(atr_floor),
-                            "level_proximity_pips": float(prox),
-                            "pullback_zone_min_pips": float(zone_min),
-                            "pullback_lookback_bars": int(lookback),
-                        }
-                        mask = build_pass_mask(frame, mode=mode, **params)
-                        summary = summarize_mask(frame, mask)
-                        candidates.append(
-                            {
-                                "params": params,
-                                "summary": asdict(summary),
-                                "delta_net_pips": round(summary.net_pips - baseline.net_pips, 2),
-                                "delta_profit_factor": round((summary.profit_factor or 0.0) - (baseline.profit_factor or 0.0), 4),
-                                "delta_quality_score": round(summary.avg_quality_score - baseline.avg_quality_score, 4),
-                                "delta_optimal_precision_pct": round(summary.optimal_precision_pct - baseline.optimal_precision_pct, 2),
-                                "delta_optimal_recall_pct": round(summary.optimal_recall_pct - baseline.optimal_recall_pct, 2),
-                                "delta_optimal_f1_pct": round(summary.optimal_f1_pct - baseline.optimal_f1_pct, 2),
-                                "trade_retention_pct": round((summary.pass_count / max(baseline.pass_count, 1)) * 100.0, 2),
+            for critical_level in critical_level_thresholds:
+                for adx_floor in trend_adx_thresholds:
+                    for micro_window in micro_confirmation_windows:
+                        for extension_mult in extension_atr_multipliers:
+                            params = {
+                                "spread_scale": float(spread_scale),
+                                "min_m5_atr_pips": float(atr_floor),
+                                "critical_level_max_pips": float(critical_level),
+                                "trend_adx_min": float(adx_floor),
+                                "micro_confirmation_bars": int(micro_window),
+                                "extension_atr_mult": float(extension_mult),
                             }
-                        )
+                            mask = build_pass_mask(frame, mode=mode, **params)
+                            summary = summarize_mask(frame, mask)
+                            candidates.append(
+                                {
+                                    "params": params,
+                                    "summary": asdict(summary),
+                                    "delta_net_pips": round(summary.net_pips - baseline.net_pips, 2),
+                                    "delta_profit_factor": round((summary.profit_factor or 0.0) - (baseline.profit_factor or 0.0), 4),
+                                    "delta_quality_score": round(summary.avg_quality_score - baseline.avg_quality_score, 4),
+                                    "delta_optimal_precision_pct": round(summary.optimal_precision_pct - baseline.optimal_precision_pct, 2),
+                                    "delta_optimal_recall_pct": round(summary.optimal_recall_pct - baseline.optimal_recall_pct, 2),
+                                    "delta_optimal_f1_pct": round(summary.optimal_f1_pct - baseline.optimal_f1_pct, 2),
+                                    "trade_retention_pct": round((summary.pass_count / max(baseline.pass_count, 1)) * 100.0, 2),
+                                }
+                            )
 
     return {
         "baseline_params": base,
@@ -1029,9 +1121,10 @@ def build_session_calibration(
     optimal_quantile: float,
     spread_scales: list[float],
     atr_floors: list[float],
-    level_thresholds: list[float],
-    pullback_zone_mins: list[float],
-    pullback_lookbacks: list[int],
+    critical_level_thresholds: list[float],
+    trend_adx_thresholds: list[float],
+    micro_confirmation_windows: list[int],
+    extension_atr_multipliers: list[float],
 ) -> dict[str, Any]:
     session_payload: dict[str, Any] = {}
     for session_label in SESSION_CALIBRATION_LABELS:
@@ -1062,18 +1155,20 @@ def build_session_calibration(
                 mode=mode,
                 spread_scales=spread_scales,
                 atr_floors=atr_floors,
-                level_thresholds=level_thresholds,
-                pullback_zone_mins=pullback_zone_mins,
-                pullback_lookbacks=pullback_lookbacks,
+                critical_level_thresholds=critical_level_thresholds,
+                trend_adx_thresholds=trend_adx_thresholds,
+                micro_confirmation_windows=micro_confirmation_windows,
+                extension_atr_multipliers=extension_atr_multipliers,
             )
             test_result = evaluate_mode_on_dataset(
                 test_subset,
                 mode=mode,
                 spread_scales=spread_scales,
                 atr_floors=atr_floors,
-                level_thresholds=level_thresholds,
-                pullback_zone_mins=pullback_zone_mins,
-                pullback_lookbacks=pullback_lookbacks,
+                critical_level_thresholds=critical_level_thresholds,
+                trend_adx_thresholds=trend_adx_thresholds,
+                micro_confirmation_windows=micro_confirmation_windows,
+                extension_atr_multipliers=extension_atr_multipliers,
             )
             label_payload["datasets"][ds_key] = {
                 "train_meta": {
@@ -1108,9 +1203,9 @@ def build_session_calibration(
 
 def build_markdown_report(payload: dict[str, Any]) -> str:
     lines = [
-        "# Autonomous Gate Calibration",
+        "# Autonomous Hybrid Gate Calibration",
         "",
-        "This report calibrates Autonomous Fillmore gate thresholds against historical USDJPY M1 data using a forward first-touch outcome proxy.",
+        "This report calibrates Autonomous Fillmore's USDJPY hybrid opportunity gate against historical M1 data using a forward first-touch outcome proxy.",
         "",
         "## Run Config",
         "",
@@ -1166,9 +1261,10 @@ def build_markdown_report(payload: dict[str, Any]) -> str:
                     f"- score: `{selected['score']}`",
                     f"- spread scale: `{params['spread_scale']}`",
                     f"- min M5 ATR: `{params['min_m5_atr_pips']}`",
-                    f"- structure proximity: `{params['level_proximity_pips']}`",
-                    f"- pullback zone min: `{params['pullback_zone_min_pips']}`",
-                    f"- pullback lookback: `{params['pullback_lookback_bars']}`",
+                    f"- critical level max: `{params['critical_level_max_pips']}`",
+                    f"- trend ADX min: `{params['trend_adx_min']}`",
+                    f"- micro-confirmation bars: `{params['micro_confirmation_bars']}`",
+                    f"- extension cap (ATR multiple): `{params['extension_atr_mult']}`",
                     f"- train delta: quality `{train_row.get('delta_quality_score')}` | precision `{train_row.get('delta_optimal_precision_pct')}%` | recall `{train_row.get('delta_optimal_recall_pct')}%` | f1 `{train_row.get('delta_optimal_f1_pct')}%` | net `{train_row['delta_net_pips']}`p",
                     f"- test delta: quality `{test_row.get('delta_quality_score')}` | precision `{test_row.get('delta_optimal_precision_pct')}%` | recall `{test_row.get('delta_optimal_recall_pct')}%` | f1 `{test_row.get('delta_optimal_f1_pct')}%` | net `{test_row['delta_net_pips']}`p",
                 ]
@@ -1189,9 +1285,10 @@ def build_markdown_report(payload: dict[str, Any]) -> str:
                     f"- score: `{selected['score']}`",
                     f"- spread scale: `{params['spread_scale']}`",
                     f"- min M5 ATR: `{params['min_m5_atr_pips']}`",
-                    f"- structure proximity: `{params['level_proximity_pips']}`",
-                    f"- pullback zone min: `{params['pullback_zone_min_pips']}`",
-                    f"- pullback lookback: `{params['pullback_lookback_bars']}`",
+                    f"- critical level max: `{params['critical_level_max_pips']}`",
+                    f"- trend ADX min: `{params['trend_adx_min']}`",
+                    f"- micro-confirmation bars: `{params['micro_confirmation_bars']}`",
+                    f"- extension cap (ATR multiple): `{params['extension_atr_mult']}`",
                     f"- train delta: quality `{train_row.get('delta_quality_score')}` | precision `{train_row.get('delta_optimal_precision_pct')}%` | recall `{train_row.get('delta_optimal_recall_pct')}%` | net `{train_row['delta_net_pips']}`p",
                     f"- test delta: quality `{test_row.get('delta_quality_score')}` | precision `{test_row.get('delta_optimal_precision_pct')}%` | recall `{test_row.get('delta_optimal_recall_pct')}%` | net `{test_row['delta_net_pips']}`p",
                 ]
@@ -1244,8 +1341,8 @@ def build_markdown_report(payload: dict[str, Any]) -> str:
                     lines.extend(
                         [
                             f"- recommended: spread `{params['spread_scale']}` | m5_atr `{params['min_m5_atr_pips']}` | "
-                            f"structure `{params['level_proximity_pips']}` | pullback `{params['pullback_zone_min_pips']}` | "
-                            f"lookback `{params['pullback_lookback_bars']}`",
+                            f"critical `{params['critical_level_max_pips']}` | adx `{params['trend_adx_min']}` | "
+                            f"micro `{params['micro_confirmation_bars']}` | ext `{params['extension_atr_mult']}`",
                             f"- test delta: quality `{test_row.get('delta_quality_score')}` | precision `{test_row.get('delta_optimal_precision_pct')}%` | "
                             f"recall `{test_row.get('delta_optimal_recall_pct')}%` | net `{test_row.get('delta_net_pips')}`p",
                         ]
@@ -1261,8 +1358,8 @@ def build_markdown_report(payload: dict[str, Any]) -> str:
                     lines.extend(
                         [
                             f"- safe: spread `{safe_params['spread_scale']}` | m5_atr `{safe_params['min_m5_atr_pips']}` | "
-                            f"structure `{safe_params['level_proximity_pips']}` | pullback `{safe_params['pullback_zone_min_pips']}` | "
-                            f"lookback `{safe_params['pullback_lookback_bars']}`",
+                            f"critical `{safe_params['critical_level_max_pips']}` | adx `{safe_params['trend_adx_min']}` | "
+                            f"micro `{safe_params['micro_confirmation_bars']}` | ext `{safe_params['extension_atr_mult']}`",
                             f"- safe test delta: quality `{safe_test.get('delta_quality_score')}` | precision `{safe_test.get('delta_optimal_precision_pct')}%` | "
                             f"recall `{safe_test.get('delta_optimal_recall_pct')}%` | net `{safe_test.get('delta_net_pips')}`p",
                         ]
@@ -1276,8 +1373,8 @@ def build_markdown_report(payload: dict[str, Any]) -> str:
             params = cand["params"]
             lines.append(
                 f"{idx}. score `{cand['score']}` | spread_scale `{params['spread_scale']}` | "
-                f"m5_atr `{params['min_m5_atr_pips']}` | structure `{params['level_proximity_pips']}` | "
-                f"pullback_min `{params['pullback_zone_min_pips']}` | lookback `{params['pullback_lookback_bars']}`"
+                f"m5_atr `{params['min_m5_atr_pips']}` | critical `{params['critical_level_max_pips']}` | "
+                f"adx `{params['trend_adx_min']}` | micro `{params['micro_confirmation_bars']}` | ext `{params['extension_atr_mult']}`"
             )
             for ds_key, ds_row in cand["datasets"].items():
                 lines.append(
@@ -1301,9 +1398,10 @@ def main() -> int:
 
     spread_scales = [0.85, 1.0, 1.15, 1.3]
     atr_floors = [2.5, 3.0, 3.5, 4.0]
-    level_thresholds = [5.0, 8.0, 10.0, 12.0]
-    pullback_zone_mins = [1.5, 2.0, 2.5]
-    pullback_lookbacks = [1, 2, 3]
+    critical_level_thresholds = [4.0, 5.0, 6.0, 8.0]
+    trend_adx_thresholds = [20.0, 22.0, 24.0, 26.0]
+    micro_confirmation_windows = [2, 3, 4]
+    extension_atr_multipliers = [0.8, 1.0, 1.2, 1.4]
 
     payload: dict[str, Any] = {
         "datasets": [str(p) for p in dataset_paths],
@@ -1317,9 +1415,10 @@ def main() -> int:
             "assumed_spread_pips": args.assume_spread_pips,
             "spread_scales": spread_scales,
             "atr_floors": atr_floors,
-            "level_thresholds": level_thresholds,
-            "pullback_zone_mins": pullback_zone_mins,
-            "pullback_lookbacks": pullback_lookbacks,
+            "critical_level_thresholds": critical_level_thresholds,
+            "trend_adx_thresholds": trend_adx_thresholds,
+            "micro_confirmation_windows": micro_confirmation_windows,
+            "extension_atr_multipliers": extension_atr_multipliers,
         },
         "modes": {},
     }
@@ -1353,18 +1452,20 @@ def main() -> int:
                 mode=mode,
                 spread_scales=spread_scales,
                 atr_floors=atr_floors,
-                level_thresholds=level_thresholds,
-                pullback_zone_mins=pullback_zone_mins,
-                pullback_lookbacks=pullback_lookbacks,
+                critical_level_thresholds=critical_level_thresholds,
+                trend_adx_thresholds=trend_adx_thresholds,
+                micro_confirmation_windows=micro_confirmation_windows,
+                extension_atr_multipliers=extension_atr_multipliers,
             )
             test_result = evaluate_mode_on_dataset(
                 test_frame,
                 mode=mode,
                 spread_scales=spread_scales,
                 atr_floors=atr_floors,
-                level_thresholds=level_thresholds,
-                pullback_zone_mins=pullback_zone_mins,
-                pullback_lookbacks=pullback_lookbacks,
+                critical_level_thresholds=critical_level_thresholds,
+                trend_adx_thresholds=trend_adx_thresholds,
+                micro_confirmation_windows=micro_confirmation_windows,
+                extension_atr_multipliers=extension_atr_multipliers,
             )
             mode_payload["datasets"][_dataset_key(dataset_path)] = {
                 "dataset_meta": meta,
@@ -1394,9 +1495,10 @@ def main() -> int:
             optimal_quantile=float(args.optimal_quantile),
             spread_scales=spread_scales,
             atr_floors=atr_floors,
-            level_thresholds=level_thresholds,
-            pullback_zone_mins=pullback_zone_mins,
-            pullback_lookbacks=pullback_lookbacks,
+            critical_level_thresholds=critical_level_thresholds,
+            trend_adx_thresholds=trend_adx_thresholds,
+            micro_confirmation_windows=micro_confirmation_windows,
+            extension_atr_multipliers=extension_atr_multipliers,
         )
         payload["modes"][mode] = mode_payload
 

@@ -1,0 +1,37 @@
+Gate Backtest Summary
+====================
+Bars processed: 1,031,491
+Wake events: 42,930
+Wake rate: 1.76/hour, 42.13/day
+
+Trigger family breakdown:
+- compression_breakout: 167 (0.4%)
+- critical_level_reaction: 36315 (84.6%)
+- trend_expansion: 6448 (15.0%)
+
+Top trigger reasons:
+- adx_trend_expansion:buy: 3441
+- adx_trend_expansion:sell: 3007
+- support_reclaim:LOCAL_RANGE_HIGH: 2687
+- resistance_reject:LOCAL_RANGE_LOW: 2403
+- resistance_reject:LONDON/NY_SESSION_HIGH: 1730
+- support_reclaim:LONDON/NY_SESSION_LOW: 1613
+- resistance_reject:TOKYO_SESSION_HIGH: 1512
+- resistance_reject:LOCAL_RANGE_HIGH: 1502
+- support_reclaim:TOKYO_SESSION_LOW: 1498
+- support_reclaim:LOCAL_RANGE_LOW: 1303
+
+Per trigger family Strategy A:
+- compression_breakout: trades=167 win_rate=43.7% avg_pnl=-0.08p total_pnl=-12.7p pf=0.98
+- critical_level_reaction: trades=36315 win_rate=52.1% avg_pnl=-0.08p total_pnl=-2898.0p pf=0.98
+- trend_expansion: trades=6448 win_rate=54.6% avg_pnl=-0.21p total_pnl=-1337.3p pf=0.96
+
+Compression breakout diagnostics:
+- False breakout rate: 92.2%
+- Expansion follow-through rate: 11.4%
+- Retest rate: 99.4%
+
+Worst wake sample:
+- 2023-12-07T17:34:00+00:00 critical_level_reaction support_reclaim:WHOLE_YEN:144.00 newyork MAE15=241.2p outcome=loss
+
+CSV rows written: 42,930

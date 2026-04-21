@@ -1197,6 +1197,8 @@ export interface AutonomousStats {
     pass_rate_pct: number;
     top_block_layers: Record<string, number>;
     top_block_reasons: Record<string, number>;
+    trigger_families: Record<string, number>;
+    trigger_reasons: Record<string, number>;
   };
   today: {
     llm_calls: number;
@@ -1234,6 +1236,22 @@ export interface AutonomousStats {
     code: string;
     msg: string;
   }>;
+  order_metrics: {
+    suggested: Record<string, number>;
+    placed: Record<string, number>;
+    filled: Record<string, number>;
+    cancelled: Record<string, number>;
+    expired: Record<string, number>;
+    by_trigger_family: Record<string, {
+      suggested: Record<string, number>;
+      placed: Record<string, number>;
+      filled: Record<string, number>;
+      cancelled: Record<string, number>;
+      expired: Record<string, number>;
+      fill_rate: Record<string, number | null>;
+      avg_time_to_fill_sec: Record<string, number | null>;
+    }>;
+  };
   performance: Record<string, {
     trade_count: number;
     closed_count: number;

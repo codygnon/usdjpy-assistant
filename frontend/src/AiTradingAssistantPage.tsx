@@ -347,7 +347,6 @@ const AGG_LABELS: { value: api.AutonomousConfig['aggressiveness']; label: string
   { value: 'conservative',    label: 'Conservative' },
   { value: 'balanced',        label: 'Balanced' },
   { value: 'aggressive',      label: 'Aggressive' },
-  { value: 'very_aggressive', label: 'Very Aggressive' },
 ];
 
 const MODE_LABELS: { value: api.AutonomousConfig['mode']; label: string; color: string }[] = [
@@ -459,6 +458,7 @@ function AutonomousFillmorePanel({
   const regime = stats?.risk_regime;
   const perf20 = stats?.performance?.rolling_20;
   const alerts = stats?.health_alerts || [];
+  const orderMetrics = stats?.order_metrics;
   const autonomousModelOptions = modelOptions.includes(cfg.model)
     ? modelOptions
     : [cfg.model, ...modelOptions.filter((m) => m !== cfg.model)];
@@ -467,6 +467,8 @@ function AutonomousFillmorePanel({
   const budgetPct = today ? Math.min(100, today.budget_used_pct) : 0;
   const budgetColor = budgetPct >= 90 ? '#f87171' : budgetPct >= 60 ? '#facc15' : '#4ade80';
   const topReasons = Object.entries(window_?.top_block_reasons || {}).slice(0, 3);
+  const topTriggerFamilies = Object.entries(window_?.trigger_families || {}).slice(0, 3);
+  const familyOrderRows = Object.entries(orderMetrics?.by_trigger_family || {}).slice(0, 4);
   const reasoningCounts = reasoning
     ? {
         suggestions: reasoning.suggestions.length,
@@ -717,6 +719,65 @@ function AutonomousFillmorePanel({
               {topReasons.map(([reason, count]) => (
                 <div key={reason} className="autonomous-panel__chip">
                   {formatAutonomousReason(reason)} · {count}
+                </div>
+              ))}
+            </div>
+          )}
+          {topTriggerFamilies.length > 0 && (
+            <div className="autonomous-panel__chip-row" style={{ marginTop: 8 }}>
+              {topTriggerFamilies.map(([family, count]) => (
+                <div key={family} className="autonomous-panel__chip">
+                  trigger {family.replace(/_/g, ' ')} · {count}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {orderMetrics && (
+        <div className="autonomous-panel__section">
+          <div className="autonomous-panel__section-head">
+            <span className="autonomous-panel__section-title">Execution Mix</span>
+            <span className="autonomous-panel__muted">trigger-aware order conversion</span>
+          </div>
+          <div className="autonomous-panel__chip-row">
+            <div className="autonomous-panel__chip">
+              suggested M/L {(orderMetrics.suggested.market ?? 0)}/{(orderMetrics.suggested.limit ?? 0)}
+            </div>
+            <div className="autonomous-panel__chip">
+              placed M/L {(orderMetrics.placed.market ?? 0)}/{(orderMetrics.placed.limit ?? 0)}
+            </div>
+            <div className="autonomous-panel__chip">
+              filled M/L {(orderMetrics.filled.market ?? 0)}/{(orderMetrics.filled.limit ?? 0)}
+            </div>
+            <div className="autonomous-panel__chip">
+              dead limits {((orderMetrics.cancelled.limit ?? 0) + (orderMetrics.expired.limit ?? 0))}
+            </div>
+          </div>
+          {familyOrderRows.length > 0 && (
+            <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
+              {familyOrderRows.map(([family, row]) => (
+                <div
+                  key={family}
+                  style={{
+                    borderRadius: 12,
+                    padding: '10px 12px',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'rgba(255,255,255,0.03)',
+                    fontSize: '0.78rem',
+                    color: '#cbd5e1',
+                  }}
+                >
+                  <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>
+                    {family.replace(/_/g, ' ')}
+                  </div>
+                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                    <div>placed M/L {(row.placed.market ?? 0)}/{(row.placed.limit ?? 0)}</div>
+                    <div>filled M/L {(row.filled.market ?? 0)}/{(row.filled.limit ?? 0)}</div>
+                    <div>limit fill {row.fill_rate.limit != null ? `${(row.fill_rate.limit * 100).toFixed(0)}%` : '–'}</div>
+                    <div>limit ttf {row.avg_time_to_fill_sec.limit != null ? `${Math.round(row.avg_time_to_fill_sec.limit)}s` : '–'}</div>
+                  </div>
                 </div>
               ))}
             </div>
@@ -998,14 +1059,17 @@ function AutonomousFillmorePanel({
                   <input
                     type="checkbox"
                     checked={cfg.trading_hours?.[sess] ?? true}
-                    disabled={busy}
+                    disabled={busy || sess === 'tokyo'}
                     onChange={(e) => void save({
                       trading_hours: { ...cfg.trading_hours, [sess]: e.target.checked },
                     })}
                   />
-                  {sess}
+                  {sess === 'tokyo' ? 'tokyo (disabled)' : sess}
                 </label>
               ))}
+            </div>
+            <div className="autonomous-panel__hint">
+              Tokyo is disabled for autonomous USDJPY trading. The current safety policy only allows London and New York.
             </div>
           </div>
 

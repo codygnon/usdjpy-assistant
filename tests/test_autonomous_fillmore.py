@@ -99,6 +99,156 @@ def _force_allowed_session(monkeypatch) -> None:
     monkeypatch.setattr(autonomous_fillmore, "_session_flag_now", lambda trading_hours: (True, "ny"))
 
 
+def _critical_trigger(**overrides) -> dict:
+    base = {
+        "family": "critical_level_reaction",
+        "reason": "support_reclaim",
+        "bias": "buy",
+        "level_label": "WHOLE_YEN:159.00",
+        "level_price": 159.000,
+        "nearest_level_pips": 3.0,
+        "micro_confirmation": "reclaim after touch",
+    }
+    base.update(overrides)
+    return base
+
+
+def _trend_trigger(**overrides) -> dict:
+    base = {
+        "family": "trend_expansion",
+        "reason": "adx_trend_expansion",
+        "bias": "buy",
+        "adx": 27.0,
+        "m5_atr_pips": 4.2,
+        "extension_pips": 1.8,
+        "extension_limit_pips": 4.0,
+    }
+    base.update(overrides)
+    return base
+
+
+def _compression_trigger(**overrides) -> dict:
+    base = {
+        "family": "compression_breakout",
+        "reason": "compression_press:PDH",
+        "bias": "buy",
+        "level_label": "PDH",
+        "level_price": 159.050,
+        "nearest_level_pips": 2.0,
+        "micro_confirmation": "compressed_range_pressing_boundary",
+        "compression_range_pips": 3.2,
+        "compression_cap_pips": 4.0,
+        "adx": 18.0,
+        "m5_atr_pips": 4.1,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_critical_level_reaction_trigger_keeps_support_reclaim(monkeypatch) -> None:
+    m1 = pd.DataFrame(
+        {
+            "open": [159.04, 159.03, 159.02, 159.01, 159.02, 159.01, 159.00, 159.01, 159.00, 159.00],
+            "high": [159.05, 159.04, 159.03, 159.02, 159.03, 159.02, 159.01, 159.02, 159.03, 159.04],
+            "low": [159.02, 159.01, 159.00, 158.99, 159.00, 158.99, 158.98, 158.99, 158.98, 158.98],
+            "close": [159.03, 159.02, 159.01, 159.00, 159.01, 159.00, 159.00, 159.01, 159.01, 159.03],
+        }
+    )
+    monkeypatch.setattr(
+        autonomous_fillmore,
+        "_nearest_structure_pips",
+        lambda *args, **kwargs: {
+            "underfoot_pips": 1.0,
+            "underfoot_price": 159.000,
+            "underfoot_label": "WHOLE_YEN:159.00",
+            "overhead_pips": None,
+            "overhead_price": None,
+            "overhead_label": None,
+        },
+    )
+
+    trig = autonomous_fillmore._critical_level_reaction_trigger(
+        159.03,
+        {"M1": m1},
+        "london/ny",
+        max_level_pips=6.0,
+        micro_window_bars=3,
+        touch_tolerance_pips=0.8,
+    )
+
+    assert trig is not None
+    assert trig["reason"] == "support_reclaim:WHOLE_YEN:159.00"
+    assert trig["bias"] == "buy"
+
+
+def test_critical_level_reaction_trigger_disables_resistance_reject(monkeypatch) -> None:
+    m1 = pd.DataFrame(
+        {
+            "open": [159.03, 159.04, 159.05, 159.06, 159.07, 159.08, 159.07, 159.08, 159.07, 159.06],
+            "high": [159.05, 159.06, 159.08, 159.09, 159.10, 159.11, 159.10, 159.11, 159.10, 159.10],
+            "low": [159.02, 159.03, 159.04, 159.05, 159.06, 159.07, 159.06, 159.06, 159.05, 159.04],
+            "close": [159.04, 159.05, 159.06, 159.07, 159.08, 159.07, 159.08, 159.07, 159.06, 159.05],
+        }
+    )
+    monkeypatch.setattr(
+        autonomous_fillmore,
+        "_nearest_structure_pips",
+        lambda *args, **kwargs: {
+            "underfoot_pips": None,
+            "underfoot_price": None,
+            "underfoot_label": None,
+            "overhead_pips": 1.0,
+            "overhead_price": 159.100,
+            "overhead_label": "WHOLE_YEN:159.10",
+        },
+    )
+
+    trig = autonomous_fillmore._critical_level_reaction_trigger(
+        159.05,
+        {"M1": m1},
+        "london/ny",
+        max_level_pips=6.0,
+        micro_window_bars=3,
+        touch_tolerance_pips=0.8,
+    )
+
+    assert trig is None
+
+
+def test_critical_level_reaction_trigger_prunes_disabled_support_labels(monkeypatch) -> None:
+    m1 = pd.DataFrame(
+        {
+            "open": [159.04, 159.03, 159.02, 159.01, 159.02, 159.01, 159.00, 159.01, 159.00, 159.00],
+            "high": [159.05, 159.04, 159.03, 159.02, 159.03, 159.02, 159.01, 159.02, 159.03, 159.04],
+            "low": [159.02, 159.01, 159.00, 158.99, 159.00, 158.99, 158.98, 158.99, 158.98, 158.98],
+            "close": [159.03, 159.02, 159.01, 159.00, 159.01, 159.00, 159.00, 159.01, 159.01, 159.03],
+        }
+    )
+    monkeypatch.setattr(
+        autonomous_fillmore,
+        "_nearest_structure_pips",
+        lambda *args, **kwargs: {
+            "underfoot_pips": 1.0,
+            "underfoot_price": 159.000,
+            "underfoot_label": "TOKYO_SESSION_LOW",
+            "overhead_pips": None,
+            "overhead_price": None,
+            "overhead_label": None,
+        },
+    )
+
+    trig = autonomous_fillmore._critical_level_reaction_trigger(
+        159.03,
+        {"M1": m1},
+        "tokyo",
+        max_level_pips=6.0,
+        micro_window_bars=3,
+        touch_tolerance_pips=0.8,
+    )
+
+    assert trig is None
+
+
 def test_invoke_suggest_persists_autonomous_suggestion_history(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "ai_suggestions.sqlite"
     fake_chat = ModuleType("api.ai_trading_chat")
@@ -234,8 +384,8 @@ def test_invoke_suggest_stage4_sharpens_confidence_prompt_and_exit_calibration(t
 
     user_prompt = str((captured.get("messages") or [{}, {}])[1]["content"])
     assert "LOT SIZING" in user_prompt
-    assert "YOUR LOTS ARE YOUR CONVICTION" in user_prompt
-    assert "0 lots: there is no trade" in user_prompt
+    assert "CONVICTION SHOULD REFLECT SELECTIVITY" in user_prompt
+    assert "0 lots: use this freely" in user_prompt
     assert '"quality": "A" | "B" | "C"' in user_prompt
     assert "London/NY trend profile" in user_prompt
     system_prompt = str((captured.get("messages") or [{}, {}])[0]["content"])
@@ -257,10 +407,13 @@ def test_autonomous_system_prompt_aligns_with_near_touch_execution() -> None:
         risk_regime={"label": "defensive_soft"},
     )
 
-    assert "commit to UP TO 2 well-reasoned trades" in prompt
+    assert "return UP TO 2 trade objects" in prompt
     assert "within ~10 pips of your proposed entry" in prompt
     assert "~$6.66/pip/lot at 150.123" in prompt
     assert "RISK REGIME: DEFENSIVE_SOFT" in prompt
+    assert "clamp autonomous limits into a near-market band" in prompt
+    assert "compression-breakout setups also favor market execution" in prompt
+    assert "You are allowed to pass freely" in prompt
 
 
 def test_fit_aux_memory_blocks_keeps_required_and_drops_low_priority_when_budget_tight() -> None:
@@ -280,8 +433,7 @@ def test_fit_aux_memory_blocks_keeps_required_and_drops_low_priority_when_budget
     assert "reflections" in packed or "today" in packed
 
 
-def test_invoke_suggest_preserves_llm_order_type_choice(tmp_path: Path, monkeypatch) -> None:
-    """LLM chooses market or limit per-suggestion; price is used as-is (no snap)."""
+def test_invoke_suggest_snaps_limit_price_into_near_market_band(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "ai_suggestions.sqlite"
     captured: dict[str, object] = {}
 
@@ -323,8 +475,19 @@ def test_invoke_suggest_preserves_llm_order_type_choice(tmp_path: Path, monkeypa
 
     user_prompt = str((captured.get("messages") or [{}, {}])[1]["content"])
     assert '"order_type": "market" | "limit"' in user_prompt
+    assert "near-touch passive entries" in user_prompt
     assert out0["order_type"] == "limit"
-    assert out0["price"] == 159.050  # no snap — LLM's price preserved exactly
+    assert out0["requested_price"] == 159.050
+    assert out0["price"] == 159.116
+    assert out0["snap_distance_pips"] == 6.6
+    assert out0["time_in_force"] == "GTD"
+    assert out0["gtd_time_utc"] is not None
+
+    history = suggestion_tracker.get_history(db_path, limit=10, offset=0)
+    row = history["items"][0]
+    assert row["requested_price"] == 159.050
+    assert row["limit_price"] == 159.116
+    assert row["snap_distance_pips"] == 6.6
 
 
 def test_invoke_suggest_sets_quality_and_strips_confidence(tmp_path: Path, monkeypatch) -> None:
@@ -525,7 +688,8 @@ def test_aggressive_gate_blocks_when_m3_and_m1_disagree(monkeypatch) -> None:
     _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bear")
-    monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend, **kwargs: True)
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
 
     decision = autonomous_fillmore.evaluate_gate(
         _gate_cfg("aggressive"),
@@ -541,14 +705,17 @@ def test_aggressive_gate_blocks_when_m3_and_m1_disagree(monkeypatch) -> None:
 
     assert decision.result == "block"
     assert decision.layer == "signal"
-    assert decision.reason == "m3_m1_mismatch:bull/bear"
+    assert decision.reason == "no_hybrid_trigger"
+    assert decision.extras.get("m3") == "bull"
+    assert decision.extras.get("m1") == "bear"
 
 
-def test_aggressive_gate_requires_pullback_or_zone(monkeypatch) -> None:
+def test_aggressive_gate_blocks_without_hybrid_trigger(monkeypatch) -> None:
     _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: None)
-    monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend, **kwargs: False)
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
 
     decision = autonomous_fillmore.evaluate_gate(
         _gate_cfg("aggressive"),
@@ -564,13 +731,15 @@ def test_aggressive_gate_requires_pullback_or_zone(monkeypatch) -> None:
 
     assert decision.result == "block"
     assert decision.layer == "signal"
-    assert decision.reason == "no_pullback_or_zone"
+    assert decision.reason == "no_hybrid_trigger"
 
 
 def test_very_aggressive_gate_still_requires_some_trend_signal(monkeypatch) -> None:
     _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: None)
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: None)
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
 
     decision = autonomous_fillmore.evaluate_gate(
         _gate_cfg("very_aggressive"),
@@ -586,7 +755,7 @@ def test_very_aggressive_gate_still_requires_some_trend_signal(monkeypatch) -> N
 
     assert decision.result == "block"
     assert decision.layer == "signal"
-    assert decision.reason == "no_trend_signal"
+    assert decision.reason == "no_hybrid_trigger:no_trend_signal"
 
 
 def test_loss_streak_throttle_does_not_rearm_forever_for_same_streak() -> None:
@@ -635,6 +804,66 @@ def test_set_config_turning_autonomous_off_clears_active_throttle(tmp_path: Path
     assert rt.get("throttle_reason") is None
 
 
+def test_get_config_sanitizes_dangerous_saved_autonomous_settings(tmp_path: Path) -> None:
+    state_path = tmp_path / "newera8" / "runtime_state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "autonomous_fillmore": {
+                    "config": {
+                        "enabled": True,
+                        "mode": "paper",
+                        "aggressiveness": "very_aggressive",
+                        "trading_hours": {"tokyo": True, "london": True, "ny": True},
+                        "max_daily_loss_usd": 5000,
+                        "max_lots_per_trade": 25.04,
+                        "max_consecutive_errors": 10,
+                        "limit_gtd_minutes": 45,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = autonomous_fillmore.get_config(state_path)
+
+    assert cfg["aggressiveness"] == "balanced"
+    assert cfg["trading_hours"]["tokyo"] is False
+    assert cfg["trading_hours"]["london"] is True
+    assert cfg["trading_hours"]["ny"] is True
+    assert cfg["max_daily_loss_usd"] == 50.0
+    assert cfg["max_lots_per_trade"] == 15.0
+    assert cfg["max_consecutive_errors"] == 5
+    assert cfg["limit_gtd_minutes"] == 15
+
+
+def test_set_config_sanitizes_patch_into_safe_autonomous_envelope(tmp_path: Path) -> None:
+    state_path = tmp_path / "newera8" / "runtime_state.json"
+
+    cfg = autonomous_fillmore.set_config(
+        state_path,
+        {
+            "enabled": True,
+            "mode": "paper",
+            "aggressiveness": "very_aggressive",
+            "trading_hours": {"tokyo": True, "london": True, "ny": True},
+            "max_daily_loss_usd": 5000,
+            "max_lots_per_trade": 25.04,
+            "max_consecutive_errors": 10,
+            "limit_gtd_minutes": 45,
+        },
+    )
+
+    assert cfg["aggressiveness"] == "balanced"
+    assert cfg["trading_hours"]["tokyo"] is False
+    assert cfg["max_daily_loss_usd"] == 50.0
+    assert cfg["max_lots_per_trade"] == 15.0
+    assert cfg["max_consecutive_errors"] == 5
+    assert cfg["limit_gtd_minutes"] == 15
+
+
 def test_extract_json_object_prefers_fenced_block_and_keeps_analysis(monkeypatch=None) -> None:
     text = (
         "ANALYSIS:\n"
@@ -666,7 +895,8 @@ def test_proximity_gate_blocks_when_price_far_from_structure(monkeypatch) -> Non
     _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
-    monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend, **kwargs: True)
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
 
     decision = autonomous_fillmore.evaluate_gate(
         _gate_cfg("balanced"),
@@ -682,14 +912,16 @@ def test_proximity_gate_blocks_when_price_far_from_structure(monkeypatch) -> Non
 
     assert decision.result == "block"
     assert decision.layer == "signal"
-    assert decision.reason.startswith("no_structure_within_")
+    assert decision.reason == "no_hybrid_trigger"
+    assert decision.extras.get("nearest_level_pips") == 23.0
 
 
 def test_proximity_gate_passes_when_price_near_round_level(monkeypatch) -> None:
     _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
-    monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend, **kwargs: True)
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: _critical_trigger())
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
 
     decision = autonomous_fillmore.evaluate_gate(
         _gate_cfg("balanced"),
@@ -705,6 +937,190 @@ def test_proximity_gate_passes_when_price_near_round_level(monkeypatch) -> None:
 
     assert decision.result == "pass"
     assert decision.extras.get("nearest_level_pips") == 3.0
+
+
+def test_gate_does_not_refire_same_critical_setup_while_still_active(monkeypatch) -> None:
+    _force_allowed_session(monkeypatch)
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: _critical_trigger())
+    monkeypatch.setattr(autonomous_fillmore, "_compression_breakout_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
+
+    rt = {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0}
+    inputs = autonomous_fillmore.GateInputs(
+        spread_pips=0.8,
+        tick_mid=159.03,
+        open_ai_trade_count=0,
+        data_by_tf={},
+        ntz_active=False,
+    )
+
+    first = autonomous_fillmore.evaluate_gate(_gate_cfg("balanced"), rt, inputs)
+    second = autonomous_fillmore.evaluate_gate(_gate_cfg("balanced"), rt, inputs)
+
+    assert first.result == "pass"
+    assert second.result == "block"
+    assert second.reason == "trigger_still_active"
+
+
+def test_gate_blocks_same_critical_setup_after_reset_during_setup_cooldown(monkeypatch) -> None:
+    _force_allowed_session(monkeypatch)
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    state = {"critical": True}
+
+    def _critical(*args, **kwargs):
+        return _critical_trigger() if state["critical"] else None
+
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", _critical)
+    monkeypatch.setattr(autonomous_fillmore, "_compression_breakout_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
+
+    rt = {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0}
+    inputs = autonomous_fillmore.GateInputs(
+        spread_pips=0.8,
+        tick_mid=159.03,
+        open_ai_trade_count=0,
+        data_by_tf={},
+        ntz_active=False,
+    )
+    now = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
+
+    first = autonomous_fillmore.evaluate_gate(_gate_cfg("balanced"), rt, inputs, now_utc=now)
+    state["critical"] = False
+    reset = autonomous_fillmore.evaluate_gate(_gate_cfg("balanced"), rt, inputs, now_utc=now + timedelta(minutes=1))
+    state["critical"] = True
+    retry = autonomous_fillmore.evaluate_gate(_gate_cfg("balanced"), rt, inputs, now_utc=now + timedelta(minutes=2))
+
+    assert first.result == "pass"
+    assert reset.result == "block"
+    assert retry.result == "block"
+    assert retry.reason == "trigger_setup_cooldown"
+
+
+def test_gate_can_fire_different_family_while_previous_family_remains_active(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_session_flag_now", lambda trading_hours: (True, "london/ny"))
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    phase = {"step": 1}
+
+    def _critical(*args, **kwargs):
+        return _critical_trigger()
+
+    def _trend(*args, **kwargs):
+        if phase["step"] >= 2:
+            return _trend_trigger()
+        return None
+
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", _critical)
+    monkeypatch.setattr(autonomous_fillmore, "_compression_breakout_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", _trend)
+
+    rt = {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0}
+    inputs = autonomous_fillmore.GateInputs(
+        spread_pips=0.8,
+        tick_mid=159.03,
+        open_ai_trade_count=0,
+        data_by_tf={},
+        ntz_active=False,
+    )
+
+    first = autonomous_fillmore.evaluate_gate(_gate_cfg("balanced"), rt, inputs)
+    phase["step"] = 2
+    second = autonomous_fillmore.evaluate_gate(_gate_cfg("balanced"), rt, inputs)
+
+    assert first.result == "pass"
+    assert first.extras.get("trigger_family") == "critical_level_reaction"
+    assert second.result == "pass"
+    assert second.extras.get("trigger_family") == "trend_expansion"
+
+
+def test_trend_expansion_is_restricted_to_london_ny_overlap(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_session_flag_now", lambda trading_hours: (True, "ny"))
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_compression_breakout_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: _trend_trigger())
+
+    decision = autonomous_fillmore.evaluate_gate(
+        _gate_cfg("balanced"),
+        {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0},
+        autonomous_fillmore.GateInputs(
+            spread_pips=0.8,
+            tick_mid=159.25,
+            open_ai_trade_count=0,
+            data_by_tf={},
+            ntz_active=False,
+        ),
+    )
+
+    assert decision.result == "block"
+    assert decision.reason == "no_hybrid_trigger"
+    assert decision.extras.get("trend_session_veto") == "ny"
+
+
+def test_trend_expansion_can_still_fire_in_london_ny_overlap(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_session_flag_now", lambda trading_hours: (True, "london/ny"))
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_compression_breakout_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: _trend_trigger())
+
+    decision = autonomous_fillmore.evaluate_gate(
+        _gate_cfg("balanced"),
+        {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0},
+        autonomous_fillmore.GateInputs(
+            spread_pips=0.8,
+            tick_mid=159.25,
+            open_ai_trade_count=0,
+            data_by_tf={},
+            ntz_active=False,
+        ),
+    )
+
+    assert decision.result == "pass"
+    assert decision.extras.get("trigger_family") == "trend_expansion"
+
+
+def test_critical_level_setup_key_buckets_nearby_levels_together(monkeypatch) -> None:
+    _force_allowed_session(monkeypatch)
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    state = {"level_price": 159.03}
+
+    def _critical(*args, **kwargs):
+        return _critical_trigger(level_label="HALF_YEN:159.00", level_price=state["level_price"])
+
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", _critical)
+    monkeypatch.setattr(autonomous_fillmore, "_compression_breakout_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
+
+    rt = {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0}
+    inputs = autonomous_fillmore.GateInputs(
+        spread_pips=0.8,
+        tick_mid=159.03,
+        open_ai_trade_count=0,
+        data_by_tf={},
+        ntz_active=False,
+    )
+    now = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
+
+    first = autonomous_fillmore.evaluate_gate(_gate_cfg("balanced"), rt, inputs, now_utc=now)
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: None)
+    _ = autonomous_fillmore.evaluate_gate(_gate_cfg("balanced"), rt, inputs, now_utc=now + timedelta(minutes=1))
+    monkeypatch.setattr(
+        autonomous_fillmore,
+        "_critical_level_reaction_trigger",
+        lambda *args, **kwargs: _critical_trigger(level_label="WHOLE_YEN:159.00", level_price=158.98),
+    )
+    retry = autonomous_fillmore.evaluate_gate(_gate_cfg("balanced"), rt, inputs, now_utc=now + timedelta(minutes=2))
+
+    assert first.result == "pass"
+    assert retry.result == "block"
+    assert retry.reason == "trigger_setup_cooldown"
 
 
 def test_clear_throttle_resets_runtime_cooldown_fields(tmp_path: Path) -> None:
@@ -788,6 +1204,7 @@ def _seed_placed_suggestion(
     fill_price: float | None = None,
     closed: bool = False,
     minutes_ago: int = 5,
+    autonomous: bool = True,
 ) -> str:
     """Seed a placed (and optionally filled/closed) suggestion row directly."""
     suggestion_tracker.init_db(db_path)
@@ -815,7 +1232,7 @@ def _seed_placed_suggestion(
         suggestion_id=sid,
         action="placed",
         edited_fields=None,
-        placed_order={"order_type": "limit", "side": side, "price": price, "lots": 2.0},
+        placed_order={"order_type": "limit", "side": side, "price": price, "lots": 2.0, "autonomous": autonomous},
         oanda_order_id="987001",
     )
     if fill_price is not None:
@@ -842,7 +1259,8 @@ def test_dedupe_gate_blocks_when_recent_placement_in_same_bucket(tmp_path: Path,
     _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
-    monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend, **kwargs: True)
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: _critical_trigger())
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
 
     decision = autonomous_fillmore.evaluate_gate(
         _gate_cfg("balanced"),
@@ -870,7 +1288,8 @@ def test_dedupe_gate_passes_when_no_recent_placement(tmp_path: Path, monkeypatch
     _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
-    monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend, **kwargs: True)
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: _critical_trigger())
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
 
     decision = autonomous_fillmore.evaluate_gate(
         _gate_cfg("balanced"),
@@ -895,7 +1314,8 @@ def test_dedupe_gate_ignores_old_suggestions_outside_window(tmp_path: Path, monk
     _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
-    monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend, **kwargs: True)
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: _critical_trigger())
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
 
     decision = autonomous_fillmore.evaluate_gate(
         _gate_cfg("balanced"),
@@ -937,6 +1357,20 @@ def test_correlated_open_position_ignores_closed_positions(tmp_path: Path) -> No
     assert autonomous_fillmore._correlated_open_position(db_path, "buy", 159.06, distance_pips=15.0) is None
 
 
+def test_correlated_open_position_ignores_manual_fillmore_positions(tmp_path: Path) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+    _seed_placed_suggestion(
+        db_path,
+        side="buy",
+        price=159.10,
+        fill_price=159.105,
+        minutes_ago=20,
+        autonomous=False,
+    )
+
+    assert autonomous_fillmore._correlated_open_position(db_path, "buy", 159.06, distance_pips=15.0) is None
+
+
 def test_build_autonomous_today_block_renders_recent_history(tmp_path: Path) -> None:
     db_path = tmp_path / "ai_suggestions.sqlite"
     _seed_placed_suggestion(db_path, side="sell", price=159.18, fill_price=159.18, closed=True, minutes_ago=45)
@@ -957,6 +1391,25 @@ def test_build_autonomous_today_block_handles_empty_db(tmp_path: Path) -> None:
     assert "No prior autonomous suggestions today" in block
 
 
+def test_count_open_ai_trades_ignores_manual_ai_manual_rows() -> None:
+    class _Store:
+        def list_open_trades(self, profile_name: str):
+            return [
+                {
+                    "entry_type": "ai_manual",
+                    "notes": "ai_manual:none:order_1",
+                    "config_json": json.dumps({"source": "ai_manual"}),
+                },
+                {
+                    "entry_type": "ai_manual",
+                    "notes": "autonomous_fillmore:none:order_2",
+                    "config_json": json.dumps({"source": "autonomous_fillmore"}),
+                },
+            ]
+
+    assert autonomous_fillmore._count_open_ai_trades(_Store(), "kumatora2") == 1
+
+
 # -----------------------------------------------------------------------------
 # Stage 6: event blackout, JSON array parsing, exit_plan, reasoning feed
 # -----------------------------------------------------------------------------
@@ -966,7 +1419,8 @@ def test_event_blackout_gate_blocks_when_imminent_high_impact_event(monkeypatch)
     _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
-    monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend, **kwargs: True)
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: _critical_trigger())
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
 
     cfg = _gate_cfg("balanced")
     cfg["event_blackout_enabled"] = True
@@ -997,7 +1451,8 @@ def test_event_blackout_gate_ignores_low_impact_and_other_currencies(monkeypatch
     _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
-    monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend, **kwargs: True)
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: _critical_trigger())
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
 
     cfg = _gate_cfg("balanced")
     cfg["event_blackout_enabled"] = True
@@ -1164,25 +1619,12 @@ def test_m1_pullback_or_zone_accepts_recent_pullback_touch() -> None:
     assert autonomous_fillmore._m1_pullback_or_zone({"M1": df}, "bull") is True
 
 
-def test_evaluate_gate_uses_aggressive_pullback_calibration(monkeypatch) -> None:
-    _force_allowed_session(monkeypatch)
+def test_evaluate_gate_passes_trend_expansion_trigger_metadata(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_session_flag_now", lambda trading_hours: (True, "london/ny"))
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
-    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: None)
-    monkeypatch.setattr(autonomous_fillmore, "_sufficient_volatility", lambda *args, **kwargs: True)
-    monkeypatch.setattr(autonomous_fillmore, "_near_daily_hl", lambda *args, **kwargs: False)
-    monkeypatch.setattr(
-        autonomous_fillmore,
-        "_nearest_structure_pips",
-        lambda *args, **kwargs: {"nearest_pips": 4.0, "kind": "round"},
-    )
-    captured: dict[str, float | int | None] = {}
-
-    def _fake_pullback(data_by_tf, trend, **kwargs):
-        captured["zone_min_pips"] = kwargs.get("zone_min_pips")
-        captured["lookback_bars"] = kwargs.get("lookback_bars")
-        return True
-
-    monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", _fake_pullback)
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: _trend_trigger())
 
     decision = autonomous_fillmore.evaluate_gate(
         _gate_cfg("aggressive"),
@@ -1197,32 +1639,84 @@ def test_evaluate_gate_uses_aggressive_pullback_calibration(monkeypatch) -> None
     )
 
     assert decision.result == "pass"
-    assert captured["zone_min_pips"] == 1.5
-    assert captured["lookback_bars"] == 1
+    assert decision.extras.get("trigger_family") == "trend_expansion"
+    assert decision.extras.get("trigger_reason") == "adx_trend_expansion"
+
+
+def test_evaluate_gate_blocks_when_compression_breakout_is_disabled(monkeypatch) -> None:
+    _force_allowed_session(monkeypatch)
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_compression_breakout_trigger", lambda *args, **kwargs: _compression_trigger())
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
+
+    decision = autonomous_fillmore.evaluate_gate(
+        _gate_cfg("balanced"),
+        {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0, "last_llm_call_utc": None},
+        autonomous_fillmore.GateInputs(
+            spread_pips=0.8,
+            tick_mid=159.03,
+            open_ai_trade_count=0,
+            data_by_tf={},
+            ntz_active=False,
+        ),
+    )
+
+    assert decision.result == "block"
+    assert decision.reason == "no_hybrid_trigger"
+
+
+def test_compression_breakout_limit_is_normalized_to_market() -> None:
+    suggestion = {
+        **_suggestion(),
+        "order_type": "limit",
+        "price": 159.180,
+    }
+    out = autonomous_fillmore._apply_autonomous_order_policy(
+        suggestion,
+        {
+            "spot_price": {"mid": 159.123, "bid": 159.121, "ask": 159.125, "spread_pips": 0.4},
+        },
+        autonomous_fillmore.GateDecision(
+            timestamp_utc=datetime.now(timezone.utc).isoformat(),
+            result="pass",
+            layer="pass",
+            reason="ok",
+            mode="paper",
+            aggressiveness="balanced",
+            extras={"trigger_family": "compression_breakout"},
+        ),
+    )
+
+    assert out["order_type"] == "market"
+    assert out["requested_order_type"] == "limit"
+    assert out["order_policy_reason"] == "compression_breakout_market_only"
+    assert out["price"] == 159.123
 
 
 def test_resolve_gate_thresholds_session_overrides() -> None:
-    # NY balanced: ATR 3.5, structure 12.0 (overrides base 3.0, 8.0)
+    # NY balanced: ATR 3.5, critical max 7.0 (overrides base 3.0, 6.0)
     bal_ny = autonomous_fillmore._resolve_gate_thresholds("balanced", "ny")
     assert bal_ny["require_min_m5_atr_pips"] == 3.5
-    assert bal_ny["require_level_proximity_pips"] == 12.0
+    assert bal_ny["critical_level_max_pips"] == 7.0
     assert bal_ny["require_m3_trend"] is True  # inherited from base
 
     # London balanced: no override, uses base
     bal_lon = autonomous_fillmore._resolve_gate_thresholds("balanced", "london")
     assert bal_lon["require_min_m5_atr_pips"] == 3.0
-    assert bal_lon["require_level_proximity_pips"] == 8.0
+    assert bal_lon["critical_level_max_pips"] == 6.0
 
-    # Aggressive London: structure 10.0, pullback 2.0, lookback 1
+    # Aggressive London: wider critical level distance, looser ADX floor
     agg_lon = autonomous_fillmore._resolve_gate_thresholds("aggressive", "london")
-    assert agg_lon["require_level_proximity_pips"] == 10.0
-    assert agg_lon["pullback_zone_min_pips"] == 2.0
-    assert agg_lon["pullback_lookback_bars"] == 1
+    assert agg_lon["critical_level_max_pips"] == 7.0
+    assert agg_lon["trend_adx_min"] == 20.0
+    assert agg_lon["critical_micro_window_bars"] == 2
 
-    # very_aggressive: no session overrides, always returns base
+    # very_aggressive is sanitized legacy behavior but still resolves cleanly.
     va_ny = autonomous_fillmore._resolve_gate_thresholds("very_aggressive", "ny")
-    assert va_ny["require_min_m5_atr_pips"] == 2.5
-    assert va_ny["require_level_proximity_pips"] == 0.0
+    assert va_ny["require_min_m5_atr_pips"] == 3.0
+    assert va_ny["critical_level_max_pips"] == 6.0
 
 
 def test_evaluate_gate_blocks_on_malformed_cooldown_timestamp(monkeypatch) -> None:
@@ -1436,11 +1930,12 @@ def test_tick_autonomous_fillmore_blocks_below_floor_risk_scaled_lot(tmp_path: P
     monkeypatch.setattr(autonomous_fillmore, "_session_flag_now", lambda trading_hours: (True, "ny"))
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
-    monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend, **kwargs: True)
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: _critical_trigger())
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         autonomous_fillmore,
         "_invoke_suggest",
-        lambda profile, profile_name, cfg, risk_regime=None: [{
+        lambda profile, profile_name, cfg, risk_regime=None, gate_decision=None: [{
             **_suggestion(),
             "lots": 0.01,
         }],

@@ -31,6 +31,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Literal, Optional
 
+import numpy as np
 import pandas as pd
 
 from api import autonomous_performance
@@ -64,11 +65,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": False,
     "mode": "off",                      # off|shadow|paper|live — paper = real OANDA practice orders (not in-app sim)
     "aggressiveness": "balanced",
-    "limit_gtd_minutes": 45,            # autonomous limit orders expire if not filled; keep stale ideas from resting forever
+    "limit_gtd_minutes": 15,            # autonomous limits are short-lived; stale scalp ideas should die quickly
     "daily_budget_usd": 2.00,
     "min_llm_cooldown_sec": 60,
     "trading_hours": {
-        "tokyo": True,
+        "tokyo": False,
         "london": True,
         "ny": True,
     },
@@ -103,52 +104,74 @@ DEFAULT_CONFIG: dict[str, Any] = {
 # These are the *signal* filters applied after hard filters pass.
 GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
     "conservative": {
-        "description": "M3 trend + M1 EMA stack + (pullback OR zone entry) + daily H/L buffer + within 5p of structure",
+        "description": "Hybrid trigger: strict critical-level reaction or strict trend expansion near actionable USDJPY structure.",
+        "critical_level_max_pips": 5.0,
+        "critical_micro_window_bars": 3,
+        "critical_touch_tolerance_pips": 0.6,
+        "trend_adx_min": 25.0,
+        "trend_extension_atr_mult": 0.9,
+        "require_min_m5_atr_pips": 3.0,
         "require_m3_trend": True,
         "require_m1_stack": True,
-        "require_pullback_or_zone": True,
-        "pullback_zone_min_pips": 1.5,
-        "pullback_lookback_bars": 3,
-        "require_daily_hl_buffer_pips": 5.0,
-        "require_level_proximity_pips": 5.0,
-        "require_min_m5_atr_pips": 3.0,
         "expected_pass_rate_pct": 1.5,
     },
     "balanced": {
-        "description": "M3 trend aligned + M1 EMA stack + within 8p of a structure level (PDH/PDL/round/today's H-L)",
+        "description": "Hybrid trigger: critical-level reaction, compression breakout, or trend expansion for ripe-now USDJPY setups.",
+        "critical_level_max_pips": 6.0,
+        "critical_micro_window_bars": 3,
+        "critical_touch_tolerance_pips": 0.8,
+        "compression_level_max_pips": 4.0,
+        "compression_window_bars": 12,
+        "compression_range_atr_mult": 0.9,
+        "compression_edge_fraction": 0.2,
+        "compression_adx_floor": 14.0,
+        "compression_adx_ceiling": 24.0,
+        "trend_adx_min": 23.0,
+        "trend_extension_atr_mult": 1.0,
+        "require_min_m5_atr_pips": 3.0,
         "require_m3_trend": True,
         "require_m1_stack": True,
-        "require_pullback_or_zone": False,
-        "require_daily_hl_buffer_pips": 0.0,
-        "require_level_proximity_pips": 8.0,
-        "require_min_m5_atr_pips": 3.0,
         "expected_pass_rate_pct": 3.5,
     },
     "aggressive": {
-        "description": "M3 or M1 trend signal (veto on disagreement) + pullback/zone + daily H/L buffer + within 12p of structure",
+        "description": "Hybrid trigger: looser critical-level reaction, compression breakout, or trend expansion, still structure-aware.",
+        "critical_level_max_pips": 8.0,
+        "critical_micro_window_bars": 2,
+        "critical_touch_tolerance_pips": 1.0,
+        "compression_level_max_pips": 5.0,
+        "compression_window_bars": 10,
+        "compression_range_atr_mult": 1.0,
+        "compression_edge_fraction": 0.25,
+        "compression_adx_floor": 12.0,
+        "compression_adx_ceiling": 22.0,
+        "trend_adx_min": 20.0,
+        "trend_extension_atr_mult": 1.25,
         "require_m3_trend": False,
         "require_m1_stack": False,
-        "require_pullback_or_zone": True,
-        "pullback_zone_min_pips": 2.0,
-        "pullback_lookback_bars": 2,
-        "require_daily_hl_buffer_pips": 3.0,
         "require_any_trend_signal": True,
         "reject_m3_m1_mismatch_if_both_present": True,
-        "require_level_proximity_pips": 12.0,
         "require_min_m5_atr_pips": 3.0,
         "expected_pass_rate_pct": 2.5,
     },
     "very_aggressive": {
-        "description": "M3 or M1 trend signal (veto on disagreement). No structure proximity check.",
+        "description": "Legacy alias for balanced hybrid trigger.",
+        "critical_level_max_pips": 6.0,
+        "critical_micro_window_bars": 3,
+        "critical_touch_tolerance_pips": 0.8,
+        "compression_level_max_pips": 4.0,
+        "compression_window_bars": 12,
+        "compression_range_atr_mult": 0.9,
+        "compression_edge_fraction": 0.2,
+        "compression_adx_floor": 14.0,
+        "compression_adx_ceiling": 24.0,
+        "trend_adx_min": 23.0,
+        "trend_extension_atr_mult": 1.0,
         "require_m3_trend": False,
         "require_m1_stack": False,
-        "require_pullback_or_zone": False,
-        "require_daily_hl_buffer_pips": 0.0,
         "require_any_trend_signal": True,
         "reject_m3_m1_mismatch_if_both_present": True,
-        "require_level_proximity_pips": 0.0,
-        "require_min_m5_atr_pips": 2.5,
-        "expected_pass_rate_pct": 8.0,
+        "require_min_m5_atr_pips": 3.0,
+        "expected_pass_rate_pct": 3.5,
     },
 }
 
@@ -157,35 +180,54 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
 # base GATE_THRESHOLDS for that mode.  Only "safe non-regressive" candidates
 # are adopted here — see research_out/autonomous_gate_calibration_1000k_sessions.md.
 SESSION_GATE_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
-    # ── balanced ──
     ("balanced", "tokyo"): {
         "require_min_m5_atr_pips": 3.0,
-        "require_level_proximity_pips": 8.0,
+        "critical_level_max_pips": 5.0,
+        "trend_adx_min": 25.0,
+        "trend_extension_atr_mult": 0.85,
     },
     ("balanced", "ny"): {
         "require_min_m5_atr_pips": 3.5,
-        "require_level_proximity_pips": 12.0,
+        "critical_level_max_pips": 7.0,
+        "trend_adx_min": 24.0,
+        "trend_extension_atr_mult": 1.1,
     },
     ("balanced", "london/ny"): {
         "require_min_m5_atr_pips": 3.0,
-        "require_level_proximity_pips": 8.0,
+        "critical_level_max_pips": 6.0,
+        "trend_adx_min": 23.0,
+        "trend_extension_atr_mult": 1.0,
     },
-    # balanced london: no safe candidate — uses base thresholds
-    # ── aggressive ──
+    ("balanced", "london"): {
+        "require_min_m5_atr_pips": 3.0,
+        "critical_level_max_pips": 6.0,
+        "trend_adx_min": 22.0,
+        "trend_extension_atr_mult": 1.05,
+    },
     ("aggressive", "ny"): {
         "require_min_m5_atr_pips": 3.0,
-        "require_level_proximity_pips": 12.0,
-        "pullback_zone_min_pips": 1.5,
-        "pullback_lookback_bars": 1,
+        "critical_level_max_pips": 8.0,
+        "trend_adx_min": 22.0,
+        "trend_extension_atr_mult": 1.3,
     },
     ("aggressive", "london"): {
         "require_min_m5_atr_pips": 3.0,
-        "require_level_proximity_pips": 10.0,
-        "pullback_zone_min_pips": 2.0,
-        "pullback_lookback_bars": 1,
+        "critical_level_max_pips": 7.0,
+        "trend_adx_min": 20.0,
+        "trend_extension_atr_mult": 1.2,
     },
-    # aggressive tokyo: no safe candidate — uses base thresholds
-    # aggressive london/ny: no safe candidate — uses base thresholds
+    ("aggressive", "tokyo"): {
+        "require_min_m5_atr_pips": 3.0,
+        "critical_level_max_pips": 6.0,
+        "trend_adx_min": 23.0,
+        "trend_extension_atr_mult": 1.0,
+    },
+    ("aggressive", "london/ny"): {
+        "require_min_m5_atr_pips": 3.0,
+        "critical_level_max_pips": 7.0,
+        "trend_adx_min": 21.0,
+        "trend_extension_atr_mult": 1.2,
+    },
 }
 
 
@@ -199,6 +241,29 @@ def _resolve_gate_thresholds(agg: str, session_label: str) -> dict[str, Any]:
 
 _AUTONOMOUS_PROMPT_SKELETON_ID = "autonomous_decision_request_v1"
 _AUTONOMOUS_AUX_MEMORY_BUDGET_WORDS = 650
+_AUTONOMOUS_LIMIT_MIN_OFFSET_PIPS = 0.1
+_AUTONOMOUS_LIMIT_MAX_OFFSET_PIPS = 0.5
+_AUTONOMOUS_MAX_DAILY_LOSS_USD = 50.0
+_AUTONOMOUS_MAX_LOTS = 15.0
+_AUTONOMOUS_MAX_CONSECUTIVE_ERRORS = 5
+_AUTONOMOUS_MAX_LIMIT_GTD_MINUTES = 15
+_GATE_SETUP_COOLDOWN_MINUTES = {
+    "critical_level_reaction": 30,
+    "compression_breakout": 20,
+    "trend_expansion": 30,
+}
+_CRITICAL_LEVEL_SETUP_BUCKET_PIPS = 25.0
+_ENABLE_CRITICAL_RESISTANCE_REJECT = False
+_ENABLE_COMPRESSION_BREAKOUT = False
+_DISABLED_SUPPORT_RECLAIM_LEVEL_LABELS = {
+    "LOCAL_RANGE_HIGH",
+    "LOCAL_RANGE_LOW",
+    "TOKYO_SESSION_LOW",
+    "TODAY_LOW",
+    "PWH",
+}
+_TREND_EXPANSION_SETUP_BUCKET_PIPS = 20.0
+_TREND_EXPANSION_ALLOWED_SESSIONS = {"london/ny"}
 _USDJPY_SPREAD_LIMITS_PIPS = {
     "tokyo": 3.0,
     "london": 3.0,
@@ -208,12 +273,109 @@ _USDJPY_SPREAD_LIMITS_PIPS = {
 }
 
 
+def _support_reclaim_level_allowed(level_label: Any) -> bool:
+    label = str(level_label or "").strip().upper()
+    if not label:
+        return False
+    return label not in _DISABLED_SUPPORT_RECLAIM_LEVEL_LABELS
+
+
 def _autonomous_prompt_hash() -> str:
     return hashlib.sha256(_AUTONOMOUS_PROMPT_SKELETON_ID.encode("utf-8")).hexdigest()[:12]
 
 
 def _word_count(text: str) -> int:
     return len(str(text or "").split())
+
+
+def _sanitize_autonomous_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    out = dict(cfg)
+
+    agg = str(out.get("aggressiveness") or "balanced").lower()
+    if agg == "very_aggressive":
+        agg = "balanced"
+    if agg not in GATE_THRESHOLDS:
+        agg = "balanced"
+    out["aggressiveness"] = agg
+
+    try:
+        out["max_daily_loss_usd"] = min(float(out.get("max_daily_loss_usd") or _AUTONOMOUS_MAX_DAILY_LOSS_USD), _AUTONOMOUS_MAX_DAILY_LOSS_USD)
+    except (TypeError, ValueError):
+        out["max_daily_loss_usd"] = _AUTONOMOUS_MAX_DAILY_LOSS_USD
+    try:
+        out["max_lots_per_trade"] = min(float(out.get("max_lots_per_trade") or _AUTONOMOUS_MAX_LOTS), _AUTONOMOUS_MAX_LOTS)
+    except (TypeError, ValueError):
+        out["max_lots_per_trade"] = _AUTONOMOUS_MAX_LOTS
+    try:
+        out["max_consecutive_errors"] = min(int(out.get("max_consecutive_errors") or _AUTONOMOUS_MAX_CONSECUTIVE_ERRORS), _AUTONOMOUS_MAX_CONSECUTIVE_ERRORS)
+    except (TypeError, ValueError):
+        out["max_consecutive_errors"] = _AUTONOMOUS_MAX_CONSECUTIVE_ERRORS
+    try:
+        out["limit_gtd_minutes"] = min(int(out.get("limit_gtd_minutes") or _AUTONOMOUS_MAX_LIMIT_GTD_MINUTES), _AUTONOMOUS_MAX_LIMIT_GTD_MINUTES)
+    except (TypeError, ValueError):
+        out["limit_gtd_minutes"] = _AUTONOMOUS_MAX_LIMIT_GTD_MINUTES
+
+    try:
+        out["base_lot_size"] = max(1.0, min(float(out.get("base_lot_size") or 5.0), float(out["max_lots_per_trade"])))
+    except (TypeError, ValueError):
+        out["base_lot_size"] = min(5.0, float(out["max_lots_per_trade"]))
+    try:
+        out["lot_deviation"] = max(0.0, min(float(out.get("lot_deviation") or 4.0), float(out["max_lots_per_trade"])))
+    except (TypeError, ValueError):
+        out["lot_deviation"] = min(4.0, float(out["max_lots_per_trade"]))
+
+    trading_hours = dict(DEFAULT_CONFIG.get("trading_hours") or {})
+    saved_hours = out.get("trading_hours")
+    if isinstance(saved_hours, dict):
+        trading_hours.update(saved_hours)
+    # Tokyo is disabled for autonomous USDJPY by policy; liquidity is too poor.
+    trading_hours["tokyo"] = False
+    out["trading_hours"] = trading_hours
+    return out
+
+
+def _apply_autonomous_limit_price_strategy(
+    suggestion: dict[str, Any],
+    ctx: dict[str, Any],
+) -> dict[str, Any]:
+    """Clamp autonomous limit orders into a near-touch band around live bid/ask.
+
+    This keeps autonomous fills actionable for scalp-style execution while
+    preserving the model's originally requested structural level for audit.
+    """
+    if str(suggestion.get("order_type") or "").lower() != "limit":
+        suggestion.pop("requested_price", None)
+        suggestion["snap_distance_pips"] = 0.0
+        return suggestion
+
+    spot = (ctx.get("spot_price") or {}) if isinstance(ctx, dict) else {}
+    try:
+        bid = float(spot.get("bid") or 0.0)
+        ask = float(spot.get("ask") or 0.0)
+        requested = float(suggestion.get("price") or 0.0)
+    except (TypeError, ValueError):
+        return suggestion
+
+    side = str(suggestion.get("side") or "").lower()
+    pip_size = 0.01
+    min_offset = _AUTONOMOUS_LIMIT_MIN_OFFSET_PIPS * pip_size
+    max_offset = _AUTONOMOUS_LIMIT_MAX_OFFSET_PIPS * pip_size
+    snapped = requested
+
+    if side == "buy" and bid > 0.0:
+        low = bid - max_offset
+        high = bid - min_offset
+        snapped = min(max(requested, low), high)
+    elif side == "sell" and ask > 0.0:
+        low = ask + min_offset
+        high = ask + max_offset
+        snapped = min(max(requested, low), high)
+
+    snapped = round(float(snapped), 3)
+    suggestion["requested_price"] = requested
+    suggestion["price"] = snapped
+    suggestion["snap_distance_pips"] = round(abs(snapped - requested) / pip_size, 2)
+    return suggestion
 
 
 def _fit_aux_memory_blocks(
@@ -318,7 +480,7 @@ def get_config(state_path: Path) -> dict[str, Any]:
                 cfg[k] = merged
             else:
                 cfg[k] = v
-    return cfg
+    return _sanitize_autonomous_config(cfg)
 
 
 def set_config(state_path: Path, patch: dict[str, Any]) -> dict[str, Any]:
@@ -362,7 +524,7 @@ def set_config(state_path: Path, patch: dict[str, Any]) -> dict[str, Any]:
                 clean[numkey] = float(clean[numkey]) if "." in str(clean[numkey]) or numkey.endswith("usd") or numkey.endswith("lots_per_trade") else int(clean[numkey])
             except (TypeError, ValueError):
                 clean.pop(numkey, None)
-    merged = {**cur, **clean}
+    merged = _sanitize_autonomous_config({**cur, **clean})
     auto["config"] = merged
     if not bool(merged.get("enabled")) or str(merged.get("mode") or "off").lower() == "off":
         runtime = _runtime_block(state)
@@ -427,9 +589,15 @@ def _runtime_block(state: dict[str, Any]) -> dict[str, Any]:
         "last_terminal_event_utc": None,
         "consecutive_llm_errors": 0,
         "consecutive_broker_rejects": 0,
+        "active_gate_setups": {},
+        "recent_fired_gate_setups": [],
     })
     if "previous_streak_regime_label" not in runtime:
         runtime["previous_streak_regime_label"] = str(runtime.get("previous_regime_label") or "normal")
+    if not isinstance(runtime.get("active_gate_setups"), dict):
+        runtime["active_gate_setups"] = {}
+    if not isinstance(runtime.get("recent_fired_gate_setups"), list):
+        runtime["recent_fired_gate_setups"] = []
     return runtime
 
 
@@ -743,6 +911,27 @@ def _m1_stack(data_by_tf: dict[str, pd.DataFrame]) -> Optional[str]:
         return None
 
 
+def _m5_stack(data_by_tf: dict[str, pd.DataFrame]) -> Optional[str]:
+    """M5 EMA9/21 directional stack."""
+    try:
+        df = data_by_tf.get("M5") if data_by_tf else None
+        if df is None or len(df) < 25:
+            return None
+        close = df["close"].astype(float)
+        e9 = float(_ema(close, 9).iloc[-1])
+        e21 = float(_ema(close, 21).iloc[-1])
+        c = float(close.iloc[-1])
+        if not all(math.isfinite(v) for v in (e9, e21, c)):
+            return None
+        if c > e9 > e21:
+            return "bull"
+        if c < e9 < e21:
+            return "bear"
+        return None
+    except Exception:
+        return None
+
+
 def _m1_pullback_or_zone(
     data_by_tf: dict[str, pd.DataFrame],
     trend: Optional[str],
@@ -792,73 +981,463 @@ def _m1_pullback_or_zone(
         return False
 
 
-def _nearest_structure_pips(
+def _adx_value(
+    data_by_tf: dict[str, pd.DataFrame],
+    timeframe: str,
+    period: int = 14,
+) -> Optional[float]:
+    """Compute a simple ADX value from OHLC bars."""
+    df = data_by_tf.get(timeframe) if data_by_tf else None
+    if df is None or len(df) < max(period * 2, 40):
+        return None
+    try:
+        highs = df["high"].astype(float)
+        lows = df["low"].astype(float)
+        closes = df["close"].astype(float)
+        up_move = highs.diff()
+        down_move = -lows.diff()
+        plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+        minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+        prev_close = closes.shift(1)
+        tr = pd.concat([
+            highs - lows,
+            (highs - prev_close).abs(),
+            (lows - prev_close).abs(),
+        ], axis=1).max(axis=1)
+        atr = tr.rolling(period).mean()
+        plus_di = 100.0 * (pd.Series(plus_dm, index=df.index).rolling(period).mean() / atr)
+        minus_di = 100.0 * (pd.Series(minus_dm, index=df.index).rolling(period).mean() / atr)
+        dx = 100.0 * ((plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan))
+        adx = float(dx.rolling(period).mean().iloc[-1])
+        if not math.isfinite(adx):
+            return None
+        return adx
+    except Exception:
+        return None
+
+
+def _classify_session_label_from_hour(hour_utc: int) -> str:
+    in_tokyo = 0 <= hour_utc < 9
+    in_london = 7 <= hour_utc < 16
+    in_ny = 12 <= hour_utc < 21
+    labels: list[str] = []
+    if in_tokyo:
+        labels.append("tokyo")
+    if in_london:
+        labels.append("london")
+    if in_ny:
+        labels.append("ny")
+    return "/".join(labels) if labels else "off-hours"
+
+
+def _extract_time_index(df: pd.DataFrame) -> Optional[pd.Series]:
+    if "time" in df.columns:
+        ts = pd.to_datetime(df["time"], utc=True, errors="coerce")
+        return ts
+    if isinstance(df.index, pd.DatetimeIndex):
+        return pd.Series(df.index.tz_convert("UTC") if df.index.tz else df.index.tz_localize("UTC"))
+    return None
+
+
+def _current_session_range_levels(
+    data_by_tf: dict[str, pd.DataFrame],
+    session_label: str,
+) -> list[tuple[str, float]]:
+    df = data_by_tf.get("M1") if data_by_tf else None
+    if df is None or len(df) < 30:
+        return []
+    ts = _extract_time_index(df)
+    if ts is None:
+        return []
+    try:
+        labels = ts.dt.hour.map(_classify_session_label_from_hour)
+        if session_label == "london/ny":
+            mask = labels == "london/ny"
+        else:
+            mask = labels.str.contains(session_label, na=False)
+        recent_mask = ts >= (ts.iloc[-1] - pd.Timedelta(hours=12))
+        mask = mask & recent_mask
+        if not mask.any():
+            return []
+        highs = df.loc[mask, "high"].astype(float)
+        lows = df.loc[mask, "low"].astype(float)
+        out: list[tuple[str, float]] = []
+        if len(highs):
+            out.append((f"{session_label.upper()}_SESSION_HIGH", float(highs.max())))
+        if len(lows):
+            out.append((f"{session_label.upper()}_SESSION_LOW", float(lows.min())))
+        return out
+    except Exception:
+        return []
+
+
+def _local_range_levels(data_by_tf: dict[str, pd.DataFrame]) -> list[tuple[str, float]]:
+    df = data_by_tf.get("M15") if data_by_tf else None
+    if df is None or len(df) < 24:
+        return []
+    try:
+        tail = df.tail(24)
+        return [
+            ("LOCAL_RANGE_HIGH", float(tail["high"].astype(float).max())),
+            ("LOCAL_RANGE_LOW", float(tail["low"].astype(float).min())),
+        ]
+    except Exception:
+        return []
+
+
+def _structure_levels(
     tick_mid: float,
     data_by_tf: dict[str, pd.DataFrame],
-    pip_size: float = 0.01,
-) -> dict[str, Optional[float]]:
-    """Distance in pips to nearest key structure level above and below current price.
-
-    Considers: today's H/L, previous day's H/L, and round levels at x.00/x.50 cadence
-    within ±3 round-level steps. Returns a dict with keys:
-        overhead_pips: distance to nearest level strictly above price (or None)
-        underfoot_pips: distance to nearest level strictly below price (or None)
-        nearest_pips: min of the two, or None if neither side has a level.
-
-    Used by the gate to ensure the LLM is invoked near actionable structure,
-    not in mid-range chop where fades/breaks are premature.
-    """
-    levels_above: list[float] = []
-    levels_below: list[float] = []
+    session_label: str,
+) -> list[tuple[str, float]]:
+    levels: list[tuple[str, float]] = []
 
     d_df = data_by_tf.get("D") if data_by_tf else None
     if d_df is not None and len(d_df) >= 1:
         try:
             today = d_df.iloc[-1]
-            th = float(today["high"]); tl = float(today["low"])
-            if th > tick_mid:
-                levels_above.append(th)
-            if tl < tick_mid:
-                levels_below.append(tl)
+            levels.extend([
+                ("TODAY_HIGH", float(today["high"])),
+                ("TODAY_LOW", float(today["low"])),
+            ])
         except Exception:
             pass
     if d_df is not None and len(d_df) >= 2:
         try:
             prev = d_df.iloc[-2]
-            pdh = float(prev["high"]); pdl = float(prev["low"])
-            if pdh > tick_mid:
-                levels_above.append(pdh)
-            if pdl < tick_mid:
-                levels_below.append(pdl)
+            levels.extend([
+                ("PDH", float(prev["high"])),
+                ("PDL", float(prev["low"])),
+            ])
         except Exception:
             pass
 
-    # Round levels: x.00 and x.50 cadence (50-pip spacing at pip_size 0.01).
+    w_df = data_by_tf.get("W") if data_by_tf else None
+    if w_df is not None and len(w_df) >= 2:
+        try:
+            prev_w = w_df.iloc[-2]
+            levels.extend([
+                ("PWH", float(prev_w["high"])),
+                ("PWL", float(prev_w["low"])),
+            ])
+        except Exception:
+            pass
+
+    levels.extend(_current_session_range_levels(data_by_tf, session_label))
+    levels.extend(_local_range_levels(data_by_tf))
+
     try:
-        base = int(tick_mid * 2) / 2.0  # floor to nearest 0.50
+        base = int(tick_mid * 2) / 2.0
         for step in range(-3, 4):
             lvl = round(base + 0.5 * step, 2)
-            if lvl > tick_mid:
-                levels_above.append(lvl)
-            elif lvl < tick_mid:
-                levels_below.append(lvl)
+            whole = abs(lvl - round(lvl)) < 1e-9
+            label = "WHOLE_YEN" if whole else "HALF_YEN"
+            levels.append((f"{label}:{lvl:.2f}", lvl))
     except Exception:
         pass
 
+    deduped: dict[float, str] = {}
+    for label, price in levels:
+        if not math.isfinite(price):
+            continue
+        key = round(float(price), 3)
+        deduped.setdefault(key, label)
+    return [(label, price) for price, label in deduped.items()]
+
+
+def _nearest_structure_pips(
+    tick_mid: float,
+    data_by_tf: dict[str, pd.DataFrame],
+    session_label: str,
+    pip_size: float = 0.01,
+) -> dict[str, Optional[float]]:
+    """Distance in pips to nearest key structure level above and below current price."""
     pip = pip_size or 0.01
+    levels_above: list[tuple[str, float]] = []
+    levels_below: list[tuple[str, float]] = []
+    for label, price in _structure_levels(tick_mid, data_by_tf, session_label):
+        if price > tick_mid:
+            levels_above.append((label, price))
+        elif price < tick_mid:
+            levels_below.append((label, price))
 
-    def _closest(levels: list[float]) -> Optional[float]:
+    def _closest(levels: list[tuple[str, float]]) -> tuple[Optional[float], Optional[str], Optional[float]]:
         if not levels:
-            return None
-        return min(abs(l - tick_mid) / pip for l in levels)
+            return None, None, None
+        label, price = min(levels, key=lambda item: abs(item[1] - tick_mid))
+        return abs(price - tick_mid) / pip, label, price
 
-    up = _closest(levels_above)
-    dn = _closest(levels_below)
+    up, up_label, up_price = _closest(levels_above)
+    dn, dn_label, dn_price = _closest(levels_below)
     candidates = [v for v in (up, dn) if v is not None]
     return {
         "overhead_pips": up,
         "underfoot_pips": dn,
         "nearest_pips": min(candidates) if candidates else None,
+        "overhead_label": up_label,
+        "underfoot_label": dn_label,
+        "overhead_price": up_price,
+        "underfoot_price": dn_price,
+    }
+
+
+def _critical_level_reaction_trigger(
+    tick_mid: float,
+    data_by_tf: dict[str, pd.DataFrame],
+    session_label: str,
+    *,
+    max_level_pips: float,
+    micro_window_bars: int,
+    touch_tolerance_pips: float,
+    pip_size: float = 0.01,
+) -> Optional[dict[str, Any]]:
+    m1 = data_by_tf.get("M1") if data_by_tf else None
+    if m1 is None or len(m1) < max(10, micro_window_bars + 2):
+        return None
+    prox = _nearest_structure_pips(tick_mid, data_by_tf, session_label, pip_size=pip_size)
+    pip = pip_size or 0.01
+    tol = max(0.1, float(touch_tolerance_pips)) * pip
+    lookback = max(2, int(micro_window_bars))
+    recent = m1.tail(lookback)
+    closes = recent["close"].astype(float)
+    highs = recent["high"].astype(float)
+    lows = recent["low"].astype(float)
+    if len(closes) < 2:
+        return None
+    last_close = float(closes.iloc[-1])
+    prev_close = float(closes.iloc[-2])
+
+    underfoot_pips = prox.get("underfoot_pips")
+    underfoot_price = prox.get("underfoot_price")
+    underfoot_label = prox.get("underfoot_label")
+    if isinstance(underfoot_pips, (int, float)) and underfoot_pips <= float(max_level_pips) and isinstance(underfoot_price, (int, float)):
+        touched_support = float(lows.min()) <= float(underfoot_price) + tol
+        reclaimed = last_close > float(underfoot_price) and last_close >= prev_close
+        if touched_support and reclaimed and _support_reclaim_level_allowed(underfoot_label):
+            return {
+                "family": "critical_level_reaction",
+                "reason": f"support_reclaim:{underfoot_label}",
+                "bias": "buy",
+                "level_label": underfoot_label,
+                "level_price": float(underfoot_price),
+                "nearest_level_pips": round(float(underfoot_pips), 2),
+                "micro_confirmation": "reclaimed_support",
+            }
+
+    # USDJPY support reclaims show a persistent edge in calibration, while
+    # resistance fades are consistently negative across sessions. Keep the
+    # implementation switchable, but default autonomous gating to the stronger
+    # support-side reaction family only.
+    if not _ENABLE_CRITICAL_RESISTANCE_REJECT:
+        return None
+
+    overhead_pips = prox.get("overhead_pips")
+    overhead_price = prox.get("overhead_price")
+    overhead_label = prox.get("overhead_label")
+    if isinstance(overhead_pips, (int, float)) and overhead_pips <= float(max_level_pips) and isinstance(overhead_price, (int, float)):
+        touched_resistance = float(highs.max()) >= float(overhead_price) - tol
+        rejected = last_close < float(overhead_price) and last_close <= prev_close
+        if touched_resistance and rejected:
+            return {
+                "family": "critical_level_reaction",
+                "reason": f"resistance_reject:{overhead_label}",
+                "bias": "sell",
+                "level_label": overhead_label,
+                "level_price": float(overhead_price),
+                "nearest_level_pips": round(float(overhead_pips), 2),
+                "micro_confirmation": "rejected_resistance",
+            }
+
+    return None
+
+
+def _compression_breakout_trigger(
+    tick_mid: float,
+    data_by_tf: dict[str, pd.DataFrame],
+    session_label: str,
+    *,
+    max_level_pips: float,
+    compression_window_bars: int,
+    compression_range_atr_mult: float,
+    edge_fraction: float,
+    adx_floor: float,
+    adx_ceiling: float,
+    require_m3_trend: bool,
+    require_m1_stack: bool,
+    require_any_trend_signal: bool,
+    reject_mismatch: bool,
+    pip_size: float = 0.01,
+) -> Optional[dict[str, Any]]:
+    if not _ENABLE_COMPRESSION_BREAKOUT:
+        return None
+
+    m1_df = data_by_tf.get("M1") if data_by_tf else None
+    m5_df = data_by_tf.get("M5") if data_by_tf else None
+    if m1_df is None or m5_df is None or len(m1_df) < max(12, compression_window_bars + 2) or len(m5_df) < 25:
+        return None
+
+    m3 = _m3_trend(data_by_tf)
+    m1 = _m1_stack(data_by_tf)
+    m5 = _m5_stack(data_by_tf)
+    if require_m3_trend and m3 is None:
+        return None
+    if require_m1_stack and m1 is None:
+        return None
+    if require_any_trend_signal and m3 is None and m1 is None:
+        return None
+    if reject_mismatch and m3 is not None and m1 is not None and m3 != m1:
+        return None
+
+    directional = [x for x in (m3, m1, m5) if x in ("bull", "bear")]
+    if not directional:
+        return None
+    if directional.count("bull") >= 2:
+        bias = "buy"
+    elif directional.count("bear") >= 2:
+        bias = "sell"
+    elif m3 == "bull" or m1 == "bull":
+        bias = "buy"
+    elif m3 == "bear" or m1 == "bear":
+        bias = "sell"
+    else:
+        return None
+
+    m5_atr_pips = _atr_pips(data_by_tf, "M5", period=14, pip_size=pip_size)
+    if m5_atr_pips is None or not math.isfinite(m5_atr_pips) or m5_atr_pips <= 0:
+        return None
+    adx_m5 = _adx_value(data_by_tf, "M5", period=14)
+    adx_m15 = _adx_value(data_by_tf, "M15", period=14)
+    adx_candidates = [v for v in (adx_m5, adx_m15) if isinstance(v, (int, float)) and math.isfinite(v)]
+    adx = max(adx_candidates) if adx_candidates else None
+    if adx is None or adx < float(adx_floor) or adx > float(adx_ceiling):
+        return None
+
+    prox = _nearest_structure_pips(tick_mid, data_by_tf, session_label, pip_size=pip_size)
+    recent = m1_df.tail(max(4, int(compression_window_bars)))
+    highs = recent["high"].astype(float)
+    lows = recent["low"].astype(float)
+    closes = recent["close"].astype(float)
+    if len(closes) < 4:
+        return None
+    box_high = float(highs.max())
+    box_low = float(lows.min())
+    box_range_pips = (box_high - box_low) / (pip_size or 0.01)
+    compression_cap_pips = max(1.5, float(m5_atr_pips) * float(compression_range_atr_mult))
+    if not math.isfinite(box_range_pips) or box_range_pips <= 0 or box_range_pips > compression_cap_pips:
+        return None
+
+    last_close = float(closes.iloc[-1])
+    prev_close = float(closes.iloc[-2])
+    edge_fraction = min(max(float(edge_fraction), 0.05), 0.4)
+    box_span = max(box_high - box_low, pip_size or 0.01)
+    close_pos = (last_close - box_low) / box_span
+
+    if bias == "buy":
+        level_pips = prox.get("overhead_pips")
+        level_price = prox.get("overhead_price")
+        level_label = prox.get("overhead_label")
+        edge_ok = close_pos >= 1.0 - edge_fraction
+        pressure_ok = last_close >= prev_close and float(highs.tail(3).max()) >= box_high - ((pip_size or 0.01) * 0.2)
+    else:
+        level_pips = prox.get("underfoot_pips")
+        level_price = prox.get("underfoot_price")
+        level_label = prox.get("underfoot_label")
+        edge_ok = close_pos <= edge_fraction
+        pressure_ok = last_close <= prev_close and float(lows.tail(3).min()) <= box_low + ((pip_size or 0.01) * 0.2)
+
+    if not isinstance(level_pips, (int, float)) or not isinstance(level_price, (int, float)) or level_pips > float(max_level_pips):
+        return None
+    if not edge_ok or not pressure_ok:
+        return None
+
+    return {
+        "family": "compression_breakout",
+        "reason": f"compression_press:{level_label}",
+        "bias": bias,
+        "level_label": level_label,
+        "level_price": float(level_price),
+        "nearest_level_pips": round(float(level_pips), 2),
+        "micro_confirmation": "compressed_range_pressing_boundary",
+        "compression_range_pips": round(float(box_range_pips), 2),
+        "compression_cap_pips": round(float(compression_cap_pips), 2),
+        "adx": round(float(adx), 2),
+        "m5_atr_pips": round(float(m5_atr_pips), 2),
+    }
+
+
+def _trend_expansion_trigger(
+    tick_mid: float,
+    data_by_tf: dict[str, pd.DataFrame],
+    *,
+    adx_min: float,
+    min_m5_atr_pips: float,
+    extension_atr_mult: float,
+    require_m3_trend: bool,
+    require_m1_stack: bool,
+    require_any_trend_signal: bool,
+    reject_mismatch: bool,
+    pip_size: float = 0.01,
+) -> Optional[dict[str, Any]]:
+    m3 = _m3_trend(data_by_tf)
+    m1 = _m1_stack(data_by_tf)
+    m5 = _m5_stack(data_by_tf)
+
+    if require_m3_trend and m3 is None:
+        return None
+    if require_m1_stack and m1 is None:
+        return None
+    if require_any_trend_signal and m3 is None and m1 is None:
+        return None
+    if reject_mismatch and m3 is not None and m1 is not None and m3 != m1:
+        return None
+
+    directional = [x for x in (m3, m1, m5) if x in ("bull", "bear")]
+    if not directional:
+        return None
+    if directional.count("bull") >= 2:
+        bias = "buy"
+    elif directional.count("bear") >= 2:
+        bias = "sell"
+    elif m3 == "bull" or m1 == "bull":
+        bias = "buy"
+    elif m3 == "bear" or m1 == "bear":
+        bias = "sell"
+    else:
+        return None
+
+    adx_m5 = _adx_value(data_by_tf, "M5", period=14)
+    adx_m15 = _adx_value(data_by_tf, "M15", period=14)
+    adx = max(v for v in (adx_m5, adx_m15) if isinstance(v, (int, float)) and math.isfinite(v)) if any(
+        isinstance(v, (int, float)) and math.isfinite(v) for v in (adx_m5, adx_m15)
+    ) else None
+    if adx is None or adx < float(adx_min):
+        return None
+
+    m5_atr_pips = _atr_pips(data_by_tf, "M5", period=14, pip_size=pip_size)
+    if m5_atr_pips is None or m5_atr_pips < float(min_m5_atr_pips):
+        return None
+
+    m5_df = data_by_tf.get("M5") if data_by_tf else None
+    if m5_df is None or len(m5_df) < 25:
+        return None
+    close = m5_df["close"].astype(float)
+    e9 = float(_ema(close, 9).iloc[-1])
+    last = float(close.iloc[-1])
+    if not all(math.isfinite(v) for v in (e9, last)):
+        return None
+    extension_pips = abs(last - e9) / (pip_size or 0.01)
+    extension_limit = max(float(min_m5_atr_pips), float(m5_atr_pips) * float(extension_atr_mult))
+    if extension_pips > extension_limit:
+        return None
+
+    return {
+        "family": "trend_expansion",
+        "reason": f"adx_trend_expansion:{bias}",
+        "bias": bias,
+        "adx": round(float(adx), 2),
+        "m5_atr_pips": round(float(m5_atr_pips), 2),
+        "extension_pips": round(float(extension_pips), 2),
+        "extension_limit_pips": round(float(extension_limit), 2),
     }
 
 
@@ -888,6 +1467,12 @@ def _correlated_open_position(
     pip = pip_size or 0.01
     distance_price = distance_pips * pip
     for r in open_rows:
+        try:
+            from api import suggestion_tracker
+            if not suggestion_tracker.is_autonomous_suggestion_row(r):
+                continue
+        except Exception:
+            continue
         if str(r.get("side") or "").lower() != side_norm:
             continue
         try:
@@ -962,6 +1547,110 @@ def _near_daily_hl(tick_mid: float, data_by_tf: dict[str, pd.DataFrame], buffer_
     if abs(tick_mid - lo) / pip <= buffer_pips:
         return True
     return False
+
+
+def _gate_setup_key(
+    trigger: dict[str, Any],
+    *,
+    tick_mid: float,
+    session_label: str,
+    pip_size: float = 0.01,
+) -> str:
+    family = str(trigger.get("family") or "unknown").strip().lower()
+    bias = str(trigger.get("bias") or "flat").strip().lower()
+    if family == "critical_level_reaction":
+        try:
+            price = float(trigger.get("level_price") or tick_mid)
+        except (TypeError, ValueError):
+            price = float(tick_mid)
+        bucket_size = max((pip_size or 0.01) * float(_CRITICAL_LEVEL_SETUP_BUCKET_PIPS), pip_size or 0.01)
+        bucket = round(round(price / bucket_size) * bucket_size, 3)
+        return f"{family}:{bias}:{session_label}:{bucket:.3f}"
+    if family == "compression_breakout":
+        label = str(trigger.get("level_label") or "level")
+        try:
+            price = round(float(trigger.get("level_price") or tick_mid), 3)
+        except (TypeError, ValueError):
+            price = round(float(tick_mid), 3)
+        return f"{family}:{bias}:{label}:{price:.3f}"
+    bucket_size = max((pip_size or 0.01) * float(_TREND_EXPANSION_SETUP_BUCKET_PIPS), pip_size or 0.01)
+    bucket = round(round(float(tick_mid) / bucket_size) * bucket_size, 3)
+    return f"{family}:{bias}:{session_label}:{bucket:.3f}"
+
+
+def _prune_gate_setup_cooldowns(rt: dict[str, Any], now_utc: datetime) -> None:
+    rows = list(rt.get("recent_fired_gate_setups") or [])
+    kept: list[dict[str, Any]] = []
+    for row in rows:
+        until = _parse_iso(row.get("until_utc"))
+        if until is None or until <= now_utc:
+            continue
+        kept.append(row)
+    rt["recent_fired_gate_setups"] = kept
+
+
+def _gate_setup_is_suppressed(rt: dict[str, Any], family: str, setup_key: str, now_utc: datetime) -> bool:
+    _prune_gate_setup_cooldowns(rt, now_utc)
+    for row in list(rt.get("recent_fired_gate_setups") or []):
+        if str(row.get("family") or "") != str(family):
+            continue
+        if str(row.get("setup_key") or "") != str(setup_key):
+            continue
+        until = _parse_iso(row.get("until_utc"))
+        if until is not None and until > now_utc:
+            return True
+    return False
+
+
+def _mark_gate_setup_fired(rt: dict[str, Any], family: str, setup_key: str, now_utc: datetime) -> None:
+    _prune_gate_setup_cooldowns(rt, now_utc)
+    minutes = int(_GATE_SETUP_COOLDOWN_MINUTES.get(str(family), 20))
+    until = (now_utc + timedelta(minutes=max(1, minutes))).isoformat()
+    rows = [
+        row
+        for row in list(rt.get("recent_fired_gate_setups") or [])
+        if not (str(row.get("family") or "") == str(family) and str(row.get("setup_key") or "") == str(setup_key))
+    ]
+    rows.append({
+        "family": str(family),
+        "setup_key": str(setup_key),
+        "fired_utc": now_utc.isoformat(),
+        "until_utc": until,
+    })
+    rt["recent_fired_gate_setups"] = rows[-50:]
+
+
+def _update_active_gate_setup(
+    rt: dict[str, Any],
+    family: str,
+    trigger: Optional[dict[str, Any]],
+    *,
+    tick_mid: float,
+    session_label: str,
+    now_utc: datetime,
+    pip_size: float = 0.01,
+) -> tuple[bool, Optional[str]]:
+    active = dict(rt.get("active_gate_setups") or {})
+    current = active.get(family) if isinstance(active.get(family), dict) else None
+    if trigger is None:
+        if family in active:
+            active.pop(family, None)
+            rt["active_gate_setups"] = active
+        return False, None
+    setup_key = _gate_setup_key(trigger, tick_mid=tick_mid, session_label=session_label, pip_size=pip_size)
+    if current is not None and str(current.get("setup_key") or "") == setup_key:
+        current["last_seen_utc"] = now_utc.isoformat()
+        active[family] = current
+        rt["active_gate_setups"] = active
+        return False, setup_key
+    active[family] = {
+        "setup_key": setup_key,
+        "family": family,
+        "first_seen_utc": now_utc.isoformat(),
+        "last_seen_utc": now_utc.isoformat(),
+    }
+    rt["active_gate_setups"] = active
+    return True, setup_key
 
 
 @dataclass
@@ -1070,62 +1759,126 @@ def evaluate_gate(
         except Exception:
             pass
 
-    # ---- Layer 3: signal gate (mode-dependent, session-calibrated) ----
+    # ---- Layer 3: hybrid opportunity gate (session-calibrated) ----
     thresholds = _resolve_gate_thresholds(agg, session_label)
 
     m3 = _m3_trend(inputs.data_by_tf)
     m1 = _m1_stack(inputs.data_by_tf)
-    extras: dict[str, Any] = {"m3": m3, "m1": m1, "spread": inputs.spread_pips, "session": session_label}
+    m5 = _m5_stack(inputs.data_by_tf)
+    extras: dict[str, Any] = {
+        "m3": m3,
+        "m1": m1,
+        "m5": m5,
+        "spread": inputs.spread_pips,
+        "session": session_label,
+    }
 
     min_m5_atr_pips = float(thresholds.get("require_min_m5_atr_pips") or 0.0)
-    if min_m5_atr_pips > 0:
-        m5_atr_pips = _atr_pips(inputs.data_by_tf, "M5", period=14, pip_size=0.01)
-        extras["m5_atr_pips"] = round(m5_atr_pips, 2) if isinstance(m5_atr_pips, (int, float)) else None
-        if not _sufficient_volatility(inputs.data_by_tf, min_atr_pips=min_m5_atr_pips, timeframe="M5", pip_size=0.01):
-            return _block("signal", "low_volatility", extras)
+    m5_atr_pips = _atr_pips(inputs.data_by_tf, "M5", period=14, pip_size=0.01)
+    extras["m5_atr_pips"] = round(m5_atr_pips, 2) if isinstance(m5_atr_pips, (int, float)) else None
+    extras["adx_m5"] = round(_adx_value(inputs.data_by_tf, "M5", period=14) or 0.0, 2) or None
+    extras["adx_m15"] = round(_adx_value(inputs.data_by_tf, "M15", period=14) or 0.0, 2) or None
 
-    if thresholds.get("require_m3_trend") and m3 is None:
-        return _block("signal", "no_m3_trend", extras)
-    if thresholds.get("require_m1_stack") and m1 is None:
-        return _block("signal", "no_m1_stack", extras)
-    mismatch_veto = bool(
-        thresholds.get("reject_m3_m1_mismatch_if_both_present")
-        or (thresholds.get("require_m3_trend") and thresholds.get("require_m1_stack"))
+    if min_m5_atr_pips > 0 and not _sufficient_volatility(
+        inputs.data_by_tf,
+        min_atr_pips=min_m5_atr_pips,
+        timeframe="M5",
+        pip_size=0.01,
+    ):
+        return _block("signal", "low_volatility", extras)
+
+    prox = _nearest_structure_pips(inputs.tick_mid, inputs.data_by_tf, session_label, pip_size=0.01)
+    nearest = prox.get("nearest_pips")
+    extras["nearest_level_pips"] = round(nearest, 1) if isinstance(nearest, (int, float)) else None
+    extras["overhead_level_pips"] = round(prox["overhead_pips"], 1) if isinstance(prox.get("overhead_pips"), (int, float)) else None
+    extras["underfoot_level_pips"] = round(prox["underfoot_pips"], 1) if isinstance(prox.get("underfoot_pips"), (int, float)) else None
+    extras["overhead_level_label"] = prox.get("overhead_label")
+    extras["underfoot_level_label"] = prox.get("underfoot_label")
+
+    critical = _critical_level_reaction_trigger(
+        inputs.tick_mid,
+        inputs.data_by_tf,
+        session_label,
+        max_level_pips=float(thresholds.get("critical_level_max_pips") or 0.0),
+        micro_window_bars=int(thresholds.get("critical_micro_window_bars") or 3),
+        touch_tolerance_pips=float(thresholds.get("critical_touch_tolerance_pips") or 0.8),
+        pip_size=0.01,
     )
-    if mismatch_veto and m3 is not None and m1 is not None and m3 != m1:
-        return _block("signal", f"m3_m1_mismatch:{m3}/{m1}", extras)
+    compression = _compression_breakout_trigger(
+        inputs.tick_mid,
+        inputs.data_by_tf,
+        session_label,
+        max_level_pips=float(thresholds.get("compression_level_max_pips") or thresholds.get("critical_level_max_pips") or 0.0),
+        compression_window_bars=int(thresholds.get("compression_window_bars") or 12),
+        compression_range_atr_mult=float(thresholds.get("compression_range_atr_mult") or 0.9),
+        edge_fraction=float(thresholds.get("compression_edge_fraction") or 0.2),
+        adx_floor=float(thresholds.get("compression_adx_floor") or 12.0),
+        adx_ceiling=float(thresholds.get("compression_adx_ceiling") or thresholds.get("trend_adx_min") or 24.0),
+        require_m3_trend=bool(thresholds.get("require_m3_trend")),
+        require_m1_stack=bool(thresholds.get("require_m1_stack")),
+        require_any_trend_signal=bool(thresholds.get("require_any_trend_signal")),
+        reject_mismatch=bool(thresholds.get("reject_m3_m1_mismatch_if_both_present")),
+        pip_size=0.01,
+    )
+    if not _ENABLE_COMPRESSION_BREAKOUT:
+        compression = None
+    trend = _trend_expansion_trigger(
+        inputs.tick_mid,
+        inputs.data_by_tf,
+        adx_min=float(thresholds.get("trend_adx_min") or 0.0),
+        min_m5_atr_pips=min_m5_atr_pips,
+        extension_atr_mult=float(thresholds.get("trend_extension_atr_mult") or 1.0),
+        require_m3_trend=bool(thresholds.get("require_m3_trend")),
+        require_m1_stack=bool(thresholds.get("require_m1_stack")),
+        require_any_trend_signal=bool(thresholds.get("require_any_trend_signal")),
+        reject_mismatch=bool(thresholds.get("reject_m3_m1_mismatch_if_both_present")),
+        pip_size=0.01,
+    )
+    if trend is not None and session_label not in _TREND_EXPANSION_ALLOWED_SESSIONS:
+        extras["trend_session_veto"] = session_label
+        trend = None
 
-    if thresholds.get("require_pullback_or_zone"):
-        trend = m1 or m3
-        if not _m1_pullback_or_zone(
-            inputs.data_by_tf,
-            trend,
-            zone_min_pips=float(thresholds.get("pullback_zone_min_pips") or 1.5),
-            lookback_bars=int(thresholds.get("pullback_lookback_bars") or 3),
-        ):
-            return _block("signal", "no_pullback_or_zone", extras)
+    family_candidates = [
+        ("critical_level_reaction", critical),
+        ("compression_breakout", compression),
+        ("trend_expansion", trend),
+    ]
+    armed_candidates: list[tuple[str, dict[str, Any], str]] = []
+    active_families: list[str] = []
+    suppressed_families: list[str] = []
+    for family_name, trig in family_candidates:
+        transitioned, setup_key = _update_active_gate_setup(
+            rt,
+            family_name,
+            trig,
+            tick_mid=inputs.tick_mid,
+            session_label=session_label,
+            now_utc=now_utc,
+            pip_size=0.01,
+        )
+        if trig is None or setup_key is None:
+            continue
+        active_families.append(family_name)
+        if not transitioned:
+            continue
+        if _gate_setup_is_suppressed(rt, family_name, setup_key, now_utc):
+            suppressed_families.append(family_name)
+            continue
+        trig = dict(trig)
+        trig["setup_key"] = setup_key
+        armed_candidates.append((family_name, trig, setup_key))
 
-    buf = float(thresholds.get("require_daily_hl_buffer_pips") or 0.0)
-    if buf > 0 and _near_daily_hl(inputs.tick_mid, inputs.data_by_tf, buf):
-        return _block("signal", f"near_daily_hl_within_{buf:.1f}p", extras)
-
-    # "aggressive" mode only requires *some* trend signal — either M3 or M1.
-    if thresholds.get("require_any_trend_signal"):
+    chosen_trigger = armed_candidates[0][1] if armed_candidates else None
+    extras["active_trigger_families"] = list(active_families)
+    extras["suppressed_trigger_families"] = list(suppressed_families)
+    if chosen_trigger is None:
+        if active_families:
+            if suppressed_families:
+                return _block("signal", "trigger_setup_cooldown", extras)
+            return _block("signal", "trigger_still_active", extras)
         if m3 is None and m1 is None:
-            return _block("signal", "no_trend_signal", extras)
-
-    # Level-proximity: only fire when price is actually near actionable structure.
-    # Prevents the LLM from being woken mid-range where its level-based rationale
-    # can't actually be expressed as a clean entry.
-    prox_thr = float(thresholds.get("require_level_proximity_pips") or 0.0)
-    if prox_thr > 0:
-        prox = _nearest_structure_pips(inputs.tick_mid, inputs.data_by_tf)
-        nearest = prox.get("nearest_pips")
-        extras["nearest_level_pips"] = round(nearest, 1) if nearest is not None else None
-        extras["overhead_level_pips"] = round(prox["overhead_pips"], 1) if prox.get("overhead_pips") is not None else None
-        extras["underfoot_level_pips"] = round(prox["underfoot_pips"], 1) if prox.get("underfoot_pips") is not None else None
-        if nearest is None or nearest > prox_thr:
-            return _block("signal", f"no_structure_within_{prox_thr:.0f}p", extras)
+            return _block("signal", "no_hybrid_trigger:no_trend_signal", extras)
+        return _block("signal", "no_hybrid_trigger", extras)
 
     # Same-setup dedupe: skip the LLM call entirely if a placement already fired
     # in this price bucket recently. Avoids paying tokens to retry a tape-rejected
@@ -1147,10 +1900,33 @@ def evaluate_gate(
                 extras,
             )
 
+    _mark_gate_setup_fired(
+        rt,
+        str(chosen_trigger.get("family") or "unknown"),
+        str(chosen_trigger.get("setup_key") or ""),
+        now_utc,
+    )
+
     return GateDecision(
         timestamp_utc=now_utc.isoformat(),
         result="pass", layer="pass", reason="ok",
-        mode=mode, aggressiveness=agg, extras={**extras, "risk_regime": risk_regime.get("label")},
+        mode=mode,
+        aggressiveness=agg,
+        extras={
+            **extras,
+            "risk_regime": risk_regime.get("label"),
+            "trigger_family": chosen_trigger.get("family"),
+            "trigger_reason": chosen_trigger.get("reason"),
+            "trigger_bias": chosen_trigger.get("bias"),
+            "trigger_level_label": chosen_trigger.get("level_label"),
+            "trigger_level_price": chosen_trigger.get("level_price"),
+            "trigger_setup_key": chosen_trigger.get("setup_key"),
+            "trigger_micro_confirmation": chosen_trigger.get("micro_confirmation"),
+            "compression_range_pips": chosen_trigger.get("compression_range_pips"),
+            "compression_cap_pips": chosen_trigger.get("compression_cap_pips"),
+            "extension_pips": chosen_trigger.get("extension_pips"),
+            "extension_limit_pips": chosen_trigger.get("extension_limit_pips"),
+        },
     )
 
 
@@ -1172,10 +1948,18 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
     blocks = total - passes
     layer_counts: dict[str, int] = {}
     reason_counts: dict[str, int] = {}
+    trigger_family_counts: dict[str, int] = {}
+    trigger_reason_counts: dict[str, int] = {}
     for d in decisions:
         if d.get("r") == "block":
             layer_counts[str(d.get("l") or "?")] = layer_counts.get(str(d.get("l") or "?"), 0) + 1
             reason_counts[str(d.get("why") or "?")] = reason_counts.get(str(d.get("why") or "?"), 0) + 1
+        trigger_family = ((d.get("x") or {}).get("trigger_family")) if isinstance(d.get("x"), dict) else None
+        trigger_reason = ((d.get("x") or {}).get("trigger_reason")) if isinstance(d.get("x"), dict) else None
+        if trigger_family:
+            trigger_family_counts[str(trigger_family)] = trigger_family_counts.get(str(trigger_family), 0) + 1
+        if trigger_reason:
+            trigger_reason_counts[str(trigger_reason)] = trigger_reason_counts.get(str(trigger_reason), 0) + 1
 
     thresholds = GATE_THRESHOLDS.get(cfg.get("aggressiveness") or "balanced") or {}
     est_cost_per_call = _estimated_call_cost_usd(cfg.get("model") or "gpt-5.4-mini")
@@ -1208,6 +1992,78 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
                     row[key] = json.loads(row[key]) if row[key] else {}
                 except Exception:
                     row[key] = {}
+
+    order_metrics: dict[str, Any] = {
+        "suggested": {"market": 0, "limit": 0},
+        "placed": {"market": 0, "limit": 0},
+        "filled": {"market": 0, "limit": 0},
+        "cancelled": {"market": 0, "limit": 0},
+        "expired": {"market": 0, "limit": 0},
+        "by_trigger_family": {},
+    }
+    try:
+        auto_rows = autonomous_performance.load_autonomous_suggestions(suggestions_db)
+
+        def _inc(bucket: dict[str, int], order_type: str) -> None:
+            key = "limit" if str(order_type).lower() == "limit" else "market"
+            bucket[key] = int(bucket.get(key) or 0) + 1
+
+        def _family_bucket(family: str) -> dict[str, Any]:
+            fam = str(family or "unknown")
+            bucket = order_metrics["by_trigger_family"].get(fam)
+            if isinstance(bucket, dict):
+                return bucket
+            bucket = {
+                "suggested": {"market": 0, "limit": 0},
+                "placed": {"market": 0, "limit": 0},
+                "filled": {"market": 0, "limit": 0},
+                "cancelled": {"market": 0, "limit": 0},
+                "expired": {"market": 0, "limit": 0},
+                "fill_rate": {},
+                "avg_time_to_fill_sec": {},
+            }
+            order_metrics["by_trigger_family"][fam] = bucket
+            return bucket
+
+        time_to_fill: dict[tuple[str, str], list[float]] = {}
+        for row in auto_rows:
+            suggested_type = str(row.get("order_type") or "market").lower()
+            placed_order = row.get("placed_order") or {}
+            placed_type = str(placed_order.get("order_type") or suggested_type or "market").lower()
+            family = str(row.get("trigger_family") or placed_order.get("trigger_family") or "unknown")
+            status = str(row.get("outcome_status") or "").lower()
+            fam_bucket = _family_bucket(family)
+
+            _inc(order_metrics["suggested"], suggested_type)
+            _inc(fam_bucket["suggested"], suggested_type)
+
+            if str(row.get("action") or "") == "placed":
+                _inc(order_metrics["placed"], placed_type)
+                _inc(fam_bucket["placed"], placed_type)
+                if status == "filled":
+                    _inc(order_metrics["filled"], placed_type)
+                    _inc(fam_bucket["filled"], placed_type)
+                    secs = autonomous_performance._time_to_fill_seconds(row)
+                    if isinstance(secs, (int, float)):
+                        time_to_fill.setdefault((family, placed_type), []).append(float(secs))
+                elif status == "cancelled":
+                    _inc(order_metrics["cancelled"], placed_type)
+                    _inc(fam_bucket["cancelled"], placed_type)
+                elif status == "expired":
+                    _inc(order_metrics["expired"], placed_type)
+                    _inc(fam_bucket["expired"], placed_type)
+
+        for family, fam_bucket in list(order_metrics["by_trigger_family"].items()):
+            for order_type in ("market", "limit"):
+                placed_n = int((fam_bucket.get("placed") or {}).get(order_type) or 0)
+                filled_n = int((fam_bucket.get("filled") or {}).get(order_type) or 0)
+                fam_bucket["fill_rate"][order_type] = round((filled_n / placed_n), 4) if placed_n > 0 else None
+                times = time_to_fill.get((family, order_type), [])
+                fam_bucket["avg_time_to_fill_sec"][order_type] = (
+                    round(sum(times) / len(times), 2) if times else None
+                )
+    except Exception:
+        pass
 
     health_alerts: list[dict[str, Any]] = []
     last_tick = _parse_iso(rt.get("last_tick_utc"))
@@ -1252,6 +2108,8 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
             "pass_rate_pct": round((passes / total * 100.0), 2) if total > 0 else 0.0,
             "top_block_layers": dict(sorted(layer_counts.items(), key=lambda kv: -kv[1])[:5]),
             "top_block_reasons": dict(sorted(reason_counts.items(), key=lambda kv: -kv[1])[:8]),
+            "trigger_families": dict(sorted(trigger_family_counts.items(), key=lambda kv: -kv[1])[:5]),
+            "trigger_reasons": dict(sorted(trigger_reason_counts.items(), key=lambda kv: -kv[1])[:8]),
         },
         "today": {
             "llm_calls": int(rt.get("llm_calls_today") or 0),
@@ -1279,6 +2137,7 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
         "recent_gate_blocks": dict(sorted((rt.get("recent_gate_blocks") or {}).items(), key=lambda kv: -kv[1])[:8]),
         "health_alerts": health_alerts,
         "performance": perf_rows,
+        "order_metrics": order_metrics,
         "last_tick_utc": rt.get("last_tick_utc"),
         "last_llm_call_utc": rt.get("last_llm_call_utc"),
         "last_placed_order_id": rt.get("last_placed_order_id"),
@@ -1299,7 +2158,18 @@ def _count_open_ai_trades(store, profile_name: str) -> int:
     n = 0
     for r in rows:
         rd = dict(r)
-        if str(rd.get("entry_type") or "").lower() == "ai_manual":
+        cfgj = {}
+        try:
+            raw_cfg = rd.get("config_json")
+            if isinstance(raw_cfg, str) and raw_cfg.strip():
+                cfgj = json.loads(raw_cfg)
+            elif isinstance(raw_cfg, dict):
+                cfgj = raw_cfg
+        except Exception:
+            cfgj = {}
+        source = str((cfgj or {}).get("source") or "").strip().lower()
+        notes = str(rd.get("notes") or "").strip().lower()
+        if source == "autonomous_fillmore" or notes.startswith("autonomous_fillmore:"):
             n += 1
     return n
 
@@ -1573,6 +2443,10 @@ def tick_autonomous_fillmore(
     _save_state(state_path, state)
 
     decision = evaluate_gate(cfg, rt, inputs, risk_regime=risk_regime)
+    state = _load_state(state_path)
+    _runtime_block(state).update(rt)
+    state["autonomous_fillmore"]["runtime"] = _runtime_block(state)
+    _save_state(state_path, state)
     log_decision(state_path, decision)
 
     if decision.result != "pass":
@@ -1583,7 +2457,13 @@ def tick_autonomous_fillmore(
     print(f"[{profile_name}] autonomous Fillmore: gate passed ({cfg.get('aggressiveness')}, {mode}); invoking LLM")
 
     try:
-        suggestions = _invoke_suggest(profile, profile_name, cfg, risk_regime=risk_regime)
+        suggestions = _invoke_suggest(
+            profile,
+            profile_name,
+            cfg,
+            risk_regime=risk_regime,
+            gate_decision=decision,
+        )
     except Exception as e:
         print(f"[{profile_name}] autonomous Fillmore: LLM error: {e}")
         record_error(state_path, cfg, str(e))
@@ -1833,11 +2713,101 @@ def _apply_autonomous_exit_calibration(
     return calibrated
 
 
+def _format_gate_opportunity_block(gate_decision: GateDecision | None) -> str:
+    if gate_decision is None:
+        return ""
+    extras = gate_decision.extras or {}
+    lines = [
+        "=== GATE-QUALIFIED OPPORTUNITY ===",
+        f"Trigger family: {extras.get('trigger_family') or 'unknown'}",
+        f"Trigger reason: {extras.get('trigger_reason') or gate_decision.reason}",
+    ]
+    if extras.get("trigger_bias"):
+        lines.append(f"Gate bias: {extras.get('trigger_bias')}")
+    if extras.get("trigger_level_label") and extras.get("trigger_level_price") is not None:
+        lines.append(
+            f"Qualified structure: {extras.get('trigger_level_label')} @ {float(extras.get('trigger_level_price')):.3f}"
+        )
+    if extras.get("nearest_level_pips") is not None:
+        lines.append(f"Nearest structure distance: {extras.get('nearest_level_pips')} pips")
+    if extras.get("m5_atr_pips") is not None:
+        lines.append(f"M5 ATR: {extras.get('m5_atr_pips')} pips")
+    if extras.get("adx_m5") is not None or extras.get("adx_m15") is not None:
+        lines.append(f"ADX M5/M15: {extras.get('adx_m5')} / {extras.get('adx_m15')}")
+    if extras.get("compression_range_pips") is not None and extras.get("compression_cap_pips") is not None:
+        lines.append(
+            f"Compression range: {extras.get('compression_range_pips')}p vs cap {extras.get('compression_cap_pips')}p"
+        )
+    if extras.get("extension_pips") is not None and extras.get("extension_limit_pips") is not None:
+        lines.append(
+            f"Trend extension: {extras.get('extension_pips')}p vs cap {extras.get('extension_limit_pips')}p"
+        )
+    if extras.get("trigger_micro_confirmation"):
+        lines.append(f"Micro confirmation: {extras.get('trigger_micro_confirmation')}")
+    return "\n".join(lines)
+
+
+def _apply_autonomous_order_policy(
+    suggestion: dict[str, Any],
+    ctx: dict[str, Any] | None,
+    gate_decision: GateDecision | None,
+) -> dict[str, Any]:
+    """Constrain market-vs-limit behavior by trigger family."""
+    out = dict(suggestion or {})
+    extras = (gate_decision.extras or {}) if gate_decision else {}
+    family = str(extras.get("trigger_family") or "").strip().lower()
+    side = str(out.get("side") or "").strip().lower()
+    order_type = str(out.get("order_type") or "market").strip().lower()
+    out["order_policy_reason"] = None
+
+    spot = ((ctx or {}).get("spot_price") or {}) if isinstance(ctx, dict) else {}
+    try:
+        mid = float(spot.get("mid") or 0.0)
+        bid = float(spot.get("bid") or 0.0)
+        ask = float(spot.get("ask") or 0.0)
+    except (TypeError, ValueError):
+        mid = bid = ask = 0.0
+
+    if family in {"trend_expansion", "compression_breakout"}:
+        if order_type != "market":
+            out["requested_order_type"] = order_type
+            out["order_type"] = "market"
+            out["order_policy_reason"] = (
+                "compression_breakout_market_only" if family == "compression_breakout" else "trend_expansion_market_only"
+            )
+        if mid > 0:
+            out["price"] = mid
+        return out
+
+    if family == "critical_level_reaction" and order_type == "limit":
+        requested_price = float(out.get("price") or 0.0)
+        if requested_price > 0:
+            out["requested_price"] = requested_price
+        out = _apply_autonomous_limit_price_strategy(out, ctx)
+        snap_distance = out.get("snap_distance_pips")
+        if isinstance(snap_distance, (int, float)) and snap_distance > 1.5:
+            out["requested_order_type"] = "limit"
+            out["order_type"] = "market"
+            out["order_policy_reason"] = "critical_reaction_far_limit_normalized_to_market"
+            if mid > 0:
+                out["price"] = mid
+            return out
+        out["order_type"] = "limit"
+        out["order_policy_reason"] = "critical_reaction_near_touch_limit_ok"
+        return out
+
+    out["order_type"] = "market" if order_type not in ("market", "limit") else order_type
+    if out["order_type"] == "limit":
+        return _apply_autonomous_limit_price_strategy(out, ctx)
+    return out
+
+
 def _invoke_suggest(
     profile,
     profile_name: str,
     cfg: dict[str, Any],
     risk_regime: Optional[dict[str, Any]] = None,
+    gate_decision: GateDecision | None = None,
 ) -> list[dict[str, Any]]:
     """Invoke the LLM for autonomous Fillmore.
 
@@ -1916,21 +2886,24 @@ def _invoke_suggest(
             system = f"{system}\n\n{aux_memory}"
     except Exception:
         pass
+    gate_block = _format_gate_opportunity_block(gate_decision)
 
     agg = cfg.get("aggressiveness") or "balanced"
     max_lots = float(cfg.get("max_lots_per_trade") or 15.0)
     mode = str(cfg.get("mode") or "off")
-    limit_gtd_min = int(cfg.get("limit_gtd_minutes") or 45)
+    limit_gtd_min = int(cfg.get("limit_gtd_minutes") or 15)
     exec_note = (
         "ORDER TYPE: You choose — 'market' or 'limit'.\n"
         "  MARKET: fills instantly at current bid/ask. Use when the tape is moving and you want in now.\n"
-        f"  LIMIT: rests at the 'price' you set; fills only if the market reaches it. Default expiry {limit_gtd_min} min (GTD). "
-        "BUY LIMIT must be BELOW current bid; SELL LIMIT must be ABOVE current ask. "
-        "Use limit when you see a structural level worth waiting for — the order dies harmlessly if it doesn't fill."
+        f"  LIMIT: use only for near-touch passive entries. The server clamps your limit into a near-market band: "
+        f"BUY LIMIT {_AUTONOMOUS_LIMIT_MAX_OFFSET_PIPS:.1f} to {_AUTONOMOUS_LIMIT_MIN_OFFSET_PIPS:.1f} pips below bid, "
+        f"SELL LIMIT {_AUTONOMOUS_LIMIT_MIN_OFFSET_PIPS:.1f} to {_AUTONOMOUS_LIMIT_MAX_OFFSET_PIPS:.1f} pips above ask. "
+        f"Default expiry {limit_gtd_min} min (GTD). If your structural level is far from current price, prefer MARKET or 0 lots."
     )
     price_instr = (
         "For MARKET: 'price' is informational (current mid is fine). "
-        "For LIMIT: 'price' is the exact level where the order rests. Place it where your thesis says the edge is."
+        "For LIMIT: give the structural level you care about, but only when price is already near that level. "
+        "If your intended level is several pips away, that is not a good autonomous limit candidate."
     )
 
     paper_note = (
@@ -1980,10 +2953,13 @@ def _invoke_suggest(
         f"{exec_note}\n"
         f"LOT RANGE: {lot_lo}-{lot_hi} lots (base {lot_mid}). Hard ceiling: {int(max_lots)}.\n"
         + (f"\n{multi_note}\n" if multi_note else "") +
+        (f"\n{gate_block}\n" if gate_block else "\n") +
         "\n"
         "RESPONSE FORMAT (two parts, in this exact order):\n"
         "\n"
         "1. ANALYSIS (plain text, 6-12 lines). Think through the setup. Cover each of:\n"
+        "   - State whether the gate-qualified opportunity is actually tradeable right now or should still be passed.\n"
+        "   - Respect the trigger family: trend-expansion usually means market execution; compression-breakout usually means market execution while the squeeze edge is actively being pressed; critical-level reaction can be market or near-touch limit.\n"
         "   - H1/M15/M5/M1 trend consensus (note any divergence).\n"
         "   - JPY CROSS BIAS — does it confirm or contradict direction?\n"
         "   - Nearest PRICE STRUCTURE level(s) + order-book clusters. Name the level you'd anchor the entry on.\n"
@@ -2024,16 +3000,12 @@ def _invoke_suggest(
         "and can hold, tighten SL, scale out, or exit. Give it clear conditions: 'exit if M3 flips bear', "
         "'tighten SL to BE after +5p', 'scale 50% at TP1 then trail on M1 21 EMA'. If you have no custom plan, "
         'write "default" and the template strategy handles it.\n'
-        "LOT SIZING — YOUR LOTS ARE YOUR CONVICTION:\n"
-        "You are a trader. You see a setup, you size it, you take it. Do not second-guess yourself. "
-        "Do not talk yourself out of trades. The gate already confirmed conditions are worth looking at — "
-        "your job is to find the trade and size it.\n"
-        f"- {lot_hi} lots: everything lines up. Trend, structure, invalidation, session — put it on.\n"
-        f"- {lot_mid} lots: the trade is there but one thing is not perfect. Take it at base size.\n"
-        f"- {lot_lo} lots: edge is thin but real. Small size, tight stop, take it.\n"
-        "- 0 lots: there is no trade. Price is mid-range with no structure, or you are stacking into an "
-        "existing position at the same level. 0 is for 'there is literally nothing here' — not for 'I am unsure'.\n"
-        "If you can identify a direction and a level, you have a trade. Size it and go.\n"
+        "LOT SIZING — CONVICTION SHOULD REFLECT SELECTIVITY:\n"
+        f"- {lot_hi} lots: only for the cleanest trigger-qualified setup with strong confirmation and clean invalidation.\n"
+        f"- {lot_mid} lots: solid setup with one soft element.\n"
+        f"- {lot_lo} lots: thin but still defensible edge.\n"
+        "- 0 lots: use this freely whenever the trigger-qualified opportunity is not clean enough after full analysis.\n"
+        "Do not force a trade because the gate woke you. The gate says 'look here', not 'trade now'.\n"
         "\n"
         "QUALITY TAG (logged for analytics, does NOT affect placement):\n"
         '- "A" = textbook. You sized it up.\n'
@@ -2103,17 +3075,32 @@ def _invoke_suggest(
         if quality not in ("A", "B", "C"):
             quality = "C"
         suggestion["quality"] = quality
-        default_tif = "GTD" if sug_order_type == "limit" else "GTC"
-        tif = str(suggestion.get("time_in_force") or default_tif).upper()
-        if tif not in ("GTC", "GTD"):
-            tif = default_tif
-        suggestion["time_in_force"] = tif
-        if tif == "GTD" and not suggestion.get("gtd_time_utc"):
-            gtd_min = limit_gtd_min if sug_order_type == "limit" else 60
+        if sug_order_type == "limit":
+            suggestion["time_in_force"] = "GTD"
             suggestion["gtd_time_utc"] = (
-                (datetime.now(timezone.utc) + timedelta(minutes=gtd_min))
+                (datetime.now(timezone.utc) + timedelta(minutes=limit_gtd_min))
                 .replace(microsecond=0).isoformat().replace("+00:00", "Z")
             )
+        else:
+            tif = str(suggestion.get("time_in_force") or "GTC").upper()
+            if tif not in ("GTC", "GTD"):
+                tif = "GTC"
+            suggestion["time_in_force"] = tif
+            if tif == "GTD" and not suggestion.get("gtd_time_utc"):
+                suggestion["gtd_time_utc"] = (
+                    (datetime.now(timezone.utc) + timedelta(minutes=60))
+                    .replace(microsecond=0).isoformat().replace("+00:00", "Z")
+                )
+        suggestion = _apply_autonomous_order_policy(suggestion, ctx, gate_decision)
+        if suggestion.get("order_type") == "limit":
+            suggestion["time_in_force"] = "GTD"
+            suggestion["gtd_time_utc"] = (
+                (datetime.now(timezone.utc) + timedelta(minutes=limit_gtd_min))
+                .replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            )
+        suggestion["trigger_family"] = (gate_decision.extras or {}).get("trigger_family") if gate_decision else None
+        suggestion["trigger_reason"] = (gate_decision.extras or {}).get("trigger_reason") if gate_decision else None
+        suggestion["trigger_bias"] = (gate_decision.extras or {}).get("trigger_bias") if gate_decision else None
         # exit_plan: free-text field for the thesis monitor to reason about mid-trade.
         suggestion["exit_plan"] = str(suggestion.get("exit_plan") or "default").strip()
         suggestion["prompt_version"] = AUTONOMOUS_PROMPT_VERSION
@@ -2249,6 +3236,8 @@ def _place_from_suggestion(
                             "exit_strategy": managed_strategy or "none",
                             "exit_params": managed_params,
                             "order_type": "market",
+                            "trigger_family": suggestion.get("trigger_family"),
+                            "order_policy_reason": suggestion.get("order_policy_reason"),
                         }),
                         "entry_price": fill_price,
                         "stop_price": float(sl) if sl is not None else None,
@@ -2300,6 +3289,8 @@ def _place_from_suggestion(
                             "exit_params": managed_params if managed_strategy else {},
                             "autonomous": True,
                             "order_type": "market",
+                            "trigger_family": suggestion.get("trigger_family"),
+                            "order_policy_reason": suggestion.get("order_policy_reason"),
                         },
                         oanda_order_id=str(order_id) if order_id is not None else None,
                     )
@@ -2369,6 +3360,8 @@ def _place_from_suggestion(
                         "exit_params": managed_params if managed_strategy else {},
                         "autonomous": True,
                         "order_type": "limit",
+                        "trigger_family": suggestion.get("trigger_family"),
+                        "order_policy_reason": suggestion.get("order_policy_reason"),
                     },
                     oanda_order_id=str(result.order) if result.order is not None else None,
                 )
