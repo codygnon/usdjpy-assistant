@@ -258,4 +258,4 @@ def test_exec_get_fillmore_system_info_includes_autonomous_runtime_snapshot(tmp_
     assert "mode=paper enabled=True aggressiveness=balanced" in out
     assert "aggressiveness=balanced" in out
     assert "daily_budget=$3.50" in out
-    assert "max_open_ai_trades=3" in out
+    assert "max_open_ai_trades=6" in out

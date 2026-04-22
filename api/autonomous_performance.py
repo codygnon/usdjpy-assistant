@@ -75,10 +75,11 @@ def load_autonomous_suggestions(db_path: Path) -> list[dict[str, Any]]:
             """
             SELECT *
             FROM ai_suggestions
-            WHERE placed_order_json LIKE ?
+            WHERE lower(COALESCE(entry_type, '')) = ?
+               OR placed_order_json LIKE ?
             ORDER BY created_utc DESC
             """,
-            (_autonomous_marker_sql(),),
+            (suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS, _autonomous_marker_sql()),
         )
         return [suggestion_tracker._deserialize_row(dict(r)) for r in cur.fetchall()]
 
@@ -111,10 +112,11 @@ def get_last_terminal_event_utc(db_path: Path) -> str | None:
             """
             SELECT created_utc, action_utc, filled_at, closed_at
             FROM ai_suggestions
-            WHERE placed_order_json LIKE ?
+            WHERE lower(COALESCE(entry_type, '')) = ?
+               OR placed_order_json LIKE ?
             ORDER BY created_utc DESC
             """,
-            (_autonomous_marker_sql(),),
+            (suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS, _autonomous_marker_sql()),
         )
         for row in cur.fetchall():
             for key in ("created_utc", "action_utc", "filled_at", "closed_at"):
@@ -191,6 +193,9 @@ def reconcile_closed_outcomes(
             pnl=float(pnl),
             pips=float(pips),
             closed_at=str(closed_at),
+            max_adverse_pips=_safe_float(trade.get("max_adverse_pips")),
+            max_favorable_pips=_safe_float(trade.get("max_favorable_pips")),
+            mae_mfe_estimated=int(trade.get("mae_mfe_estimated") or 0),
         ):
             updated += 1
     return updated
@@ -364,9 +369,15 @@ def recompute_performance_stats(
             or ",".join(str(x).strip().lower() for x in (session.get("active_sessions") or []) if x)
         )
         row_out["hold_minutes"] = _hold_minutes(row, trade)
-        row_out["max_adverse_pips"] = _safe_float((trade or {}).get("max_adverse_pips"))
-        row_out["max_favorable_pips"] = _safe_float((trade or {}).get("max_favorable_pips"))
-        row_out["mae_mfe_estimated"] = int((trade or {}).get("mae_mfe_estimated") or 0) if trade else None
+        row_out["max_adverse_pips"] = _safe_float(row.get("max_adverse_pips"))
+        if row_out["max_adverse_pips"] is None:
+            row_out["max_adverse_pips"] = _safe_float((trade or {}).get("max_adverse_pips"))
+        row_out["max_favorable_pips"] = _safe_float(row.get("max_favorable_pips"))
+        if row_out["max_favorable_pips"] is None:
+            row_out["max_favorable_pips"] = _safe_float((trade or {}).get("max_favorable_pips"))
+        row_out["mae_mfe_estimated"] = row.get("mae_mfe_estimated")
+        if row_out["mae_mfe_estimated"] is None and trade:
+            row_out["mae_mfe_estimated"] = int((trade or {}).get("mae_mfe_estimated") or 0)
         merged.append(row_out)
 
     stats_rows: dict[str, dict[str, Any]] = {}

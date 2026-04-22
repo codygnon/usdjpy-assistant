@@ -45,6 +45,7 @@ if DATA_BASE != BASE_DIR:
 sys.path.insert(0, str(BASE_DIR))
 
 from core.execution_state import RuntimeState, load_state, save_state
+from core.json_state import load_json_state, save_json_state
 from core.phase3_operator import (
     build_phase3_acceptance_payload,
     build_phase3_defensive_monitor_payload,
@@ -326,12 +327,7 @@ def _apply_phase3_sync_close_state_update(
         )
 
         state_path = _runtime_state_path(profile_name)
-        runtime_data: dict[str, Any] = {}
-        if state_path.exists():
-            try:
-                runtime_data = json.loads(state_path.read_text(encoding="utf-8"))
-            except Exception:
-                runtime_data = {}
+        runtime_data = load_json_state(state_path, default={})
         phase3_state = dict(runtime_data.get("phase3_state", {}) or {})
 
         exit_ts = updates.get("exit_timestamp_utc") or pd.Timestamp.now(tz="UTC").isoformat()
@@ -373,8 +369,7 @@ def _apply_phase3_sync_close_state_update(
             now_utc=now_utc,
         )
         runtime_data["phase3_state"] = phase3_state
-        state_path.parent.mkdir(parents=True, exist_ok=True)
-        state_path.write_text(json.dumps(runtime_data, indent=2), encoding="utf-8")
+        save_json_state(state_path, runtime_data, indent=2, trailing_newline=False)
         if entry_session == "ny":
             print(
                 f"[api] phase3 sync state update: session=ny loss={1 if is_loss else 0} "
@@ -3154,15 +3149,10 @@ def _sync_open_trades_with_broker(profile: ProfileV1, store: SqliteStore) -> int
             trade_row=trade_row,
             updates=updates,
         )
-        _is_fillmore_trade = (
-            str(trade_row.get("entry_type") or "").strip().lower() == "ai_manual"
-            or str(trade_row.get("policy_type") or "").strip().lower() == "ai_manual"
-            or str(trade_row.get("opened_by") or "").strip().lower() == "ai_manual"
-            or trade_id.startswith("ai_manual:")
-        )
+        from api import suggestion_tracker
+        _is_fillmore_trade = suggestion_tracker.is_fillmore_trade_row({**dict(trade_row), "trade_id": trade_id})
         if _is_fillmore_trade:
             try:
-                from api import suggestion_tracker
                 from api.fillmore_learning import maybe_generate_trade_reflection
 
                 _db_path = _suggestions_db_path(profile.profile_name)
@@ -3177,6 +3167,9 @@ def _sync_open_trades_with_broker(profile: ProfileV1, store: SqliteStore) -> int
                             pnl=float(profit),
                             pips=float(pips),
                             closed_at=str(exit_time or ""),
+                            max_adverse_pips=trade_row.get("max_adverse_pips"),
+                            max_favorable_pips=trade_row.get("max_favorable_pips"),
+                            mae_mfe_estimated=trade_row.get("mae_mfe_estimated"),
                         )
                     if not _closed:
                         _linked = suggestion_tracker.resolve_suggestion_for_trade(
@@ -3192,6 +3185,9 @@ def _sync_open_trades_with_broker(profile: ProfileV1, store: SqliteStore) -> int
                                 pnl=float(profit),
                                 pips=float(pips),
                                 closed_at=str(exit_time or ""),
+                                max_adverse_pips=trade_row.get("max_adverse_pips"),
+                                max_favorable_pips=trade_row.get("max_favorable_pips"),
+                                mae_mfe_estimated=trade_row.get("mae_mfe_estimated"),
                             )
 
                     _closed_trade = dict(trade_row)
@@ -3576,15 +3572,10 @@ def _aggressive_sync_with_broker(profile: ProfileV1, store: SqliteStore) -> int:
             trade_row=trade_row,
             updates=updates,
         )
-        _is_fillmore_trade = (
-            str(trade_row.get("entry_type") or "").strip().lower() == "ai_manual"
-            or str(trade_row.get("policy_type") or "").strip().lower() == "ai_manual"
-            or str(trade_row.get("opened_by") or "").strip().lower() == "ai_manual"
-            or trade_id.startswith("ai_manual:")
-        )
+        from api import suggestion_tracker
+        _is_fillmore_trade = suggestion_tracker.is_fillmore_trade_row({**dict(trade_row), "trade_id": trade_id})
         if _is_fillmore_trade:
             try:
-                from api import suggestion_tracker
                 from api.fillmore_learning import maybe_generate_trade_reflection
 
                 _db_path = _suggestions_db_path(profile.profile_name)
@@ -3599,6 +3590,9 @@ def _aggressive_sync_with_broker(profile: ProfileV1, store: SqliteStore) -> int:
                             pnl=float(profit),
                             pips=float(pips),
                             closed_at=str(exit_time or ""),
+                            max_adverse_pips=trade_row.get("max_adverse_pips"),
+                            max_favorable_pips=trade_row.get("max_favorable_pips"),
+                            mae_mfe_estimated=trade_row.get("mae_mfe_estimated"),
                         )
                     if not _closed:
                         _linked = suggestion_tracker.resolve_suggestion_for_trade(
@@ -3614,6 +3608,9 @@ def _aggressive_sync_with_broker(profile: ProfileV1, store: SqliteStore) -> int:
                                 pnl=float(profit),
                                 pips=float(pips),
                                 closed_at=str(exit_time or ""),
+                                max_adverse_pips=trade_row.get("max_adverse_pips"),
+                                max_favorable_pips=trade_row.get("max_favorable_pips"),
+                                mae_mfe_estimated=trade_row.get("mae_mfe_estimated"),
                             )
 
                     _closed_trade = dict(trade_row)
@@ -3782,6 +3779,18 @@ if FRONTEND_DIR.exists():
 @app.get("/api/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/health/fillmore")
+def fillmore_health_check() -> dict[str, Any]:
+    from api.fillmore_llm_guard import get_fillmore_llm_health
+
+    llm = get_fillmore_llm_health()
+    state = str(llm.get("state") or "closed")
+    return {
+        "status": "ok" if state == "closed" else "degraded",
+        "llm_circuit_breaker": llm,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -5850,7 +5859,14 @@ def ai_suggest_trade(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     try:
-        system = system_prompt_from_context(ctx, effective_model)
+        from api.prompt_builder import PromptBuilder
+
+        prompt_builder = PromptBuilder.for_manual_suggest(
+            profile=profile,
+            profile_name=profile_name,
+            ctx=ctx,
+            model=effective_model,
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"System prompt build error: {e}")
 
@@ -5880,18 +5896,20 @@ def ai_suggest_trade(
             web_result_count=web_n,
             parallel_timeout_sec=parallel_sec,
         )
-        system = f"{system}\n\n{news_block}"
+        prompt_builder.append_system_block(news_block, kind="news")
     except FuturesTimeoutError:
-        system = (
-            f"{system}\n\n"
+        prompt_builder.append_system_block(
             "=== TRADE SUGGESTION — EXTERNAL MARKET NEWS (prefetched) ===\n"
             "RSS and web search timed out; proceed using LIVE TRADING CONTEXT only.\n"
+            ,
+            kind="news",
         )
     except Exception as news_exc:
-        system = (
-            f"{system}\n\n"
+        prompt_builder.append_system_block(
             "=== TRADE SUGGESTION — EXTERNAL MARKET NEWS (prefetched) ===\n"
             f"News prefetch failed ({news_exc}); proceed using LIVE TRADING CONTEXT only.\n"
+            ,
+            kind="news",
         )
 
     try:
@@ -5903,12 +5921,13 @@ def ai_suggest_trade(
             max_recent_examples=8,
             current_ctx=ctx,
         )
-        system = f"{system}\n\n{learning_block}"
+        prompt_builder.append_system_block(learning_block, kind="learning")
     except Exception as learn_exc:
-        system = (
-            f"{system}\n\n"
+        prompt_builder.append_system_block(
             "=== FILLMORE LEARNING MEMORY (recent AI limit-order outcomes) ===\n"
             f"Learning memory unavailable ({learn_exc}); rely on LIVE TRADING CONTEXT and be selective.\n"
+            ,
+            kind="learning",
         )
 
     from api.ai_exit_strategies import (
@@ -6004,11 +6023,15 @@ def ai_suggest_trade(
     raw = ""
     try:
         client = openai.OpenAI()
+        assembly = prompt_builder.build(
+            user=suggest_prompt,
+            prompt_version="manual_suggest_v1",
+        )
         resp = client.chat.completions.create(
-            model=effective_model,
+            model=assembly.model,
             messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": suggest_prompt},
+                {"role": "system", "content": assembly.system},
+                {"role": "user", "content": assembly.user},
             ],
         )
         raw = (resp.choices[0].message.content or "").strip()
@@ -6020,11 +6043,8 @@ def ai_suggest_trade(
         raw = raw.strip()
 
         suggestion = _json.loads(raw)
-        # Validate required fields
-        required = ("side", "price", "sl", "tp", "lots", "rationale", "confidence")
-        missing = [f for f in required if f not in suggestion]
-        if missing:
-            raise HTTPException(status_code=502, detail=f"AI response missing fields: {missing}")
+        from api.suggestion_schema import ValidationError as SuggestionValidationError
+        from api.suggestion_schema import validate_manual_suggestion
         # Normalize
         suggestion["side"] = str(suggestion["side"]).lower()
         suggestion["price"] = float(suggestion["price"])
@@ -6059,8 +6079,15 @@ def ai_suggest_trade(
             suggestion["exit_strategy"] = chosen
             raw_params = suggestion.get("exit_params") if isinstance(suggestion.get("exit_params"), dict) else None
             suggestion["exit_params"] = merge_exit_params(chosen, raw_params)
+        suggestion["entry_type"] = "ai_manual"
+        try:
+            suggestion = validate_manual_suggestion(suggestion)
+        except SuggestionValidationError as e:
+            raise HTTPException(status_code=502, detail=f"AI suggestion failed schema validation: {e}") from e
         # Echo the chosen model so the UI can display which brain picked the trade.
         suggestion["model_used"] = effective_model
+        suggestion["prompt_version"] = assembly.prompt_version
+        suggestion["prompt_hash"] = assembly.prompt_hash
         # Expose catalog so the UI can render dropdown options + descriptions.
         suggestion["available_exit_strategies"] = {
             sid: {

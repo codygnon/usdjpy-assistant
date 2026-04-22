@@ -46,6 +46,7 @@ from core.execution_engine import (
     execute_vwap_policy_demo_only,
 )
 from core.execution_state import RuntimeState, load_state, save_state
+from core.json_state import load_json_state, save_json_state
 from core.models import MarketContext
 from core.profile import get_effective_risk, load_profile_v1
 from core.risk_engine import evaluate_trade
@@ -178,16 +179,13 @@ _TRIAL9_TEMP_OVERRIDE_MAP: dict[str, str] = {
 
 
 def _read_state_json(state_path: Path) -> dict[str, Any]:
-    try:
-        return json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
-    except Exception:
-        return {}
+    return load_json_state(state_path, default={})
 
 
 def _write_state_updates(state_path: Path, updates: dict[str, Any]) -> None:
     state_data = _read_state_json(state_path)
     state_data.update(updates)
-    state_path.write_text(json.dumps(state_data, indent=2) + "\n", encoding="utf-8")
+    save_json_state(state_path, state_data, indent=2, trailing_newline=True)
 
 
 def _trial10_temp_overrides_from_state(state_data: dict[str, Any]) -> dict[str, Any] | None:
@@ -529,8 +527,8 @@ _FILLMORE_THESIS_INTERVAL_SEC = 180.0
 
 def _load_state_json(state_path) -> dict[str, Any]:
     try:
-        if state_path is not None and Path(state_path).exists():
-            return json.loads(Path(state_path).read_text(encoding="utf-8")) or {}
+        if state_path is not None:
+            return load_json_state(Path(state_path), default={})
     except Exception:
         return {}
     return {}
@@ -540,7 +538,7 @@ def _save_state_json(state_path, data: dict[str, Any]) -> None:
     try:
         if state_path is None:
             return
-        Path(state_path).write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        save_json_state(Path(state_path), data, indent=2, trailing_newline=True)
     except Exception as e:
         print(f"[run_loop] failed to persist state {state_path}: {e}")
 
@@ -653,10 +651,19 @@ def _watch_ai_managed_pending_orders(profile, adapter, store, state_path) -> Non
 
         # Filled — insert a trade row with managed fields so `_manage_ai_manual_trades` picks it up.
         try:
+            from api import suggestion_tracker as _suggestion_tracker
+
             trail_mode = str(entry.get("trail_mode") or "").lower() or "none"
             exit_params = entry.get("exit_params") or {}
             side = str(entry.get("side") or "buy").lower()
-            trade_id = f"ai_manual:{order_id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}"
+            source = str(entry.get("source") or "ai_manual").strip().lower()
+            is_autonomous = source in {"autonomous_fillmore", "autonomous_fillmore_paper"}
+            entry_type = (
+                _suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS
+                if is_autonomous else
+                _suggestion_tracker.ENTRY_TYPE_FILLMORE_MANUAL
+            )
+            trade_id = f"{entry_type}:{order_id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}"
             fill_price = float(entry.get("price") or 0.0)
             try:
                 pos = adapter.get_position_by_ticket(int(position_id))
@@ -682,10 +689,10 @@ def _watch_ai_managed_pending_orders(profile, adapter, store, state_path) -> Non
                 "profile": profile.profile_name,
                 "symbol": profile.symbol,
                 "side": side,
-                "policy_type": "ai_manual",
+                "policy_type": entry_type,
                 "config_json": json.dumps(
                     {
-                        "source": "ai_manual",
+                        "source": source,
                         "order_id": order_id,
                         "exit_strategy": entry.get("exit_strategy"),
                         "exit_params": exit_params,
@@ -695,15 +702,19 @@ def _watch_ai_managed_pending_orders(profile, adapter, store, state_path) -> Non
                 "stop_price": entry.get("sl"),
                 "target_price": entry.get("tp"),
                 "size_lots": float(entry.get("lots") or 0.0),
-                "notes": f"ai_manual:{entry.get('exit_strategy') or 'none'}:order_{order_id}",
+                "notes": (
+                    f"autonomous_fillmore:{entry.get('exit_strategy') or 'none'}:order_{order_id}"
+                    if is_autonomous else
+                    f"ai_manual:{entry.get('exit_strategy') or 'none'}:order_{order_id}"
+                ),
                 "snapshot_id": None,
                 "mt5_order_id": int(order_id),
                 "mt5_deal_id": None,
                 "mt5_retcode": 0,
                 "mt5_position_id": int(position_id),
-                "opened_by": "ai_manual",
-                "preset_name": profile.active_preset_name or "AI Manual",
-                "entry_type": "ai_manual",
+                "opened_by": entry_type,
+                "preset_name": profile.active_preset_name or ("Autonomous Fillmore" if is_autonomous else "AI Manual"),
+                "entry_type": entry_type,
                 "breakeven_applied": 0,
                 "tp1_partial_done": 0,
                 "managed_trail_mode": trail_mode,
@@ -811,6 +822,29 @@ def _update_ai_manual_mae_mfe(
     trade_row["max_adverse_pips"] = round(next_mae, 3)
     trade_row["max_favorable_pips"] = round(next_mfe, 3)
     _ai_mae_mfe_write_state[trade_id] = {"ts": now, "mae": next_mae, "mfe": next_mfe}
+
+
+def _trade_excursion_payload(trade_row: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    try:
+        mae = trade_row.get("max_adverse_pips")
+        if mae is not None:
+            payload["max_adverse_pips"] = float(mae)
+    except (TypeError, ValueError):
+        pass
+    try:
+        mfe = trade_row.get("max_favorable_pips")
+        if mfe is not None:
+            payload["max_favorable_pips"] = float(mfe)
+    except (TypeError, ValueError):
+        pass
+    try:
+        est = trade_row.get("mae_mfe_estimated")
+        if est is not None:
+            payload["mae_mfe_estimated"] = int(est)
+    except (TypeError, ValueError):
+        pass
+    return payload
 
 
 def _position_current_lots(position: Any) -> float:
@@ -1072,6 +1106,7 @@ def _maybe_run_fillmore_thesis_monitor(
                                 pnl=profit,
                                 pips=pips,
                                 closed_at=now_utc,
+                                **_trade_excursion_payload({**dict(trade_row), **updates}),
                             )
                         except Exception:
                             pass
@@ -1084,6 +1119,7 @@ def _maybe_run_fillmore_thesis_monitor(
                                 pnl=profit,
                                 pips=pips,
                                 closed_at=now_utc,
+                                **_trade_excursion_payload({**dict(trade_row), **updates}),
                             )
                         except Exception:
                             pass
@@ -1160,8 +1196,10 @@ def _manage_ai_manual_trades(
     open_positions: list | None = None,
     data_by_tf: dict | None = None,
 ) -> None:
-    """Apply TP1 + BE + HWM/M1/M5/BE-only trail to open entry_type='ai_manual' trades."""
+    """Apply TP1 + BE + HWM/M1/M5/BE-only trail to open Fillmore-managed trades."""
     try:
+        from api import suggestion_tracker as _suggestion_tracker
+
         if open_positions is None:
             try:
                 open_positions = adapter.get_open_positions(profile.symbol)
@@ -1170,9 +1208,9 @@ def _manage_ai_manual_trades(
         if not open_positions:
             return
 
-        # Pull open ai_manual trades; skip if none.
+        # Pull open Fillmore-managed trades; skip if none.
         our_trades = [dict(r) for r in store.list_open_trades(profile.profile_name)]
-        ai_trades = [r for r in our_trades if str(r.get("entry_type") or "").lower() == "ai_manual"]
+        ai_trades = [r for r in our_trades if _suggestion_tracker.is_fillmore_trade_row(r)]
         if not ai_trades:
             return
 
@@ -1336,12 +1374,20 @@ def _manage_ai_manual_trades(
                                 },
                             )
                             # --- Phase B: BE on TP1 ---
-                            be_offset = current_spread + be_plus * pip
+                            from api.ai_exit_strategies import compute_post_tp1_stop
+
+                            be_sl = compute_post_tp1_stop(
+                                trade_side=side,
+                                entry_price=entry,
+                                pip_size=pip,
+                                tp1_pips=tp1_pips,
+                                spread_pips=current_spread / pip if pip > 0 else 0.0,
+                                be_plus_pips=be_plus,
+                                lock_in_fraction=float(exit_params.get("tp1_lock_in_fraction") or 0.2),
+                            )
                             if side == "buy":
-                                be_sl = entry + be_offset
                                 be_sl = min(be_sl, tick.bid - pip * 0.5)
                             else:
-                                be_sl = entry - be_offset
                                 be_sl = max(be_sl, tick.ask + pip * 0.5)
                             try:
                                 adapter.update_position_stop_loss(position_id, profile.symbol, round(be_sl, 3))

@@ -199,6 +199,54 @@ def test_manage_ai_manual_trades_uses_hwm_override_from_config_json() -> None:
     assert any(trade_id == "ai_manual:12345:1" and "peak_price" in updates for trade_id, updates in store.updated)
 
 
+def test_manage_ai_manual_trades_locks_in_profit_after_tp1() -> None:
+    profile = SimpleNamespace(profile_name="kumatora2", symbol="USDJPY", pip_size=0.01)
+    store = _DummyStore(
+        open_rows=[
+            {
+                "trade_id": "ai_manual:profitlock:1",
+                "mt5_position_id": 42,
+                "entry_type": "ai_manual",
+                "side": "buy",
+                "entry_price": 160.000,
+                "managed_trail_mode": "hwm",
+                "managed_tp1_pips": 6.0,
+                "managed_tp1_close_pct": 50.0,
+                "managed_be_plus_pips": 0.5,
+                "tp1_partial_done": 0,
+                "tp1_triggered": 0,
+                "breakeven_applied": 0,
+                "config_json": json.dumps(
+                    {
+                        "source": "ai_manual",
+                        "order_id": 999,
+                        "exit_strategy": "tp1_be_hwm_trail",
+                        "exit_params": {"tp1_lock_in_fraction": 0.2},
+                    }
+                ),
+            }
+        ]
+    )
+    adapter = _TrailAdapter()
+    tick = SimpleNamespace(bid=160.070, ask=160.090)
+
+    run_loop._manage_ai_manual_trades(
+        profile,
+        adapter,
+        store,
+        tick,
+        open_positions=[{"id": "42", "currentUnits": "10000"}],
+        data_by_tf={},
+    )
+
+    assert adapter.close_calls == [(42, "USDJPY", 0.05, 0)]
+    assert adapter.stop_updates == [(42, "USDJPY", 160.017)]
+    assert any(
+        trade_id == "ai_manual:profitlock:1" and updates.get("breakeven_sl_price") == 160.017
+        for trade_id, updates in store.updated
+    )
+
+
 def test_manage_ai_manual_trades_skips_thesis_monitor_until_cadence_elapsed(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "ai_suggestions.sqlite"
     _install_fake_main(monkeypatch, db_path)

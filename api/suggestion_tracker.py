@@ -24,6 +24,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from api.suggestion_features import compute_suggestion_features
+
+ENTRY_TYPE_FILLMORE_MANUAL = "ai_manual"
+ENTRY_TYPE_FILLMORE_AUTONOMOUS = "ai_autonomous"
+_FILLMORE_ENTRY_TYPES = {ENTRY_TYPE_FILLMORE_MANUAL, ENTRY_TYPE_FILLMORE_AUTONOMOUS}
+_AUTONOMOUS_SOURCES = {"autonomous_fillmore", "autonomous_fillmore_paper"}
+
 
 SCHEMA_SQL = """
 PRAGMA journal_mode=WAL;
@@ -52,8 +59,13 @@ CREATE TABLE IF NOT EXISTS ai_suggestions (
     prompt_version TEXT,
     prompt_hash TEXT,
     snap_distance_pips REAL,
+    entry_type TEXT,
     trigger_family TEXT,
     trigger_reason TEXT,
+    features_json TEXT,
+    max_adverse_pips REAL,
+    max_favorable_pips REAL,
+    mae_mfe_estimated INTEGER,
 
     -- Market snapshot at generation time (selected fields as JSON)
     market_snapshot_json TEXT,
@@ -182,8 +194,13 @@ def init_db(db_path: Path) -> None:
         _ensure_column(conn, "ai_suggestions", "prompt_version", "TEXT")
         _ensure_column(conn, "ai_suggestions", "prompt_hash", "TEXT")
         _ensure_column(conn, "ai_suggestions", "snap_distance_pips", "REAL")
+        _ensure_column(conn, "ai_suggestions", "entry_type", "TEXT")
         _ensure_column(conn, "ai_suggestions", "trigger_family", "TEXT")
         _ensure_column(conn, "ai_suggestions", "trigger_reason", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "features_json", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "max_adverse_pips", "REAL")
+        _ensure_column(conn, "ai_suggestions", "max_favorable_pips", "REAL")
+        _ensure_column(conn, "ai_suggestions", "mae_mfe_estimated", "INTEGER")
         _ensure_column(conn, "ai_suggestions", "price_at_expiry", "REAL")
         _ensure_column(conn, "ai_suggestions", "distance_at_expiry_pips", "REAL")
         _ensure_column(conn, "ai_reflections", "primary_error_category", "TEXT")
@@ -307,6 +324,7 @@ def log_generated(
 
     suggestion_id = uuid.uuid4().hex
     snapshot = _extract_market_snapshot(ctx)
+    features = compute_suggestion_features(suggestion, ctx)
 
     def _fnum(key: str) -> Optional[float]:
         v = suggestion.get(key)
@@ -336,8 +354,10 @@ def log_generated(
         "prompt_version": suggestion.get("prompt_version"),
         "prompt_hash": suggestion.get("prompt_hash"),
         "snap_distance_pips": _fnum("snap_distance_pips"),
+        "entry_type": str(suggestion.get("entry_type") or ENTRY_TYPE_FILLMORE_MANUAL).strip().lower(),
         "trigger_family": suggestion.get("trigger_family"),
         "trigger_reason": suggestion.get("trigger_reason"),
+        "features_json": json.dumps(features),
         "market_snapshot_json": json.dumps(snapshot),
     }
 
@@ -349,13 +369,13 @@ def log_generated(
                 side, requested_price, limit_price, sl, tp, lots, time_in_force, gtd_time_utc,
                 confidence, rationale, exit_strategy, exit_params_json,
                 exit_plan, prompt_version, prompt_hash, snap_distance_pips,
-                trigger_family, trigger_reason, market_snapshot_json
+                entry_type, trigger_family, trigger_reason, features_json, market_snapshot_json
             ) VALUES (
                 :suggestion_id, :created_utc, :profile, :model,
                 :side, :requested_price, :limit_price, :sl, :tp, :lots, :time_in_force, :gtd_time_utc,
                 :confidence, :rationale, :exit_strategy, :exit_params_json,
                 :exit_plan, :prompt_version, :prompt_hash, :snap_distance_pips,
-                :trigger_family, :trigger_reason, :market_snapshot_json
+                :entry_type, :trigger_family, :trigger_reason, :features_json, :market_snapshot_json
             )
             """,
             row,
@@ -447,15 +467,13 @@ def mark_closed(
     pnl: float,
     pips: float,
     closed_at: Optional[str] = None,
+    max_adverse_pips: float | None = None,
+    max_favorable_pips: float | None = None,
+    mae_mfe_estimated: int | None = None,
 ) -> bool:
     """Flag a filled suggestion-trade as closed and stamp the P&L outcome."""
     init_db(db_path)
-    if pnl > 0:
-        outcome = "win"
-    elif pnl < 0:
-        outcome = "loss"
-    else:
-        outcome = "breakeven"
+    outcome = _win_loss_from_pnl_or_pips(pnl=pnl, pips=pips)
     with _connect(db_path) as conn:
         cur = conn.execute(
             """
@@ -464,7 +482,10 @@ def mark_closed(
                 exit_price = ?,
                 pnl = ?,
                 pips = ?,
-                win_loss = ?
+                win_loss = ?,
+                max_adverse_pips = COALESCE(?, max_adverse_pips),
+                max_favorable_pips = COALESCE(?, max_favorable_pips),
+                mae_mfe_estimated = COALESCE(?, mae_mfe_estimated)
             WHERE oanda_order_id = ?
               AND closed_at IS NULL
             """,
@@ -474,6 +495,9 @@ def mark_closed(
                 float(pnl),
                 float(pips),
                 outcome,
+                float(max_adverse_pips) if max_adverse_pips is not None else None,
+                float(max_favorable_pips) if max_favorable_pips is not None else None,
+                int(mae_mfe_estimated) if mae_mfe_estimated is not None else None,
                 str(oanda_order_id),
             ),
         )
@@ -489,15 +513,13 @@ def mark_closed_by_suggestion_id(
     pnl: float,
     pips: float,
     closed_at: Optional[str] = None,
+    max_adverse_pips: float | None = None,
+    max_favorable_pips: float | None = None,
+    mae_mfe_estimated: int | None = None,
 ) -> bool:
     """Close outcome keyed by suggestion_id (paper trades use stable synthetic order ids)."""
     init_db(db_path)
-    if pnl > 0:
-        outcome = "win"
-    elif pnl < 0:
-        outcome = "loss"
-    else:
-        outcome = "breakeven"
+    outcome = _win_loss_from_pnl_or_pips(pnl=pnl, pips=pips)
     with _connect(db_path) as conn:
         cur = conn.execute(
             """
@@ -506,7 +528,10 @@ def mark_closed_by_suggestion_id(
                 exit_price = ?,
                 pnl = ?,
                 pips = ?,
-                win_loss = ?
+                win_loss = ?,
+                max_adverse_pips = COALESCE(?, max_adverse_pips),
+                max_favorable_pips = COALESCE(?, max_favorable_pips),
+                mae_mfe_estimated = COALESCE(?, mae_mfe_estimated)
             WHERE suggestion_id = ?
               AND closed_at IS NULL
             """,
@@ -516,11 +541,91 @@ def mark_closed_by_suggestion_id(
                 float(pnl),
                 float(pips),
                 outcome,
+                float(max_adverse_pips) if max_adverse_pips is not None else None,
+                float(max_favorable_pips) if max_favorable_pips is not None else None,
+                int(mae_mfe_estimated) if mae_mfe_estimated is not None else None,
                 str(suggestion_id),
             ),
         )
         conn.commit()
         return cur.rowcount > 0
+
+
+def update_excursion(
+    db_path: Path,
+    *,
+    suggestion_id: str | None = None,
+    oanda_order_id: str | None = None,
+    trade_id: str | None = None,
+    max_adverse_pips: float | None = None,
+    max_favorable_pips: float | None = None,
+    mae_mfe_estimated: int | None = None,
+) -> bool:
+    init_db(db_path)
+    clauses: list[str] = []
+    params: list[Any] = []
+    if suggestion_id:
+        clauses.append("suggestion_id = ?")
+        params.append(str(suggestion_id))
+    if oanda_order_id:
+        clauses.append("oanda_order_id = ?")
+        params.append(str(oanda_order_id))
+    if trade_id:
+        clauses.append("trade_id = ?")
+        params.append(str(trade_id))
+    if not clauses:
+        return False
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            f"""
+            UPDATE ai_suggestions
+            SET max_adverse_pips = COALESCE(?, max_adverse_pips),
+                max_favorable_pips = COALESCE(?, max_favorable_pips),
+                mae_mfe_estimated = COALESCE(?, mae_mfe_estimated)
+            WHERE {" OR ".join(clauses)}
+            """,
+            (
+                float(max_adverse_pips) if max_adverse_pips is not None else None,
+                float(max_favorable_pips) if max_favorable_pips is not None else None,
+                int(mae_mfe_estimated) if mae_mfe_estimated is not None else None,
+                *params,
+            ),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def backfill_null_win_loss(db_path: Path) -> dict[str, int]:
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            SELECT suggestion_id, pnl, pips
+            FROM ai_suggestions
+            WHERE closed_at IS NOT NULL
+              AND (win_loss IS NULL OR TRIM(win_loss) = '')
+            """
+        )
+        rows = cur.fetchall()
+        updated = 0
+        skipped = 0
+        for row in rows:
+            win_loss = _win_loss_from_pnl_or_pips(pnl=row["pnl"], pips=row["pips"])
+            if not win_loss:
+                skipped += 1
+                continue
+            conn.execute(
+                """
+                UPDATE ai_suggestions
+                SET win_loss = COALESCE(win_loss, ?),
+                    outcome_status = COALESCE(outcome_status, 'filled')
+                WHERE suggestion_id = ?
+                """,
+                (win_loss, str(row["suggestion_id"])),
+            )
+            updated += 1
+        conn.commit()
+    return {"updated": updated, "skipped": skipped, "total": len(rows)}
 
 
 def mark_cancelled_or_expired(
@@ -603,13 +708,73 @@ def resolve_suggestion_for_trade(
 def is_autonomous_suggestion_row(row: dict[str, Any] | None) -> bool:
     if not isinstance(row, dict):
         return False
+    entry_type = str(row.get("entry_type") or "").strip().lower()
+    if entry_type == ENTRY_TYPE_FILLMORE_AUTONOMOUS:
+        return True
     placed = _json_obj(row.get("placed_order"))
     if placed:
+        if str(placed.get("entry_type") or "").strip().lower() == ENTRY_TYPE_FILLMORE_AUTONOMOUS:
+            return True
         return bool(placed.get("autonomous"))
     placed_json = _json_obj(row.get("placed_order_json"))
     if placed_json:
+        if str(placed_json.get("entry_type") or "").strip().lower() == ENTRY_TYPE_FILLMORE_AUTONOMOUS:
+            return True
         return bool(placed_json.get("autonomous"))
     return False
+
+
+def is_fillmore_trade_row(row: dict[str, Any] | None) -> bool:
+    if not isinstance(row, dict):
+        return False
+    entry_type = str(row.get("entry_type") or "").strip().lower()
+    policy_type = str(row.get("policy_type") or "").strip().lower()
+    opened_by = str(row.get("opened_by") or "").strip().lower()
+    trade_id = str(row.get("trade_id") or "").strip().lower()
+    notes = str(row.get("notes") or "").strip().lower()
+    if entry_type in _FILLMORE_ENTRY_TYPES:
+        return True
+    if policy_type in _FILLMORE_ENTRY_TYPES:
+        return True
+    if opened_by in _FILLMORE_ENTRY_TYPES:
+        return True
+    if trade_id.startswith(f"{ENTRY_TYPE_FILLMORE_MANUAL}:") or trade_id.startswith(f"{ENTRY_TYPE_FILLMORE_AUTONOMOUS}:"):
+        return True
+    if notes.startswith("ai_manual:") or notes.startswith("autonomous_fillmore:") or notes.startswith("autonomous_fillmore_paper:"):
+        return True
+    try:
+        raw_cfg = row.get("config_json")
+        cfg = json.loads(raw_cfg) if isinstance(raw_cfg, str) and raw_cfg.strip() else (raw_cfg if isinstance(raw_cfg, dict) else {})
+    except Exception:
+        cfg = {}
+    source = str((cfg or {}).get("source") or "").strip().lower()
+    return source in _AUTONOMOUS_SOURCES or source == ENTRY_TYPE_FILLMORE_MANUAL
+
+
+def is_autonomous_trade_row(row: dict[str, Any] | None) -> bool:
+    if not isinstance(row, dict):
+        return False
+    entry_type = str(row.get("entry_type") or "").strip().lower()
+    if entry_type == ENTRY_TYPE_FILLMORE_AUTONOMOUS:
+        return True
+    try:
+        raw_cfg = row.get("config_json")
+        cfg = json.loads(raw_cfg) if isinstance(raw_cfg, str) and raw_cfg.strip() else (raw_cfg if isinstance(raw_cfg, dict) else {})
+    except Exception:
+        cfg = {}
+    source = str((cfg or {}).get("source") or "").strip().lower()
+    notes = str(row.get("notes") or "").strip().lower()
+    opened_by = str(row.get("opened_by") or "").strip().lower()
+    policy_type = str(row.get("policy_type") or "").strip().lower()
+    trade_id = str(row.get("trade_id") or "").strip().lower()
+    return (
+        source in _AUTONOMOUS_SOURCES
+        or notes.startswith("autonomous_fillmore:")
+        or notes.startswith("autonomous_fillmore_paper:")
+        or opened_by == ENTRY_TYPE_FILLMORE_AUTONOMOUS
+        or policy_type == ENTRY_TYPE_FILLMORE_AUTONOMOUS
+        or trade_id.startswith(f"{ENTRY_TYPE_FILLMORE_AUTONOMOUS}:")
+    )
 
 
 def log_thesis_check(
@@ -914,6 +1079,10 @@ def get_reasoning_feed(
             "win_loss": row.get("win_loss"),
             "pips": row.get("pips"),
             "pnl": row.get("pnl"),
+            "features": row.get("features"),
+            "max_adverse_pips": row.get("max_adverse_pips"),
+            "max_favorable_pips": row.get("max_favorable_pips"),
+            "mae_mfe_estimated": row.get("mae_mfe_estimated"),
         })
 
     thesis_checks = get_recent_thesis_checks(db_path, limit=thesis_checks_limit)
@@ -1184,10 +1353,29 @@ def _load_rows_since(db_path: Path, cutoff_iso: str) -> list[dict[str, Any]]:
 def _deserialize_row(row: dict[str, Any]) -> dict[str, Any]:
     out = dict(row)
     out["market_snapshot"] = _json_obj(out.pop("market_snapshot_json", None))
+    out["features"] = _json_obj(out.pop("features_json", None))
     out["edited_fields"] = _json_obj(out.pop("edited_fields_json", None))
     out["placed_order"] = _json_obj(out.pop("placed_order_json", None))
     out["exit_params"] = _json_obj(out.pop("exit_params_json", None))
     return out
+
+
+def _win_loss_from_pnl_or_pips(*, pnl: Any, pips: Any) -> str | None:
+    pnl_f = _to_float(pnl)
+    if pnl_f is not None:
+        if pnl_f > 0:
+            return "win"
+        if pnl_f < 0:
+            return "loss"
+        return "breakeven"
+    pips_f = _to_float(pips)
+    if pips_f is not None:
+        if pips_f > 0:
+            return "win"
+        if pips_f < 0:
+            return "loss"
+        return "breakeven"
+    return None
 
 
 def _deserialize_thesis_check(row: dict[str, Any]) -> dict[str, Any]:

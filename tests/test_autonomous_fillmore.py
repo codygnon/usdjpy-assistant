@@ -733,12 +733,14 @@ def test_market_order_with_no_exit_strategy_still_links_trade_and_fill(tmp_path:
     assert out["status"] == "filled"
     assert len(store.inserted) == 1
     row = store.inserted[0]
-    assert row["trade_id"].startswith("ai_manual:555001:")
+    assert row["trade_id"].startswith("ai_autonomous:555001:")
+    assert row["entry_type"] == "ai_autonomous"
     assert row["managed_trail_mode"] == "none"
 
     tracked = suggestion_tracker.get_by_order_id(db_path, "555001")
     assert tracked is not None
     assert tracked["trade_id"] == row["trade_id"]
+    assert tracked["placed_order"]["entry_type"] == "ai_autonomous"
     assert tracked["placed_order"]["order_type"] == "market"
     assert tracked["placed_order"]["exit_strategy"] == "none"
 
@@ -1566,9 +1568,14 @@ def test_count_open_ai_trades_ignores_manual_ai_manual_rows() -> None:
                     "notes": "autonomous_fillmore:none:order_2",
                     "config_json": json.dumps({"source": "autonomous_fillmore"}),
                 },
+                {
+                    "entry_type": "ai_autonomous",
+                    "notes": "autonomous_fillmore:none:order_3",
+                    "config_json": json.dumps({"source": "autonomous_fillmore"}),
+                },
             ]
 
-    assert autonomous_fillmore._count_open_ai_trades(_Store(), "kumatora2") == 1
+    assert autonomous_fillmore._count_open_ai_trades(_Store(), "kumatora2") == 2
 
 
 # -----------------------------------------------------------------------------

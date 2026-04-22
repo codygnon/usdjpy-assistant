@@ -35,6 +35,8 @@ import numpy as np
 import pandas as pd
 
 from api import autonomous_performance
+from api.fillmore_llm_guard import FillmoreLLMCircuitOpenError, get_fillmore_llm_health, run_guarded_fillmore_llm_call
+from core.json_state import load_json_state, save_json_state
 from core.indicators import bollinger_bands
 
 # -----------------------------------------------------------------------------
@@ -500,17 +502,11 @@ class GateDecision:
 # -----------------------------------------------------------------------------
 
 def _load_state(state_path: Path) -> dict[str, Any]:
-    if not state_path.exists():
-        return {}
-    try:
-        return json.loads(state_path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return {}
+    return load_json_state(state_path, default={})
 
 
 def _save_state(state_path: Path, data: dict[str, Any]) -> None:
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    save_json_state(state_path, data, indent=2, trailing_newline=True)
 
 
 def get_config(state_path: Path) -> dict[str, Any]:
@@ -839,7 +835,7 @@ def record_broker_reject(state_path: Path) -> None:
 
 
 def record_trade_outcome(state_path: Path, pnl_usd: float, cfg: dict[str, Any]) -> None:
-    """Called from trade-close path when an ai_manual trade closes."""
+    """Called from trade-close path when an autonomous Fillmore trade closes."""
     state = _load_state(state_path)
     rt = _runtime_block(state)
     _rollover_daily_counters(rt)
@@ -1639,7 +1635,7 @@ def _correlated_open_position(
     distance_pips: float,
     pip_size: float = 0.01,
 ) -> Optional[dict[str, Any]]:
-    """Return an open ai_manual position that conflicts with a new proposed entry.
+    """Return an open autonomous Fillmore position that conflicts with a new proposed entry.
 
     Conflict = same side AND fill_price within ``distance_pips`` of the
     proposed entry. The autonomous loop calls this AFTER the LLM responds, so
@@ -2350,6 +2346,16 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
             "code": "llm_errors",
             "msg": f"{int(rt.get('consecutive_llm_errors') or 0)} consecutive LLM errors. Last: {rt.get('last_error_msg', '?')[:100]}",
         })
+    llm_circuit = get_fillmore_llm_health()
+    if str(llm_circuit.get("state") or "closed") != "closed":
+        health_alerts.append({
+            "level": "error" if llm_circuit.get("state") == "open" else "warning",
+            "code": "llm_circuit_breaker",
+            "msg": (
+                f"Fillmore LLM circuit is {llm_circuit.get('state')}. "
+                f"Last error: {str(llm_circuit.get('last_error') or 'n/a')[:100]}"
+            ),
+        })
     if int(rt.get("consecutive_broker_rejects") or 0) >= 3:
         health_alerts.append({
             "level": "error",
@@ -2395,6 +2401,7 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
             **risk_regime,
             "override_until_utc": rt.get("risk_regime_override_until_utc"),
         },
+        "llm_circuit_breaker": llm_circuit,
         "recent_gate_blocks": dict(sorted((rt.get("recent_gate_blocks") or {}).items(), key=lambda kv: -kv[1])[:8]),
         "health_alerts": health_alerts,
         "performance": perf_rows,
@@ -2412,31 +2419,17 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
 # -----------------------------------------------------------------------------
 
 def _count_open_ai_trades(store, profile_name: str) -> int:
+    from api import suggestion_tracker
+
     try:
         rows = store.list_open_trades(profile_name)
     except Exception:
         return 0
-    n = 0
-    for r in rows:
-        rd = dict(r)
-        cfgj = {}
-        try:
-            raw_cfg = rd.get("config_json")
-            if isinstance(raw_cfg, str) and raw_cfg.strip():
-                cfgj = json.loads(raw_cfg)
-            elif isinstance(raw_cfg, dict):
-                cfgj = raw_cfg
-        except Exception:
-            cfgj = {}
-        source = str((cfgj or {}).get("source") or "").strip().lower()
-        notes = str(rd.get("notes") or "").strip().lower()
-        if source == "autonomous_fillmore" or notes.startswith("autonomous_fillmore:"):
-            n += 1
-    return n
+    return sum(1 for r in rows if suggestion_tracker.is_autonomous_trade_row(dict(r)))
 
 
 def _refresh_daily_pnl(store, profile_name: str, rt: dict[str, Any], cfg: Optional[dict[str, Any]] = None) -> None:
-    """Query closed ai_manual trades for today and update rt['daily_pnl_usd'].
+    """Query closed autonomous Fillmore trades for today and update rt['daily_pnl_usd'].
 
     Runs best-effort — any error leaves rt['daily_pnl_usd'] unchanged. Called
     each tick so the daily loss cap and loss-streak throttle see real outcomes
@@ -2617,9 +2610,10 @@ def _compute_risk_regime(rt: dict[str, Any], cfg: dict[str, Any]) -> dict[str, A
     }
     try:
         df = rows.copy()
-        # Filter to ai_manual entries that closed today.
-        if "entry_type" in df.columns:
-            df = df[df["entry_type"].astype(str).str.lower() == "ai_manual"]
+        # Filter to autonomous Fillmore entries that closed today.
+        if not df.empty:
+            mask = df.apply(lambda row: suggestion_tracker.is_autonomous_trade_row(row.to_dict()), axis=1)
+            df = df[mask]
         if "close_time" not in df.columns and "exit_time_utc" in df.columns:
             df = df.rename(columns={"exit_time_utc": "close_time"})
         if "close_time" not in df.columns and "exit_timestamp_utc" in df.columns:
@@ -2636,7 +2630,7 @@ def _compute_risk_regime(rt: dict[str, Any], cfg: dict[str, Any]) -> dict[str, A
         if pnl_col is None:
             return
         daily = float(df[pnl_col].fillna(0).astype(float).sum())
-        # Compute loss streak from closed ai_manual trades today (chronological).
+        # Compute loss streak from closed autonomous Fillmore trades today (chronological).
         if "close_time" in df.columns:
             df = df.sort_values("close_time")
         losses_in_streak = 0
@@ -2741,6 +2735,9 @@ def tick_autonomous_fillmore(
             risk_regime=risk_regime,
             gate_decision=decision,
         )
+    except FillmoreLLMCircuitOpenError as e:
+        print(f"[{profile_name}] autonomous Fillmore: {e}")
+        return
     except Exception as e:
         print(f"[{profile_name}] autonomous Fillmore: LLM error: {e}")
         record_error(state_path, cfg, str(e))
@@ -3110,16 +3107,17 @@ def _invoke_suggest(
     Lazy imports avoid circular dependency with api.main.
     """
     from api.ai_trading_chat import (
-        autonomous_system_prompt_from_context,
-        build_trade_suggestion_news_block,
         build_trading_context,
         resolve_ai_suggest_model,
     )
+    from api.prompt_builder import PromptBuilder
     from api import suggestion_tracker
     from api.ai_exit_strategies import (
         AI_EXIT_STRATEGIES, DEFAULT_AI_EXIT_STRATEGY,
         exit_strategies_prompt_block, merge_exit_params, normalize_exit_strategy,
     )
+    from api.suggestion_schema import ValidationError as SuggestionValidationError
+    from api.suggestion_schema import validate_autonomous_suggestion
     import openai
     import json as _json
 
@@ -3129,52 +3127,39 @@ def _invoke_suggest(
 
     ctx = build_trading_context(profile, profile_name)
     model = resolve_ai_suggest_model(cfg.get("model"))
-    system = autonomous_system_prompt_from_context(
-        ctx,
-        model,
-        autonomous_config=cfg,
-        risk_regime=risk_regime,
-    )
     risk_regime = risk_regime or {
         "label": "normal",
         "risk_multiplier": 1.0,
     }
+    prompt_builder = PromptBuilder.for_autonomous_suggest(
+        profile=profile,
+        profile_name=profile_name,
+        ctx=ctx,
+        model=model,
+        autonomous_config=cfg,
+        risk_regime=risk_regime,
+    )
     # Best-effort news enrichment; swallow errors.
     try:
-        news_block = build_trade_suggestion_news_block(
+        prompt_builder.append_news_block(
             symbol=getattr(profile, "symbol", "USD_JPY"),
             rss_headline_count=8,
             web_result_count=3,
             parallel_timeout_sec=10.0,
         )
-        system = f"{system}\n\n{news_block}"
     except Exception:
         pass
     # Learning memory block + today's autonomous run history.
     try:
         from api.main import _suggestions_db_path
         db_path = _suggestions_db_path(profile_name)
-        learning = suggestion_tracker.build_learning_prompt_block(
-            db_path, days_back=180, max_recent_examples=6, current_ctx=ctx,
-        )
-        reflection_block = suggestion_tracker.build_autonomous_reflection_prompt_block(
-            db_path,
-            limit=8,
-            autonomous_only=True,
-        )
-        perf_block = autonomous_performance.build_performance_memory_block(
-            db_path,
+        prompt_builder.append_autonomous_memory(
+            db_path=db_path,
             risk_regime=risk_regime,
+            max_recent_examples=6,
+            reflection_limit=8,
+            today_limit=10,
         )
-        today_block = suggestion_tracker.build_autonomous_today_block(db_path, max_items=10)
-        aux_memory = _fit_aux_memory_blocks([
-            ("learning", learning, True),
-            ("performance", perf_block, True),
-            ("reflections", reflection_block, False),
-            ("today", today_block, False),
-        ])
-        if aux_memory:
-            system = f"{system}\n\n{aux_memory}"
     except Exception:
         pass
     gate_block = _format_gate_opportunity_block(gate_decision)
@@ -3309,12 +3294,19 @@ def _invoke_suggest(
     )
 
     client = openai.OpenAI()
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": suggest_prompt},
-        ],
+    assembly = prompt_builder.build(
+        user=suggest_prompt,
+        prompt_version=AUTONOMOUS_PROMPT_VERSION,
+    )
+    resp = run_guarded_fillmore_llm_call(
+        "autonomous_suggest",
+        lambda: client.chat.completions.create(
+            model=assembly.model,
+            messages=[
+                {"role": "system", "content": assembly.system},
+                {"role": "user", "content": assembly.user},
+            ],
+        ),
     )
     raw = (resp.choices[0].message.content or "").strip()
     try:
@@ -3396,8 +3388,8 @@ def _invoke_suggest(
         suggestion["trigger_bias"] = (gate_decision.extras or {}).get("trigger_bias") if gate_decision else None
         # exit_plan: free-text field for the thesis monitor to reason about mid-trade.
         suggestion["exit_plan"] = str(suggestion.get("exit_plan") or "default").strip()
-        suggestion["prompt_version"] = AUTONOMOUS_PROMPT_VERSION
-        suggestion["prompt_hash"] = _autonomous_prompt_hash()
+        suggestion["prompt_version"] = assembly.prompt_version
+        suggestion["prompt_hash"] = assembly.prompt_hash
 
         raw_exit = suggestion.get("exit_strategy")
         raw_exit_s = str(raw_exit).strip().lower() if raw_exit is not None else ""
@@ -3411,6 +3403,12 @@ def _invoke_suggest(
             merged_params = merge_exit_params(chosen, raw_params)
             suggestion["exit_params"] = _apply_autonomous_exit_calibration(chosen, merged_params, ctx)
         suggestion["model_used"] = model
+        suggestion["entry_type"] = suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS
+        try:
+            suggestion = validate_autonomous_suggestion(suggestion)
+        except SuggestionValidationError as e:
+            print(f"[{profile_name}] autonomous Fillmore: suggestion schema validation failed: {e}")
+            continue
 
         # Persist the suggestion row.
         try:
@@ -3515,14 +3513,14 @@ def _place_from_suggestion(
             if position_id is not None:
                 try:
                     trail_mode = trail_mode_for_strategy(managed_strategy) if managed_strategy else "none"
-                    trade_id = f"ai_manual:{order_id or position_id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}"
+                    trade_id = f"{suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS}:{order_id or position_id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}"
                     row: dict[str, Any] = {
                         "trade_id": trade_id,
                         "timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
                         "profile": profile.profile_name,
                         "symbol": profile.symbol,
                         "side": side,
-                        "policy_type": "ai_manual",
+                        "policy_type": suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS,
                         "config_json": _json.dumps({
                             "source": "autonomous_fillmore",
                             "order_id": order_id,
@@ -3542,9 +3540,9 @@ def _place_from_suggestion(
                         "mt5_deal_id": None,
                         "mt5_retcode": 0,
                         "mt5_position_id": int(position_id),
-                        "opened_by": "ai_manual",
+                        "opened_by": suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS,
                         "preset_name": getattr(profile, "active_preset_name", None) or "Autonomous Fillmore",
-                        "entry_type": "ai_manual",
+                        "entry_type": suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS,
                         "breakeven_applied": 0,
                         "tp1_partial_done": 0,
                         "managed_trail_mode": trail_mode or "none",
@@ -3581,6 +3579,7 @@ def _place_from_suggestion(
                             "exit_strategy": managed_strategy or "none",
                             "exit_params": managed_params if managed_strategy else {},
                             "autonomous": True,
+                            "entry_type": suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS,
                             "order_type": "market",
                             "trigger_family": suggestion.get("trigger_family"),
                             "order_policy_reason": suggestion.get("order_policy_reason"),
@@ -3627,7 +3626,7 @@ def _place_from_suggestion(
                 "exit_strategy": managed_strategy or "none",
                 "trail_mode": trail_mode_for_strategy(managed_strategy) if managed_strategy else "none",
                 "exit_params": managed_params,
-                "source": "ai_manual",  # reuse watchdog path
+                "source": "autonomous_fillmore",
                 "suggestion_id": suggestion.get("suggestion_id"),
                 "created_utc": datetime.now(timezone.utc).isoformat(),
                 "autonomous": True,
@@ -3652,6 +3651,7 @@ def _place_from_suggestion(
                         "exit_strategy": managed_strategy or "none",
                         "exit_params": managed_params if managed_strategy else {},
                         "autonomous": True,
+                        "entry_type": suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS,
                         "order_type": "limit",
                         "trigger_family": suggestion.get("trigger_family"),
                         "order_policy_reason": suggestion.get("order_policy_reason"),

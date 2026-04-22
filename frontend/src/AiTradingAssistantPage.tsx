@@ -478,6 +478,8 @@ function AutonomousFillmorePanel({
   };
   const alerts = stats?.health_alerts || [];
   const orderMetrics = stats?.order_metrics;
+  const llmCircuit = stats?.llm_circuit_breaker;
+  const showHealthSection = alerts.length > 0 || !!llmCircuit;
   const autonomousModelOptions = modelOptions.includes(cfg.model)
     ? modelOptions
     : [cfg.model, ...modelOptions.filter((m) => m !== cfg.model)];
@@ -828,12 +830,68 @@ function AutonomousFillmorePanel({
         </button>
       )}
 
-      {alerts.length > 0 && (
+      {showHealthSection && (
         <div className="autonomous-panel__section">
           <div className="autonomous-panel__section-head">
             <span className="autonomous-panel__section-title">Health</span>
             <span className="autonomous-panel__muted">runtime diagnostics</span>
           </div>
+          {llmCircuit && (
+            <div style={{ marginBottom: alerts.length > 0 ? 10 : 0 }}>
+              <div className="autonomous-panel__chip-row" style={{ marginBottom: 8 }}>
+                <div
+                  className="autonomous-panel__chip"
+                  style={{
+                    border: llmCircuit.state === 'open'
+                      ? '1px solid rgba(248,113,113,0.35)'
+                      : llmCircuit.state === 'half_open'
+                        ? '1px solid rgba(250,204,21,0.35)'
+                        : '1px solid rgba(74,222,128,0.25)',
+                    color: llmCircuit.state === 'open'
+                      ? '#fecaca'
+                      : llmCircuit.state === 'half_open'
+                        ? '#fde68a'
+                        : '#86efac',
+                  }}
+                >
+                  LLM circuit {llmCircuit.state.replace('_', ' ')}
+                </div>
+                <div className="autonomous-panel__chip">
+                  failures {llmCircuit.consecutive_failures}/{llmCircuit.failure_threshold}
+                </div>
+                <div className="autonomous-panel__chip">
+                  skipped {llmCircuit.total_skipped}
+                </div>
+                <div className="autonomous-panel__chip">
+                  callsite {llmCircuit.last_callsite || '–'}
+                </div>
+              </div>
+              <div
+                style={{
+                  borderRadius: 10,
+                  padding: '8px 10px',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  background: 'rgba(255,255,255,0.03)',
+                  color: '#cbd5e1',
+                  fontSize: '0.76rem',
+                  lineHeight: 1.45,
+                }}
+              >
+                <div>
+                  {llmCircuit.last_error
+                    ? `Last LLM error: ${llmCircuit.last_error}`
+                    : 'No recent LLM breaker errors.'}
+                </div>
+                <div style={{ marginTop: 4, color: 'var(--text-secondary)' }}>
+                  {llmCircuit.cooldown_remaining_sec != null
+                    ? `Cooldown remaining ${Math.ceil(llmCircuit.cooldown_remaining_sec)}s`
+                    : `Reset timeout ${Math.round(llmCircuit.reset_timeout_sec)}s`}
+                  {llmCircuit.last_failure_utc ? ` · last fail ${new Date(llmCircuit.last_failure_utc).toLocaleTimeString()}` : ''}
+                  {llmCircuit.last_success_utc ? ` · last success ${new Date(llmCircuit.last_success_utc).toLocaleTimeString()}` : ''}
+                </div>
+              </div>
+            </div>
+          )}
           <div style={{ display: 'grid', gap: 8 }}>
             {alerts.map((alert) => (
               <div
@@ -993,6 +1051,11 @@ function AutonomousFillmorePanel({
                   ? (s.rationale || '').slice(0, (s.rationale || '').indexOf('\n\nANALYSIS:')).trim()
                   : (s.rationale || '').trim();
                 const snapped = snapDeltaPips(s.requested_price, s.price);
+                const features = s.features || null;
+                const plannedRr = typeof features?.planned_rr === 'number' ? features.planned_rr.toFixed(2) : null;
+                const sessionLabel = typeof features?.session === 'string' ? features.session : null;
+                const volLabel = typeof features?.vol_regime === 'string' ? features.vol_regime : null;
+                const showAuditStrip = plannedRr || sessionLabel || volLabel || s.max_adverse_pips != null || s.max_favorable_pips != null;
                 return (
                   <div key={s.suggestion_id} style={{ marginBottom: 10, borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 8 }}>
                     <div>
@@ -1029,6 +1092,40 @@ function AutonomousFillmorePanel({
                         </div>
                       )}
                     </div>
+                    {showAuditStrip && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                        {plannedRr && (
+                          <div style={{ fontSize: '0.7rem', color: '#cbd5e1' }}>
+                            R:R {plannedRr}
+                          </div>
+                        )}
+                        {sessionLabel && (
+                          <div style={{ fontSize: '0.7rem', color: '#cbd5e1' }}>
+                            session {sessionLabel}
+                          </div>
+                        )}
+                        {volLabel && (
+                          <div style={{ fontSize: '0.7rem', color: '#cbd5e1' }}>
+                            vol {volLabel}
+                          </div>
+                        )}
+                        {s.max_adverse_pips != null && (
+                          <div style={{ fontSize: '0.7rem', color: '#fca5a5' }}>
+                            MAE {Math.abs(s.max_adverse_pips).toFixed(1)}p
+                          </div>
+                        )}
+                        {s.max_favorable_pips != null && (
+                          <div style={{ fontSize: '0.7rem', color: '#86efac' }}>
+                            MFE {s.max_favorable_pips.toFixed(1)}p
+                          </div>
+                        )}
+                        {s.mae_mfe_estimated != null && (
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                            excursion {s.mae_mfe_estimated ? 'estimated' : 'broker'}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {s.exit_plan && s.exit_plan !== 'default' && (
                       <div style={{ color: '#a5b4fc', marginTop: 2, fontStyle: 'italic' }}>Exit plan: {s.exit_plan}</div>
                     )}

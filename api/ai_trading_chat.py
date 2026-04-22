@@ -147,6 +147,7 @@ def resolve_ai_suggest_model(requested: str | None) -> str:
 
 
 BOT_ENTRY_TAGS: tuple[str, ...] = (
+    "ai_autonomous",
     "phase3",
     "v44",
     "tiered_pullback",
@@ -3018,6 +3019,7 @@ def _attach_ai_suggestion_trade_results(rows: list[dict[str, Any]], profile_name
     if not rows:
         return
 
+    from api import suggestion_tracker
     from storage.sqlite_store import SqliteStore
 
     db_path = LOGS_DIR / profile_name / "assistant.db"
@@ -3035,22 +3037,7 @@ def _attach_ai_suggestion_trade_results(rows: list[dict[str, Any]], profile_name
         return
 
     def _is_fillmore_trade(trade: dict[str, Any]) -> bool:
-        entry_type = str(trade.get("entry_type") or "").strip().lower()
-        policy_type = str(trade.get("policy_type") or "").strip().lower()
-        opened_by = str(trade.get("opened_by") or "").strip().lower()
-        trade_id = str(trade.get("trade_id") or "").strip().lower()
-        notes = str(trade.get("notes") or "").strip().lower()
-        if entry_type == "ai_manual":
-            return True
-        if policy_type == "ai_manual":
-            return True
-        if opened_by == "ai_manual":
-            return True
-        if trade_id.startswith("ai_manual:"):
-            return True
-        if notes.startswith("ai_manual:") or ":order_" in notes:
-            return True
-        return False
+        return suggestion_tracker.is_fillmore_trade_row(trade)
 
     trade_by_id: dict[str, dict[str, Any]] = {}
     fillmore_trade_by_order: dict[str, dict[str, Any]] = {}

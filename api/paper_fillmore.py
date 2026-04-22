@@ -212,7 +212,7 @@ def place_paper_market_fill(
 
     trail_mode = trail_mode_for_strategy(managed_strategy) if managed_strategy else "none"
 
-    trade_id = f"ai_manual:paper:{position_id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}"
+    trade_id = f"{suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS}:paper:{position_id}:{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}"
     cfg_payload: dict[str, Any] = {
         "paper": True,
         "paper_order_id": paper_oid,
@@ -228,7 +228,7 @@ def place_paper_market_fill(
         "profile": profile.profile_name,
         "symbol": profile.symbol,
         "side": side,
-        "policy_type": "ai_manual",
+        "policy_type": suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS,
         "config_json": json.dumps(cfg_payload),
         "entry_price": fill_price,
         "stop_price": float(sl) if sl is not None else None,
@@ -240,9 +240,9 @@ def place_paper_market_fill(
         "mt5_deal_id": None,
         "mt5_retcode": 0,
         "mt5_position_id": int(position_id),
-        "opened_by": "ai_manual",
+        "opened_by": suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS,
         "preset_name": getattr(profile, "active_preset_name", None) or "Autonomous Fillmore (Paper)",
-        "entry_type": "ai_manual",
+        "entry_type": suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS,
         "breakeven_applied": 0,
         "tp1_partial_done": 0,
         "tp1_triggered": 0,
@@ -581,12 +581,20 @@ def _tick_one_paper_trade(
                 part_pnl = _usd_profit_usdjpy(pips=pips_part, lots=close_lots, mid=mid, pip_size=pip)
                 new_lots = max(0.0, round(lots - close_lots, 4))
                 new_partial = float(cfgj.get("paper_partial_pnl_usd") or 0.0) + part_pnl
-                be_offset = spread + be_plus * pip
+                from api.ai_exit_strategies import compute_post_tp1_stop
+
+                be_sl = compute_post_tp1_stop(
+                    trade_side=side,
+                    entry_price=entry,
+                    pip_size=pip,
+                    tp1_pips=tp1_pips,
+                    spread_pips=spread / pip if pip > 0 else 0.0,
+                    be_plus_pips=be_plus,
+                    lock_in_fraction=float(_cfg_exit("tp1_lock_in_fraction", 0.2)),
+                )
                 if side == "buy":
-                    be_sl = entry + be_offset
                     be_sl = min(be_sl, bid - pip * 0.5)
                 else:
-                    be_sl = entry - be_offset
                     be_sl = max(be_sl, ask + pip * 0.5)
                 store.update_trade(
                     trade_id,

@@ -86,6 +86,9 @@ def test_init_db_adds_learning_columns(tmp_path: Path) -> None:
     assert "placed_order_json" in cols
     assert "trade_id" in cols
     assert "requested_price" in cols
+    assert "features_json" in cols
+    assert "max_adverse_pips" in cols
+    assert "max_favorable_pips" in cols
     assert "ai_thesis_checks" in tables
     assert "ai_reflections" in tables
 
@@ -183,6 +186,8 @@ def test_stats_capture_generated_placed_edited_rejected_and_closed(tmp_path: Pat
     assert linked is not None
     assert linked["trade_id"] == "ai_manual:101:1"
     assert linked["placed_order"]["exit_strategy"] == "tp1_be_hwm_trail"
+    assert linked["outcome_status"] == "filled"
+    assert linked["features"]["session"] == "london"
 
 
 def test_learning_prompt_block_surfaces_behavioral_feedback(tmp_path: Path) -> None:
@@ -281,6 +286,78 @@ def test_learning_prompt_block_surfaces_behavioral_feedback(tmp_path: Path) -> N
     assert "Recent matched examples:" in block
     assert "bias=bullish" in block
     assert "session=london" in block
+
+
+def test_mark_closed_persists_excursion_metrics(tmp_path: Path) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+    sid = suggestion_tracker.log_generated(
+        db_path,
+        profile="demo",
+        model="gpt-5.4-mini",
+        suggestion=_suggestion(side="buy", price=150.0),
+        ctx=_ctx(),
+    )
+    suggestion_tracker.log_action(
+        db_path,
+        suggestion_id=sid,
+        action="placed",
+        edited_fields={},
+        placed_order={"side": "buy", "price": 150.0},
+        oanda_order_id="701",
+    )
+    suggestion_tracker.mark_filled(db_path, oanda_order_id="701", fill_price=150.0, trade_id="ai_manual:701:1")
+
+    ok = suggestion_tracker.mark_closed(
+        db_path,
+        oanda_order_id="701",
+        exit_price=150.05,
+        pnl=10.0,
+        pips=5.0,
+        max_adverse_pips=3.2,
+        max_favorable_pips=8.7,
+        mae_mfe_estimated=0,
+    )
+
+    assert ok is True
+    row = suggestion_tracker.get_by_order_id(db_path, "701")
+    assert row is not None
+    assert row["outcome_status"] == "filled"
+    assert row["win_loss"] == "win"
+    assert row["max_adverse_pips"] == 3.2
+    assert row["max_favorable_pips"] == 8.7
+
+
+def test_backfill_null_win_loss_updates_closed_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+    sid = suggestion_tracker.log_generated(
+        db_path,
+        profile="demo",
+        model="gpt-5.4-mini",
+        suggestion=_suggestion(side="buy", price=150.0),
+        ctx=_ctx(),
+    )
+    suggestion_tracker.log_action(
+        db_path,
+        suggestion_id=sid,
+        action="placed",
+        edited_fields={},
+        placed_order={"side": "buy", "price": 150.0},
+        oanda_order_id="702",
+    )
+    suggestion_tracker.mark_filled(db_path, oanda_order_id="702", fill_price=150.0, trade_id="ai_manual:702:1")
+    suggestion_tracker.mark_closed(db_path, oanda_order_id="702", exit_price=149.94, pnl=-12.0, pips=-6.0)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE ai_suggestions SET win_loss = NULL, outcome_status = NULL WHERE suggestion_id = ?", (sid,))
+        conn.commit()
+
+    result = suggestion_tracker.backfill_null_win_loss(db_path)
+    row = suggestion_tracker.get_by_order_id(db_path, "702")
+
+    assert result["updated"] == 1
+    assert row is not None
+    assert row["win_loss"] == "loss"
+    assert row["outcome_status"] == "filled"
 
 
 def test_learning_prompt_block_handles_empty_history(tmp_path: Path) -> None:
@@ -485,3 +562,23 @@ def test_log_generated_persists_requested_price_when_distinct_from_limit_price(t
     feed = suggestion_tracker.get_reasoning_feed(db_path, suggestions_limit=5)
     assert feed["suggestions"][0]["requested_price"] == 150.00
     assert feed["suggestions"][0]["price"] == 150.12
+
+
+def test_log_generated_persists_entry_type_and_autonomous_detection(tmp_path: Path) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+    sugg = _suggestion(side="buy", price=150.12)
+    sugg["entry_type"] = suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS
+
+    sid = suggestion_tracker.log_generated(
+        db_path,
+        profile="kumatora2",
+        model="gpt-5.4-mini",
+        suggestion=sugg,
+        ctx=_ctx(),
+    )
+
+    history = suggestion_tracker.get_history(db_path, limit=1, offset=0)
+    row = history["items"][0]
+    assert row is not None
+    assert row["entry_type"] == suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS
+    assert suggestion_tracker.is_autonomous_suggestion_row(row) is True

@@ -30,6 +30,7 @@ AI_EXIT_STRATEGIES: dict[str, dict[str, Any]] = {
             "tp1_pips": 6.0,
             "tp1_close_pct": 70.0,
             "be_plus_pips": 0.5,
+            "tp1_lock_in_fraction": 0.2,
             "hwm_trail_pips": 3.0,
         },
     },
@@ -46,6 +47,7 @@ AI_EXIT_STRATEGIES: dict[str, dict[str, Any]] = {
             "tp1_pips": 6.0,
             "tp1_close_pct": 80.0,
             "be_plus_pips": 0.5,
+            "tp1_lock_in_fraction": 0.2,
             "trail_ema_period": 20,
         },
     },
@@ -62,6 +64,7 @@ AI_EXIT_STRATEGIES: dict[str, dict[str, Any]] = {
             "tp1_pips": 4.0,
             "tp1_close_pct": 50.0,
             "be_plus_pips": 0.5,
+            "tp1_lock_in_fraction": 0.2,
             "trail_ema_period": 21,
         },
     },
@@ -78,6 +81,7 @@ AI_EXIT_STRATEGIES: dict[str, dict[str, Any]] = {
             "tp1_pips": 4.0,
             "tp1_close_pct": 50.0,
             "be_plus_pips": 0.5,
+            "tp1_lock_in_fraction": 0.2,
         },
     },
     "none": {
@@ -143,3 +147,21 @@ def merge_exit_params(sid: str, overrides: dict[str, Any] | None) -> dict[str, A
 def trail_mode_for_strategy(sid: str) -> str:
     cfg = AI_EXIT_STRATEGIES.get(sid) or AI_EXIT_STRATEGIES[DEFAULT_AI_EXIT_STRATEGY]
     return str(cfg.get("trail_mode") or "none")
+
+
+def compute_post_tp1_stop(
+    *,
+    trade_side: str,
+    entry_price: float,
+    pip_size: float,
+    tp1_pips: float,
+    spread_pips: float = 0.0,
+    be_plus_pips: float = 0.5,
+    lock_in_fraction: float = 0.2,
+) -> float:
+    tp1_distance = max(0.0, float(tp1_pips)) * float(pip_size)
+    fractional_lock = max(0.0, float(lock_in_fraction)) * tp1_distance
+    lock_distance = fractional_lock + max(0.0, float(be_plus_pips)) * float(pip_size)
+    if str(trade_side).lower() == "sell":
+        return round(float(entry_price) - lock_distance, 3)
+    return round(float(entry_price) + lock_distance, 3)

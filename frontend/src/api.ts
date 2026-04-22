@@ -1030,6 +1030,10 @@ export interface AiSuggestionHistoryItem {
   pnl: number | null;
   pips: number | null;
   win_loss: string | null;
+  features: Record<string, unknown> | null;
+  max_adverse_pips: number | null;
+  max_favorable_pips: number | null;
+  mae_mfe_estimated: number | null;
 }
 
 export interface AiSuggestionHistoryResponse {
@@ -1230,6 +1234,21 @@ export interface AutonomousStats {
     recovery_wins?: number;
     regime_entered_trade_id?: string | null;
   };
+  llm_circuit_breaker?: {
+    state: 'closed' | 'open' | 'half_open' | string;
+    failure_threshold: number;
+    reset_timeout_sec: number;
+    consecutive_failures: number;
+    last_failure_utc: string | null;
+    last_success_utc: string | null;
+    last_error: string | null;
+    last_callsite: string | null;
+    cooldown_remaining_sec: number | null;
+    probe_in_flight: boolean;
+    total_calls: number;
+    total_failures: number;
+    total_skipped: number;
+  };
   recent_gate_blocks: Record<string, number>;
   health_alerts: Array<{
     level: 'warning' | 'error' | string;
@@ -1325,6 +1344,10 @@ export interface ReasoningSuggestion {
   win_loss: string | null;
   pips: number | null;
   pnl: number | null;
+  features: Record<string, unknown> | null;
+  max_adverse_pips: number | null;
+  max_favorable_pips: number | null;
+  mae_mfe_estimated: number | null;
 }
 
 export interface ReasoningThesisCheck {

@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from api.fillmore_llm_guard import FillmoreLLMCircuitOpenError, run_guarded_fillmore_llm_call
+
 
 THESIS_MONITOR_MODEL = "gpt-5.4-mini"
 REFLECTION_MODEL = "gpt-5.4-mini"
@@ -211,8 +213,9 @@ def evaluate_trade_thesis(
         return None
 
     from api import suggestion_tracker
-    from api.ai_trading_chat import autonomous_system_prompt_from_context, build_trading_context, resolve_ai_suggest_model
+    from api.ai_trading_chat import build_trading_context, resolve_ai_suggest_model
     from api.autonomous_fillmore import _extract_json_object
+    from api.prompt_builder import PromptBuilder
     import json as _json
     import openai
 
@@ -233,7 +236,12 @@ def evaluate_trade_thesis(
 
     ctx = build_trading_context(profile, profile_name)
     model = resolve_ai_suggest_model(THESIS_MONITOR_MODEL)
-    system = autonomous_system_prompt_from_context(ctx, model)
+    assembly_builder = PromptBuilder.for_thesis_monitor(
+        profile=profile,
+        profile_name=profile_name,
+        ctx=ctx,
+        model=model,
+    )
 
     side = str(trade_row.get("side") or suggestion_row.get("side") or "buy").lower()
     entry = _safe_float(trade_row.get("entry_price")) or _safe_float(suggestion_row.get("fill_price")) or 0.0
@@ -299,14 +307,24 @@ def evaluate_trade_thesis(
         "If you choose scale_out, only use 25, 33, or 50. If the trade is clearly broken, use exit_now."
     )
 
-    client = openai.OpenAI()
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ],
+    assembly = assembly_builder.build(
+        user=prompt,
+        prompt_version="thesis_monitor_v1",
     )
+    client = openai.OpenAI()
+    try:
+        resp = run_guarded_fillmore_llm_call(
+            "thesis_monitor",
+            lambda: client.chat.completions.create(
+                model=assembly.model,
+                messages=[
+                    {"role": "system", "content": assembly.system},
+                    {"role": "user", "content": assembly.user},
+                ],
+            ),
+        )
+    except FillmoreLLMCircuitOpenError:
+        return None
     raw = (resp.choices[0].message.content or "").strip()
     json_str, _ = _extract_json_object(raw)
     decision = _json.loads(json_str)
@@ -417,19 +435,25 @@ def maybe_generate_trade_reflection(
     )
 
     client = openai.OpenAI()
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are Fillmore writing a compact post-trade self-review for future autonomous suggestions. "
-                    "Be honest, concrete, and concise."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ],
-    )
+    try:
+        resp = run_guarded_fillmore_llm_call(
+            "trade_reflection",
+            lambda: client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are Fillmore writing a compact post-trade self-review for future autonomous suggestions. "
+                            "Be honest, concrete, and concise."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+            ),
+        )
+    except FillmoreLLMCircuitOpenError:
+        return False
     raw = (resp.choices[0].message.content or "").strip()
     json_str, _ = _extract_json_object(raw)
     parsed = _json.loads(json_str)
