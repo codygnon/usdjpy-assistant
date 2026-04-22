@@ -2681,6 +2681,9 @@ def autonomous_system_prompt_from_context(
         "For limit orders: BUY LIMIT must be below current bid, SELL LIMIT must be above current ask. "
         "The server will clamp autonomous limits into a near-market band rather than leave them several pips away. "
         "If the structural level is far from current price, prefer market or pass.",
+        "- SPREAD DISCIPLINE: treat spread as execution context, not a hard blocker. "
+        "For OANDA USDJPY, roughly 1.6-2.9 pips is a normal tradable band. "
+        "If spread is materially above that, either downgrade conviction, prefer cleaner structures, or pass.",
         "- Check the OPEN POSITIONS block below. Stacking and hedging are allowed when thesis quality is clear. "
         f"If you add exposure near an existing position (within ~{corr_pips:g} pips), explain why this is additive "
         "alpha (or why a hedge is justified) instead of a duplicate idea.",
@@ -3276,7 +3279,7 @@ def _fillmore_autonomous_help(profile_name: str, *, include_runtime: bool) -> st
         "- This is the unattended engine that runs inside the main trading loop each tick, not the normal chat reply path.",
         "- It first loads autonomous config/runtime state from the profile runtime_state.json block.",
         "- Then it evaluates a three-layer gate before paying for an LLM call.",
-        "- Layer 1 hard filters: enabled flag, mode not off, spread cap, no-trade-zone flag, daily LLM budget cap, allowed trading sessions, and minimum cooldown since the last model call.",
+        "- Layer 1 hard filters: enabled flag, mode not off, no-trade-zone flag, daily LLM budget cap, allowed trading sessions, and minimum cooldown since the last model call.",
         "- Layer 2 adaptive throttle: if Fillmore is in a cooldown from repeated no-trade replies, a loss streak, or too many consecutive errors, it blocks before calling the model.",
         "- Layer 3 signal gate: this depends on aggressiveness. Conservative wants M3 trend + M1 stack + pullback/zone + daily high/low buffer. Balanced wants aligned M3 and M1. Aggressive only needs some trend evidence. Very aggressive is close to hard-filters-only.",
         "- If the gate passes, Autonomous Fillmore calls the same suggestion pipeline as manual suggestions, including live context, news enrichment, and learning memory.",

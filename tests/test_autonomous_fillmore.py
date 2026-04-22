@@ -1961,8 +1961,26 @@ def test_evaluate_gate_blocks_on_malformed_cooldown_timestamp(monkeypatch) -> No
     assert decision.reason == "llm_cooldown:malformed_timestamp"
 
 
-def test_evaluate_gate_uses_session_aware_spread_limit(monkeypatch) -> None:
+def test_evaluate_gate_does_not_hard_block_on_wide_spread(monkeypatch) -> None:
     monkeypatch.setattr(autonomous_fillmore, "_session_flag_now", lambda trading_hours: (True, "london/ny"))
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend, **kwargs: True)
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: _critical_trigger())
+    monkeypatch.setattr(autonomous_fillmore, "_tokyo_tight_range_mean_reversion_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_compression_breakout_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        autonomous_fillmore,
+        "_nearest_structure_pips",
+        lambda *args, **kwargs: {
+            "nearest_pips": 1.5,
+            "overhead_pips": None,
+            "underfoot_pips": 1.5,
+            "overhead_label": None,
+            "underfoot_label": "WHOLE_YEN:159.00",
+        },
+    )
 
     decision = autonomous_fillmore.evaluate_gate(
         _gate_cfg("balanced"),
@@ -1976,9 +1994,9 @@ def test_evaluate_gate_uses_session_aware_spread_limit(monkeypatch) -> None:
         ),
     )
 
-    assert decision.result == "block"
-    assert decision.reason == "spread_too_wide:3.1"
-    assert decision.extras.get("max_spread_pips") == 3.0
+    assert decision.result == "pass"
+    assert decision.reason == "ok"
+    assert decision.extras.get("spread") == 3.1
 
 
 def test_evaluate_gate_blocks_low_volatility(monkeypatch) -> None:

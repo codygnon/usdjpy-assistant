@@ -1893,13 +1893,6 @@ def evaluate_gate(
     allowed, session_label = _session_flag_now(cfg.get("trading_hours") or {})
     if not allowed:
         return _block("hard", f"out_of_session:{session_label}")
-    max_spread_pips = _session_spread_limit_pips(session_label)
-    if inputs.spread_pips is None or inputs.spread_pips > max_spread_pips:
-        return _block(
-            "hard",
-            f"spread_too_wide:{inputs.spread_pips}",
-            {"max_spread_pips": max_spread_pips, "session": session_label},
-        )
     if inputs.ntz_active:
         return _block("hard", "ntz_active")
     # Event blackout: block when a high-impact USD/JPY event is imminent.
@@ -3207,12 +3200,19 @@ def _invoke_suggest(
 
     daily_pnl_usd = float(runtime_snapshot.get("daily_pnl_usd") or 0.0)
     open_ai_trade_count = int(runtime_snapshot.get("open_ai_trade_count") or 0)
+    live_spread_pips = float((ctx.get("spot_price") or {}).get("spread_pips") or 0.0)
     context_note = (
         "RUNTIME CONTEXT: "
         f"today autonomous P&L ${daily_pnl_usd:+.2f}; "
         f"{open_ai_trade_count} autonomous trade(s) currently open. "
         "This is context only. There is no server-side daily-loss or open-trade veto here, "
         "so if you add exposure you must justify why it is still good risk."
+    )
+    spread_note = (
+        f"SPREAD CONTEXT: live OANDA spread is {live_spread_pips:.1f} pips. "
+        "A good tradable range is roughly 1.6-2.9 pips. "
+        "Inside that range, spread is normal context. Much tighter is unusually favorable. "
+        "Much wider should reduce conviction, worsen entry quality, or push you to pass."
     )
 
     base_lots = float(cfg.get("base_lot_size") or 5.0)
@@ -3229,6 +3229,7 @@ def _invoke_suggest(
         + (f"\n{multi_note}\n" if multi_note else "") +
         (f"\n{gate_block}\n" if gate_block else "\n") +
         f"\n{context_note}\n"
+        f"{spread_note}\n"
         "\n"
         "RESPONSE FORMAT (two parts, in this exact order):\n"
         "\n"
@@ -3242,6 +3243,7 @@ def _invoke_suggest(
         "   - Nearest PRICE STRUCTURE level(s) + order-book clusters. Name the level you'd anchor the entry on.\n"
         "   - Relevant bar patterns / recent candle streak.\n"
         "   - M5/M15 ATR — does it justify a wider or tighter SL?\n"
+        "   - SPREAD: explicitly judge whether current spread is fine, favorable, or too expensive for this setup.\n"
         "   - OPEN POSITIONS + YOUR MOST RECENT SUGGESTION — stacking/hedging is allowed, but justify it. "
         "If adding near same-side exposure, explain why this is not just a duplicate level.\n"
         "   - Imminent events / session risk — include MOF/BOJ/US event timing and fold it into conviction, execution style, and size.\n"
