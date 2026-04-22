@@ -1915,15 +1915,6 @@ def evaluate_gate(
                 continue
             if isinstance(mins, (int, float)) and 0 <= mins <= blackout_min:
                 return _block("hard", f"event_blackout:{ev.get('event', '?')}_{mins}m")
-    if inputs.open_ai_trade_count >= int(risk_regime.get("effective_max_open_ai_trades") or cfg.get("max_open_ai_trades") or 2):
-        return _block(
-            "hard",
-            f"max_open_ai_trades:{inputs.open_ai_trade_count}",
-            {"effective_limit": int(risk_regime.get("effective_max_open_ai_trades") or 0)},
-        )
-    # Daily loss cap
-    if float(rt.get("daily_pnl_usd") or 0.0) <= -float(cfg.get("max_daily_loss_usd") or 50.0):
-        return _block("hard", f"daily_loss_cap:{rt.get('daily_pnl_usd')}")
     # Budget cap
     if float(rt.get("llm_spend_today_usd") or 0.0) >= float(cfg.get("daily_budget_usd") or 2.0):
         return _block("hard", f"budget_cap:${rt.get('llm_spend_today_usd'):.3f}")
@@ -2566,10 +2557,7 @@ def _compute_risk_regime(rt: dict[str, Any], cfg: dict[str, Any]) -> dict[str, A
     daily_drawdown_active = float(rt.get("daily_pnl_usd") or 0.0) <= -(
         float(cfg.get("max_daily_loss_usd") or 50.0) * 0.6
     )
-    if daily_drawdown_active:
-        label = "defensive_hard"
-    else:
-        label = streak_label
+    label = streak_label
 
     override_label = None
     override_until = _parse_iso(rt.get("risk_regime_override_until_utc"))
@@ -2585,11 +2573,11 @@ def _compute_risk_regime(rt: dict[str, Any], cfg: dict[str, Any]) -> dict[str, A
     if label == "defensive_hard":
         risk_multiplier = 0.5
         effective_cooldown = int(cfg.get("min_llm_cooldown_sec") or 60) * 2
-        effective_max_open = 1
+        effective_max_open = int(cfg.get("max_open_ai_trades") or 2)
     elif label == "defensive_soft":
         risk_multiplier = 0.75
         effective_cooldown = int(math.ceil(float(cfg.get("min_llm_cooldown_sec") or 60) * 1.5))
-        effective_max_open = min(int(cfg.get("max_open_ai_trades") or 2), 1)
+        effective_max_open = int(cfg.get("max_open_ai_trades") or 2)
     else:
         risk_multiplier = 1.0
         effective_cooldown = int(cfg.get("min_llm_cooldown_sec") or 60)
@@ -2734,6 +2722,10 @@ def tick_autonomous_fillmore(
             cfg,
             risk_regime=risk_regime,
             gate_decision=decision,
+            runtime_snapshot={
+                "daily_pnl_usd": rt.get("daily_pnl_usd"),
+                "open_ai_trade_count": inputs.open_ai_trade_count,
+            },
         )
     except FillmoreLLMCircuitOpenError as e:
         print(f"[{profile_name}] autonomous Fillmore: {e}")
@@ -2751,7 +2743,6 @@ def tick_autonomous_fillmore(
     min_lot_size = float(cfg.get("min_lot_size") or 0.01)
     placed_any = False
     agg_label = str(cfg.get("aggressiveness") or "balanced")
-    max_open = int(risk_regime.get("effective_max_open_ai_trades") or cfg.get("max_open_ai_trades") or 2)
 
     for suggestion in suggestions:
         print(
@@ -2759,11 +2750,6 @@ def tick_autonomous_fillmore(
             f"side={suggestion.get('side')} lots={suggestion.get('lots')} "
             f"quality={suggestion.get('quality')} mode={mode}"
         )
-        # Respect max_open_ai_trades across the batch — count may change after each placement.
-        current_open = _count_open_ai_trades(store, profile_name)
-        if current_open >= max_open:
-            print(f"[{profile_name}] autonomous Fillmore: max open trades reached ({current_open}/{max_open}); skipping remaining suggestions")
-            break
 
         sug_lots = float(suggestion.get("lots") or 0)
         if sug_lots <= 0:
@@ -3096,6 +3082,7 @@ def _invoke_suggest(
     cfg: dict[str, Any],
     risk_regime: Optional[dict[str, Any]] = None,
     gate_decision: GateDecision | None = None,
+    runtime_snapshot: Optional[dict[str, Any]] = None,
 ) -> list[dict[str, Any]]:
     """Invoke the LLM for autonomous Fillmore.
 
@@ -3131,6 +3118,7 @@ def _invoke_suggest(
         "label": "normal",
         "risk_multiplier": 1.0,
     }
+    runtime_snapshot = runtime_snapshot or {}
     prompt_builder = PromptBuilder.for_autonomous_suggest(
         profile=profile,
         profile_name=profile_name,
@@ -3217,6 +3205,16 @@ def _invoke_suggest(
         multi_note = ""
         decision_format = "2. DECISION (single fenced JSON code block). Use this exact schema:\n"
 
+    daily_pnl_usd = float(runtime_snapshot.get("daily_pnl_usd") or 0.0)
+    open_ai_trade_count = int(runtime_snapshot.get("open_ai_trade_count") or 0)
+    context_note = (
+        "RUNTIME CONTEXT: "
+        f"today autonomous P&L ${daily_pnl_usd:+.2f}; "
+        f"{open_ai_trade_count} autonomous trade(s) currently open. "
+        "This is context only. There is no server-side daily-loss or open-trade veto here, "
+        "so if you add exposure you must justify why it is still good risk."
+    )
+
     base_lots = float(cfg.get("base_lot_size") or 5.0)
     lot_dev = float(cfg.get("lot_deviation") or 4.0)
     lot_lo = max(1, int(base_lots - lot_dev))
@@ -3230,6 +3228,7 @@ def _invoke_suggest(
         f"LOT RANGE: {lot_lo}-{lot_hi} lots (base {lot_mid}). Hard ceiling: {int(max_lots)}.\n"
         + (f"\n{multi_note}\n" if multi_note else "") +
         (f"\n{gate_block}\n" if gate_block else "\n") +
+        f"\n{context_note}\n"
         "\n"
         "RESPONSE FORMAT (two parts, in this exact order):\n"
         "\n"

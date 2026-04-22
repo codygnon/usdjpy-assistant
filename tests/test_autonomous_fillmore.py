@@ -2020,15 +2020,30 @@ def test_evaluate_gate_blocks_low_volatility(monkeypatch) -> None:
     assert decision.reason == "low_volatility"
 
 
-def test_evaluate_gate_uses_risk_regime_effective_limits(monkeypatch) -> None:
+def test_evaluate_gate_does_not_hard_block_on_open_trade_count(monkeypatch) -> None:
     _force_allowed_session(monkeypatch)
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
     monkeypatch.setattr(autonomous_fillmore, "_m1_pullback_or_zone", lambda data_by_tf, trend, **kwargs: True)
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: _critical_trigger())
+    monkeypatch.setattr(autonomous_fillmore, "_tokyo_tight_range_mean_reversion_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_compression_breakout_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        autonomous_fillmore,
+        "_nearest_structure_pips",
+        lambda *args, **kwargs: {
+            "nearest_pips": 1.5,
+            "overhead_pips": None,
+            "underfoot_pips": 1.5,
+            "overhead_label": None,
+            "underfoot_label": "WHOLE_YEN:159.00",
+        },
+    )
 
     decision = autonomous_fillmore.evaluate_gate(
         _gate_cfg("balanced"),
-        {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0, "last_llm_call_utc": None},
+        {"daily_pnl_usd": -125.0, "llm_spend_today_usd": 0.0, "last_llm_call_utc": None},
         autonomous_fillmore.GateInputs(
             spread_pips=0.8,
             tick_mid=159.03,
@@ -2043,9 +2058,23 @@ def test_evaluate_gate_uses_risk_regime_effective_limits(monkeypatch) -> None:
         },
     )
 
-    assert decision.result == "block"
-    assert decision.reason == "max_open_ai_trades:1"
-    assert decision.extras.get("effective_limit") == 1
+    assert decision.result == "pass"
+    assert decision.reason == "ok"
+
+
+def test_compute_risk_regime_keeps_drawdown_informational_not_forced_defensive() -> None:
+    cfg = _gate_cfg("balanced")
+    rt = {
+        "daily_pnl_usd": -95.0,
+        "previous_streak_regime_label": "normal",
+        "previous_regime_label": "normal",
+    }
+
+    regime = autonomous_fillmore._compute_risk_regime(rt, cfg)
+
+    assert regime["daily_drawdown_active"] is True
+    assert regime["label"] == "normal"
+    assert regime["effective_max_open_ai_trades"] == int(cfg["max_open_ai_trades"])
 
 
 def test_recompute_performance_stats_materializes_prompt_and_mae_metrics(tmp_path: Path) -> None:
