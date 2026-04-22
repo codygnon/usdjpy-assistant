@@ -35,6 +35,7 @@ import numpy as np
 import pandas as pd
 
 from api import autonomous_performance
+from core.indicators import bollinger_bands
 
 # -----------------------------------------------------------------------------
 # Config defaults + types
@@ -69,7 +70,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "daily_budget_usd": 2.00,
     "min_llm_cooldown_sec": 60,
     "trading_hours": {
-        "tokyo": False,
+        "tokyo": True,
         "london": True,
         "ny": True,
     },
@@ -104,10 +105,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
 # These are the *signal* filters applied after hard filters pass.
 GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
     "conservative": {
-        "description": "Hybrid trigger: strict critical-level reaction or strict trend expansion near actionable USDJPY structure.",
+        "description": "Hybrid trigger: strict critical-level reaction, Tokyo tight-range mean reversion, or strict trend expansion near actionable USDJPY structure.",
         "critical_level_max_pips": 5.0,
         "critical_micro_window_bars": 3,
         "critical_touch_tolerance_pips": 0.6,
+        "tokyo_meanrev_window_bars": 24,
+        "tokyo_meanrev_min_session_bars": 45,
+        "tokyo_meanrev_max_range_pips": 16.0,
+        "tokyo_meanrev_range_atr_mult": 3.2,
+        "tokyo_meanrev_edge_fraction": 0.22,
+        "tokyo_meanrev_touch_tolerance_pips": 0.6,
+        "tokyo_meanrev_adx_ceiling": 20.0,
+        "tokyo_meanrev_bb_width_max": 0.0007,
+        "tokyo_meanrev_min_reward_pips": 3.0,
         "trend_adx_min": 25.0,
         "trend_extension_atr_mult": 0.9,
         "require_min_m5_atr_pips": 3.0,
@@ -116,10 +126,19 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
         "expected_pass_rate_pct": 1.5,
     },
     "balanced": {
-        "description": "Hybrid trigger: critical-level reaction, compression breakout, or trend expansion for ripe-now USDJPY setups.",
+        "description": "Hybrid trigger: critical-level reaction, Tokyo tight-range mean reversion, or trend expansion for ripe-now USDJPY setups.",
         "critical_level_max_pips": 6.0,
         "critical_micro_window_bars": 3,
         "critical_touch_tolerance_pips": 0.8,
+        "tokyo_meanrev_window_bars": 20,
+        "tokyo_meanrev_min_session_bars": 45,
+        "tokyo_meanrev_max_range_pips": 18.0,
+        "tokyo_meanrev_range_atr_mult": 3.6,
+        "tokyo_meanrev_edge_fraction": 0.24,
+        "tokyo_meanrev_touch_tolerance_pips": 0.8,
+        "tokyo_meanrev_adx_ceiling": 22.0,
+        "tokyo_meanrev_bb_width_max": 0.0008,
+        "tokyo_meanrev_min_reward_pips": 2.5,
         "compression_level_max_pips": 4.0,
         "compression_window_bars": 12,
         "compression_range_atr_mult": 0.9,
@@ -134,10 +153,19 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
         "expected_pass_rate_pct": 3.5,
     },
     "aggressive": {
-        "description": "Hybrid trigger: looser critical-level reaction, compression breakout, or trend expansion, still structure-aware.",
+        "description": "Hybrid trigger: looser critical-level reaction, Tokyo tight-range mean reversion, or trend expansion, still structure-aware.",
         "critical_level_max_pips": 8.0,
         "critical_micro_window_bars": 2,
         "critical_touch_tolerance_pips": 1.0,
+        "tokyo_meanrev_window_bars": 16,
+        "tokyo_meanrev_min_session_bars": 36,
+        "tokyo_meanrev_max_range_pips": 20.0,
+        "tokyo_meanrev_range_atr_mult": 4.0,
+        "tokyo_meanrev_edge_fraction": 0.28,
+        "tokyo_meanrev_touch_tolerance_pips": 1.0,
+        "tokyo_meanrev_adx_ceiling": 24.0,
+        "tokyo_meanrev_bb_width_max": 0.001,
+        "tokyo_meanrev_min_reward_pips": 2.0,
         "compression_level_max_pips": 5.0,
         "compression_window_bars": 10,
         "compression_range_atr_mult": 1.0,
@@ -158,6 +186,15 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
         "critical_level_max_pips": 6.0,
         "critical_micro_window_bars": 3,
         "critical_touch_tolerance_pips": 0.8,
+        "tokyo_meanrev_window_bars": 20,
+        "tokyo_meanrev_min_session_bars": 45,
+        "tokyo_meanrev_max_range_pips": 18.0,
+        "tokyo_meanrev_range_atr_mult": 3.6,
+        "tokyo_meanrev_edge_fraction": 0.24,
+        "tokyo_meanrev_touch_tolerance_pips": 0.8,
+        "tokyo_meanrev_adx_ceiling": 22.0,
+        "tokyo_meanrev_bb_width_max": 0.0008,
+        "tokyo_meanrev_min_reward_pips": 2.5,
         "compression_level_max_pips": 4.0,
         "compression_window_bars": 12,
         "compression_range_atr_mult": 0.9,
@@ -249,6 +286,7 @@ _AUTONOMOUS_MAX_CONSECUTIVE_ERRORS = 5
 _AUTONOMOUS_MAX_LIMIT_GTD_MINUTES = 15
 _GATE_SETUP_COOLDOWN_MINUTES = {
     "critical_level_reaction": 30,
+    "tight_range_mean_reversion": 20,
     "compression_breakout": 20,
     "trend_expansion": 30,
 }
@@ -264,6 +302,7 @@ _DISABLED_SUPPORT_RECLAIM_LEVEL_LABELS = {
 }
 _TREND_EXPANSION_SETUP_BUCKET_PIPS = 20.0
 _TREND_EXPANSION_ALLOWED_SESSIONS = {"london/ny"}
+_TOKYO_CONTROLLED_EXPERIMENT_FAMILIES = {"tight_range_mean_reversion"}
 _USDJPY_SPREAD_LIMITS_PIPS = {
     "tokyo": 3.0,
     "london": 3.0,
@@ -334,8 +373,6 @@ def _sanitize_autonomous_config(cfg: dict[str, Any]) -> dict[str, Any]:
     saved_hours = out.get("trading_hours")
     if isinstance(saved_hours, dict):
         trading_hours.update(saved_hours)
-    # Tokyo is disabled for autonomous USDJPY by policy; liquidity is too poor.
-    trading_hours["tokyo"] = False
     out["trading_hours"] = trading_hours
     # Discretion-first policy: AI should decide stacking/hedging/event behavior.
     out["correlation_veto_enabled"] = False
@@ -1288,6 +1325,123 @@ def _critical_level_reaction_trigger(
     return None
 
 
+def _tokyo_tight_range_mean_reversion_trigger(
+    tick_mid: float,
+    data_by_tf: dict[str, pd.DataFrame],
+    session_label: str,
+    *,
+    range_window_bars: int,
+    min_session_bars: int,
+    max_range_pips: float,
+    range_atr_mult: float,
+    edge_fraction: float,
+    touch_tolerance_pips: float,
+    adx_ceiling: float,
+    bb_width_max: float,
+    min_reward_pips: float,
+    pip_size: float = 0.01,
+) -> Optional[dict[str, Any]]:
+    if session_label != "tokyo":
+        return None
+    m1_df = data_by_tf.get("M1") if data_by_tf else None
+    m5_df = data_by_tf.get("M5") if data_by_tf else None
+    if m1_df is None or m5_df is None or len(m1_df) < max(40, int(range_window_bars) + 5) or len(m5_df) < 25:
+        return None
+
+    ts = _extract_time_index(m1_df)
+    if ts is None or len(ts) != len(m1_df):
+        return None
+    session_mask = ts.dt.hour.map(_classify_session_label_from_hour) == "tokyo"
+    if int(session_mask.sum()) < int(min_session_bars):
+        return None
+    session_df = m1_df.loc[session_mask].copy()
+    if len(session_df) < int(min_session_bars):
+        return None
+
+    recent = session_df.tail(max(6, int(range_window_bars))).copy()
+    highs = recent["high"].astype(float)
+    lows = recent["low"].astype(float)
+    closes = recent["close"].astype(float)
+    if len(closes) < 6:
+        return None
+
+    session_high = float(highs.max())
+    session_low = float(lows.min())
+    session_mid = (session_high + session_low) / 2.0
+    pip = pip_size or 0.01
+    range_pips = (session_high - session_low) / pip
+    if not math.isfinite(range_pips) or range_pips <= 0:
+        return None
+
+    m5_atr_pips = _atr_pips(data_by_tf, "M5", period=14, pip_size=pip)
+    if m5_atr_pips is None or not math.isfinite(m5_atr_pips) or m5_atr_pips <= 0:
+        return None
+    range_cap_pips = min(float(max_range_pips), float(m5_atr_pips) * float(range_atr_mult))
+    if range_pips > range_cap_pips:
+        return None
+
+    adx_m5 = _adx_value(data_by_tf, "M5", period=14)
+    if adx_m5 is None or not math.isfinite(adx_m5) or adx_m5 > float(adx_ceiling):
+        return None
+
+    bb_upper, bb_mid, bb_lower = bollinger_bands(closes, period=min(20, len(closes)), std_dev=2.0)
+    try:
+        bb_middle = float(bb_mid.iloc[-1])
+        bb_width = float((bb_upper.iloc[-1] - bb_lower.iloc[-1]) / max(bb_middle, pip))
+    except Exception:
+        return None
+    if not math.isfinite(bb_width) or bb_width > float(bb_width_max):
+        return None
+
+    last_close = float(closes.iloc[-1])
+    prev_close = float(closes.iloc[-2])
+    last_high = float(highs.iloc[-1])
+    last_low = float(lows.iloc[-1])
+    close_pos = (last_close - session_low) / max(session_high - session_low, pip)
+    tol = max(0.1, float(touch_tolerance_pips)) * pip
+    edge_fraction = min(max(float(edge_fraction), 0.1), 0.4)
+
+    buy_touch = float(lows.tail(3).min()) <= session_low + tol
+    buy_reclaim = last_close > prev_close and last_close > session_low and close_pos <= edge_fraction + 0.12
+    buy_reward_pips = (session_mid - last_close) / pip
+
+    sell_touch = float(highs.tail(3).max()) >= session_high - tol
+    sell_reject = last_close < prev_close and last_close < session_high and close_pos >= 1.0 - edge_fraction - 0.12
+    sell_reward_pips = (last_close - session_mid) / pip
+
+    if buy_touch and buy_reclaim and buy_reward_pips >= float(min_reward_pips):
+        return {
+            "family": "tight_range_mean_reversion",
+            "reason": "tokyo_range_reclaim:session_low",
+            "bias": "buy",
+            "level_label": "TOKYO_SESSION_LOW",
+            "level_price": session_low,
+            "nearest_level_pips": round((last_close - session_low) / pip, 2),
+            "micro_confirmation": "tokyo_range_low_reclaim",
+            "session_range_pips": round(range_pips, 2),
+            "session_mid_price": round(session_mid, 3),
+            "reward_to_mid_pips": round(buy_reward_pips, 2),
+            "bb_width": round(bb_width, 6),
+            "adx": round(float(adx_m5), 2),
+        }
+    if sell_touch and sell_reject and sell_reward_pips >= float(min_reward_pips):
+        return {
+            "family": "tight_range_mean_reversion",
+            "reason": "tokyo_range_reject:session_high",
+            "bias": "sell",
+            "level_label": "TOKYO_SESSION_HIGH",
+            "level_price": session_high,
+            "nearest_level_pips": round((session_high - last_close) / pip, 2),
+            "micro_confirmation": "tokyo_range_high_reject",
+            "session_range_pips": round(range_pips, 2),
+            "session_mid_price": round(session_mid, 3),
+            "reward_to_mid_pips": round(sell_reward_pips, 2),
+            "bb_width": round(bb_width, 6),
+            "adx": round(float(adx_m5), 2),
+        }
+    return None
+
+
 def _compression_breakout_trigger(
     tick_mid: float,
     data_by_tf: dict[str, pd.DataFrame],
@@ -1603,6 +1757,15 @@ def _gate_setup_key(
         bucket_size = max((pip_size or 0.01) * float(_CRITICAL_LEVEL_SETUP_BUCKET_PIPS), pip_size or 0.01)
         bucket = round(round(price / bucket_size) * bucket_size, 3)
         return f"{family}:{bias}:{session_label}:{bucket:.3f}"
+    if family == "tight_range_mean_reversion":
+        label = str(trigger.get("level_label") or "tokyo_range")
+        try:
+            price = float(trigger.get("level_price") or tick_mid)
+        except (TypeError, ValueError):
+            price = float(tick_mid)
+        bucket_size = max((pip_size or 0.01) * 20.0, pip_size or 0.01)
+        bucket = round(round(price / bucket_size) * bucket_size, 3)
+        return f"{family}:{bias}:{label}:{bucket:.3f}"
     if family == "compression_breakout":
         label = str(trigger.get("level_label") or "level")
         try:
@@ -1841,6 +2004,21 @@ def evaluate_gate(
         touch_tolerance_pips=float(thresholds.get("critical_touch_tolerance_pips") or 0.8),
         pip_size=0.01,
     )
+    tokyo_meanrev = _tokyo_tight_range_mean_reversion_trigger(
+        inputs.tick_mid,
+        inputs.data_by_tf,
+        session_label,
+        range_window_bars=int(thresholds.get("tokyo_meanrev_window_bars") or 20),
+        min_session_bars=int(thresholds.get("tokyo_meanrev_min_session_bars") or 45),
+        max_range_pips=float(thresholds.get("tokyo_meanrev_max_range_pips") or 18.0),
+        range_atr_mult=float(thresholds.get("tokyo_meanrev_range_atr_mult") or 3.6),
+        edge_fraction=float(thresholds.get("tokyo_meanrev_edge_fraction") or 0.24),
+        touch_tolerance_pips=float(thresholds.get("tokyo_meanrev_touch_tolerance_pips") or 0.8),
+        adx_ceiling=float(thresholds.get("tokyo_meanrev_adx_ceiling") or 22.0),
+        bb_width_max=float(thresholds.get("tokyo_meanrev_bb_width_max") or 0.0008),
+        min_reward_pips=float(thresholds.get("tokyo_meanrev_min_reward_pips") or 2.5),
+        pip_size=0.01,
+    )
     compression = _compression_breakout_trigger(
         inputs.tick_mid,
         inputs.data_by_tf,
@@ -1874,9 +2052,17 @@ def evaluate_gate(
     if trend is not None and session_label not in _TREND_EXPANSION_ALLOWED_SESSIONS:
         extras["trend_session_veto"] = session_label
         trend = None
+    if session_label == "tokyo":
+        if "critical_level_reaction" not in _TOKYO_CONTROLLED_EXPERIMENT_FAMILIES:
+            critical = None
+        if "compression_breakout" not in _TOKYO_CONTROLLED_EXPERIMENT_FAMILIES:
+            compression = None
+        if "trend_expansion" not in _TOKYO_CONTROLLED_EXPERIMENT_FAMILIES:
+            trend = None
 
     family_candidates = [
         ("critical_level_reaction", critical),
+        ("tight_range_mean_reversion", tokyo_meanrev),
         ("compression_breakout", compression),
         ("trend_expansion", trend),
     ]
@@ -1959,6 +2145,10 @@ def evaluate_gate(
             "trigger_level_price": chosen_trigger.get("level_price"),
             "trigger_setup_key": chosen_trigger.get("setup_key"),
             "trigger_micro_confirmation": chosen_trigger.get("micro_confirmation"),
+            "session_range_pips": chosen_trigger.get("session_range_pips"),
+            "session_mid_price": chosen_trigger.get("session_mid_price"),
+            "reward_to_mid_pips": chosen_trigger.get("reward_to_mid_pips"),
+            "bb_width": chosen_trigger.get("bb_width"),
             "compression_range_pips": chosen_trigger.get("compression_range_pips"),
             "compression_cap_pips": chosen_trigger.get("compression_cap_pips"),
             "extension_pips": chosen_trigger.get("extension_pips"),
@@ -2831,6 +3021,12 @@ def _format_gate_opportunity_block(gate_decision: GateDecision | None) -> str:
         )
     if extras.get("trigger_micro_confirmation"):
         lines.append(f"Micro confirmation: {extras.get('trigger_micro_confirmation')}")
+    if extras.get("session_range_pips") is not None and extras.get("reward_to_mid_pips") is not None:
+        lines.append(
+            f"Tokyo range: {extras.get('session_range_pips')}p, reward to mid: {extras.get('reward_to_mid_pips')}p"
+        )
+    if extras.get("bb_width") is not None:
+        lines.append(f"Bollinger width: {extras.get('bb_width')}")
     return "\n".join(lines)
 
 
@@ -2866,7 +3062,7 @@ def _apply_autonomous_order_policy(
             out["price"] = mid
         return out
 
-    if family == "critical_level_reaction" and order_type == "limit":
+    if family in {"critical_level_reaction", "tight_range_mean_reversion"} and order_type == "limit":
         requested_price = float(out.get("price") or 0.0)
         if requested_price > 0:
             out["requested_price"] = requested_price
@@ -2875,12 +3071,20 @@ def _apply_autonomous_order_policy(
         if isinstance(snap_distance, (int, float)) and snap_distance > 1.5:
             out["requested_order_type"] = "limit"
             out["order_type"] = "market"
-            out["order_policy_reason"] = "critical_reaction_far_limit_normalized_to_market"
+            out["order_policy_reason"] = (
+                "tokyo_mean_reversion_far_limit_normalized_to_market"
+                if family == "tight_range_mean_reversion"
+                else "critical_reaction_far_limit_normalized_to_market"
+            )
             if mid > 0:
                 out["price"] = mid
             return out
         out["order_type"] = "limit"
-        out["order_policy_reason"] = "critical_reaction_near_touch_limit_ok"
+        out["order_policy_reason"] = (
+            "tokyo_mean_reversion_near_touch_limit_ok"
+            if family == "tight_range_mean_reversion"
+            else "critical_reaction_near_touch_limit_ok"
+        )
         return out
 
     out["order_type"] = "market" if order_type not in ("market", "limit") else order_type
@@ -3046,7 +3250,7 @@ def _invoke_suggest(
         "\n"
         "1. ANALYSIS (plain text, 6-12 lines). Think through the setup. Cover each of:\n"
         "   - State whether the gate-qualified opportunity is actually tradeable right now or should still be passed.\n"
-        "   - Respect the trigger family: trend-expansion usually means market execution; compression-breakout usually means market execution while the squeeze edge is actively being pressed; critical-level reaction can be market or near-touch limit.\n"
+        "   - Respect the trigger family: trend-expansion usually means market execution; critical-level reaction and Tokyo tight-range mean reversion can be market or near-touch limit.\n"
         "   - H1/M15/M5/M1 trend consensus (note any divergence).\n"
         "   - POLICY + GEOPOLITICAL ALPHA (required): what is Japan MOF doing now (including rate-check/intervention signaling), what is Japan's finance minister signaling, is there active Japan-US policy coordination, and what war-premium dynamics are doing to USDJPY.\n"
         "   - Explicitly call whether that macro/policy layer CONFIRMS, CONTRADICTS, or is MIXED versus your technical setup.\n"

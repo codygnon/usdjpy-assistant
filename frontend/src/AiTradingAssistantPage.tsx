@@ -986,6 +986,7 @@ function AutonomousFillmorePanel({
                 const lotsColor = lotsVal >= 7 ? '#4ade80' : lotsVal >= 3 ? '#facc15' : '#94a3b8';
                 const outcomeLabel = s.win_loss || s.outcome_status || s.action || '';
                 const outcomeColor = s.win_loss === 'win' ? '#4ade80' : s.win_loss === 'loss' ? '#f87171' : 'var(--text-secondary)';
+                const familyLabel = (s.trigger_family || '').replace(/_/g, ' ');
                 const analysisMatch = (s.rationale || '').match(/ANALYSIS:\n([\s\S]*)/);
                 const analysisText = analysisMatch ? analysisMatch[1].trim() : null;
                 const shortRationale = analysisMatch
@@ -1015,6 +1016,16 @@ function AutonomousFillmorePanel({
                       {s.exit_strategy && (
                         <div style={{ fontSize: '0.7rem', color: '#a5b4fc' }}>
                           exit {s.exit_strategy}
+                        </div>
+                      )}
+                      {s.trigger_family && (
+                        <div style={{ fontSize: '0.7rem', color: '#93c5fd' }}>
+                          family {familyLabel}
+                        </div>
+                      )}
+                      {s.trigger_reason && (
+                        <div style={{ fontSize: '0.7rem', color: '#7dd3fc' }}>
+                          trigger {s.trigger_reason}
                         </div>
                       )}
                     </div>

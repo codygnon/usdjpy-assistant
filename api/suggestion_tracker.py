@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS ai_suggestions (
     prompt_version TEXT,
     prompt_hash TEXT,
     snap_distance_pips REAL,
+    trigger_family TEXT,
+    trigger_reason TEXT,
 
     -- Market snapshot at generation time (selected fields as JSON)
     market_snapshot_json TEXT,
@@ -180,6 +182,8 @@ def init_db(db_path: Path) -> None:
         _ensure_column(conn, "ai_suggestions", "prompt_version", "TEXT")
         _ensure_column(conn, "ai_suggestions", "prompt_hash", "TEXT")
         _ensure_column(conn, "ai_suggestions", "snap_distance_pips", "REAL")
+        _ensure_column(conn, "ai_suggestions", "trigger_family", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "trigger_reason", "TEXT")
         _ensure_column(conn, "ai_suggestions", "price_at_expiry", "REAL")
         _ensure_column(conn, "ai_suggestions", "distance_at_expiry_pips", "REAL")
         _ensure_column(conn, "ai_reflections", "primary_error_category", "TEXT")
@@ -332,6 +336,8 @@ def log_generated(
         "prompt_version": suggestion.get("prompt_version"),
         "prompt_hash": suggestion.get("prompt_hash"),
         "snap_distance_pips": _fnum("snap_distance_pips"),
+        "trigger_family": suggestion.get("trigger_family"),
+        "trigger_reason": suggestion.get("trigger_reason"),
         "market_snapshot_json": json.dumps(snapshot),
     }
 
@@ -342,12 +348,14 @@ def log_generated(
                 suggestion_id, created_utc, profile, model,
                 side, requested_price, limit_price, sl, tp, lots, time_in_force, gtd_time_utc,
                 confidence, rationale, exit_strategy, exit_params_json,
-                exit_plan, prompt_version, prompt_hash, snap_distance_pips, market_snapshot_json
+                exit_plan, prompt_version, prompt_hash, snap_distance_pips,
+                trigger_family, trigger_reason, market_snapshot_json
             ) VALUES (
                 :suggestion_id, :created_utc, :profile, :model,
                 :side, :requested_price, :limit_price, :sl, :tp, :lots, :time_in_force, :gtd_time_utc,
                 :confidence, :rationale, :exit_strategy, :exit_params_json,
-                :exit_plan, :prompt_version, :prompt_hash, :snap_distance_pips, :market_snapshot_json
+                :exit_plan, :prompt_version, :prompt_hash, :snap_distance_pips,
+                :trigger_family, :trigger_reason, :market_snapshot_json
             )
             """,
             row,
@@ -892,6 +900,8 @@ def get_reasoning_feed(
             "suggestion_id": row.get("suggestion_id"),
             "created_utc": row.get("created_utc"),
             "side": row.get("side"),
+            "trigger_family": row.get("trigger_family") or ((row.get("placed_order") or {}).get("trigger_family")),
+            "trigger_reason": row.get("trigger_reason") or ((row.get("placed_order") or {}).get("trigger_reason")),
             "requested_price": row.get("requested_price"),
             "price": row.get("limit_price"),
             "lots": row.get("lots"),

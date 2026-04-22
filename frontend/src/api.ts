@@ -1311,6 +1311,8 @@ export interface ReasoningSuggestion {
   suggestion_id: string;
   created_utc: string;
   side: string;
+  trigger_family: string | null;
+  trigger_reason: string | null;
   requested_price: number | null;
   price: number;
   lots: number;

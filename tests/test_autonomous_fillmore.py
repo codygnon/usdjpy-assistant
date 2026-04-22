@@ -95,6 +95,10 @@ def _gate_cfg(aggressiveness: str) -> dict:
     return cfg
 
 
+def test_default_autonomous_config_enables_tokyo() -> None:
+    assert autonomous_fillmore.DEFAULT_CONFIG["trading_hours"]["tokyo"] is True
+
+
 def _force_allowed_session(monkeypatch) -> None:
     monkeypatch.setattr(autonomous_fillmore, "_session_flag_now", lambda trading_hours: (True, "ny"))
 
@@ -140,6 +144,25 @@ def _compression_trigger(**overrides) -> dict:
         "compression_cap_pips": 4.0,
         "adx": 18.0,
         "m5_atr_pips": 4.1,
+    }
+    base.update(overrides)
+    return base
+
+
+def _tokyo_meanrev_trigger(**overrides) -> dict:
+    base = {
+        "family": "tight_range_mean_reversion",
+        "reason": "tokyo_range_reclaim:session_low",
+        "bias": "buy",
+        "level_label": "TOKYO_SESSION_LOW",
+        "level_price": 159.000,
+        "nearest_level_pips": 1.2,
+        "micro_confirmation": "tokyo_range_low_reclaim",
+        "session_range_pips": 8.0,
+        "session_mid_price": 159.040,
+        "reward_to_mid_pips": 3.0,
+        "bb_width": 0.0005,
+        "adx": 16.0,
     }
     base.update(overrides)
     return base
@@ -244,6 +267,90 @@ def test_critical_level_reaction_trigger_prunes_disabled_support_labels(monkeypa
         max_level_pips=6.0,
         micro_window_bars=3,
         touch_tolerance_pips=0.8,
+    )
+
+    assert trig is None
+
+
+def test_tokyo_tight_range_mean_reversion_trigger_fires_on_low_reclaim(monkeypatch) -> None:
+    times = pd.date_range("2026-01-05 00:00:00+00:00", periods=60, freq="min")
+    closes = [159.05] * 50 + [159.03, 159.02, 159.01, 159.00, 158.99, 158.98, 158.99, 158.98, 158.99, 159.00]
+    m1 = pd.DataFrame(
+        {
+            "time": times,
+            "open": closes,
+            "high": [c + 0.03 for c in closes],
+            "low": [c - 0.01 for c in closes],
+            "close": closes,
+        }
+    )
+    m5 = pd.DataFrame(
+        {
+            "open": [159.03] * 30,
+            "high": [159.08] * 30,
+            "low": [159.00] * 30,
+            "close": [159.04] * 30,
+        }
+    )
+    monkeypatch.setattr(autonomous_fillmore, "_atr_pips", lambda *args, **kwargs: 4.0)
+    monkeypatch.setattr(autonomous_fillmore, "_adx_value", lambda *args, **kwargs: 16.0)
+
+    trig = autonomous_fillmore._tokyo_tight_range_mean_reversion_trigger(
+        159.03,
+        {"M1": m1, "M5": m5},
+        "tokyo",
+        range_window_bars=20,
+        min_session_bars=45,
+        max_range_pips=18.0,
+        range_atr_mult=3.6,
+        edge_fraction=0.24,
+        touch_tolerance_pips=0.8,
+        adx_ceiling=22.0,
+        bb_width_max=0.0008,
+        min_reward_pips=2.5,
+    )
+
+    assert trig is not None
+    assert trig["family"] == "tight_range_mean_reversion"
+    assert trig["bias"] == "buy"
+    assert trig["reason"] == "tokyo_range_reclaim:session_low"
+
+
+def test_tokyo_tight_range_mean_reversion_trigger_is_tokyo_only(monkeypatch) -> None:
+    times = pd.date_range("2026-01-05 00:00:00+00:00", periods=60, freq="min")
+    m1 = pd.DataFrame(
+        {
+            "time": times,
+            "open": [159.03] * 60,
+            "high": [159.05] * 60,
+            "low": [159.01] * 60,
+            "close": [159.03] * 60,
+        }
+    )
+    m5 = pd.DataFrame(
+        {
+            "open": [159.03] * 30,
+            "high": [159.05] * 30,
+            "low": [159.01] * 30,
+            "close": [159.03] * 30,
+        }
+    )
+    monkeypatch.setattr(autonomous_fillmore, "_atr_pips", lambda *args, **kwargs: 4.0)
+    monkeypatch.setattr(autonomous_fillmore, "_adx_value", lambda *args, **kwargs: 16.0)
+
+    trig = autonomous_fillmore._tokyo_tight_range_mean_reversion_trigger(
+        159.03,
+        {"M1": m1, "M5": m5},
+        "london",
+        range_window_bars=20,
+        min_session_bars=45,
+        max_range_pips=18.0,
+        range_atr_mult=3.6,
+        edge_fraction=0.24,
+        touch_tolerance_pips=0.8,
+        adx_ceiling=22.0,
+        bb_width_max=0.0008,
+        min_reward_pips=2.5,
     )
 
     assert trig is None
@@ -858,7 +965,7 @@ def test_get_config_sanitizes_dangerous_saved_autonomous_settings(tmp_path: Path
     cfg = autonomous_fillmore.get_config(state_path)
 
     assert cfg["aggressiveness"] == "balanced"
-    assert cfg["trading_hours"]["tokyo"] is False
+    assert cfg["trading_hours"]["tokyo"] is True
     assert cfg["trading_hours"]["london"] is True
     assert cfg["trading_hours"]["ny"] is True
     assert cfg["max_daily_loss_usd"] == 50.0
@@ -886,7 +993,7 @@ def test_set_config_sanitizes_patch_into_safe_autonomous_envelope(tmp_path: Path
     )
 
     assert cfg["aggressiveness"] == "balanced"
-    assert cfg["trading_hours"]["tokyo"] is False
+    assert cfg["trading_hours"]["tokyo"] is True
     assert cfg["max_daily_loss_usd"] == 50.0
     assert cfg["max_lots_per_trade"] == 15.0
     assert cfg["max_consecutive_errors"] == 5
@@ -1584,6 +1691,8 @@ def test_reasoning_feed_returns_structured_data(tmp_path: Path) -> None:
 
     sugg = _suggestion()
     sugg["exit_plan"] = "trail on M1 21 EMA"
+    sugg["trigger_family"] = "tight_range_mean_reversion"
+    sugg["trigger_reason"] = "tokyo_range_reclaim:session_low"
     suggestion_tracker.log_generated(
         db_path,
         profile="kumatora2",
@@ -1599,6 +1708,8 @@ def test_reasoning_feed_returns_structured_data(tmp_path: Path) -> None:
     assert len(feed["suggestions"]) == 1
     assert feed["suggestions"][0]["exit_plan"] == "trail on M1 21 EMA"
     assert feed["suggestions"][0]["side"] == "buy"
+    assert feed["suggestions"][0]["trigger_family"] == "tight_range_mean_reversion"
+    assert feed["suggestions"][0]["trigger_reason"] == "tokyo_range_reclaim:session_low"
 
 
 def test_compute_risk_regime_hysteresis_and_daily_drawdown() -> None:
@@ -1695,6 +1806,55 @@ def test_evaluate_gate_passes_trend_expansion_trigger_metadata(monkeypatch) -> N
     assert decision.result == "pass"
     assert decision.extras.get("trigger_family") == "trend_expansion"
     assert decision.extras.get("trigger_reason") == "adx_trend_expansion"
+
+
+def test_evaluate_gate_passes_tokyo_mean_reversion_trigger_metadata(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_session_flag_now", lambda trading_hours: (True, "tokyo"))
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: None)
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: None)
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_tokyo_tight_range_mean_reversion_trigger", lambda *args, **kwargs: _tokyo_meanrev_trigger())
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
+
+    decision = autonomous_fillmore.evaluate_gate(
+        _gate_cfg("balanced"),
+        {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0, "last_llm_call_utc": None},
+        autonomous_fillmore.GateInputs(
+            spread_pips=0.8,
+            tick_mid=159.03,
+            open_ai_trade_count=0,
+            data_by_tf={},
+            ntz_active=False,
+        ),
+    )
+
+    assert decision.result == "pass"
+    assert decision.extras.get("trigger_family") == "tight_range_mean_reversion"
+    assert decision.extras.get("trigger_reason") == "tokyo_range_reclaim:session_low"
+
+
+def test_evaluate_gate_tokyo_controlled_experiment_blocks_non_meanrev_families(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_session_flag_now", lambda trading_hours: (True, "tokyo"))
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: _critical_trigger())
+    monkeypatch.setattr(autonomous_fillmore, "_tokyo_tight_range_mean_reversion_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: _trend_trigger())
+
+    decision = autonomous_fillmore.evaluate_gate(
+        _gate_cfg("balanced"),
+        {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0, "last_llm_call_utc": None},
+        autonomous_fillmore.GateInputs(
+            spread_pips=0.8,
+            tick_mid=159.03,
+            open_ai_trade_count=0,
+            data_by_tf={},
+            ntz_active=False,
+        ),
+    )
+
+    assert decision.result == "block"
+    assert decision.reason == "no_hybrid_trigger"
 
 
 def test_evaluate_gate_blocks_when_compression_breakout_is_disabled(monkeypatch) -> None:
