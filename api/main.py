@@ -6203,6 +6203,9 @@ class AutonomousConfigPatch(BaseModel):
     min_llm_cooldown_sec: Optional[int] = None
     trading_hours: Optional[dict[str, bool]] = None
     max_lots_per_trade: Optional[float] = None
+    base_lot_size: Optional[float] = None
+    lot_deviation: Optional[float] = None
+    min_lot_size: Optional[float] = None
     max_open_ai_trades: Optional[int] = None
     max_daily_loss_usd: Optional[float] = None
     max_consecutive_errors: Optional[int] = None
