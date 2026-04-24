@@ -292,6 +292,7 @@ _GATE_SETUP_COOLDOWN_MINUTES = {
     "compression_breakout": 20,
     "trend_expansion": 30,
     "failed_breakout_reversal_overlap_v1": 20,
+    "post_spike_retracement_ny_overlap_v1": 20,
 }
 _CRITICAL_LEVEL_SETUP_BUCKET_PIPS = 25.0
 _ENABLE_CRITICAL_RESISTANCE_REJECT = False
@@ -313,6 +314,14 @@ _FAILED_BREAKOUT_MAX_HOLD_BARS = 2
 _FAILED_BREAKOUT_MIN_SESSION_BARS = 9
 _FAILED_BREAKOUT_RECAPTURE_BODY_RATIO = 0.5
 _FAILED_BREAKOUT_CONTINUATION_INVALIDATION_PIPS = 8.0
+_POST_SPIKE_ALLOWED_SESSIONS = {"ny", "london/ny"}
+_POST_SPIKE_WINDOW_BARS = 5
+_POST_SPIKE_MIN_MOVE_PIPS = 12.0
+_POST_SPIKE_MIN_DIRECTIONAL_CONSISTENCY = 0.60
+_POST_SPIKE_MAX_CONFIRMATION_BARS = 3
+_POST_SPIKE_ALLOWED_CONFIRMATION_BARS = {2, 3}
+_POST_SPIKE_STALL_BODY_FRACTION = 0.60
+_POST_SPIKE_MAX_EXTENSION_AFTER_SPIKE_PIPS = 4.0
 _USDJPY_SPREAD_LIMITS_PIPS = {
     "tokyo": 3.0,
     "london": 3.0,
@@ -1684,6 +1693,111 @@ def _failed_breakout_reversal_trigger(
     return None
 
 
+def _post_spike_retracement_trigger(
+    tick_mid: float,
+    data_by_tf: dict[str, pd.DataFrame],
+    session_label: str,
+    *,
+    spike_window_bars: int = _POST_SPIKE_WINDOW_BARS,
+    min_spike_pips: float = _POST_SPIKE_MIN_MOVE_PIPS,
+    min_directional_consistency: float = _POST_SPIKE_MIN_DIRECTIONAL_CONSISTENCY,
+    max_confirmation_bars: int = _POST_SPIKE_MAX_CONFIRMATION_BARS,
+    allowed_confirmation_bars: set[int] = _POST_SPIKE_ALLOWED_CONFIRMATION_BARS,
+    stall_body_fraction: float = _POST_SPIKE_STALL_BODY_FRACTION,
+    max_extension_after_spike_pips: float = _POST_SPIKE_MAX_EXTENSION_AFTER_SPIKE_PIPS,
+    pip_size: float = 0.01,
+) -> Optional[dict[str, Any]]:
+    if session_label not in _POST_SPIKE_ALLOWED_SESSIONS:
+        return None
+    m1_df = data_by_tf.get("M1") if data_by_tf else None
+    min_rows = int(spike_window_bars) + int(max_confirmation_bars) + 2
+    if m1_df is None or len(m1_df) < max(20, min_rows):
+        return None
+    ts = _extract_time_index(m1_df)
+    if ts is None or len(ts) != len(m1_df):
+        return None
+    try:
+        work = m1_df.copy()
+        work["time"] = pd.to_datetime(ts, utc=True, errors="coerce")
+        work = work.dropna(subset=["time"]).copy().reset_index(drop=True)
+        if len(work) < min_rows:
+            return None
+
+        work["session_label"] = work["time"].dt.hour.map(_classify_session_label_from_hour)
+        if str(work["session_label"].iloc[-1]) != session_label:
+            return None
+
+        closes = work["close"].astype(float).to_numpy()
+        opens = work["open"].astype(float).to_numpy()
+        highs = work["high"].astype(float).to_numpy()
+        lows = work["low"].astype(float).to_numpy()
+        signal_idx = len(work) - 1
+
+        for confirmation_bars in sorted(set(int(x) for x in allowed_confirmation_bars if int(x) > 0)):
+            if confirmation_bars > int(max_confirmation_bars) or signal_idx - confirmation_bars < int(spike_window_bars):
+                continue
+            spike_end_idx = signal_idx - confirmation_bars
+            spike_start_idx = spike_end_idx - int(spike_window_bars)
+            if spike_start_idx < 0:
+                continue
+
+            net_move_pips = (closes[spike_end_idx] - closes[spike_start_idx]) / (pip_size or 0.01)
+            abs_move_pips = abs(float(net_move_pips))
+            if abs_move_pips < float(min_spike_pips):
+                continue
+
+            spike_direction = 1 if net_move_pips > 0 else -1
+            deltas = np.diff(closes[spike_start_idx : spike_end_idx + 1]) / (pip_size or 0.01)
+            directional_hits = int(np.sum(deltas * spike_direction > 0))
+            consistency = float(directional_hits) / max(len(deltas), 1)
+            if consistency < float(min_directional_consistency):
+                continue
+
+            spike_bodies = np.abs(closes[spike_start_idx + 1 : spike_end_idx + 1] - opens[spike_start_idx + 1 : spike_end_idx + 1]) / (pip_size or 0.01)
+            avg_spike_body = max(float(np.mean(spike_bodies)), 1e-6)
+            spike_close = float(closes[spike_end_idx])
+            saw_stall = False
+            valid = True
+
+            for j in range(spike_end_idx + 1, signal_idx + 1):
+                if spike_direction > 0:
+                    if ((highs[j] - spike_close) / (pip_size or 0.01)) > float(max_extension_after_spike_pips):
+                        valid = False
+                        break
+                else:
+                    if ((spike_close - lows[j]) / (pip_size or 0.01)) > float(max_extension_after_spike_pips):
+                        valid = False
+                        break
+                body_pips = abs(closes[j] - opens[j]) / (pip_size or 0.01)
+                if body_pips <= avg_spike_body * float(stall_body_fraction):
+                    saw_stall = True
+
+            if not valid or not saw_stall:
+                continue
+
+            confirm_direction = np.sign(closes[signal_idx] - opens[signal_idx])
+            if confirm_direction == 0 or int(confirm_direction) == int(spike_direction):
+                continue
+
+            bias = "sell" if spike_direction > 0 else "buy"
+            return {
+                "family": "post_spike_retracement_ny_overlap_v1",
+                "reason": f"post_spike_retrace:{session_label}:{'up' if spike_direction > 0 else 'down'}_spike",
+                "bias": bias,
+                "level_label": f"{session_label.upper()}_SPIKE_RETRACE",
+                "level_price": round(float(tick_mid), 3),
+                "nearest_level_pips": 0.0,
+                "micro_confirmation": "stalled_spike_first_opposite_close",
+                "spike_direction": "up" if spike_direction > 0 else "down",
+                "spike_move_pips": round(abs_move_pips, 2),
+                "confirmation_bars": int(confirmation_bars),
+                "directional_consistency": round(float(consistency), 3),
+            }
+    except Exception:
+        return None
+    return None
+
+
 def _trend_expansion_trigger(
     tick_mid: float,
     data_by_tf: dict[str, pd.DataFrame],
@@ -1909,6 +2023,12 @@ def _gate_setup_key(
         except (TypeError, ValueError):
             price = round(float(tick_mid), 3)
         return f"{family}:{bias}:{label}:{hold_bars}:{price:.3f}"
+    if family == "post_spike_retracement_ny_overlap_v1":
+        spike_direction = str(trigger.get("spike_direction") or "spike")
+        confirmation_bars = int(trigger.get("confirmation_bars") or 0)
+        bucket_size = max((pip_size or 0.01) * 20.0, pip_size or 0.01)
+        bucket = round(round(float(tick_mid) / bucket_size) * bucket_size, 3)
+        return f"{family}:{bias}:{session_label}:{spike_direction}:{confirmation_bars}:{bucket:.3f}"
     bucket_size = max((pip_size or 0.01) * float(_TREND_EXPANSION_SETUP_BUCKET_PIPS), pip_size or 0.01)
     bucket = round(round(float(tick_mid) / bucket_size) * bucket_size, 3)
     return f"{family}:{bias}:{session_label}:{bucket:.3f}"
@@ -2163,6 +2283,12 @@ def evaluate_gate(
         session_label,
         pip_size=0.01,
     )
+    post_spike = _post_spike_retracement_trigger(
+        inputs.tick_mid,
+        inputs.data_by_tf,
+        session_label,
+        pip_size=0.01,
+    )
     trend = _trend_expansion_trigger(
         inputs.tick_mid,
         inputs.data_by_tf,
@@ -2191,6 +2317,7 @@ def evaluate_gate(
         ("tight_range_mean_reversion", tokyo_meanrev),
         ("compression_breakout", compression),
         ("failed_breakout_reversal_overlap_v1", failed_breakout),
+        ("post_spike_retracement_ny_overlap_v1", post_spike),
         ("trend_expansion", trend),
     ]
     armed_candidates: list[tuple[str, dict[str, Any], str]] = []
@@ -2283,6 +2410,9 @@ def evaluate_gate(
             "trigger_breakout_side": chosen_trigger.get("breakout_side"),
             "trigger_breakout_excursion_pips": chosen_trigger.get("breakout_excursion_pips"),
             "trigger_hold_bars": chosen_trigger.get("hold_bars"),
+            "trigger_spike_direction": chosen_trigger.get("spike_direction"),
+            "trigger_spike_move_pips": chosen_trigger.get("spike_move_pips"),
+            "trigger_confirmation_bars": chosen_trigger.get("confirmation_bars"),
         },
     )
 
@@ -2697,9 +2827,6 @@ def _compute_risk_regime(rt: dict[str, Any], cfg: dict[str, Any]) -> dict[str, A
     else:
         streak_label = "normal"
 
-    daily_drawdown_active = float(rt.get("daily_pnl_usd") or 0.0) <= -(
-        float(cfg.get("max_daily_loss_usd") or 50.0) * 0.6
-    )
     label = streak_label
 
     override_label = None
@@ -2729,7 +2856,8 @@ def _compute_risk_regime(rt: dict[str, Any], cfg: dict[str, Any]) -> dict[str, A
     return {
         "label": label,
         "streak_label": streak_label,
-        "daily_drawdown_active": daily_drawdown_active,
+        # Retained for API compatibility; no longer used to influence behavior.
+        "daily_drawdown_active": False,
         "risk_multiplier": risk_multiplier,
         "effective_min_llm_cooldown_sec": effective_cooldown,
         "effective_max_open_ai_trades": effective_max_open,

@@ -185,6 +185,24 @@ def _failed_breakout_trigger(**overrides) -> dict:
     return base
 
 
+def _post_spike_trigger(**overrides) -> dict:
+    base = {
+        "family": "post_spike_retracement_ny_overlap_v1",
+        "reason": "post_spike_retrace:london/ny:up_spike",
+        "bias": "sell",
+        "level_label": "LONDON/NY_SPIKE_RETRACE",
+        "level_price": 159.150,
+        "nearest_level_pips": 0.0,
+        "micro_confirmation": "stalled_spike_first_opposite_close",
+        "spike_direction": "up",
+        "spike_move_pips": 18.0,
+        "confirmation_bars": 2,
+        "directional_consistency": 0.8,
+    }
+    base.update(overrides)
+    return base
+
+
 def test_critical_level_reaction_trigger_keeps_support_reclaim(monkeypatch) -> None:
     m1 = pd.DataFrame(
         {
@@ -352,6 +370,96 @@ def test_failed_breakout_reversal_trigger_is_overlap_only() -> None:
         159.0,
         {"M5": m5},
         "ny",
+    )
+
+    assert trig is None
+
+
+def test_post_spike_retracement_trigger_detects_overlap_confirmation() -> None:
+    warmup_times = pd.date_range("2026-04-24T11:47:00Z", periods=13, freq="1min", tz="UTC")
+    warmup = pd.DataFrame(
+        {
+            "time": warmup_times,
+            "open": [158.95] * 13,
+            "high": [158.96] * 13,
+            "low": [158.94] * 13,
+            "close": [158.95] * 13,
+        }
+    )
+    pattern = pd.DataFrame(
+        {
+            "time": pd.to_datetime(
+                [
+                    "2026-04-24T12:00:00Z",
+                    "2026-04-24T12:01:00Z",
+                    "2026-04-24T12:02:00Z",
+                    "2026-04-24T12:03:00Z",
+                    "2026-04-24T12:04:00Z",
+                    "2026-04-24T12:05:00Z",
+                    "2026-04-24T12:06:00Z",
+                    "2026-04-24T12:07:00Z",
+                ],
+                utc=True,
+            ),
+            "open": [159.00, 159.03, 159.06, 159.09, 159.12, 159.145, 159.15, 159.15],
+            "high": [159.04, 159.07, 159.10, 159.13, 159.16, 159.155, 159.151, 159.151],
+            "low": [158.99, 159.02, 159.05, 159.08, 159.11, 159.14, 159.14, 159.11],
+            "close": [159.03, 159.06, 159.09, 159.12, 159.14, 159.15, 159.15, 159.12],
+        }
+    )
+    m1 = pd.concat([warmup, pattern], ignore_index=True)
+
+    trig = autonomous_fillmore._post_spike_retracement_trigger(
+        159.12,
+        {"M1": m1},
+        "london/ny",
+    )
+
+    assert trig is not None
+    assert trig["family"] == "post_spike_retracement_ny_overlap_v1"
+    assert trig["bias"] == "sell"
+    assert trig["spike_direction"] == "up"
+    assert trig["confirmation_bars"] == 2
+
+
+def test_post_spike_retracement_trigger_rejects_tokyo_session() -> None:
+    warmup_times = pd.date_range("2026-04-24T00:47:00Z", periods=13, freq="1min", tz="UTC")
+    warmup = pd.DataFrame(
+        {
+            "time": warmup_times,
+            "open": [158.95] * 13,
+            "high": [158.96] * 13,
+            "low": [158.94] * 13,
+            "close": [158.95] * 13,
+        }
+    )
+    pattern = pd.DataFrame(
+        {
+            "time": pd.to_datetime(
+                [
+                    "2026-04-24T01:00:00Z",
+                    "2026-04-24T01:01:00Z",
+                    "2026-04-24T01:02:00Z",
+                    "2026-04-24T01:03:00Z",
+                    "2026-04-24T01:04:00Z",
+                    "2026-04-24T01:05:00Z",
+                    "2026-04-24T01:06:00Z",
+                    "2026-04-24T01:07:00Z",
+                ],
+                utc=True,
+            ),
+            "open": [159.00, 159.03, 159.06, 159.09, 159.12, 159.145, 159.15, 159.15],
+            "high": [159.04, 159.07, 159.10, 159.13, 159.16, 159.155, 159.151, 159.151],
+            "low": [158.99, 159.02, 159.05, 159.08, 159.11, 159.14, 159.14, 159.11],
+            "close": [159.03, 159.06, 159.09, 159.12, 159.14, 159.15, 159.15, 159.12],
+        }
+    )
+    m1 = pd.concat([warmup, pattern], ignore_index=True)
+
+    trig = autonomous_fillmore._post_spike_retracement_trigger(
+        159.12,
+        {"M1": m1},
+        "tokyo",
     )
 
     assert trig is None
@@ -1804,7 +1912,7 @@ def test_reasoning_feed_returns_structured_data(tmp_path: Path) -> None:
     assert feed["suggestions"][0]["trigger_reason"] == "tokyo_range_reclaim:session_low"
 
 
-def test_compute_risk_regime_hysteresis_and_daily_drawdown() -> None:
+def test_compute_risk_regime_hysteresis_and_no_drawdown_trigger() -> None:
     cfg = dict(autonomous_fillmore.DEFAULT_CONFIG)
     cfg["max_daily_loss_usd"] = 50.0
 
@@ -1843,8 +1951,8 @@ def test_compute_risk_regime_hysteresis_and_daily_drawdown() -> None:
         "previous_streak_regime_label": "normal",
     }
     drawdown = autonomous_fillmore._compute_risk_regime(dd, cfg)
-    assert drawdown["label"] == "defensive_hard"
-    assert drawdown["daily_drawdown_active"] is True
+    assert drawdown["label"] == "normal"
+    assert drawdown["daily_drawdown_active"] is False
 
     drawdown_cleared = {
         "consecutive_losses": 0,
@@ -1952,6 +2060,36 @@ def test_evaluate_gate_passes_failed_breakout_trigger_metadata(monkeypatch) -> N
     assert decision.extras.get("trigger_reason") == "failed_breakout_recapture:LONDON_NY_SESSION_HIGH"
     assert decision.extras.get("trigger_breakout_side") == "up"
     assert decision.extras.get("trigger_hold_bars") == 2
+
+
+def test_evaluate_gate_passes_post_spike_trigger_metadata(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_session_flag_now", lambda trading_hours: (True, "london/ny"))
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: None)
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: None)
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_tokyo_tight_range_mean_reversion_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_compression_breakout_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_failed_breakout_reversal_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_post_spike_retracement_trigger", lambda *args, **kwargs: _post_spike_trigger())
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
+
+    decision = autonomous_fillmore.evaluate_gate(
+        _gate_cfg("balanced"),
+        {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0, "last_llm_call_utc": None},
+        autonomous_fillmore.GateInputs(
+            spread_pips=0.8,
+            tick_mid=159.12,
+            open_ai_trade_count=0,
+            data_by_tf={},
+            ntz_active=False,
+        ),
+    )
+
+    assert decision.result == "pass"
+    assert decision.extras.get("trigger_family") == "post_spike_retracement_ny_overlap_v1"
+    assert decision.extras.get("trigger_reason") == "post_spike_retrace:london/ny:up_spike"
+    assert decision.extras.get("trigger_spike_direction") == "up"
+    assert decision.extras.get("trigger_confirmation_bars") == 2
 
 
 def test_evaluate_gate_tokyo_controlled_experiment_blocks_non_meanrev_families(monkeypatch) -> None:
@@ -2204,7 +2342,7 @@ def test_compute_risk_regime_keeps_drawdown_informational_not_forced_defensive()
 
     regime = autonomous_fillmore._compute_risk_regime(rt, cfg)
 
-    assert regime["daily_drawdown_active"] is True
+    assert regime["daily_drawdown_active"] is False
     assert regime["label"] == "normal"
     assert regime["effective_max_open_ai_trades"] == int(cfg["max_open_ai_trades"])
 

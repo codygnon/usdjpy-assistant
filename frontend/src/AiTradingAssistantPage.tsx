@@ -318,6 +318,7 @@ const TRIGGER_FAMILY_LABELS: Record<string, string> = {
   compression_breakout: 'Compression Breakout',
   trend_expansion: 'Trend Expansion',
   failed_breakout_reversal_overlap_v1: 'Failed Breakout (Overlap)',
+  post_spike_retracement_ny_overlap_v1: 'Post Spike Retracement (NY/Overlap)',
 };
 
 function formatTriggerFamilyLabel(family: string | null | undefined): string {
@@ -631,7 +632,6 @@ function AutonomousFillmorePanel({
             <div>losses {thr?.consecutive_losses ?? 0}</div>
             <div>wins {thr?.consecutive_wins ?? 0}</div>
             <div>recovery wins {(regime.recovery_wins ?? 0)}</div>
-            {regime.daily_drawdown_active && <div style={{ color: '#f87171' }}>daily drawdown trigger active</div>}
             {regime.override_until_utc && <div>override until {new Date(regime.override_until_utc).toLocaleTimeString()}</div>}
           </div>
         </div>
