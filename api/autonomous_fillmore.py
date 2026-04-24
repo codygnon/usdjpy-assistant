@@ -297,6 +297,8 @@ _GATE_SETUP_COOLDOWN_MINUTES = {
 _CRITICAL_LEVEL_SETUP_BUCKET_PIPS = 25.0
 _ENABLE_CRITICAL_RESISTANCE_REJECT = False
 _ENABLE_COMPRESSION_BREAKOUT = False
+_ENABLE_FAILED_BREAKOUT_REVERSAL = False
+_ENABLE_POST_SPIKE_RETRACEMENT = False
 _DISABLED_SUPPORT_RECLAIM_LEVEL_LABELS = {
     "LOCAL_RANGE_HIGH",
     "LOCAL_RANGE_LOW",
@@ -2277,17 +2279,25 @@ def evaluate_gate(
     )
     if not _ENABLE_COMPRESSION_BREAKOUT:
         compression = None
-    failed_breakout = _failed_breakout_reversal_trigger(
-        inputs.tick_mid,
-        inputs.data_by_tf,
-        session_label,
-        pip_size=0.01,
+    failed_breakout = (
+        _failed_breakout_reversal_trigger(
+            inputs.tick_mid,
+            inputs.data_by_tf,
+            session_label,
+            pip_size=0.01,
+        )
+        if _ENABLE_FAILED_BREAKOUT_REVERSAL
+        else None
     )
-    post_spike = _post_spike_retracement_trigger(
-        inputs.tick_mid,
-        inputs.data_by_tf,
-        session_label,
-        pip_size=0.01,
+    post_spike = (
+        _post_spike_retracement_trigger(
+            inputs.tick_mid,
+            inputs.data_by_tf,
+            session_label,
+            pip_size=0.01,
+        )
+        if _ENABLE_POST_SPIKE_RETRACEMENT
+        else None
     )
     trend = _trend_expansion_trigger(
         inputs.tick_mid,

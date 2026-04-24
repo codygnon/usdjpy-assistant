@@ -1007,7 +1007,7 @@ def test_aggressive_gate_blocks_when_m3_and_m1_disagree(monkeypatch) -> None:
 
     assert decision.result == "block"
     assert decision.layer == "signal"
-    assert decision.reason == "no_hybrid_trigger"
+    assert decision.reason == "no_hybrid_trigger:no_trend_signal"
     assert decision.extras.get("m3") == "bull"
     assert decision.extras.get("m1") == "bear"
 
@@ -1033,7 +1033,7 @@ def test_aggressive_gate_blocks_without_hybrid_trigger(monkeypatch) -> None:
 
     assert decision.result == "block"
     assert decision.layer == "signal"
-    assert decision.reason == "no_hybrid_trigger"
+    assert decision.reason == "no_hybrid_trigger:no_trend_signal"
 
 
 def test_very_aggressive_gate_still_requires_some_trend_signal(monkeypatch) -> None:
@@ -1268,7 +1268,7 @@ def test_proximity_gate_blocks_when_price_far_from_structure(monkeypatch) -> Non
 
     assert decision.result == "block"
     assert decision.layer == "signal"
-    assert decision.reason == "no_hybrid_trigger"
+    assert decision.reason == "no_hybrid_trigger:no_trend_signal"
     assert decision.extras.get("nearest_level_pips") == 23.0
 
 
@@ -1413,7 +1413,7 @@ def test_trend_expansion_is_restricted_to_london_ny_overlap(monkeypatch) -> None
     )
 
     assert decision.result == "block"
-    assert decision.reason == "no_hybrid_trigger"
+    assert decision.reason == "no_hybrid_trigger:no_trend_signal"
     assert decision.extras.get("trend_session_veto") == "ny"
 
 
@@ -2033,7 +2033,7 @@ def test_evaluate_gate_passes_tokyo_mean_reversion_trigger_metadata(monkeypatch)
     assert decision.extras.get("trigger_reason") == "tokyo_range_reclaim:session_low"
 
 
-def test_evaluate_gate_passes_failed_breakout_trigger_metadata(monkeypatch) -> None:
+def test_evaluate_gate_ignores_failed_breakout_when_family_disabled(monkeypatch) -> None:
     monkeypatch.setattr(autonomous_fillmore, "_session_flag_now", lambda trading_hours: (True, "london/ny"))
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: None)
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: None)
@@ -2055,14 +2055,12 @@ def test_evaluate_gate_passes_failed_breakout_trigger_metadata(monkeypatch) -> N
         ),
     )
 
-    assert decision.result == "pass"
-    assert decision.extras.get("trigger_family") == "failed_breakout_reversal_overlap_v1"
-    assert decision.extras.get("trigger_reason") == "failed_breakout_recapture:LONDON_NY_SESSION_HIGH"
-    assert decision.extras.get("trigger_breakout_side") == "up"
-    assert decision.extras.get("trigger_hold_bars") == 2
+    assert decision.result == "block"
+    assert decision.reason == "no_hybrid_trigger:no_trend_signal"
+    assert decision.extras.get("trigger_family") is None
 
 
-def test_evaluate_gate_passes_post_spike_trigger_metadata(monkeypatch) -> None:
+def test_evaluate_gate_ignores_post_spike_when_family_disabled(monkeypatch) -> None:
     monkeypatch.setattr(autonomous_fillmore, "_session_flag_now", lambda trading_hours: (True, "london/ny"))
     monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: None)
     monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: None)
@@ -2085,11 +2083,9 @@ def test_evaluate_gate_passes_post_spike_trigger_metadata(monkeypatch) -> None:
         ),
     )
 
-    assert decision.result == "pass"
-    assert decision.extras.get("trigger_family") == "post_spike_retracement_ny_overlap_v1"
-    assert decision.extras.get("trigger_reason") == "post_spike_retrace:london/ny:up_spike"
-    assert decision.extras.get("trigger_spike_direction") == "up"
-    assert decision.extras.get("trigger_confirmation_bars") == 2
+    assert decision.result == "block"
+    assert decision.reason == "no_hybrid_trigger:no_trend_signal"
+    assert decision.extras.get("trigger_family") is None
 
 
 def test_evaluate_gate_tokyo_controlled_experiment_blocks_non_meanrev_families(monkeypatch) -> None:
