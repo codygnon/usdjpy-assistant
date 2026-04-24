@@ -291,6 +291,7 @@ _GATE_SETUP_COOLDOWN_MINUTES = {
     "tight_range_mean_reversion": 20,
     "compression_breakout": 20,
     "trend_expansion": 30,
+    "failed_breakout_reversal_overlap_v1": 20,
 }
 _CRITICAL_LEVEL_SETUP_BUCKET_PIPS = 25.0
 _ENABLE_CRITICAL_RESISTANCE_REJECT = False
@@ -305,6 +306,13 @@ _DISABLED_SUPPORT_RECLAIM_LEVEL_LABELS = {
 _TREND_EXPANSION_SETUP_BUCKET_PIPS = 20.0
 _TREND_EXPANSION_ALLOWED_SESSIONS = {"london/ny"}
 _TOKYO_CONTROLLED_EXPERIMENT_FAMILIES = {"tight_range_mean_reversion"}
+_FAILED_BREAKOUT_ALLOWED_SESSIONS = {"london/ny"}
+_FAILED_BREAKOUT_MIN_BREAK_PIPS = 2.0
+_FAILED_BREAKOUT_MAX_BREAK_PIPS = 5.0
+_FAILED_BREAKOUT_MAX_HOLD_BARS = 2
+_FAILED_BREAKOUT_MIN_SESSION_BARS = 9
+_FAILED_BREAKOUT_RECAPTURE_BODY_RATIO = 0.5
+_FAILED_BREAKOUT_CONTINUATION_INVALIDATION_PIPS = 8.0
 _USDJPY_SPREAD_LIMITS_PIPS = {
     "tokyo": 3.0,
     "london": 3.0,
@@ -1552,6 +1560,130 @@ def _compression_breakout_trigger(
     }
 
 
+def _failed_breakout_reversal_trigger(
+    tick_mid: float,
+    data_by_tf: dict[str, pd.DataFrame],
+    session_label: str,
+    *,
+    min_break_pips: float = _FAILED_BREAKOUT_MIN_BREAK_PIPS,
+    max_break_pips: float = _FAILED_BREAKOUT_MAX_BREAK_PIPS,
+    max_hold_bars: int = _FAILED_BREAKOUT_MAX_HOLD_BARS,
+    min_session_bars: int = _FAILED_BREAKOUT_MIN_SESSION_BARS,
+    recapture_body_ratio: float = _FAILED_BREAKOUT_RECAPTURE_BODY_RATIO,
+    continuation_invalidation_pips: float = _FAILED_BREAKOUT_CONTINUATION_INVALIDATION_PIPS,
+    pip_size: float = 0.01,
+) -> Optional[dict[str, Any]]:
+    if session_label not in _FAILED_BREAKOUT_ALLOWED_SESSIONS:
+        return None
+    m5_df = data_by_tf.get("M5") if data_by_tf else None
+    if m5_df is None or len(m5_df) < max(20, int(min_session_bars) + int(max_hold_bars) + 3):
+        return None
+    ts = _extract_time_index(m5_df)
+    if ts is None or len(ts) != len(m5_df):
+        return None
+    try:
+        work = m5_df.copy()
+        work["time"] = pd.to_datetime(ts, utc=True, errors="coerce")
+        work = work.dropna(subset=["time"]).copy()
+        if work.empty:
+            return None
+        work["session_label"] = work["time"].dt.hour.map(_classify_session_label_from_hour)
+        session_df = work.loc[work["session_label"] == session_label].copy()
+        if len(session_df) < int(min_session_bars):
+            return None
+        session_day = session_df["time"].iloc[-1].floor("D")
+        session_df = session_df.loc[session_df["time"].dt.floor("D") == session_day].copy()
+        if len(session_df) < int(min_session_bars):
+            return None
+
+        session_df["session_bar_index"] = range(1, len(session_df) + 1)
+        session_df["prior_session_high"] = session_df["high"].astype(float).cummax().shift(1)
+        session_df["prior_session_low"] = session_df["low"].astype(float).cummin().shift(1)
+        session_df["bar_body_ratio"] = session_df.apply(
+            lambda row: abs(float(row["close"]) - float(row["open"])) / max(float(row["high"]) - float(row["low"]), 1e-9),
+            axis=1,
+        )
+
+        invalidation_px = float(continuation_invalidation_pips) * (pip_size or 0.01)
+        active: list[dict[str, Any]] = []
+        for row in session_df.itertuples(index=False):
+            next_active: list[dict[str, Any]] = []
+            for candidate in active:
+                age = int(row.session_bar_index) - int(candidate["session_bar_index"])
+                if age < 1:
+                    next_active.append(candidate)
+                    continue
+                if age > int(max_hold_bars):
+                    continue
+                level = float(candidate["reference_level"])
+                if candidate["breakout_side"] == "up":
+                    if float(row.high) >= level + invalidation_px:
+                        continue
+                    if float(row.close) < level and float(row.bar_body_ratio) >= float(recapture_body_ratio):
+                        return {
+                            "family": "failed_breakout_reversal_overlap_v1",
+                            "reason": f"failed_breakout_recapture:{candidate['level_label']}",
+                            "bias": "sell",
+                            "level_label": candidate["level_label"],
+                            "level_price": round(level, 3),
+                            "nearest_level_pips": round(abs(float(tick_mid) - level) / (pip_size or 0.01), 2),
+                            "micro_confirmation": "failed_breakout_recapture",
+                            "breakout_side": "up",
+                            "breakout_excursion_pips": round(float(candidate["breakout_excursion_pips"]), 2),
+                            "hold_bars": age,
+                        }
+                else:
+                    if float(row.low) <= level - invalidation_px:
+                        continue
+                    if float(row.close) > level and float(row.bar_body_ratio) >= float(recapture_body_ratio):
+                        return {
+                            "family": "failed_breakout_reversal_overlap_v1",
+                            "reason": f"failed_breakout_recapture:{candidate['level_label']}",
+                            "bias": "buy",
+                            "level_label": candidate["level_label"],
+                            "level_price": round(level, 3),
+                            "nearest_level_pips": round(abs(float(tick_mid) - level) / (pip_size or 0.01), 2),
+                            "micro_confirmation": "failed_breakout_recapture",
+                            "breakout_side": "down",
+                            "breakout_excursion_pips": round(float(candidate["breakout_excursion_pips"]), 2),
+                            "hold_bars": age,
+                        }
+                next_active.append(candidate)
+            active = next_active
+
+            if int(row.session_bar_index) < int(min_session_bars):
+                continue
+            prior_high = float(row.prior_session_high) if pd.notna(row.prior_session_high) else math.nan
+            prior_low = float(row.prior_session_low) if pd.notna(row.prior_session_low) else math.nan
+            if math.isfinite(prior_high):
+                excursion_up = (float(row.high) - prior_high) / (pip_size or 0.01)
+                if float(min_break_pips) <= excursion_up <= float(max_break_pips) and float(row.close) > prior_high:
+                    active.append(
+                        {
+                            "session_bar_index": int(row.session_bar_index),
+                            "breakout_side": "up",
+                            "reference_level": prior_high,
+                            "breakout_excursion_pips": excursion_up,
+                            "level_label": "LONDON_NY_SESSION_HIGH",
+                        }
+                    )
+            if math.isfinite(prior_low):
+                excursion_down = (prior_low - float(row.low)) / (pip_size or 0.01)
+                if float(min_break_pips) <= excursion_down <= float(max_break_pips) and float(row.close) < prior_low:
+                    active.append(
+                        {
+                            "session_bar_index": int(row.session_bar_index),
+                            "breakout_side": "down",
+                            "reference_level": prior_low,
+                            "breakout_excursion_pips": excursion_down,
+                            "level_label": "LONDON_NY_SESSION_LOW",
+                        }
+                    )
+    except Exception:
+        return None
+    return None
+
+
 def _trend_expansion_trigger(
     tick_mid: float,
     data_by_tf: dict[str, pd.DataFrame],
@@ -1769,6 +1901,14 @@ def _gate_setup_key(
         except (TypeError, ValueError):
             price = round(float(tick_mid), 3)
         return f"{family}:{bias}:{label}:{price:.3f}"
+    if family == "failed_breakout_reversal_overlap_v1":
+        label = str(trigger.get("level_label") or "session_level")
+        hold_bars = int(trigger.get("hold_bars") or 0)
+        try:
+            price = round(float(trigger.get("level_price") or tick_mid), 3)
+        except (TypeError, ValueError):
+            price = round(float(tick_mid), 3)
+        return f"{family}:{bias}:{label}:{hold_bars}:{price:.3f}"
     bucket_size = max((pip_size or 0.01) * float(_TREND_EXPANSION_SETUP_BUCKET_PIPS), pip_size or 0.01)
     bucket = round(round(float(tick_mid) / bucket_size) * bucket_size, 3)
     return f"{family}:{bias}:{session_label}:{bucket:.3f}"
@@ -2017,6 +2157,12 @@ def evaluate_gate(
     )
     if not _ENABLE_COMPRESSION_BREAKOUT:
         compression = None
+    failed_breakout = _failed_breakout_reversal_trigger(
+        inputs.tick_mid,
+        inputs.data_by_tf,
+        session_label,
+        pip_size=0.01,
+    )
     trend = _trend_expansion_trigger(
         inputs.tick_mid,
         inputs.data_by_tf,
@@ -2044,6 +2190,7 @@ def evaluate_gate(
         ("critical_level_reaction", critical),
         ("tight_range_mean_reversion", tokyo_meanrev),
         ("compression_breakout", compression),
+        ("failed_breakout_reversal_overlap_v1", failed_breakout),
         ("trend_expansion", trend),
     ]
     armed_candidates: list[tuple[str, dict[str, Any], str]] = []
@@ -2133,6 +2280,9 @@ def evaluate_gate(
             "compression_cap_pips": chosen_trigger.get("compression_cap_pips"),
             "extension_pips": chosen_trigger.get("extension_pips"),
             "extension_limit_pips": chosen_trigger.get("extension_limit_pips"),
+            "trigger_breakout_side": chosen_trigger.get("breakout_side"),
+            "trigger_breakout_excursion_pips": chosen_trigger.get("breakout_excursion_pips"),
+            "trigger_hold_bars": chosen_trigger.get("hold_bars"),
         },
     )
 

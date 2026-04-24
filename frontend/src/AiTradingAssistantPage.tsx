@@ -312,6 +312,20 @@ function formatAutonomousReason(reason: string | null | undefined): string {
     .replace(/_/g, ' ');
 }
 
+const TRIGGER_FAMILY_LABELS: Record<string, string> = {
+  critical_level_reaction: 'Critical Level Reaction',
+  tight_range_mean_reversion: 'Tokyo Tight Range Mean Reversion',
+  compression_breakout: 'Compression Breakout',
+  trend_expansion: 'Trend Expansion',
+  failed_breakout_reversal_overlap_v1: 'Failed Breakout (Overlap)',
+};
+
+function formatTriggerFamilyLabel(family: string | null | undefined): string {
+  const key = String(family || '').trim();
+  if (!key) return 'Unknown';
+  return TRIGGER_FAMILY_LABELS[key] || key.replace(/_/g, ' ');
+}
+
 function featurePill(label: string, active: boolean, detail?: string): ReactNode {
   return (
     <div
@@ -399,6 +413,7 @@ function AutonomousFillmorePanel({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [showDecisions, setShowDecisions] = useState(false);
+  const [showTradeLog, setShowTradeLog] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
   const [reasoning, setReasoning] = useState<api.ReasoningFeed | null>(null);
   const [tradeLog, setTradeLog] = useState<api.AiSuggestionHistoryItem[]>([]);
@@ -537,6 +552,8 @@ function AutonomousFillmorePanel({
   const topReasons = Object.entries(window_?.top_block_reasons || {}).slice(0, 3);
   const topTriggerFamilies = Object.entries(window_?.trigger_families || {}).slice(0, 3);
   const familyOrderRows = Object.entries(orderMetrics?.by_trigger_family || {}).slice(0, 4);
+  const failedBreakoutWindowCount = window_?.trigger_families?.failed_breakout_reversal_overlap_v1 ?? 0;
+  const failedBreakoutOrders = orderMetrics?.by_trigger_family?.failed_breakout_reversal_overlap_v1;
   const reasoningCounts = reasoning
     ? {
         suggestions: reasoning.suggestions.length,
@@ -801,9 +818,35 @@ function AutonomousFillmorePanel({
             <div className="autonomous-panel__chip-row" style={{ marginTop: 8 }}>
               {topTriggerFamilies.map(([family, count]) => (
                 <div key={family} className="autonomous-panel__chip">
-                  trigger {family.replace(/_/g, ' ')} · {count}
+                  trigger {formatTriggerFamilyLabel(family)} · {count}
                 </div>
               ))}
+            </div>
+          )}
+          {(failedBreakoutWindowCount > 0 || failedBreakoutOrders) && (
+            <div
+              style={{
+                marginTop: 10,
+                padding: '10px 12px',
+                borderRadius: 12,
+                border: '1px solid rgba(125,211,252,0.24)',
+                background: 'rgba(125,211,252,0.08)',
+              }}
+            >
+              <div style={{ fontSize: '0.72rem', letterSpacing: 0.5, textTransform: 'uppercase', color: '#7dd3fc', marginBottom: 4 }}>
+                Candidate Family
+              </div>
+              <div style={{ fontWeight: 700, color: '#e2e8f0', marginBottom: 4 }}>
+                Failed Breakout (Overlap)
+              </div>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: '0.76rem', color: '#cbd5e1' }}>
+                <div>gate wakes {failedBreakoutWindowCount}</div>
+                <div>placed {(failedBreakoutOrders?.placed?.market ?? 0) + (failedBreakoutOrders?.placed?.limit ?? 0)}</div>
+                <div>filled {(failedBreakoutOrders?.filled?.market ?? 0) + (failedBreakoutOrders?.filled?.limit ?? 0)}</div>
+                <div>
+                  fill rate {failedBreakoutOrders?.fill_rate?.limit != null ? `${(failedBreakoutOrders.fill_rate.limit * 100).toFixed(0)}% limit` : '–'}
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -844,7 +887,7 @@ function AutonomousFillmorePanel({
                   }}
                 >
                   <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>
-                    {family.replace(/_/g, ' ')}
+                    {formatTriggerFamilyLabel(family)}
                   </div>
                   <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                     <div>placed M/L {(row.placed.market ?? 0)}/{(row.placed.limit ?? 0)}</div>
@@ -1057,11 +1100,16 @@ function AutonomousFillmorePanel({
         </div>
       )}
 
-      <div className="autonomous-panel__section">
-        <div className="autonomous-panel__section-head">
-          <span className="autonomous-panel__section-title">Fillmore Trade Log</span>
-          <span className="autonomous-panel__muted">recent placed trades {tradeLogCount ? `(${tradeLogCount})` : ''}</span>
-        </div>
+      <button
+        type="button"
+        className="btn btn-secondary autonomous-panel__toggle-btn autonomous-panel__toggle-btn--spaced"
+        onClick={() => setShowTradeLog((v) => !v)}
+      >
+        {showTradeLog ? 'Hide' : 'Show'} Fillmore trade log
+        {tradeLogCount ? ` (${tradeLogCount})` : ''}
+      </button>
+
+      {showTradeLog && (
         <div className="autonomous-panel__reasoning">
           {tradeLog.length === 0 ? (
             <div style={{ color: 'var(--text-secondary)' }}>No Fillmore trades yet.</div>
@@ -1121,7 +1169,7 @@ function AutonomousFillmorePanel({
             Refresh
           </button>
         </div>
-      </div>
+      )}
 
       {/* Fillmore's Reasoning panel — displays stored analysis, thesis checks, reflections */}
       <button
@@ -1158,7 +1206,7 @@ function AutonomousFillmorePanel({
                 const lotsColor = lotsVal >= 7 ? '#4ade80' : lotsVal >= 3 ? '#facc15' : '#94a3b8';
                 const outcomeLabel = s.win_loss || s.outcome_status || s.action || '';
                 const outcomeColor = s.win_loss === 'win' ? '#4ade80' : s.win_loss === 'loss' ? '#f87171' : 'var(--text-secondary)';
-                const familyLabel = (s.trigger_family || '').replace(/_/g, ' ');
+                const familyLabel = formatTriggerFamilyLabel(s.trigger_family);
                 const analysisMatch = (s.rationale || '').match(/ANALYSIS:\n([\s\S]*)/);
                 const analysisText = analysisMatch ? analysisMatch[1].trim() : null;
                 const shortRationale = analysisMatch

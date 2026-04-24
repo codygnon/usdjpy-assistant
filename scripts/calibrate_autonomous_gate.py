@@ -58,6 +58,16 @@ DEFAULT_MD = OUT_DIR / "autonomous_gate_calibration.md"
 PIP_SIZE = 0.01
 RECOMMENDATION_OBJECTIVES = ("quality_balanced", "precision_first", "recall_first")
 SESSION_CALIBRATION_LABELS = ("tokyo", "london", "ny", "london/ny")
+FAILED_BREAKOUT_RESEARCH_FAMILY = "failed_breakout_reversal_overlap_v1"
+FAILED_BREAKOUT_VALID_SESSIONS = {"london/ny"}
+FAILED_BREAKOUT_DEFAULTS = {
+    "min_break_pips": 2.0,
+    "max_break_pips": 5.0,
+    "max_hold_bars": 2,
+    "min_session_bars": 9,
+    "recapture_body_ratio": 0.5,
+    "continuation_invalidation_pips": 8.0,
+}
 
 
 @dataclass
@@ -82,6 +92,11 @@ class MaskSummary:
     middle_net_pips: float
     late_net_pips: float
     positive_splits: int
+
+
+def _body_ratio(open_: float, high: float, low: float, close: float) -> float:
+    rng = max(float(high) - float(low), 1e-9)
+    return abs(float(close) - float(open_)) / rng
 
 
 def parse_args() -> argparse.Namespace:
@@ -346,6 +361,160 @@ def build_feature_frame(df: pd.DataFrame) -> pd.DataFrame:
     return work
 
 
+def _prepare_failed_breakout_m5_frame(m1_frame: pd.DataFrame) -> pd.DataFrame:
+    m5 = _resample_ohlc(m1_frame[["time", "open", "high", "low", "close"]].copy(), "5min")
+    m5["session_label"] = m5["time"].map(_classify_session_label)
+    m5["session_day"] = m5["time"].dt.floor("D")
+    m5["session_block"] = m5["session_day"].astype(str) + "::" + m5["session_label"].astype(str)
+    m5["session_bar_index"] = m5.groupby("session_block").cumcount() + 1
+    m5["prior_session_high"] = m5.groupby("session_block")["high"].cummax().shift(1)
+    m5["prior_session_low"] = m5.groupby("session_block")["low"].cummin().shift(1)
+    m5["bar_body_ratio"] = [
+        _body_ratio(o, h, l, c) for o, h, l, c in zip(m5["open"], m5["high"], m5["low"], m5["close"])
+    ]
+    return m5
+
+
+def scan_failed_breakout_reversal_signals(
+    m5: pd.DataFrame,
+    *,
+    min_break_pips: float = float(FAILED_BREAKOUT_DEFAULTS["min_break_pips"]),
+    max_break_pips: float = float(FAILED_BREAKOUT_DEFAULTS["max_break_pips"]),
+    max_hold_bars: int = int(FAILED_BREAKOUT_DEFAULTS["max_hold_bars"]),
+    min_session_bars: int = int(FAILED_BREAKOUT_DEFAULTS["min_session_bars"]),
+    recapture_body_ratio: float = float(FAILED_BREAKOUT_DEFAULTS["recapture_body_ratio"]),
+    continuation_invalidation_pips: float = float(FAILED_BREAKOUT_DEFAULTS["continuation_invalidation_pips"]),
+) -> pd.DataFrame:
+    if m5.empty:
+        return pd.DataFrame(
+            columns=[
+                "time",
+                "failed_breakout_direction",
+                "failed_breakout_family",
+                "failed_breakout_side",
+                "failed_breakout_reference_level",
+                "failed_breakout_excursion_pips",
+                "failed_breakout_hold_bars",
+                "failed_breakout_session_label",
+            ]
+        )
+
+    records: list[dict[str, Any]] = []
+    active: list[dict[str, Any]] = []
+    invalidation_px = float(continuation_invalidation_pips) * PIP_SIZE
+
+    for row in m5.itertuples(index=False):
+        next_active: list[dict[str, Any]] = []
+        for candidate in active:
+            if candidate["session_block"] != row.session_block:
+                continue
+            age = int(row.session_bar_index) - int(candidate["session_bar_index"])
+            if age < 1:
+                next_active.append(candidate)
+                continue
+            if age > int(max_hold_bars):
+                continue
+
+            level = float(candidate["reference_level"])
+            if candidate["breakout_side"] == "up":
+                if float(row.high) >= level + invalidation_px:
+                    continue
+                if float(row.close) < level and float(row.bar_body_ratio) >= float(recapture_body_ratio):
+                    records.append(
+                        {
+                            "time": row.time,
+                            "failed_breakout_direction": -1,
+                            "failed_breakout_family": FAILED_BREAKOUT_RESEARCH_FAMILY,
+                            "failed_breakout_side": "up",
+                            "failed_breakout_reference_level": level,
+                            "failed_breakout_excursion_pips": round(float(candidate["breakout_excursion_pips"]), 2),
+                            "failed_breakout_hold_bars": age,
+                            "failed_breakout_session_label": row.session_label,
+                        }
+                    )
+                    continue
+            else:
+                if float(row.low) <= level - invalidation_px:
+                    continue
+                if float(row.close) > level and float(row.bar_body_ratio) >= float(recapture_body_ratio):
+                    records.append(
+                        {
+                            "time": row.time,
+                            "failed_breakout_direction": 1,
+                            "failed_breakout_family": FAILED_BREAKOUT_RESEARCH_FAMILY,
+                            "failed_breakout_side": "down",
+                            "failed_breakout_reference_level": level,
+                            "failed_breakout_excursion_pips": round(float(candidate["breakout_excursion_pips"]), 2),
+                            "failed_breakout_hold_bars": age,
+                            "failed_breakout_session_label": row.session_label,
+                        }
+                    )
+                    continue
+            next_active.append(candidate)
+        active = next_active
+
+        if (
+            str(row.session_label) not in FAILED_BREAKOUT_VALID_SESSIONS
+            or int(row.session_bar_index) < int(min_session_bars)
+        ):
+            continue
+
+        prior_high = float(row.prior_session_high) if pd.notna(row.prior_session_high) else math.nan
+        prior_low = float(row.prior_session_low) if pd.notna(row.prior_session_low) else math.nan
+
+        if math.isfinite(prior_high):
+            excursion_up = (float(row.high) - prior_high) / PIP_SIZE
+            if float(min_break_pips) <= excursion_up <= float(max_break_pips) and float(row.close) > prior_high:
+                active.append(
+                    {
+                        "session_block": row.session_block,
+                        "session_bar_index": int(row.session_bar_index),
+                        "breakout_side": "up",
+                        "reference_level": prior_high,
+                        "breakout_excursion_pips": excursion_up,
+                    }
+                )
+        if math.isfinite(prior_low):
+            excursion_down = (prior_low - float(row.low)) / PIP_SIZE
+            if float(min_break_pips) <= excursion_down <= float(max_break_pips) and float(row.close) < prior_low:
+                active.append(
+                    {
+                        "session_block": row.session_block,
+                        "session_bar_index": int(row.session_bar_index),
+                        "breakout_side": "down",
+                        "reference_level": prior_low,
+                        "breakout_excursion_pips": excursion_down,
+                    }
+                )
+
+    if not records:
+        return pd.DataFrame(
+            columns=[
+                "time",
+                "failed_breakout_direction",
+                "failed_breakout_family",
+                "failed_breakout_side",
+                "failed_breakout_reference_level",
+                "failed_breakout_excursion_pips",
+                "failed_breakout_hold_bars",
+                "failed_breakout_session_label",
+            ]
+        )
+    return pd.DataFrame.from_records(records).drop_duplicates(subset=["time", "failed_breakout_direction"], keep="first")
+
+
+def attach_failed_breakout_reversal_features(frame: pd.DataFrame) -> pd.DataFrame:
+    work = frame.copy()
+    signals = scan_failed_breakout_reversal_signals(_prepare_failed_breakout_m5_frame(work))
+    work = work.merge(signals, on="time", how="left")
+    work["failed_breakout_direction"] = pd.to_numeric(work["failed_breakout_direction"], errors="coerce").fillna(0).astype(int)
+    work["failed_breakout_family"] = work["failed_breakout_family"].fillna("none")
+    work["failed_breakout_side"] = work["failed_breakout_side"].fillna("none")
+    work["failed_breakout_hold_bars"] = pd.to_numeric(work["failed_breakout_hold_bars"], errors="coerce")
+    work["failed_breakout_excursion_pips"] = pd.to_numeric(work["failed_breakout_excursion_pips"], errors="coerce")
+    return work
+
+
 def compute_direction(frame: pd.DataFrame, mode: str) -> np.ndarray:
     m3 = frame["m3_trend"].astype(str)
     m1 = frame["m1_stack"].astype(str)
@@ -513,6 +682,149 @@ def simulate_first_touch_outcomes(
         pip_size=pip_size,
     )
     return metrics["outcome_pips"], metrics["outcome_code"]
+
+
+def attach_bidirectional_outcomes(
+    frame: pd.DataFrame,
+    *,
+    target_pips: float,
+    stop_pips: float,
+    horizon_bars: int,
+    pip_size: float = PIP_SIZE,
+) -> pd.DataFrame:
+    work = frame.copy()
+    close = work["close"].to_numpy(dtype=float)
+    high = work["high"].to_numpy(dtype=float)
+    low = work["low"].to_numpy(dtype=float)
+    long_direction = np.ones(len(work), dtype=np.int8)
+    short_direction = np.full(len(work), -1, dtype=np.int8)
+    long_metrics = simulate_forward_metrics(
+        close,
+        high,
+        low,
+        long_direction,
+        target_pips=target_pips,
+        stop_pips=stop_pips,
+        horizon_bars=horizon_bars,
+        pip_size=pip_size,
+    )
+    short_metrics = simulate_forward_metrics(
+        close,
+        high,
+        low,
+        short_direction,
+        target_pips=target_pips,
+        stop_pips=stop_pips,
+        horizon_bars=horizon_bars,
+        pip_size=pip_size,
+    )
+    for key, values in long_metrics.items():
+        work[f"long_{key}"] = values
+    for key, values in short_metrics.items():
+        work[f"short_{key}"] = values
+    return work
+
+
+def summarize_directional_mask(
+    frame: pd.DataFrame,
+    mask: pd.Series,
+    *,
+    direction_col: str,
+) -> MaskSummary:
+    chosen = frame.loc[mask.fillna(False)].copy()
+    if chosen.empty:
+        return summarize_mask(frame.iloc[0:0].copy(), pd.Series([], dtype=bool))
+
+    direction = pd.to_numeric(chosen[direction_col], errors="coerce").fillna(0).astype(int)
+    long_mask = direction > 0
+    chosen["outcome_pips"] = np.where(long_mask, chosen["long_outcome_pips"], chosen["short_outcome_pips"])
+    chosen["outcome_code"] = np.where(long_mask, chosen["long_outcome_code"], chosen["short_outcome_code"])
+    chosen["final_pips"] = np.where(long_mask, chosen["long_final_pips"], chosen["short_final_pips"])
+    chosen["mfe_pips"] = np.where(long_mask, chosen["long_mfe_pips"], chosen["short_mfe_pips"])
+    chosen["mae_pips"] = np.where(long_mask, chosen["long_mae_pips"], chosen["short_mae_pips"])
+    chosen["setup_quality_score"] = chosen["outcome_pips"] + (0.35 * (chosen["mfe_pips"] - chosen["mae_pips"])) + (0.15 * chosen["final_pips"])
+    return summarize_mask(chosen, pd.Series(True, index=chosen.index))
+
+
+def build_research_family_comparison(
+    frame: pd.DataFrame,
+    *,
+    mode: str,
+    spread_scale: float,
+    min_m5_atr_pips: float,
+    critical_level_max_pips: float,
+    trend_adx_min: float,
+    micro_confirmation_bars: int,
+    extension_atr_mult: float,
+) -> list[dict[str, Any]]:
+    thresholds = autonomous_fillmore.GATE_THRESHOLDS[mode]
+    session_cap = frame["session_label"].map(
+        lambda s: autonomous_fillmore._session_spread_limit_pips(s) * float(spread_scale)
+    )
+    base_mask = (frame["session_label"] != "off-hours") & (frame["spread_pips"] <= session_cap)
+
+    lookback = max(1, int(micro_confirmation_bars))
+    recent_low = frame["low"].rolling(lookback, min_periods=1).min()
+    recent_high = frame["high"].rolling(lookback, min_periods=1).max()
+    touch_width = 0.8 * PIP_SIZE
+    critical_mask = base_mask & (frame["direction"] != 0)
+    if thresholds.get("require_m3_trend", False):
+        critical_mask &= frame["m3_trend"].isin(["bull", "bear"])
+    if thresholds.get("require_m1_stack", False):
+        critical_mask &= frame["m1_stack"].isin(["bull", "bear"])
+    if thresholds.get("reject_m3_m1_mismatch_if_both_present", False):
+        both = frame["m3_trend"].isin(["bull", "bear"]) & frame["m1_stack"].isin(["bull", "bear"])
+        critical_mask &= ~(both & (frame["m3_trend"] != frame["m1_stack"]))
+    critical_mask &= frame["m5_atr_pips"].fillna(float(min_m5_atr_pips)) >= float(min_m5_atr_pips)
+    critical_mask &= (
+        (
+            (frame["direction"] > 0)
+            & (frame["nearest_structure_pips"].fillna(9999.0) <= float(critical_level_max_pips))
+            & (recent_low <= (frame["close"] + touch_width))
+            & (frame["close"] >= frame["close"].shift(1))
+        ) | (
+            (frame["direction"] < 0)
+            & (frame["nearest_structure_pips"].fillna(9999.0) <= float(critical_level_max_pips))
+            & (recent_high >= (frame["close"] - touch_width))
+            & (frame["close"] <= frame["close"].shift(1))
+        )
+    )
+
+    adx = frame["m5_adx"].fillna(frame["m15_adx"]).fillna(0.0)
+    extension_cap = frame["m5_atr_pips"].fillna(0.0) * float(extension_atr_mult)
+    trend_alignment = pd.Series(True, index=frame.index)
+    if thresholds.get("require_m3_trend", False):
+        trend_alignment &= frame["m3_trend"].isin(["bull", "bear"])
+    if thresholds.get("require_m1_stack", False):
+        trend_alignment &= frame["m1_stack"].isin(["bull", "bear"])
+    if thresholds.get("reject_m3_m1_mismatch_if_both_present", False):
+        both = frame["m3_trend"].isin(["bull", "bear"]) & frame["m1_stack"].isin(["bull", "bear"])
+        trend_alignment &= ~(both & (frame["m3_trend"] != frame["m1_stack"]))
+    trend_mask = base_mask & trend_alignment & frame["direction"].isin([-1, 1])
+    trend_mask &= (adx >= float(trend_adx_min))
+    trend_mask &= (frame["m5_atr_pips"].fillna(0.0) >= float(min_m5_atr_pips))
+    trend_mask &= (frame["m5_atr_ratio"].fillna(0.0) >= 1.0)
+    trend_mask &= (frame["m5_extension_pips"].fillna(9999.0) <= extension_cap.replace(0, np.nan).fillna(9999.0))
+    trend_mask &= frame["m5_stack"].replace("none", np.nan).fillna(frame["m1_stack"]).isin(["bull", "bear"])
+
+    failed_breakout_mask = base_mask & (frame["failed_breakout_direction"] != 0)
+    family_specs = [
+        ("critical_level_reaction", critical_mask, "direction"),
+        ("trend_expansion", trend_mask, "direction"),
+        (FAILED_BREAKOUT_RESEARCH_FAMILY, failed_breakout_mask, "failed_breakout_direction"),
+    ]
+    rows: list[dict[str, Any]] = []
+    for family_name, family_mask, direction_col in family_specs:
+        summary = summarize_directional_mask(frame, family_mask, direction_col=direction_col)
+        rows.append(
+            {
+                "family": family_name,
+                "direction_col": direction_col,
+                **asdict(summary),
+            }
+        )
+    rows.sort(key=lambda row: (-row["net_pips"], -row["profit_factor"] if row["profit_factor"] is not None else -999.0))
+    return rows
 
 
 def build_pass_mask(
@@ -913,6 +1225,13 @@ def run_dataset_mode(
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     raw = _load_dataset(dataset_path, assumed_spread_pips=assumed_spread_pips)
     frame = build_feature_frame(raw)
+    frame = attach_failed_breakout_reversal_features(frame)
+    frame = attach_bidirectional_outcomes(
+        frame,
+        target_pips=target_pips,
+        stop_pips=stop_pips,
+        horizon_bars=horizon_bars,
+    )
     frame["direction"] = compute_direction(frame, mode)
     metrics = simulate_forward_metrics(
         frame["close"].to_numpy(dtype=float),
@@ -929,6 +1248,7 @@ def run_dataset_mode(
         "bars": int(len(frame)),
         "spread_source": str(raw["spread_source"].iloc[0]) if len(raw) else "unknown",
         "directional_bars": int((frame["direction"] != 0).sum()),
+        "failed_breakout_signal_bars": int((frame["failed_breakout_direction"] != 0).sum()),
     }
     return frame, meta
 
@@ -1242,6 +1562,20 @@ def build_markdown_report(payload: dict[str, Any]) -> str:
                 f"opt precision {test_base.get('optimal_precision_pct', 0.0)}% | "
                 f"net {test_base.get('net_pips', 0.0)}p | PF {test_base.get('profit_factor')}"
             )
+            family_comparison = ds_result.get("family_comparison") or {}
+            train_families = family_comparison.get("train") or []
+            test_families = family_comparison.get("test") or []
+            if train_families or test_families:
+                lines.append(f"- `{ds_key}` research family head-to-head:")
+                for label, rows in (("train", train_families), ("test", test_families)):
+                    if not rows:
+                        continue
+                    lines.append(f"  - {label}:")
+                    for row in rows:
+                        lines.append(
+                            f"    - `{row['family']}`: trades {row['pass_count']} | WR {row['win_rate_pct']}% | "
+                            f"avg {row['avg_pips']}p | net {row['net_pips']}p | PF {row['profit_factor']}"
+                        )
 
         recommendations = mode_payload.get("recommendations") or {}
         for objective in RECOMMENDATION_OBJECTIVES:
@@ -1467,6 +1801,26 @@ def main() -> int:
                 micro_confirmation_windows=micro_confirmation_windows,
                 extension_atr_multipliers=extension_atr_multipliers,
             )
+            train_family_comparison = build_research_family_comparison(
+                train_frame,
+                mode=mode,
+                spread_scale=1.0,
+                min_m5_atr_pips=float(autonomous_fillmore.GATE_THRESHOLDS[mode].get("require_min_m5_atr_pips") or 0.0),
+                critical_level_max_pips=float(autonomous_fillmore.GATE_THRESHOLDS[mode].get("critical_level_max_pips") or 0.0),
+                trend_adx_min=float(autonomous_fillmore.GATE_THRESHOLDS[mode].get("trend_adx_min") or 0.0),
+                micro_confirmation_bars=int(autonomous_fillmore.GATE_THRESHOLDS[mode].get("critical_micro_window_bars") or 3),
+                extension_atr_mult=float(autonomous_fillmore.GATE_THRESHOLDS[mode].get("trend_extension_atr_mult") or 1.0),
+            )
+            test_family_comparison = build_research_family_comparison(
+                test_frame,
+                mode=mode,
+                spread_scale=1.0,
+                min_m5_atr_pips=float(autonomous_fillmore.GATE_THRESHOLDS[mode].get("require_min_m5_atr_pips") or 0.0),
+                critical_level_max_pips=float(autonomous_fillmore.GATE_THRESHOLDS[mode].get("critical_level_max_pips") or 0.0),
+                trend_adx_min=float(autonomous_fillmore.GATE_THRESHOLDS[mode].get("trend_adx_min") or 0.0),
+                micro_confirmation_bars=int(autonomous_fillmore.GATE_THRESHOLDS[mode].get("critical_micro_window_bars") or 3),
+                extension_atr_mult=float(autonomous_fillmore.GATE_THRESHOLDS[mode].get("trend_extension_atr_mult") or 1.0),
+            )
             mode_payload["datasets"][_dataset_key(dataset_path)] = {
                 "dataset_meta": meta,
                 "train_meta": {"bars": int(len(train_frame))},
@@ -1474,6 +1828,10 @@ def main() -> int:
                 "quality_meta": quality_meta,
                 "train": train_result,
                 "test": test_result,
+                "family_comparison": {
+                    "train": train_family_comparison,
+                    "test": test_family_comparison,
+                },
             }
             dataset_split_frames[_dataset_key(dataset_path)] = {
                 "train": train_frame.copy(),

@@ -104,6 +104,98 @@ def test_build_pass_mask_blocks_spread_and_low_volatility() -> None:
     assert mask.tolist() == [False, False]
 
 
+def test_scan_failed_breakout_reversal_signals_finds_overlap_recapture() -> None:
+    m5 = pd.DataFrame(
+        {
+            "time": pd.to_datetime(
+                [
+                    "2026-04-23T12:00:00Z",
+                    "2026-04-23T12:05:00Z",
+                    "2026-04-23T12:10:00Z",
+                    "2026-04-23T12:15:00Z",
+                ],
+                utc=True,
+            ),
+            "open": [100.00, 99.99, 100.02, 100.01],
+            "high": [100.00, 100.04, 100.03, 100.02],
+            "low": [99.96, 99.99, 100.01, 99.96],
+            "close": [99.98, 100.02, 100.01, 99.97],
+            "session_label": ["london/ny"] * 4,
+        }
+    )
+    m5["session_day"] = m5["time"].dt.floor("D")
+    m5["session_block"] = m5["session_day"].astype(str) + "::" + m5["session_label"].astype(str)
+    m5["session_bar_index"] = m5.groupby("session_block").cumcount() + 1
+    m5["prior_session_high"] = m5.groupby("session_block")["high"].cummax().shift(1)
+    m5["prior_session_low"] = m5.groupby("session_block")["low"].cummin().shift(1)
+    m5["bar_body_ratio"] = [
+        cag._body_ratio(o, h, l, c) for o, h, l, c in zip(m5["open"], m5["high"], m5["low"], m5["close"])
+    ]
+
+    signals = cag.scan_failed_breakout_reversal_signals(
+        m5,
+        min_break_pips=2.0,
+        max_break_pips=5.0,
+        max_hold_bars=2,
+        min_session_bars=1,
+        recapture_body_ratio=0.5,
+        continuation_invalidation_pips=8.0,
+    )
+
+    assert len(signals) == 1
+    row = signals.iloc[0]
+    assert row["failed_breakout_family"] == cag.FAILED_BREAKOUT_RESEARCH_FAMILY
+    assert row["failed_breakout_direction"] == -1
+    assert row["failed_breakout_hold_bars"] == 2
+
+
+def test_build_research_family_comparison_includes_failed_breakout_family() -> None:
+    frame = pd.DataFrame(
+        {
+            "session_label": ["london/ny", "london/ny"],
+            "spread_pips": [1.0, 1.0],
+            "direction": [1, -1],
+            "m3_trend": ["bull", "bear"],
+            "m1_stack": ["bull", "bear"],
+            "m5_stack": ["bull", "bear"],
+            "m5_atr_pips": [4.0, 4.0],
+            "m5_adx": [25.0, 25.0],
+            "m15_adx": [25.0, 25.0],
+            "m5_atr_ratio": [1.2, 1.2],
+            "m5_extension_pips": [1.0, 1.0],
+            "nearest_structure_pips": [3.0, 3.0],
+            "close": [159.00, 159.01],
+            "low": [158.98, 159.00],
+            "high": [159.02, 159.03],
+            "failed_breakout_direction": [-1, 0],
+            "long_outcome_pips": [6.0, 6.0],
+            "short_outcome_pips": [5.0, -10.0],
+            "long_outcome_code": ["target", "target"],
+            "short_outcome_code": ["target", "stop"],
+            "long_final_pips": [4.0, 4.0],
+            "short_final_pips": [3.0, -8.0],
+            "long_mfe_pips": [8.0, 8.0],
+            "short_mfe_pips": [7.0, 2.0],
+            "long_mae_pips": [2.0, 2.0],
+            "short_mae_pips": [1.0, 9.0],
+            "optimal_setup": [True, False],
+        }
+    )
+
+    rows = cag.build_research_family_comparison(
+        frame,
+        mode="balanced",
+        spread_scale=1.0,
+        min_m5_atr_pips=3.0,
+        critical_level_max_pips=6.0,
+        trend_adx_min=23.0,
+        micro_confirmation_bars=3,
+        extension_atr_mult=1.0,
+    )
+
+    assert any(row["family"] == cag.FAILED_BREAKOUT_RESEARCH_FAMILY for row in rows)
+
+
 def test_split_frame_train_test_uses_requested_recent_window() -> None:
     frame = pd.DataFrame({"x": np.arange(1000)})
 

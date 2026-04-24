@@ -168,6 +168,23 @@ def _tokyo_meanrev_trigger(**overrides) -> dict:
     return base
 
 
+def _failed_breakout_trigger(**overrides) -> dict:
+    base = {
+        "family": "failed_breakout_reversal_overlap_v1",
+        "reason": "failed_breakout_recapture:LONDON_NY_SESSION_HIGH",
+        "bias": "sell",
+        "level_label": "LONDON_NY_SESSION_HIGH",
+        "level_price": 159.120,
+        "nearest_level_pips": 2.0,
+        "micro_confirmation": "failed_breakout_recapture",
+        "breakout_side": "up",
+        "breakout_excursion_pips": 3.2,
+        "hold_bars": 2,
+    }
+    base.update(overrides)
+    return base
+
+
 def test_critical_level_reaction_trigger_keeps_support_reclaim(monkeypatch) -> None:
     m1 = pd.DataFrame(
         {
@@ -267,6 +284,74 @@ def test_critical_level_reaction_trigger_prunes_disabled_support_labels(monkeypa
         max_level_pips=6.0,
         micro_window_bars=3,
         touch_tolerance_pips=0.8,
+    )
+
+    assert trig is None
+
+
+def test_failed_breakout_reversal_trigger_detects_overlap_recapture() -> None:
+    m5 = pd.DataFrame(
+        {
+            "time": pd.to_datetime(
+                [
+                    "2026-04-24T11:15:00Z",
+                    "2026-04-24T11:20:00Z",
+                    "2026-04-24T11:25:00Z",
+                    "2026-04-24T11:30:00Z",
+                    "2026-04-24T11:35:00Z",
+                    "2026-04-24T11:40:00Z",
+                    "2026-04-24T11:45:00Z",
+                    "2026-04-24T11:50:00Z",
+                    "2026-04-24T11:55:00Z",
+                    "2026-04-24T12:00:00Z",
+                    "2026-04-24T12:05:00Z",
+                    "2026-04-24T12:10:00Z",
+                    "2026-04-24T12:15:00Z",
+                    "2026-04-24T12:20:00Z",
+                    "2026-04-24T12:25:00Z",
+                    "2026-04-24T12:30:00Z",
+                    "2026-04-24T12:35:00Z",
+                    "2026-04-24T12:40:00Z",
+                    "2026-04-24T12:45:00Z",
+                    "2026-04-24T12:50:00Z",
+                ],
+                utc=True,
+            ),
+            "open": [158.90, 158.91, 158.92, 158.93, 158.94, 158.95, 158.96, 158.97, 158.98, 159.00, 159.01, 159.02, 159.03, 159.04, 159.05, 159.06, 159.07, 159.08, 159.10, 159.11],
+            "high": [158.92, 158.93, 158.94, 158.95, 158.96, 158.97, 158.98, 158.99, 159.00, 159.02, 159.03, 159.04, 159.05, 159.06, 159.07, 159.08, 159.09, 159.10, 159.13, 159.12],
+            "low": [158.89, 158.90, 158.91, 158.92, 158.93, 158.94, 158.95, 158.96, 158.97, 158.99, 159.00, 159.01, 159.02, 159.03, 159.04, 159.05, 159.06, 159.07, 159.09, 159.05],
+            "close": [158.91, 158.92, 158.93, 158.94, 158.95, 158.96, 158.97, 158.98, 158.99, 159.01, 159.02, 159.03, 159.04, 159.05, 159.06, 159.07, 159.08, 159.09, 159.11, 159.06],
+        }
+    )
+
+    trig = autonomous_fillmore._failed_breakout_reversal_trigger(
+        159.06,
+        {"M5": m5},
+        "london/ny",
+    )
+
+    assert trig is not None
+    assert trig["family"] == "failed_breakout_reversal_overlap_v1"
+    assert trig["bias"] == "sell"
+    assert trig["breakout_side"] == "up"
+    assert trig["hold_bars"] == 1
+
+
+def test_failed_breakout_reversal_trigger_is_overlap_only() -> None:
+    m5 = pd.DataFrame(
+        {
+            "time": pd.to_datetime(["2026-04-24T14:00:00Z"] * 20, utc=True),
+            "open": [159.0] * 20,
+            "high": [159.1] * 20,
+            "low": [158.9] * 20,
+            "close": [159.0] * 20,
+        }
+    )
+
+    trig = autonomous_fillmore._failed_breakout_reversal_trigger(
+        159.0,
+        {"M5": m5},
+        "ny",
     )
 
     assert trig is None
@@ -1838,6 +1923,35 @@ def test_evaluate_gate_passes_tokyo_mean_reversion_trigger_metadata(monkeypatch)
     assert decision.result == "pass"
     assert decision.extras.get("trigger_family") == "tight_range_mean_reversion"
     assert decision.extras.get("trigger_reason") == "tokyo_range_reclaim:session_low"
+
+
+def test_evaluate_gate_passes_failed_breakout_trigger_metadata(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_session_flag_now", lambda trading_hours: (True, "london/ny"))
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: None)
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: None)
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_tokyo_tight_range_mean_reversion_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_compression_breakout_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_failed_breakout_reversal_trigger", lambda *args, **kwargs: _failed_breakout_trigger())
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
+
+    decision = autonomous_fillmore.evaluate_gate(
+        _gate_cfg("balanced"),
+        {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0, "last_llm_call_utc": None},
+        autonomous_fillmore.GateInputs(
+            spread_pips=0.8,
+            tick_mid=159.06,
+            open_ai_trade_count=0,
+            data_by_tf={},
+            ntz_active=False,
+        ),
+    )
+
+    assert decision.result == "pass"
+    assert decision.extras.get("trigger_family") == "failed_breakout_reversal_overlap_v1"
+    assert decision.extras.get("trigger_reason") == "failed_breakout_recapture:LONDON_NY_SESSION_HIGH"
+    assert decision.extras.get("trigger_breakout_side") == "up"
+    assert decision.extras.get("trigger_hold_bars") == 2
 
 
 def test_evaluate_gate_tokyo_controlled_experiment_blocks_non_meanrev_families(monkeypatch) -> None:
