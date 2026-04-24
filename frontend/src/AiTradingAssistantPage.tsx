@@ -339,6 +339,36 @@ function snapDeltaPips(requestedPrice: number | null | undefined, workingPrice: 
   return Math.abs(workingPrice - requestedPrice) / 0.01;
 }
 
+function formatFillmoreTimestamp(value: string | null | undefined): string {
+  if (!value) return '–';
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return value;
+  return dt.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function fillmoreTradeStatus(item: api.AiSuggestionHistoryItem): { label: string; color: string } {
+  if (item.closed_at) {
+    if (item.win_loss === 'win') return { label: 'WIN', color: '#4ade80' };
+    if (item.win_loss === 'loss') return { label: 'LOSS', color: '#f87171' };
+    if (item.win_loss === 'breakeven') return { label: 'BE', color: '#facc15' };
+    return { label: 'CLOSED', color: '#cbd5e1' };
+  }
+  if (item.filled_at) return { label: 'OPEN', color: '#93c5fd' };
+  if (item.outcome_status === 'cancelled') return { label: 'CANCELLED', color: '#94a3b8' };
+  if (item.outcome_status === 'expired') return { label: 'EXPIRED', color: '#94a3b8' };
+  if (item.action === 'placed' || item.oanda_order_id || item.trade_id) return { label: 'PLACED', color: '#facc15' };
+  return { label: (item.action || 'PENDING').toUpperCase(), color: '#94a3b8' };
+}
+
+function isFillmoreTradeLogRow(item: api.AiSuggestionHistoryItem): boolean {
+  return Boolean(item.action === 'placed' || item.oanda_order_id || item.trade_id || item.filled_at || item.closed_at);
+}
+
 // ===========================================================================
 // Autonomous Fillmore panel
 // ===========================================================================
@@ -371,6 +401,8 @@ function AutonomousFillmorePanel({
   const [showDecisions, setShowDecisions] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
   const [reasoning, setReasoning] = useState<api.ReasoningFeed | null>(null);
+  const [showTradeLog, setShowTradeLog] = useState(false);
+  const [tradeLog, setTradeLog] = useState<api.AiSuggestionHistoryItem[]>([]);
 
   // Initial load.
   useEffect(() => {
@@ -411,6 +443,23 @@ function AutonomousFillmorePanel({
       window.clearInterval(id);
     };
   }, [profileName, showReasoning]);
+
+  useEffect(() => {
+    if (!showTradeLog) return undefined;
+    let cancelled = false;
+    const tick = () => {
+      api.getAiSuggestionHistory(profileName, 100, 0).then((r) => {
+        if (cancelled) return;
+        setTradeLog((r.items || []).filter(isFillmoreTradeLogRow));
+      }).catch(() => { /* silent */ });
+    };
+    tick();
+    const id = window.setInterval(tick, 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [profileName, showTradeLog]);
 
   const save = useCallback(async (patch: Partial<api.AutonomousConfig>) => {
     setBusy(true); setErr(null);
@@ -497,6 +546,7 @@ function AutonomousFillmorePanel({
         reflections: reasoning.reflections.length,
       }
     : null;
+  const tradeLogCount = tradeLog.length;
 
   return (
     <div className="card autonomous-panel">
@@ -1006,6 +1056,85 @@ function AutonomousFillmorePanel({
               );
             })
           )}
+        </div>
+      )}
+
+      <button
+        type="button"
+        className="btn btn-secondary autonomous-panel__toggle-btn autonomous-panel__toggle-btn--spaced"
+        onClick={() => {
+          const next = !showTradeLog;
+          setShowTradeLog(next);
+          if (next && tradeLog.length === 0) {
+            api.getAiSuggestionHistory(profileName, 100, 0)
+              .then((r) => setTradeLog((r.items || []).filter(isFillmoreTradeLogRow)))
+              .catch(() => {});
+          }
+        }}
+      >
+        {showTradeLog ? 'Hide' : 'Show'} Fillmore trade log
+        {tradeLogCount ? ` (${tradeLogCount})` : ''}
+      </button>
+
+      {showTradeLog && (
+        <div className="autonomous-panel__reasoning">
+          {tradeLog.length === 0 ? (
+            <div style={{ color: 'var(--text-secondary)' }}>No Fillmore trades yet.</div>
+          ) : (
+            tradeLog.slice(0, 40).map((item) => {
+              const status = fillmoreTradeStatus(item);
+              const timeLabel = formatFillmoreTimestamp(item.closed_at || item.filled_at || item.action_utc || item.created_utc);
+              const orderPrice = item.fill_price ?? item.limit_price;
+              const pnlText = item.pnl != null ? `${item.pnl >= 0 ? '+' : ''}$${item.pnl.toFixed(2)}` : null;
+              const pipsText = item.pips != null ? `${item.pips >= 0 ? '+' : ''}${item.pips.toFixed(1)}p` : null;
+              return (
+                <div key={item.suggestion_id} style={{ marginBottom: 10, borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div>
+                      <span style={{ color: '#e2e8f0' }}>{timeLabel}</span>{' '}
+                      <span style={{ fontWeight: 700 }}>{(item.side || '').toUpperCase()}</span>{' '}
+                      <span style={{ color: '#cbd5e1' }}>{item.lots.toFixed(2)} lots</span>{' '}
+                      {orderPrice != null && <span style={{ color: '#cbd5e1' }}>@{orderPrice.toFixed(3)}</span>}
+                    </div>
+                    <div style={{ color: status.color, fontWeight: 700 }}>{status.label}</div>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4, color: 'var(--text-secondary)' }}>
+                    {item.trade_id && <div>trade {item.trade_id}</div>}
+                    {item.limit_price != null && <div>planned {item.limit_price.toFixed(3)}</div>}
+                    {item.fill_price != null && <div>fill {item.fill_price.toFixed(3)}</div>}
+                    {item.exit_price != null && <div>exit {item.exit_price.toFixed(3)}</div>}
+                    {item.closed_at && <div>closed {formatFillmoreTimestamp(item.closed_at)}</div>}
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 4 }}>
+                    {pnlText && (
+                      <div style={{ color: item.pnl != null && item.pnl >= 0 ? '#4ade80' : '#f87171', fontWeight: 700 }}>
+                        {pnlText}
+                      </div>
+                    )}
+                    {pipsText && (
+                      <div style={{ color: item.pips != null && item.pips >= 0 ? '#4ade80' : '#f87171' }}>
+                        {pipsText}
+                      </div>
+                    )}
+                    {item.win_loss && (
+                      <div style={{ color: status.color }}>
+                        {item.win_loss}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+
+          <button
+            type="button"
+            className="btn btn-secondary"
+            style={{ width: '100%', fontSize: '0.72rem', padding: '4px 8px', marginTop: 6 }}
+            onClick={() => api.getAiSuggestionHistory(profileName, 100, 0).then((r) => setTradeLog((r.items || []).filter(isFillmoreTradeLogRow))).catch(() => {})}
+          >
+            Refresh
+          </button>
         </div>
       )}
 

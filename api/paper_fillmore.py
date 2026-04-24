@@ -635,20 +635,31 @@ def _tick_one_paper_trade(
 
     if trail_mode == "hwm" and tp1_done:
         peak = trade_row.get("peak_price")
-        hwm_pips = _cfg_exit("hwm_trail_pips", 3.0)
+        from api.ai_exit_strategies import compute_post_tp1_trail_sl
+
         if side == "buy":
             cur_peak = max(float(peak) if peak is not None else entry, mid)
-            new_sl = max(
-                working_sl if working_sl is not None else entry - 10 * pip,
-                cur_peak - hwm_pips * pip,
+            lock_sl = working_sl if working_sl is not None else entry - 10 * pip
+            new_sl = compute_post_tp1_trail_sl(
+                trade_side=side,
+                entry_price=entry,
+                tp1_pips=tp1_pips,
+                pip_size=pip,
+                high_water_mark=cur_peak,
+                lock_sl=lock_sl,
             )
             working_sl = new_sl
             store.update_trade(trade_id, {"peak_price": round(cur_peak, 5), "stop_price": round(new_sl, 3)})
         else:
             cur_peak = min(float(peak) if peak is not None else entry, mid)
-            new_sl = min(
-                working_sl if working_sl is not None else entry + 10 * pip,
-                cur_peak + hwm_pips * pip,
+            lock_sl = working_sl if working_sl is not None else entry + 10 * pip
+            new_sl = compute_post_tp1_trail_sl(
+                trade_side=side,
+                entry_price=entry,
+                tp1_pips=tp1_pips,
+                pip_size=pip,
+                high_water_mark=cur_peak,
+                lock_sl=lock_sl,
             )
             working_sl = new_sl
             store.update_trade(trade_id, {"peak_price": round(cur_peak, 5), "stop_price": round(new_sl, 3)})

@@ -1415,37 +1415,48 @@ def _manage_ai_manual_trades(
                     continue  # TP1 + BE only, no further trailing
 
                 if trail_mode == "hwm":
-                    hwm_pips = float(exit_params.get("hwm_trail_pips") or 3.0)
                     stored_peak = trade_row.get("peak_price")
+                    from api.ai_exit_strategies import compute_post_tp1_trail_sl
+
                     if side == "buy":
                         current_peak = max(float(stored_peak) if stored_peak is not None else entry, mid)
-                        new_sl = max(
-                            prev_be_sl if prev_be_sl is not None else (entry + pip),
-                            current_peak - hwm_pips * pip,
+                        lock_sl = prev_be_sl if prev_be_sl is not None else (entry + pip)
+                        new_sl = compute_post_tp1_trail_sl(
+                            trade_side=side,
+                            entry_price=entry,
+                            tp1_pips=tp1_pips,
+                            pip_size=pip,
+                            high_water_mark=current_peak,
+                            lock_sl=lock_sl,
                         )
                         if _safe_update_trail_sl(
                             adapter, store, position_id, trade_id, profile.symbol,
                             new_sl, prev_be_sl, side, tick, pip,
-                            profile.profile_name, label="ai_manual HWM trail (BUY)",
+                            profile.profile_name, label="ai_manual proportional HWM trail (BUY)",
                         ):
                             print(
-                                f"[{profile.profile_name}] ai_manual HWM trail BUY: pos {position_id} "
-                                f"SL->{new_sl:.3f} peak->{current_peak:.3f}"
+                                f"[{profile.profile_name}] ai_manual proportional HWM trail BUY: pos {position_id} "
+                                f"SL->{new_sl:.3f} peak->{current_peak:.3f} lock->{lock_sl:.3f}"
                             )
                     else:
                         current_peak = min(float(stored_peak) if stored_peak is not None else entry, mid)
-                        new_sl = min(
-                            prev_be_sl if prev_be_sl is not None else (entry - pip),
-                            current_peak + hwm_pips * pip,
+                        lock_sl = prev_be_sl if prev_be_sl is not None else (entry - pip)
+                        new_sl = compute_post_tp1_trail_sl(
+                            trade_side=side,
+                            entry_price=entry,
+                            tp1_pips=tp1_pips,
+                            pip_size=pip,
+                            high_water_mark=current_peak,
+                            lock_sl=lock_sl,
                         )
                         if _safe_update_trail_sl(
                             adapter, store, position_id, trade_id, profile.symbol,
                             new_sl, prev_be_sl, side, tick, pip,
-                            profile.profile_name, label="ai_manual HWM trail (SELL)",
+                            profile.profile_name, label="ai_manual proportional HWM trail (SELL)",
                         ):
                             print(
-                                f"[{profile.profile_name}] ai_manual HWM trail SELL: pos {position_id} "
-                                f"SL->{new_sl:.3f} peak->{current_peak:.3f}"
+                                f"[{profile.profile_name}] ai_manual proportional HWM trail SELL: pos {position_id} "
+                                f"SL->{new_sl:.3f} peak->{current_peak:.3f} lock->{lock_sl:.3f}"
                             )
                     if stored_peak is None or current_peak != float(stored_peak):
                         store.update_trade(trade_id, {"peak_price": round(current_peak, 5)})

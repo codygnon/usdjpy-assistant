@@ -165,3 +165,40 @@ def compute_post_tp1_stop(
     if str(trade_side).lower() == "sell":
         return round(float(entry_price) - lock_distance, 3)
     return round(float(entry_price) + lock_distance, 3)
+
+
+def compute_post_tp1_trail_sl(
+    *,
+    trade_side: str,
+    entry_price: float,
+    tp1_pips: float,
+    pip_size: float,
+    high_water_mark: float,
+    lock_sl: float,
+    trail_fraction: float = 0.40,
+    extended_threshold: float = 1.5,
+    extended_trail_fraction: float = 0.30,
+) -> float:
+    """Compute a proportional post-TP1 runner trail, floored/capped at the lock SL."""
+    tp1_distance = max(0.0, float(tp1_pips)) * float(pip_size)
+    if tp1_distance <= 0:
+        return round(float(lock_sl), 3)
+
+    side = str(trade_side).lower()
+    if side == "sell":
+        hwm_distance = float(entry_price) - float(high_water_mark)
+    else:
+        hwm_distance = float(high_water_mark) - float(entry_price)
+
+    effective_fraction = float(trail_fraction)
+    if hwm_distance > tp1_distance * float(extended_threshold):
+        effective_fraction = float(extended_trail_fraction)
+
+    trail_distance = tp1_distance * max(0.0, effective_fraction)
+
+    if side == "sell":
+        trail_sl = float(high_water_mark) + trail_distance
+        return round(min(trail_sl, float(lock_sl)), 3)
+
+    trail_sl = float(high_water_mark) - trail_distance
+    return round(max(trail_sl, float(lock_sl)), 3)

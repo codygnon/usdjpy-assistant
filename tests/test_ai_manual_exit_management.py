@@ -195,8 +195,52 @@ def test_manage_ai_manual_trades_uses_hwm_override_from_config_json() -> None:
         data_by_tf={},
     )
 
-    assert adapter.stop_updates == [(42, "USDJPY", 160.11)]
+    assert adapter.stop_updates == [(42, "USDJPY", 160.112)]
     assert any(trade_id == "ai_manual:12345:1" and "peak_price" in updates for trade_id, updates in store.updated)
+
+
+def test_manage_ai_manual_trades_hwm_trail_does_not_loosen_existing_stop() -> None:
+    profile = SimpleNamespace(profile_name="kumatora2", symbol="USDJPY", pip_size=0.01)
+    store = _DummyStore(
+        open_rows=[
+            {
+                "trade_id": "ai_manual:12345:2",
+                "mt5_position_id": 42,
+                "entry_type": "ai_manual",
+                "side": "buy",
+                "entry_price": 160.000,
+                "managed_trail_mode": "hwm",
+                "managed_tp1_pips": 6.0,
+                "managed_tp1_close_pct": 70.0,
+                "managed_be_plus_pips": 0.5,
+                "tp1_partial_done": 1,
+                "tp1_triggered": 1,
+                "breakeven_applied": 1,
+                "breakeven_sl_price": 160.120,
+                "peak_price": 160.120,
+                "config_json": json.dumps(
+                    {
+                        "source": "ai_manual",
+                        "order_id": 12346,
+                        "exit_strategy": "tp1_be_hwm_trail",
+                    }
+                ),
+            }
+        ]
+    )
+    adapter = _TrailAdapter()
+    tick = SimpleNamespace(bid=160.120, ask=160.140)
+
+    run_loop._manage_ai_manual_trades(
+        profile,
+        adapter,
+        store,
+        tick,
+        open_positions=[{"id": "42"}],
+        data_by_tf={},
+    )
+
+    assert adapter.stop_updates == []
 
 
 def test_manage_ai_manual_trades_locks_in_profit_after_tp1() -> None:
