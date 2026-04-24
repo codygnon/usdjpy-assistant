@@ -401,7 +401,6 @@ function AutonomousFillmorePanel({
   const [showDecisions, setShowDecisions] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
   const [reasoning, setReasoning] = useState<api.ReasoningFeed | null>(null);
-  const [showTradeLog, setShowTradeLog] = useState(false);
   const [tradeLog, setTradeLog] = useState<api.AiSuggestionHistoryItem[]>([]);
 
   // Initial load.
@@ -445,7 +444,6 @@ function AutonomousFillmorePanel({
   }, [profileName, showReasoning]);
 
   useEffect(() => {
-    if (!showTradeLog) return undefined;
     let cancelled = false;
     const tick = () => {
       api.getAiSuggestionHistory(profileName, 100, 0).then((r) => {
@@ -459,7 +457,7 @@ function AutonomousFillmorePanel({
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [profileName, showTradeLog]);
+  }, [profileName]);
 
   const save = useCallback(async (patch: Partial<api.AutonomousConfig>) => {
     setBusy(true); setErr(null);
@@ -1059,24 +1057,11 @@ function AutonomousFillmorePanel({
         </div>
       )}
 
-      <button
-        type="button"
-        className="btn btn-secondary autonomous-panel__toggle-btn autonomous-panel__toggle-btn--spaced"
-        onClick={() => {
-          const next = !showTradeLog;
-          setShowTradeLog(next);
-          if (next && tradeLog.length === 0) {
-            api.getAiSuggestionHistory(profileName, 100, 0)
-              .then((r) => setTradeLog((r.items || []).filter(isFillmoreTradeLogRow)))
-              .catch(() => {});
-          }
-        }}
-      >
-        {showTradeLog ? 'Hide' : 'Show'} Fillmore trade log
-        {tradeLogCount ? ` (${tradeLogCount})` : ''}
-      </button>
-
-      {showTradeLog && (
+      <div className="autonomous-panel__section">
+        <div className="autonomous-panel__section-head">
+          <span className="autonomous-panel__section-title">Fillmore Trade Log</span>
+          <span className="autonomous-panel__muted">recent placed trades {tradeLogCount ? `(${tradeLogCount})` : ''}</span>
+        </div>
         <div className="autonomous-panel__reasoning">
           {tradeLog.length === 0 ? (
             <div style={{ color: 'var(--text-secondary)' }}>No Fillmore trades yet.</div>
@@ -1136,7 +1121,7 @@ function AutonomousFillmorePanel({
             Refresh
           </button>
         </div>
-      )}
+      </div>
 
       {/* Fillmore's Reasoning panel — displays stored analysis, thesis checks, reflections */}
       <button
