@@ -39,7 +39,7 @@ def _word_count(text: str) -> int:
 def _fit_aux_memory_blocks(
     blocks: list[tuple[str, str, bool]],
     *,
-    budget_words: int = 650,
+    budget_words: int = 2400,
 ) -> str:
     budget_words = max(100, int(budget_words))
     selected: list[str] = []
@@ -272,12 +272,14 @@ class PromptBuilder:
             db_path,
             risk_regime=risk_regime,
         )
+        family_scorecard = autonomous_performance.build_family_scorecard_memory_block(db_path)
         today_block = suggestion_tracker.build_autonomous_today_block(db_path, max_items=today_limit)
         aux_memory = _fit_aux_memory_blocks([
             ("learning", learning, True),
             ("performance", perf_block, True),
-            ("reflections", reflection_block, False),
-            ("today", today_block, False),
+            ("family_scorecard", family_scorecard, True),
+            ("reflections", reflection_block, True),
+            ("today", today_block, True),
         ])
         if aux_memory:
             self.system_parts.append(str(aux_memory).strip())

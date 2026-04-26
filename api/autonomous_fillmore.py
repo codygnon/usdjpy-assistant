@@ -62,7 +62,7 @@ _MODEL_COST_PER_1M: dict[str, tuple[float, float]] = {
 # pessimistic-ish so the budget stats trend slightly conservative.
 _ASSUMED_INPUT_TOKENS = 4000
 _ASSUMED_OUTPUT_TOKENS = 350
-AUTONOMOUS_PROMPT_VERSION = "autonomous_phase_a_v1"
+AUTONOMOUS_PROMPT_VERSION = "autonomous_phase2_zone_memory_custom_exit_v1"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": False,
@@ -278,8 +278,8 @@ def _resolve_gate_thresholds(agg: str, session_label: str) -> dict[str, Any]:
     return base
 
 
-_AUTONOMOUS_PROMPT_SKELETON_ID = "autonomous_decision_request_v1"
-_AUTONOMOUS_AUX_MEMORY_BUDGET_WORDS = 650
+_AUTONOMOUS_PROMPT_SKELETON_ID = "autonomous_decision_request_v2_zone_memory_custom_exit"
+_AUTONOMOUS_AUX_MEMORY_BUDGET_WORDS = 2400
 _AUTONOMOUS_LIMIT_MIN_OFFSET_PIPS = 0.1
 _AUTONOMOUS_LIMIT_MAX_OFFSET_PIPS = 0.5
 _AUTONOMOUS_MAX_DAILY_LOSS_USD = 50.0
@@ -1174,10 +1174,42 @@ def _local_range_levels(data_by_tf: dict[str, pd.DataFrame]) -> list[tuple[str, 
         return []
 
 
+def _order_book_cluster_levels(order_book: Optional[dict[str, Any]]) -> list[tuple[str, float]]:
+    """Convert OANDA order-book cluster summaries into advisory structure levels."""
+    if not isinstance(order_book, dict):
+        return []
+    levels: list[tuple[str, float]] = []
+
+    def _append_clusters(key: str, label_prefix: str) -> None:
+        clusters = order_book.get(key)
+        if not isinstance(clusters, list):
+            return
+        for cluster in clusters[:5]:
+            if not isinstance(cluster, dict):
+                continue
+            try:
+                price = float(cluster.get("price"))
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(price):
+                continue
+            pct = cluster.get("pct")
+            try:
+                pct_val = float(pct)
+            except (TypeError, ValueError):
+                pct_val = 0.0
+            levels.append((f"{label_prefix}:{price:.3f}:{pct_val:.3f}", price))
+
+    _append_clusters("buy_clusters", "OANDA_BUY_CLUSTER")
+    _append_clusters("sell_clusters", "OANDA_SELL_CLUSTER")
+    return levels
+
+
 def _structure_levels(
     tick_mid: float,
     data_by_tf: dict[str, pd.DataFrame],
     session_label: str,
+    order_book: Optional[dict[str, Any]] = None,
 ) -> list[tuple[str, float]]:
     levels: list[tuple[str, float]] = []
 
@@ -1214,6 +1246,7 @@ def _structure_levels(
 
     levels.extend(_current_session_range_levels(data_by_tf, session_label))
     levels.extend(_local_range_levels(data_by_tf))
+    levels.extend(_order_book_cluster_levels(order_book))
 
     try:
         base = int(tick_mid * 2) / 2.0
@@ -1239,12 +1272,13 @@ def _nearest_structure_pips(
     data_by_tf: dict[str, pd.DataFrame],
     session_label: str,
     pip_size: float = 0.01,
+    order_book: Optional[dict[str, Any]] = None,
 ) -> dict[str, Optional[float]]:
     """Distance in pips to nearest key structure level above and below current price."""
     pip = pip_size or 0.01
     levels_above: list[tuple[str, float]] = []
     levels_below: list[tuple[str, float]] = []
-    for label, price in _structure_levels(tick_mid, data_by_tf, session_label):
+    for label, price in _structure_levels(tick_mid, data_by_tf, session_label, order_book=order_book):
         if price > tick_mid:
             levels_above.append((label, price))
         elif price < tick_mid:
@@ -1279,11 +1313,12 @@ def _critical_level_reaction_trigger(
     micro_window_bars: int,
     touch_tolerance_pips: float,
     pip_size: float = 0.01,
+    order_book: Optional[dict[str, Any]] = None,
 ) -> Optional[dict[str, Any]]:
     m1 = data_by_tf.get("M1") if data_by_tf else None
     if m1 is None or len(m1) < max(10, micro_window_bars + 2):
         return None
-    prox = _nearest_structure_pips(tick_mid, data_by_tf, session_label, pip_size=pip_size)
+    prox = _nearest_structure_pips(tick_mid, data_by_tf, session_label, pip_size=pip_size, order_book=order_book)
     pip = pip_size or 0.01
     tol = max(0.1, float(touch_tolerance_pips)) * pip
     lookback = max(2, int(micro_window_bars))
@@ -1840,6 +1875,12 @@ def _trend_expansion_trigger(
     else:
         return None
 
+    expected_stack = "bull" if bias == "buy" else "bear"
+    if m1 in ("bull", "bear") and m1 != expected_stack:
+        return None
+    if m5 in ("bull", "bear") and m5 != expected_stack:
+        return None
+
     adx_m5 = _adx_value(data_by_tf, "M5", period=14)
     adx_m15 = _adx_value(data_by_tf, "M15", period=14)
     adx = max(v for v in (adx_m5, adx_m15) if isinstance(v, (int, float)) and math.isfinite(v)) if any(
@@ -1873,6 +1914,7 @@ def _trend_expansion_trigger(
         "m5_atr_pips": round(float(m5_atr_pips), 2),
         "extension_pips": round(float(extension_pips), 2),
         "extension_limit_pips": round(float(extension_limit), 2),
+        "trend_alignment": {"m3": m3, "m1": m1, "m5": m5},
     }
 
 
@@ -2120,6 +2162,123 @@ class GateInputs:
     ntz_active: bool = False
     suggestions_db_path: Optional[Path] = None  # for same-setup dedupe lookup; None disables the check
     upcoming_events: Optional[list[dict[str, Any]]] = None  # from get_economic_calendar_events(); None skips check
+    order_book: Optional[dict[str, Any]] = None  # OANDA order-book cluster summary, when available
+
+
+# -----------------------------------------------------------------------------
+# Phase 1 guided-reasoning helpers: thesis fingerprint + recent-fire stats
+# -----------------------------------------------------------------------------
+
+def compute_thesis_fingerprint(
+    side: Optional[str],
+    trigger_family: Optional[str],
+    level_label: Optional[str],
+    level_price: Optional[float],
+    htf_bias: Optional[str] = None,
+) -> str:
+    """Canonical thesis fingerprint for repetition visibility.
+
+    Buckets level_price to nearest 0.10 (≈10 pips on USDJPY) so 159.48 / 159.50
+    collapse to the same fingerprint while 159.50 / 159.62 do not. Side and
+    trigger family are normalized; htf_bias is optional.
+    """
+    s = (side or "").strip().lower() or "unknown"
+    fam = (trigger_family or "unknown").strip().lower()
+    label = (level_label or "unknown").strip().upper()
+    try:
+        if level_price is None:
+            bucket_s = "na"
+        else:
+            bucket = round(float(level_price) * 10.0) / 10.0
+            bucket_s = f"{bucket:.2f}"
+    except (TypeError, ValueError):
+        bucket_s = "na"
+    htf = (htf_bias or "na").strip().lower()
+    return f"{s}:{fam}:{label}@{bucket_s}:{htf}"
+
+
+def _compute_recent_fingerprint_stats(
+    store,
+    profile_name: str,
+    fingerprint: str,
+    window_minutes: int = 120,
+) -> dict[str, Any]:
+    """Look up trades with matching thesis_fingerprint within the window.
+
+    Returns dict with: count, wins, losses, net_pips, last_outcome, last_pips,
+    minutes_since_last. Best-effort — any failure returns zeros.
+    """
+    out: dict[str, Any] = {
+        "count": 0,
+        "wins": 0,
+        "losses": 0,
+        "net_pips": 0.0,
+        "last_outcome": None,
+        "last_pips": None,
+        "minutes_since_last": None,
+    }
+    if not fingerprint or store is None:
+        return out
+    try:
+        df = store.get_trades_df(profile_name) if hasattr(store, "get_trades_df") else None
+    except Exception:
+        return out
+    if df is None or getattr(df, "empty", True):
+        return out
+    if "thesis_fingerprint" not in df.columns:
+        return out
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
+        cutoff_iso = cutoff.isoformat()
+        sub = df[df["thesis_fingerprint"] == fingerprint]
+        if sub.empty:
+            return out
+        sub = sub[sub["timestamp_utc"] >= cutoff_iso]
+        if sub.empty:
+            return out
+        sub = sub.sort_values("timestamp_utc")
+        out["count"] = int(len(sub))
+        for _, row in sub.iterrows():
+            pips = row.get("pips")
+            if pips is None or (isinstance(pips, float) and pd.isna(pips)):
+                continue
+            try:
+                p = float(pips)
+            except (TypeError, ValueError):
+                continue
+            out["net_pips"] += p
+            if p > 0:
+                out["wins"] += 1
+            elif p < 0:
+                out["losses"] += 1
+        last = sub.iloc[-1]
+        last_pips = last.get("pips")
+        if last_pips is not None and not (isinstance(last_pips, float) and pd.isna(last_pips)):
+            try:
+                lp = float(last_pips)
+                out["last_pips"] = round(lp, 1)
+                if lp > 0:
+                    out["last_outcome"] = "win"
+                elif lp < 0:
+                    out["last_outcome"] = "loss"
+                else:
+                    out["last_outcome"] = "scratch"
+            except (TypeError, ValueError):
+                pass
+        try:
+            last_ts = datetime.fromisoformat(str(last.get("timestamp_utc")).replace("Z", "+00:00"))
+            if last_ts.tzinfo is None:
+                last_ts = last_ts.replace(tzinfo=timezone.utc)
+            out["minutes_since_last"] = round(
+                (datetime.now(timezone.utc) - last_ts).total_seconds() / 60.0,
+                1,
+            )
+        except Exception:
+            pass
+        out["net_pips"] = round(out["net_pips"], 1)
+    except Exception:
+        return out
+    return out
 
 
 def evaluate_gate(
@@ -2229,7 +2388,13 @@ def evaluate_gate(
     ):
         return _block("signal", "low_volatility", extras)
 
-    prox = _nearest_structure_pips(inputs.tick_mid, inputs.data_by_tf, session_label, pip_size=0.01)
+    prox = _nearest_structure_pips(
+        inputs.tick_mid,
+        inputs.data_by_tf,
+        session_label,
+        pip_size=0.01,
+        order_book=inputs.order_book,
+    )
     nearest = prox.get("nearest_pips")
     extras["nearest_level_pips"] = round(nearest, 1) if isinstance(nearest, (int, float)) else None
     extras["overhead_level_pips"] = round(prox["overhead_pips"], 1) if isinstance(prox.get("overhead_pips"), (int, float)) else None
@@ -2245,6 +2410,7 @@ def evaluate_gate(
         micro_window_bars=int(thresholds.get("critical_micro_window_bars") or 3),
         touch_tolerance_pips=float(thresholds.get("critical_touch_tolerance_pips") or 0.8),
         pip_size=0.01,
+        order_book=inputs.order_book,
     )
     tokyo_meanrev = _tokyo_tight_range_mean_reversion_trigger(
         inputs.tick_mid,
@@ -2394,6 +2560,13 @@ def evaluate_gate(
         now_utc,
     )
 
+    thesis_fingerprint = compute_thesis_fingerprint(
+        side=chosen_trigger.get("bias"),
+        trigger_family=chosen_trigger.get("family"),
+        level_label=chosen_trigger.get("level_label"),
+        level_price=chosen_trigger.get("level_price"),
+    )
+
     return GateDecision(
         timestamp_utc=now_utc.isoformat(),
         result="pass", layer="pass", reason="ok",
@@ -2402,6 +2575,7 @@ def evaluate_gate(
         extras={
             **extras,
             "risk_regime": risk_regime.get("label"),
+            "thesis_fingerprint": thesis_fingerprint,
             "trigger_family": chosen_trigger.get("family"),
             "trigger_reason": chosen_trigger.get("reason"),
             "trigger_bias": chosen_trigger.get("bias"),
@@ -2532,8 +2706,29 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
         "expired": {"market": 0, "limit": 0},
         "by_trigger_family": {},
     }
+    selection_metrics: dict[str, Any] = {
+        "generated": 0,
+        "placed": 0,
+        "skips": 0,
+        "skip_rate_pct": 0.0,
+        "llm_custom_exit_suggestions": 0,
+    }
     try:
         auto_rows = autonomous_performance.load_autonomous_suggestions(suggestions_db)
+        selection_metrics["generated"] = len(auto_rows)
+        selection_metrics["placed"] = sum(1 for row in auto_rows if str(row.get("action") or "") == "placed")
+        selection_metrics["skips"] = sum(
+            1
+            for row in auto_rows
+            if str(row.get("decision") or "").lower() == "skip" or float(row.get("lots") or 0.0) <= 0
+        )
+        selection_metrics["skip_rate_pct"] = round(
+            float(selection_metrics["skips"]) / max(int(selection_metrics["generated"]), 1) * 100.0,
+            1,
+        )
+        selection_metrics["llm_custom_exit_suggestions"] = sum(
+            1 for row in auto_rows if str(row.get("exit_strategy") or "").lower() == "llm_custom_exit"
+        )
 
         def _inc(bucket: dict[str, int], order_type: str) -> None:
             key = "limit" if str(order_type).lower() == "limit" else "market"
@@ -2680,6 +2875,7 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
         "health_alerts": health_alerts,
         "performance": perf_rows,
         "order_metrics": order_metrics,
+        "selection_metrics": selection_metrics,
         "last_tick_utc": rt.get("last_tick_utc"),
         "last_llm_call_utc": rt.get("last_llm_call_utc"),
         "last_placed_order_id": rt.get("last_placed_order_id"),
@@ -2804,6 +3000,19 @@ def _refresh_autonomous_runtime_from_history(
     rt["consecutive_wins"] = consecutive_wins
     if latest_trade_id:
         rt["latest_closed_trade_id"] = latest_trade_id
+
+    # Phase 1: track session peak realized P&L for drawdown-from-peak visibility
+    # in the LLM prompt. Resets each UTC day via the today-key check.
+    peak_day = str(rt.get("session_peak_day") or "")
+    if peak_day != today:
+        rt["session_peak_day"] = today
+        rt["session_peak_pnl_usd"] = float(daily_pnl)
+        rt["session_peak_pnl_time_utc"] = datetime.now(timezone.utc).isoformat()
+    else:
+        prev_peak = float(rt.get("session_peak_pnl_usd") or 0.0)
+        if float(daily_pnl) > prev_peak:
+            rt["session_peak_pnl_usd"] = float(daily_pnl)
+            rt["session_peak_pnl_time_utc"] = datetime.now(timezone.utc).isoformat()
     return {
         "outcomes": outcomes,
         "stats_stale": stale,
@@ -2918,6 +3127,55 @@ def _compute_risk_regime(rt: dict[str, Any], cfg: dict[str, Any]) -> dict[str, A
         return
 
 
+def _summarize_oanda_order_book(raw_book: Optional[dict[str, Any]], *, range_pips: float = 100.0, top_n: int = 5) -> Optional[dict[str, Any]]:
+    if not isinstance(raw_book, dict):
+        return None
+    ob = raw_book.get("orderBook") if isinstance(raw_book.get("orderBook"), dict) else raw_book
+    if not isinstance(ob, dict):
+        return None
+    buckets = ob.get("buckets")
+    if not isinstance(buckets, list):
+        return None
+    try:
+        book_price = float(ob.get("price"))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(book_price) or book_price <= 0:
+        return None
+    pip = 0.01
+    lo = book_price - float(range_pips) * pip
+    hi = book_price + float(range_pips) * pip
+    nearby: list[dict[str, float]] = []
+    for bucket in buckets:
+        if not isinstance(bucket, dict):
+            continue
+        try:
+            price = float(bucket.get("price"))
+            long_pct = float(bucket.get("longCountPercent", 0.0))
+            short_pct = float(bucket.get("shortCountPercent", 0.0))
+        except (TypeError, ValueError):
+            continue
+        if lo <= price <= hi:
+            nearby.append({"price": price, "long_pct": long_pct, "short_pct": short_pct})
+    if not nearby:
+        return None
+    buy_clusters = sorted(nearby, key=lambda x: x["long_pct"], reverse=True)[:top_n]
+    sell_clusters = sorted(nearby, key=lambda x: x["short_pct"], reverse=True)[:top_n]
+    below_buys = [b for b in buy_clusters if b["price"] < book_price]
+    above_sells = [s for s in sell_clusters if s["price"] > book_price]
+    nearest_support = below_buys[0]["price"] if below_buys else None
+    nearest_resistance = above_sells[0]["price"] if above_sells else None
+    return {
+        "current_price": book_price,
+        "buy_clusters": [{"price": b["price"], "pct": b["long_pct"]} for b in buy_clusters],
+        "sell_clusters": [{"price": s["price"], "pct": s["short_pct"]} for s in sell_clusters],
+        "nearest_support": nearest_support,
+        "nearest_resistance": nearest_resistance,
+        "nearest_support_distance_pips": round((book_price - nearest_support) / pip, 1) if nearest_support else None,
+        "nearest_resistance_distance_pips": round((nearest_resistance - book_price) / pip, 1) if nearest_resistance else None,
+    }
+
+
 def tick_autonomous_fillmore(
     profile,
     profile_name: str,
@@ -2926,6 +3184,7 @@ def tick_autonomous_fillmore(
     tick,
     data_by_tf: dict[str, pd.DataFrame],
     ntz_active: bool = False,
+    adapter: Any = None,
     **_unused: Any,
 ) -> None:
     """Called from the run loop each iteration after trade management.
@@ -2960,6 +3219,18 @@ def tick_autonomous_fillmore(
         except Exception:
             upcoming = None
 
+    order_book: Optional[dict[str, Any]] = None
+    if adapter is not None:
+        try:
+            from core.book_cache import get_book_cache
+            book_cache = get_book_cache()
+            book_cache.poll_books(adapter, getattr(profile, "symbol", "USD/JPY"))
+            snaps = book_cache.get_order_books(getattr(profile, "symbol", "USD/JPY"))
+            if snaps:
+                order_book = _summarize_oanda_order_book(snaps[-1].data)
+        except Exception:
+            order_book = None
+
     inputs = GateInputs(
         spread_pips=float(spread_pips) if spread_pips is not None else 999.0,
         tick_mid=mid,
@@ -2968,6 +3239,7 @@ def tick_autonomous_fillmore(
         ntz_active=bool(ntz_active),
         suggestions_db_path=db_path,
         upcoming_events=upcoming,
+        order_book=order_book,
     )
 
     state = _load_state(state_path)
@@ -2987,14 +3259,39 @@ def tick_autonomous_fillmore(
     _runtime_block(state).update(rt)
     state["autonomous_fillmore"]["runtime"] = _runtime_block(state)
     _save_state(state_path, state)
-    log_decision(state_path, decision)
-
     if decision.result != "pass":
+        log_decision(state_path, decision)
         return
 
     # ---- Gate passed: invoke LLM via existing suggest plumbing ----
     mode = str(cfg.get("mode") or "off")
     print(f"[{profile_name}] autonomous Fillmore: gate passed ({cfg.get('aggressiveness')}, {mode}); invoking LLM")
+
+    # Phase 1 guided reasoning: surface recent-fingerprint stats so the LLM
+    # can see when this exact thesis has just fired and how it ended. Logged
+    # to decision.extras only — never overrides the model's choice.
+    fingerprint = (decision.extras or {}).get("thesis_fingerprint")
+    if fingerprint:
+        try:
+            fp_stats = _compute_recent_fingerprint_stats(
+                store, profile_name, str(fingerprint), window_minutes=120,
+            )
+            if decision.extras is None:
+                decision.extras = {}
+            decision.extras["recent_fires_2h_count"] = fp_stats["count"]
+            decision.extras["recent_fires_2h_record"] = (
+                f"{fp_stats['wins']}W/{fp_stats['losses']}L"
+            )
+            decision.extras["recent_fires_2h_net_pips"] = fp_stats["net_pips"]
+            decision.extras["last_outcome"] = fp_stats["last_outcome"]
+            decision.extras["last_outcome_pips"] = fp_stats["last_pips"]
+            decision.extras["minutes_since_last_fire"] = fp_stats["minutes_since_last"]
+        except Exception as _e:
+            print(f"[{profile_name}] autonomous Fillmore: fingerprint stats error: {_e}")
+
+    # Log pass decisions after Phase 1 enrichment so diagnostics show the same
+    # fingerprint/repetition context that the LLM sees.
+    log_decision(state_path, decision)
 
     try:
         suggestions = _invoke_suggest(
@@ -3006,6 +3303,10 @@ def tick_autonomous_fillmore(
             runtime_snapshot={
                 "daily_pnl_usd": rt.get("daily_pnl_usd"),
                 "open_ai_trade_count": inputs.open_ai_trade_count,
+                "session_peak_pnl_usd": rt.get("session_peak_pnl_usd"),
+                "session_peak_pnl_time_utc": rt.get("session_peak_pnl_time_utc"),
+                "consecutive_losses": rt.get("consecutive_losses"),
+                "consecutive_wins": rt.get("consecutive_wins"),
             },
         )
     except FillmoreLLMCircuitOpenError as e:
@@ -3033,9 +3334,36 @@ def tick_autonomous_fillmore(
         )
 
         sug_lots = float(suggestion.get("lots") or 0)
-        if sug_lots <= 0:
+        sug_decision = str(suggestion.get("decision") or "").lower()
+        if sug_lots <= 0 or sug_decision == "skip":
             quality = str(suggestion.get("quality") or "C")
-            print(f"[{profile_name}] autonomous Fillmore: LLM returned 0 lots (quality={quality}); skipping")
+            rung = str(suggestion.get("conviction_rung") or "?")
+            skip_rsn = str(suggestion.get("skip_reason") or "").strip() or "(no reason given)"
+            print(
+                f"[{profile_name}] autonomous Fillmore: SKIP "
+                f"(decision={sug_decision or 'implicit'} rung={rung} quality={quality}) — {skip_rsn}"
+            )
+            try:
+                log_decision(
+                    state_path,
+                    GateDecision(
+                        timestamp_utc=datetime.now(timezone.utc).isoformat(),
+                        result="block", layer="signal",
+                        reason=f"llm_skip:{rung}",
+                        mode=mode, aggressiveness=agg_label,
+                        extras={
+                            "decision": sug_decision or "implicit_zero_lots",
+                            "conviction_rung": rung,
+                            "quality": quality,
+                            "skip_reason": skip_rsn,
+                            "thesis_fingerprint": suggestion.get("thesis_fingerprint"),
+                            "trigger_family": suggestion.get("trigger_family"),
+                            "trigger_reason": suggestion.get("trigger_reason"),
+                        },
+                    ),
+                )
+            except Exception:
+                pass
             continue
 
         # Book-correlation veto: don't stack a same-side trade near an existing fill.
@@ -3291,6 +3619,42 @@ def _format_gate_opportunity_block(gate_decision: GateDecision | None) -> str:
         )
     if extras.get("bb_width") is not None:
         lines.append(f"Bollinger width: {extras.get('bb_width')}")
+
+    # Phase 1: thesis fingerprint and recent-fire history.
+    if extras.get("thesis_fingerprint"):
+        lines.append("")
+        lines.append(f"THESIS FINGERPRINT: {extras.get('thesis_fingerprint')}")
+        count = extras.get("recent_fires_2h_count")
+        if count is not None:
+            record = extras.get("recent_fires_2h_record") or "0W/0L"
+            net_pips = extras.get("recent_fires_2h_net_pips")
+            net_str = f"{net_pips:+.1f}p" if isinstance(net_pips, (int, float)) else "0.0p"
+            lines.append(
+                f"ZONE MEMORY (this fingerprint, last 2h): {count} attempt(s), {record}, net {net_str}"
+            )
+            last = extras.get("last_outcome")
+            if last:
+                last_pips = extras.get("last_outcome_pips")
+                mins = extras.get("minutes_since_last_fire")
+                pip_str = f"{last_pips:+.1f}p" if isinstance(last_pips, (int, float)) else "?"
+                ago_str = f"{mins:.0f}m ago" if isinstance(mins, (int, float)) else "?"
+                lines.append(f"LAST OUTCOME: {last} ({pip_str}, {ago_str})")
+            try:
+                wins = int(str(record).split("W")[0] or 0)
+                losses = int(str(record).split("L")[0].split("/")[1] or 0)
+            except Exception:
+                wins = 0
+                losses = 0
+            if int(count) >= 1 and wins > losses and isinstance(net_pips, (int, float)) and net_pips > 0:
+                lines.append(
+                    "WORKING-ZONE NOTE: repetition is not automatically bad. If price is still respecting "
+                    "this zone and structure remains clean, another same-zone trade can be valid."
+                )
+            elif int(count) >= 1 and losses >= 1:
+                lines.append(
+                    f"FAILING-ZONE NOTE: this thesis has fired {count} time(s) in the last 2h with {losses} loss(es). "
+                    "Do not retry it unless price/structure/context has materially changed."
+                )
     return "\n".join(lines)
 
 
@@ -3488,13 +3852,33 @@ def _invoke_suggest(
 
     daily_pnl_usd = float(runtime_snapshot.get("daily_pnl_usd") or 0.0)
     open_ai_trade_count = int(runtime_snapshot.get("open_ai_trade_count") or 0)
+    session_peak_pnl = runtime_snapshot.get("session_peak_pnl_usd")
+    session_peak_time = runtime_snapshot.get("session_peak_pnl_time_utc")
+    consecutive_losses = int(runtime_snapshot.get("consecutive_losses") or 0)
     live_spread_pips = float((ctx.get("spot_price") or {}).get("spread_pips") or 0.0)
+
+    # Phase 1: structured SESSION STATE block exposes drawdown-from-peak so the
+    # model can reason about cumulative session pain. Pure context — never
+    # used by code to gate or alter the LLM's output.
+    peak_value = float(session_peak_pnl) if session_peak_pnl is not None else daily_pnl_usd
+    drawdown_from_peak = max(0.0, peak_value - daily_pnl_usd)
+    peak_time_str = "n/a"
+    if session_peak_time:
+        try:
+            peak_dt = datetime.fromisoformat(str(session_peak_time).replace("Z", "+00:00"))
+            peak_time_str = peak_dt.strftime("%H:%M UTC")
+        except Exception:
+            peak_time_str = str(session_peak_time)
     context_note = (
-        "RUNTIME CONTEXT: "
-        f"today autonomous P&L ${daily_pnl_usd:+.2f}; "
-        f"{open_ai_trade_count} autonomous trade(s) currently open. "
-        "This is context only. There is no server-side daily-loss or open-trade veto here, "
-        "so if you add exposure you must justify why it is still good risk."
+        "SESSION STATE:\n"
+        f"  realized P&L today: ${daily_pnl_usd:+.2f}\n"
+        f"  peak P&L today: ${peak_value:+.2f} at {peak_time_str}\n"
+        f"  drawdown from peak: ${drawdown_from_peak:.2f}\n"
+        f"  open AI trades: {open_ai_trade_count}\n"
+        f"  consecutive losses: {consecutive_losses}\n"
+        "There is no server-side daily-loss veto. The bar to trade naturally rises with session pain — "
+        "as realized P&L falls and drawdown from peak grows, the evidence required to justify a new trade "
+        "should grow with it. Use your judgment about how much the day's path should raise your selectivity."
     )
     spread_note = (
         f"SPREAD CONTEXT: live OANDA spread is {live_spread_pips:.1f} pips. "
@@ -3509,6 +3893,44 @@ def _invoke_suggest(
     lot_hi = min(int(max_lots), int(base_lots + lot_dev))
     lot_mid = int(base_lots)
 
+    # Phase 1: conditional required fields. whats_different is required when this
+    # exact thesis fingerprint has fired in the last 2h; why_not_stop is required
+    # when realized P&L today is negative. Both are forcing-function fields —
+    # logged either way, never used by code to override the model's decision.
+    fp_extras = (gate_decision.extras or {}) if gate_decision else {}
+    recent_fires = int(fp_extras.get("recent_fires_2h_count") or 0)
+    needs_whats_different = recent_fires >= 1
+    needs_why_not_stop = daily_pnl_usd < 0.0
+
+    conditional_field_lines = []
+    if needs_whats_different:
+        conditional_field_lines.append(
+            '  "whats_different": "<one specific sentence on what is materially '
+            'different about price/structure/context vs. recent fires of this same fingerprint>",'
+        )
+    if needs_why_not_stop:
+        conditional_field_lines.append(
+            '  "why_not_stop": "<one specific sentence on why this trade is better '
+            'than stopping for the day, given the current session drawdown>",'
+        )
+    conditional_block = ("\n" + "\n".join(conditional_field_lines)) if conditional_field_lines else ""
+
+    forcing_function_notes = []
+    if needs_whats_different:
+        forcing_function_notes.append(
+            "WHAT'S DIFFERENT: this thesis fingerprint has fired recently. If you decide to trade, "
+            "classify whether this is a working zone, failing zone, unresolved chop, or fresh setup. "
+            "Repeating a working zone can be valid; retrying a failing/unresolved zone needs a material change "
+            "(new structural break, new HTF shift, new catalyst, fresh momentum leg). Generic 'conditions look "
+            "better' answers tell you the trade is a skip."
+        )
+    if needs_why_not_stop:
+        forcing_function_notes.append(
+            "WHY NOT STOP: realized P&L today is negative. If you decide to trade, answer specifically "
+            "why this trade beats stopping for the day. Generic optimism tells you the trade is a skip."
+        )
+    forcing_function_block = ("\n\n" + "\n\n".join(forcing_function_notes)) if forcing_function_notes else ""
+
     suggest_prompt = (
         f"=== AUTONOMOUS DECISION REQUEST ===\n"
         f"Gate mode: {agg}. Execution mode: {mode}.{paper_note}\n"
@@ -3517,14 +3939,26 @@ def _invoke_suggest(
         + (f"\n{multi_note}\n" if multi_note else "") +
         (f"\n{gate_block}\n" if gate_block else "\n") +
         f"\n{context_note}\n"
-        f"{spread_note}\n"
+        f"{spread_note}"
+        f"{forcing_function_block}\n"
+        "\n"
+        "STANCE: The gate has surfaced a candidate opportunity. Treat it as a real setup worth evaluating "
+        "seriously — it is not noise by default. Look at it honestly and decide whether the opportunity is "
+        "still genuinely present right now. If the setup is intact and the supporting context is there, "
+        "trade it. Repeating a successful idea inside a working zone is allowed when price is still respecting "
+        "the zone. If it has degraded, become a blind retry after failed/unresolved attempts, contradicted itself "
+        "across timeframes, or simply isn't clearly present anymore, skip it. You are not obligated to trade "
+        "every gated setup, and you are not supposed to begin from a posture of refusal. You are supposed to "
+        "be accurate. The words probe, hedge, tactical, additive, reduced conviction do not on their own "
+        "justify a trade. If you use them, you must still explain why the trade is worth taking despite the "
+        "weakness those words point to. If you cannot, skip is the better answer.\n"
         "\n"
         "RESPONSE FORMAT (two parts, in this exact order):\n"
         "\n"
         "1. ANALYSIS (plain text, 6-12 lines). Think through the setup. Cover each of:\n"
-        "   - State whether the gate-qualified opportunity is actually tradeable right now or should still be passed.\n"
+        "   - State whether the gate-qualified opportunity is actually tradeable right now or should be passed.\n"
         "   - Respect the trigger family: trend-expansion usually means market execution; critical-level reaction and Tokyo tight-range mean reversion can be market or near-touch limit.\n"
-        "   - H1/M15/M5/M1 trend consensus (note any divergence).\n"
+        "   - H1/M15/M5/M1 trend consensus (note any divergence) and whether this is aligned, mixed, or countertrend.\n"
         "   - POLICY + GEOPOLITICAL ALPHA (required): what is Japan MOF doing now (including rate-check/intervention signaling), what is Japan's finance minister signaling, is there active Japan-US policy coordination, and what war-premium dynamics are doing to USDJPY.\n"
         "   - Explicitly call whether that macro/policy layer CONFIRMS, CONTRADICTS, or is MIXED versus your technical setup.\n"
         "   - JPY CROSS BIAS — does it confirm or contradict direction?\n"
@@ -3534,44 +3968,86 @@ def _invoke_suggest(
         "   - SPREAD: explicitly judge whether current spread is fine, favorable, or too expensive for this setup.\n"
         "   - OPEN POSITIONS + YOUR MOST RECENT SUGGESTION — stacking/hedging is allowed, but justify it. "
         "If adding near same-side exposure, explain why this is not just a duplicate level.\n"
+        "   - ZONE MEMORY + SESSION STATE: classify recent same-fingerprint behavior as fresh_setup, working_zone, "
+        "failing_zone, or unresolved_chop. Repeating a working zone can be good; retrying a failing/unresolved zone needs material change. "
+        "If the session is in drawdown, weigh that too.\n"
+        "   - PLANNED GEOMETRY: estimate R:R from entry/SL/TP. Low R:R is not banned, but it needs a clear reason "
+        "why context, zone behavior, or win probability still makes it worth trading.\n"
+        "   - WEAKNESS TERMS: if you rely on words like probe, hedge, tactical, additive, or reduced conviction, "
+        "explain why the trade still stands without those words doing the work.\n"
         "   - Imminent events / session risk — include MOF/BOJ/US event timing and fold it into conviction, execution style, and size.\n"
-        "   - EXIT STRATEGY + EXIT PLAN: Choose a strategy and briefly describe your conditional exit logic "
-        "(e.g., 'trail on M1 21 EMA after TP1' or 'exit if M3 trend flips bearish within 10 min'). "
-        "The thesis monitor will use your exit_plan to judge mid-trade.\n"
-        "   - Final call: what direction, what size? Be direct.\n"
+        "   - EXIT STRATEGY + EXIT PLAN: Choose a strategy. If using llm_custom_exit, write a structured custom plan "
+        "with first objective, partial, BE trigger, invalidation, trail preference, time stop, and early-exit condition.\n"
+        "   - Final call: trade or skip? If trade, what direction and size? Be direct.\n"
         "\n"
         + decision_format +
         "```json\n"
         "{\n"
+        '  "decision": "trade" | "skip",\n'
+        '  "skip_reason": "<one specific sentence — required if decision is skip>",\n'
+        '  "trade_thesis": "<one specific sentence — required if decision is trade>",\n'
+        '  "conviction_rung": "A" | "B" | "C" | "D",'
+        + conditional_block + "\n"
+        '  "zone_memory_read": "fresh_setup" | "working_zone" | "failing_zone" | "unresolved_chop",\n'
+        '  "repeat_trade_case": "none" | "same_zone_continuation" | "retest_after_success" | "material_change_after_failure" | "blind_retry",\n'
+        '  "planned_rr_estimate": <number or null>,\n'
+        '  "low_rr_edge": "<required if planned_rr_estimate is below 1.0, else null>",\n'
+        '  "timeframe_alignment": "aligned" | "mixed" | "countertrend",\n'
+        '  "countertrend_edge": "<required if timeframe_alignment is countertrend or mixed, else null>",\n'
+        '  "trigger_fit": "true_escape" | "micro_expansion_inside_chop" | "level_reaction" | "mean_reversion" | "unclear",\n'
+        '  "why_trade_despite_weakness": "<required if using hedge/probe/tactical/additive/reduced-conviction logic, else null>",\n'
         '  "order_type": "market" | "limit",\n'
         '  "side": "buy" | "sell",\n'
         '  "price": <entry price as number>,\n'
         '  "sl": <stop loss price as number>,\n'
         '  "tp": <take profit price as number>,\n'
-        f'  "lots": <0 to skip, or {lot_lo}-{lot_hi} — this IS your conviction>,\n'
+        f'  "lots": <0 to skip, or {lot_lo}-{lot_hi} based on your conviction>,\n'
         '  "time_in_force": "GTC" | "GTD",\n'
         '  "gtd_time_utc": <ISO datetime string if GTD, else null>,\n'
         '  "exit_strategy": one of [' + _strategy_ids + '],\n'
         '  "exit_params": {<optional numeric overrides>} or null,\n'
         '  "exit_plan": "<1-2 sentence custom exit logic for the thesis monitor>",\n'
+        '  "custom_exit_plan": {\n'
+        '    "first_profit_objective_pips": <number or null>,\n'
+        '    "partial_close_pct": <number or null>,\n'
+        '    "breakeven_trigger_pips": <number or null>,\n'
+        '    "invalidation_conditions": "<specific conditions that kill the thesis>",\n'
+        '    "trail_preference": "<hwm | m1_ema | m5_ema | price_action | none plus details>",\n'
+        '    "time_stop_minutes": <number or null>,\n'
+        '    "early_exit_if": "<what would make you exit early>"\n'
+        '  },\n'
         '  "rationale": "<1-2 sentence concise summary of the decision>",\n'
         '  "quality": "A" | "B" | "C"\n'
         "}\n"
         "```\n"
         "\n"
+        "DECISION FIELD: trade or skip — both are first-class outcomes. Both require the same rigor of "
+        "justification. If decision is skip, lots is irrelevant (use 0). If decision is trade, lots must be "
+        f"in {lot_lo}-{lot_hi} and reflect your honest read of the setup quality.\n"
+        "\n"
+        "CONVICTION RUNG (self-assessment, logged for analytics — your lots choice is independent):\n"
+        "- A: fresh structural event or clearly working zone, multi-TF alignment, clean invalidation, R:R ≥ 1.2, no recent same-fingerprint failure.\n"
+        "- B: two-TF alignment, R:R ≥ 1.0, no recent same-fingerprint failure, or working-zone continuation with one soft element.\n"
+        "- C: marginal but defensible — you can articulate the edge despite weaknesses.\n"
+        "- D: probe / hedge / tactical / additive / reduced conviction. If you can't write a specific 'what's "
+        "different' answer, or session drawdown should have stopped you, this is the rung. Pair with a 'skip' "
+        "decision unless you can defend taking it.\n"
+        "\n"
         "ENTRY PRICE RULE: " + price_instr + "\n"
         "SL/TP: Baseline SL 10-15p, TP 4-10p; flex with ATR. Never glue SL 1-2p past a known level.\n"
-        f'EXIT STRATEGY: default "{DEFAULT_AI_EXIT_STRATEGY}" unless analysis favors another (or "none").\n'
+        f'EXIT STRATEGY: default "{DEFAULT_AI_EXIT_STRATEGY}" unless analysis favors another, "llm_custom_exit", or "none".\n'
         + exit_calibration_text + "\n"
-        "EXIT PLAN: Describe how you want to manage the trade mid-flight. The thesis monitor runs every ~3 min "
-        "and can hold, tighten SL, scale out, or exit. Give it clear conditions: 'exit if M3 flips bear', "
+        "EXIT PLAN: Describe how you want to manage the trade mid-flight. The standard thesis monitor runs every ~3 min. "
+        "For llm_custom_exit, checks are event-driven and budgeted, so give the monitor crisp decision points instead of vague intent. "
+        "It can only hold, tighten SL, scale out, or exit. Give it clear conditions: 'exit if M3 flips bear', "
         "'tighten SL to BE after +5p', 'scale 50% at TP1 then trail on M1 21 EMA'. If you have no custom plan, "
         'write "default" and the template strategy handles it.\n'
         "LOT SIZING — CONVICTION SHOULD REFLECT SELECTIVITY:\n"
-        f"- {lot_hi} lots: only for the cleanest trigger-qualified setup with strong confirmation and clean invalidation.\n"
+        f"- {lot_hi} lots: cleanest trigger-qualified setup, strong confirmation, clean invalidation.\n"
         f"- {lot_mid} lots: solid setup with one soft element.\n"
         f"- {lot_lo} lots: thin but still defensible edge.\n"
-        "- 0 lots: use this freely whenever the trigger-qualified opportunity is not clean enough after full analysis.\n"
+        "- 0 lots: use freely whenever the gated opportunity is not clean enough after full analysis. "
+        "Pair with decision='skip'.\n"
         "Do not force a trade because the gate woke you. The gate says 'look here', not 'trade now'.\n"
         "\n"
         "QUALITY TAG (logged for analytics, does NOT affect placement):\n"
@@ -3649,6 +4125,79 @@ def _invoke_suggest(
         if quality not in ("A", "B", "C"):
             quality = "C"
         suggestion["quality"] = quality
+
+        # Phase 1 guided-reasoning fields. Decision is first-class trade/skip;
+        # conviction_rung is self-assessment; whats_different / why_not_stop are
+        # forcing-function fields conditionally required by prompt context.
+        # All are normalized + persisted; we never override the model's choice
+        # from these — only honor decision="skip" by routing to the existing
+        # 0-lot skip path downstream.
+        decision_field = str(suggestion.get("decision") or "").strip().lower()
+        if decision_field not in ("trade", "skip"):
+            decision_field = "trade" if float(suggestion.get("lots") or 0) > 0 else "skip"
+        suggestion["decision"] = decision_field
+
+        rung = str(suggestion.get("conviction_rung") or "").strip().upper()
+        if rung not in ("A", "B", "C", "D"):
+            rung = "D" if decision_field == "skip" else "C"
+        suggestion["conviction_rung"] = rung
+
+        suggestion["skip_reason"] = str(suggestion.get("skip_reason") or "").strip() or None
+        suggestion["trade_thesis"] = str(suggestion.get("trade_thesis") or "").strip() or None
+        suggestion["whats_different"] = str(suggestion.get("whats_different") or "").strip() or None
+        suggestion["why_not_stop"] = str(suggestion.get("why_not_stop") or "").strip() or None
+        suggestion["zone_memory_read"] = str(suggestion.get("zone_memory_read") or "fresh_setup").strip().lower()
+        if suggestion["zone_memory_read"] not in {"fresh_setup", "working_zone", "failing_zone", "unresolved_chop"}:
+            suggestion["zone_memory_read"] = "fresh_setup"
+        suggestion["repeat_trade_case"] = str(suggestion.get("repeat_trade_case") or "none").strip().lower()
+        if suggestion["repeat_trade_case"] not in {
+            "none",
+            "same_zone_continuation",
+            "retest_after_success",
+            "material_change_after_failure",
+            "blind_retry",
+        }:
+            suggestion["repeat_trade_case"] = "none"
+
+        def _optional_text(key: str) -> None:
+            suggestion[key] = str(suggestion.get(key) or "").strip() or None
+
+        for _k in (
+            "low_rr_edge",
+            "timeframe_alignment",
+            "countertrend_edge",
+            "trigger_fit",
+            "why_trade_despite_weakness",
+        ):
+            _optional_text(_k)
+        if suggestion["timeframe_alignment"] not in {"aligned", "mixed", "countertrend", None}:
+            suggestion["timeframe_alignment"] = "mixed"
+        if suggestion["trigger_fit"] not in {
+            "true_escape",
+            "micro_expansion_inside_chop",
+            "level_reaction",
+            "mean_reversion",
+            "unclear",
+            None,
+        }:
+            suggestion["trigger_fit"] = "unclear"
+        try:
+            suggestion["planned_rr_estimate"] = float(suggestion.get("planned_rr_estimate"))
+        except (TypeError, ValueError):
+            risk = abs(float(suggestion.get("price") or 0.0) - float(suggestion.get("sl") or 0.0))
+            reward = abs(float(suggestion.get("tp") or 0.0) - float(suggestion.get("price") or 0.0))
+            suggestion["planned_rr_estimate"] = round(reward / risk, 3) if risk > 0 else None
+
+        custom_plan = suggestion.get("custom_exit_plan")
+        if not isinstance(custom_plan, dict):
+            custom_plan = {}
+        suggestion["custom_exit_plan"] = custom_plan
+
+        # If the model chose skip, force lots to 0 so the existing skip path
+        # at the placement loop catches it cleanly. We do not override a
+        # decision="trade" with lots>0 — the model's lots choice is preserved.
+        if decision_field == "skip":
+            suggestion["lots"] = 0.0
         if sug_order_type == "limit":
             suggestion["time_in_force"] = "GTD"
             suggestion["gtd_time_utc"] = (
@@ -3675,6 +4224,7 @@ def _invoke_suggest(
         suggestion["trigger_family"] = (gate_decision.extras or {}).get("trigger_family") if gate_decision else None
         suggestion["trigger_reason"] = (gate_decision.extras or {}).get("trigger_reason") if gate_decision else None
         suggestion["trigger_bias"] = (gate_decision.extras or {}).get("trigger_bias") if gate_decision else None
+        suggestion["thesis_fingerprint"] = (gate_decision.extras or {}).get("thesis_fingerprint") if gate_decision else None
         # exit_plan: free-text field for the thesis monitor to reason about mid-trade.
         suggestion["exit_plan"] = str(suggestion.get("exit_plan") or "default").strip()
         suggestion["prompt_version"] = assembly.prompt_version
@@ -3691,6 +4241,19 @@ def _invoke_suggest(
             raw_params = suggestion.get("exit_params") if isinstance(suggestion.get("exit_params"), dict) else None
             merged_params = merge_exit_params(chosen, raw_params)
             suggestion["exit_params"] = _apply_autonomous_exit_calibration(chosen, merged_params, ctx)
+            if chosen == "llm_custom_exit":
+                plan = suggestion.get("custom_exit_plan") if isinstance(suggestion.get("custom_exit_plan"), dict) else {}
+                if not plan:
+                    plan = {
+                        "first_profit_objective_pips": suggestion["exit_params"].get("tp1_pips"),
+                        "partial_close_pct": suggestion["exit_params"].get("tp1_close_pct"),
+                        "breakeven_trigger_pips": suggestion["exit_params"].get("tp1_pips"),
+                        "invalidation_conditions": suggestion.get("exit_plan") or "exit if the original thesis is materially invalidated",
+                        "trail_preference": "discretionary price action",
+                        "time_stop_minutes": None,
+                        "early_exit_if": suggestion.get("exit_plan") or "momentum or zone behavior flips against the thesis",
+                    }
+                suggestion["custom_exit_plan"] = plan
         suggestion["model_used"] = model
         suggestion["entry_type"] = suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS
         try:
@@ -3818,6 +4381,21 @@ def _place_from_suggestion(
                             "order_type": "market",
                             "trigger_family": suggestion.get("trigger_family"),
                             "order_policy_reason": suggestion.get("order_policy_reason"),
+                            "thesis_fingerprint": suggestion.get("thesis_fingerprint"),
+                            "decision": suggestion.get("decision"),
+                            "conviction_rung": suggestion.get("conviction_rung"),
+                            "trade_thesis": suggestion.get("trade_thesis"),
+                            "whats_different": suggestion.get("whats_different"),
+                            "why_not_stop": suggestion.get("why_not_stop"),
+                            "zone_memory_read": suggestion.get("zone_memory_read"),
+                            "repeat_trade_case": suggestion.get("repeat_trade_case"),
+                            "planned_rr_estimate": suggestion.get("planned_rr_estimate"),
+                            "low_rr_edge": suggestion.get("low_rr_edge"),
+                            "timeframe_alignment": suggestion.get("timeframe_alignment"),
+                            "countertrend_edge": suggestion.get("countertrend_edge"),
+                            "trigger_fit": suggestion.get("trigger_fit"),
+                            "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
+                            "custom_exit_plan": suggestion.get("custom_exit_plan") or {},
                         }),
                         "entry_price": fill_price,
                         "stop_price": float(sl) if sl is not None else None,
@@ -3835,13 +4413,21 @@ def _place_from_suggestion(
                         "breakeven_applied": 0,
                         "tp1_partial_done": 0,
                         "managed_trail_mode": trail_mode or "none",
+                        "custom_exit_plan_json": _json.dumps(suggestion.get("custom_exit_plan") or {}),
+                        "llm_exit_check_count": 0,
                     }
+                    if managed_strategy == "llm_custom_exit":
+                        row["llm_exit_max_checks"] = int(float(managed_params.get("custom_exit_max_checks") or 3))
+                        row["llm_exit_runner_max_checks"] = int(float(managed_params.get("custom_exit_runner_max_checks") or 5))
                     if managed_params.get("tp1_pips") is not None:
                         row["managed_tp1_pips"] = float(managed_params["tp1_pips"])
                     if managed_params.get("tp1_close_pct") is not None:
                         row["managed_tp1_close_pct"] = float(managed_params["tp1_close_pct"])
                     if managed_params.get("be_plus_pips") is not None:
                         row["managed_be_plus_pips"] = float(managed_params["be_plus_pips"])
+                    fp = suggestion.get("thesis_fingerprint")
+                    if fp:
+                        row["thesis_fingerprint"] = str(fp)
                     store.insert_trade(row)
                     print(
                         f"[{profile_name}] autonomous Fillmore: inserted market trade {trade_id} "
@@ -3872,6 +4458,21 @@ def _place_from_suggestion(
                             "order_type": "market",
                             "trigger_family": suggestion.get("trigger_family"),
                             "order_policy_reason": suggestion.get("order_policy_reason"),
+                            "thesis_fingerprint": suggestion.get("thesis_fingerprint"),
+                            "decision": suggestion.get("decision"),
+                            "conviction_rung": suggestion.get("conviction_rung"),
+                            "trade_thesis": suggestion.get("trade_thesis"),
+                            "whats_different": suggestion.get("whats_different"),
+                            "why_not_stop": suggestion.get("why_not_stop"),
+                            "zone_memory_read": suggestion.get("zone_memory_read"),
+                            "repeat_trade_case": suggestion.get("repeat_trade_case"),
+                            "planned_rr_estimate": suggestion.get("planned_rr_estimate"),
+                            "low_rr_edge": suggestion.get("low_rr_edge"),
+                            "timeframe_alignment": suggestion.get("timeframe_alignment"),
+                            "countertrend_edge": suggestion.get("countertrend_edge"),
+                            "trigger_fit": suggestion.get("trigger_fit"),
+                            "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
+                            "custom_exit_plan": suggestion.get("custom_exit_plan") or {},
                         },
                         oanda_order_id=str(order_id) if order_id is not None else None,
                     )
@@ -3917,6 +4518,22 @@ def _place_from_suggestion(
                 "exit_params": managed_params,
                 "source": "autonomous_fillmore",
                 "suggestion_id": suggestion.get("suggestion_id"),
+                "thesis_fingerprint": suggestion.get("thesis_fingerprint"),
+                "decision": suggestion.get("decision"),
+                "conviction_rung": suggestion.get("conviction_rung"),
+                "skip_reason": suggestion.get("skip_reason"),
+                "trade_thesis": suggestion.get("trade_thesis"),
+                "whats_different": suggestion.get("whats_different"),
+                "why_not_stop": suggestion.get("why_not_stop"),
+                "zone_memory_read": suggestion.get("zone_memory_read"),
+                "repeat_trade_case": suggestion.get("repeat_trade_case"),
+                "planned_rr_estimate": suggestion.get("planned_rr_estimate"),
+                "low_rr_edge": suggestion.get("low_rr_edge"),
+                "timeframe_alignment": suggestion.get("timeframe_alignment"),
+                "countertrend_edge": suggestion.get("countertrend_edge"),
+                "trigger_fit": suggestion.get("trigger_fit"),
+                "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
+                "custom_exit_plan": suggestion.get("custom_exit_plan") or {},
                 "created_utc": datetime.now(timezone.utc).isoformat(),
                 "autonomous": True,
             })
@@ -3944,6 +4561,21 @@ def _place_from_suggestion(
                         "order_type": "limit",
                         "trigger_family": suggestion.get("trigger_family"),
                         "order_policy_reason": suggestion.get("order_policy_reason"),
+                        "thesis_fingerprint": suggestion.get("thesis_fingerprint"),
+                        "decision": suggestion.get("decision"),
+                        "conviction_rung": suggestion.get("conviction_rung"),
+                        "trade_thesis": suggestion.get("trade_thesis"),
+                        "whats_different": suggestion.get("whats_different"),
+                        "why_not_stop": suggestion.get("why_not_stop"),
+                        "zone_memory_read": suggestion.get("zone_memory_read"),
+                        "repeat_trade_case": suggestion.get("repeat_trade_case"),
+                        "planned_rr_estimate": suggestion.get("planned_rr_estimate"),
+                        "low_rr_edge": suggestion.get("low_rr_edge"),
+                        "timeframe_alignment": suggestion.get("timeframe_alignment"),
+                        "countertrend_edge": suggestion.get("countertrend_edge"),
+                        "trigger_fit": suggestion.get("trigger_fit"),
+                        "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
+                        "custom_exit_plan": suggestion.get("custom_exit_plan") or {},
                     },
                     oanda_order_id=str(result.order) if result.order is not None else None,
                 )

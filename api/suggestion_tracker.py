@@ -62,6 +62,22 @@ CREATE TABLE IF NOT EXISTS ai_suggestions (
     entry_type TEXT,
     trigger_family TEXT,
     trigger_reason TEXT,
+    thesis_fingerprint TEXT,
+    decision TEXT,
+    conviction_rung TEXT,
+    skip_reason TEXT,
+    trade_thesis TEXT,
+    whats_different TEXT,
+    why_not_stop TEXT,
+    zone_memory_read TEXT,
+    repeat_trade_case TEXT,
+    planned_rr_estimate REAL,
+    low_rr_edge TEXT,
+    timeframe_alignment TEXT,
+    countertrend_edge TEXT,
+    trigger_fit TEXT,
+    why_trade_despite_weakness TEXT,
+    custom_exit_plan_json TEXT,
     features_json TEXT,
     max_adverse_pips REAL,
     max_favorable_pips REAL,
@@ -113,6 +129,16 @@ CREATE TABLE IF NOT EXISTS ai_thesis_checks (
     requested_new_sl REAL,
     requested_scale_out_pct REAL,
     confidence TEXT,
+    check_reason TEXT,
+    current_pips REAL,
+    current_mae_pips REAL,
+    current_mfe_pips REAL,
+    exit_state TEXT,
+    invalidation_status TEXT,
+    management_intent TEXT,
+    updated_exit_plan TEXT,
+    next_watch_condition TEXT,
+    custom_exit INTEGER NOT NULL DEFAULT 0,
     execution_succeeded INTEGER NOT NULL DEFAULT 0,
     execution_note TEXT
 );
@@ -197,12 +223,38 @@ def init_db(db_path: Path) -> None:
         _ensure_column(conn, "ai_suggestions", "entry_type", "TEXT")
         _ensure_column(conn, "ai_suggestions", "trigger_family", "TEXT")
         _ensure_column(conn, "ai_suggestions", "trigger_reason", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "thesis_fingerprint", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "decision", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "conviction_rung", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "skip_reason", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "trade_thesis", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "whats_different", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "why_not_stop", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "zone_memory_read", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "repeat_trade_case", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "planned_rr_estimate", "REAL")
+        _ensure_column(conn, "ai_suggestions", "low_rr_edge", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "timeframe_alignment", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "countertrend_edge", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "trigger_fit", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "why_trade_despite_weakness", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "custom_exit_plan_json", "TEXT")
         _ensure_column(conn, "ai_suggestions", "features_json", "TEXT")
         _ensure_column(conn, "ai_suggestions", "max_adverse_pips", "REAL")
         _ensure_column(conn, "ai_suggestions", "max_favorable_pips", "REAL")
         _ensure_column(conn, "ai_suggestions", "mae_mfe_estimated", "INTEGER")
         _ensure_column(conn, "ai_suggestions", "price_at_expiry", "REAL")
         _ensure_column(conn, "ai_suggestions", "distance_at_expiry_pips", "REAL")
+        _ensure_column(conn, "ai_thesis_checks", "check_reason", "TEXT")
+        _ensure_column(conn, "ai_thesis_checks", "current_pips", "REAL")
+        _ensure_column(conn, "ai_thesis_checks", "current_mae_pips", "REAL")
+        _ensure_column(conn, "ai_thesis_checks", "current_mfe_pips", "REAL")
+        _ensure_column(conn, "ai_thesis_checks", "exit_state", "TEXT")
+        _ensure_column(conn, "ai_thesis_checks", "invalidation_status", "TEXT")
+        _ensure_column(conn, "ai_thesis_checks", "management_intent", "TEXT")
+        _ensure_column(conn, "ai_thesis_checks", "updated_exit_plan", "TEXT")
+        _ensure_column(conn, "ai_thesis_checks", "next_watch_condition", "TEXT")
+        _ensure_column(conn, "ai_thesis_checks", "custom_exit", "INTEGER")
         _ensure_column(conn, "ai_reflections", "primary_error_category", "TEXT")
         _ensure_column(conn, "ai_reflections", "primary_strength_category", "TEXT")
         _ensure_column(conn, "ai_reflections", "regime_at_entry", "TEXT")
@@ -357,6 +409,22 @@ def log_generated(
         "entry_type": str(suggestion.get("entry_type") or ENTRY_TYPE_FILLMORE_MANUAL).strip().lower(),
         "trigger_family": suggestion.get("trigger_family"),
         "trigger_reason": suggestion.get("trigger_reason"),
+        "thesis_fingerprint": suggestion.get("thesis_fingerprint"),
+        "decision": suggestion.get("decision"),
+        "conviction_rung": suggestion.get("conviction_rung"),
+        "skip_reason": suggestion.get("skip_reason"),
+        "trade_thesis": suggestion.get("trade_thesis"),
+        "whats_different": suggestion.get("whats_different"),
+        "why_not_stop": suggestion.get("why_not_stop"),
+        "zone_memory_read": suggestion.get("zone_memory_read"),
+        "repeat_trade_case": suggestion.get("repeat_trade_case"),
+        "planned_rr_estimate": _fnum("planned_rr_estimate"),
+        "low_rr_edge": suggestion.get("low_rr_edge"),
+        "timeframe_alignment": suggestion.get("timeframe_alignment"),
+        "countertrend_edge": suggestion.get("countertrend_edge"),
+        "trigger_fit": suggestion.get("trigger_fit"),
+        "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
+        "custom_exit_plan_json": json.dumps(suggestion.get("custom_exit_plan") or {}),
         "features_json": json.dumps(features),
         "market_snapshot_json": json.dumps(snapshot),
     }
@@ -369,13 +437,25 @@ def log_generated(
                 side, requested_price, limit_price, sl, tp, lots, time_in_force, gtd_time_utc,
                 confidence, rationale, exit_strategy, exit_params_json,
                 exit_plan, prompt_version, prompt_hash, snap_distance_pips,
-                entry_type, trigger_family, trigger_reason, features_json, market_snapshot_json
+                entry_type, trigger_family, trigger_reason,
+                thesis_fingerprint, decision, conviction_rung, skip_reason,
+                trade_thesis, whats_different, why_not_stop,
+                zone_memory_read, repeat_trade_case, planned_rr_estimate,
+                low_rr_edge, timeframe_alignment, countertrend_edge, trigger_fit,
+                why_trade_despite_weakness, custom_exit_plan_json,
+                features_json, market_snapshot_json
             ) VALUES (
                 :suggestion_id, :created_utc, :profile, :model,
                 :side, :requested_price, :limit_price, :sl, :tp, :lots, :time_in_force, :gtd_time_utc,
                 :confidence, :rationale, :exit_strategy, :exit_params_json,
                 :exit_plan, :prompt_version, :prompt_hash, :snap_distance_pips,
-                :entry_type, :trigger_family, :trigger_reason, :features_json, :market_snapshot_json
+                :entry_type, :trigger_family, :trigger_reason,
+                :thesis_fingerprint, :decision, :conviction_rung, :skip_reason,
+                :trade_thesis, :whats_different, :why_not_stop,
+                :zone_memory_read, :repeat_trade_case, :planned_rr_estimate,
+                :low_rr_edge, :timeframe_alignment, :countertrend_edge, :trigger_fit,
+                :why_trade_despite_weakness, :custom_exit_plan_json,
+                :features_json, :market_snapshot_json
             )
             """,
             row,
@@ -790,6 +870,16 @@ def log_thesis_check(
     requested_new_sl: float | None = None,
     requested_scale_out_pct: float | None = None,
     confidence: str | None = None,
+    check_reason: str | None = None,
+    current_pips: float | None = None,
+    current_mae_pips: float | None = None,
+    current_mfe_pips: float | None = None,
+    exit_state: str | None = None,
+    invalidation_status: str | None = None,
+    management_intent: str | None = None,
+    updated_exit_plan: str | None = None,
+    next_watch_condition: str | None = None,
+    custom_exit: bool = False,
     execution_succeeded: bool = False,
     execution_note: str | None = None,
     created_utc: str | None = None,
@@ -802,8 +892,10 @@ def log_thesis_check(
             INSERT INTO ai_thesis_checks (
                 profile, suggestion_id, trade_id, position_id, created_utc,
                 model, action, reason, requested_new_sl, requested_scale_out_pct,
-                confidence, execution_succeeded, execution_note
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                confidence, check_reason, current_pips, current_mae_pips, current_mfe_pips,
+                exit_state, invalidation_status, management_intent, updated_exit_plan,
+                next_watch_condition, custom_exit, execution_succeeded, execution_note
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(profile),
@@ -817,6 +909,16 @@ def log_thesis_check(
                 float(requested_new_sl) if requested_new_sl is not None else None,
                 float(requested_scale_out_pct) if requested_scale_out_pct is not None else None,
                 str(confidence or "") or None,
+                str(check_reason or "") or None,
+                float(current_pips) if current_pips is not None else None,
+                float(current_mae_pips) if current_mae_pips is not None else None,
+                float(current_mfe_pips) if current_mfe_pips is not None else None,
+                str(exit_state or "") or None,
+                str(invalidation_status or "") or None,
+                str(management_intent or "") or None,
+                str(updated_exit_plan or "") or None,
+                str(next_watch_condition or "") or None,
+                1 if custom_exit else 0,
                 1 if execution_succeeded else 0,
                 str(execution_note or "") or None,
             ),
@@ -1067,6 +1169,22 @@ def get_reasoning_feed(
             "side": row.get("side"),
             "trigger_family": row.get("trigger_family") or ((row.get("placed_order") or {}).get("trigger_family")),
             "trigger_reason": row.get("trigger_reason") or ((row.get("placed_order") or {}).get("trigger_reason")),
+            "thesis_fingerprint": row.get("thesis_fingerprint") or ((row.get("placed_order") or {}).get("thesis_fingerprint")),
+            "decision": row.get("decision"),
+            "conviction_rung": row.get("conviction_rung"),
+            "skip_reason": row.get("skip_reason"),
+            "trade_thesis": row.get("trade_thesis"),
+            "whats_different": row.get("whats_different"),
+            "why_not_stop": row.get("why_not_stop"),
+            "zone_memory_read": row.get("zone_memory_read"),
+            "repeat_trade_case": row.get("repeat_trade_case"),
+            "planned_rr_estimate": row.get("planned_rr_estimate"),
+            "low_rr_edge": row.get("low_rr_edge"),
+            "timeframe_alignment": row.get("timeframe_alignment"),
+            "countertrend_edge": row.get("countertrend_edge"),
+            "trigger_fit": row.get("trigger_fit"),
+            "why_trade_despite_weakness": row.get("why_trade_despite_weakness"),
+            "custom_exit_plan": row.get("custom_exit_plan"),
             "requested_price": row.get("requested_price"),
             "price": row.get("limit_price"),
             "lots": row.get("lots"),
@@ -1328,8 +1446,8 @@ def build_autonomous_today_block(
     if closed_today > 0:
         lines.append(f"Today closed P&L (autonomous + manual AI): ${pnl_today:+.2f} across {closed_today} closed trade(s).")
     lines.append(
-        "Self-coaching rule: if the same side+level keeps firing without working, "
-        "the tape is rejecting that thesis — pass instead of stacking."
+        "Self-coaching rule: same-zone continuation is valid when the zone is working. "
+        "If the same side+level keeps firing without working, the tape is rejecting that thesis — pass instead of stacking."
     )
     return "\n".join(lines)
 
@@ -1357,6 +1475,7 @@ def _deserialize_row(row: dict[str, Any]) -> dict[str, Any]:
     out["edited_fields"] = _json_obj(out.pop("edited_fields_json", None))
     out["placed_order"] = _json_obj(out.pop("placed_order_json", None))
     out["exit_params"] = _json_obj(out.pop("exit_params_json", None))
+    out["custom_exit_plan"] = _json_obj(out.pop("custom_exit_plan_json", None))
     return out
 
 
@@ -1381,6 +1500,7 @@ def _win_loss_from_pnl_or_pips(*, pnl: Any, pips: Any) -> str | None:
 def _deserialize_thesis_check(row: dict[str, Any]) -> dict[str, Any]:
     out = dict(row)
     out["execution_succeeded"] = bool(int(out.get("execution_succeeded") or 0))
+    out["custom_exit"] = bool(int(out.get("custom_exit") or 0))
     return out
 
 

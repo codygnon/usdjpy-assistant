@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from api import suggestion_tracker
+from api import autonomous_performance, suggestion_tracker
 
 
 def _ctx(
@@ -286,6 +286,68 @@ def test_learning_prompt_block_surfaces_behavioral_feedback(tmp_path: Path) -> N
     assert "Recent matched examples:" in block
     assert "bias=bullish" in block
     assert "session=london" in block
+
+
+def test_autonomous_family_scorecard_includes_family_intent_and_recent_stats(tmp_path: Path) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+
+    trend = _suggestion(side="buy", price=150.0)
+    trend.update({
+        "entry_type": suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS,
+        "trigger_family": "trend_expansion",
+        "decision": "trade",
+        "planned_rr_estimate": 1.25,
+        "timeframe_alignment": "aligned",
+        "zone_memory_read": "working_zone",
+    })
+    sid1 = suggestion_tracker.log_generated(
+        db_path,
+        profile="demo",
+        model="gpt-5.4-mini",
+        suggestion=trend,
+        ctx=_ctx(),
+    )
+    suggestion_tracker.log_action(
+        db_path,
+        suggestion_id=sid1,
+        action="placed",
+        edited_fields={},
+        placed_order={"side": "buy", "price": 150.0, "autonomous": True, "trigger_family": "trend_expansion"},
+        oanda_order_id="801",
+    )
+    suggestion_tracker.mark_filled(db_path, oanda_order_id="801", fill_price=150.0, trade_id="ai_autonomous:801:1")
+    suggestion_tracker.mark_closed(db_path, oanda_order_id="801", exit_price=150.08, pnl=20.0, pips=8.0)
+
+    critical_skip = _suggestion(side="sell", price=150.2)
+    critical_skip.update({
+        "entry_type": suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS,
+        "trigger_family": "critical_level_reaction",
+        "decision": "skip",
+        "lots": 0.0,
+        "planned_rr_estimate": 0.75,
+        "timeframe_alignment": "mixed",
+        "zone_memory_read": "failing_zone",
+    })
+    suggestion_tracker.log_generated(
+        db_path,
+        profile="demo",
+        model="gpt-5.4-mini",
+        suggestion=critical_skip,
+        ctx=_ctx(structure="resistance"),
+    )
+
+    block = autonomous_performance.build_family_scorecard_memory_block(db_path)
+
+    assert "AUTONOMOUS CODE-GATE FAMILY SCORECARD" in block
+    assert "critical_level_reaction: idea=reaction at nearby structure/order-book/round/session levels" in block
+    assert "trend_expansion: idea=ADX/ATR-backed directional continuation" in block
+    assert "trend_expansion" in block and "1 gen, 1 placed" in block
+    assert "closed=1, WR=100%, avg=+8.0p, net=+8.0p" in block
+    assert "critical_level_reaction" in block and "1 skip (100%)" in block
+    assert "lowRR=1" in block
+    assert "mixed/counter=1" in block
+    assert "zone W/F/chop=0/1/0" in block
+    assert "tight_range_mean_reversion: idea=Tokyo/compressed-range edge" in block
 
 
 def test_mark_closed_persists_excursion_metrics(tmp_path: Path) -> None:

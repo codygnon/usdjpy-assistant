@@ -76,6 +76,15 @@ class AutonomousSuggestion(FillmoreSuggestionBase):
     order_type: Literal["market", "limit"] = "market"
     quality: Literal["A", "B", "C", "A+", "B+", "C+"] = "C"
     exit_plan: str = "default"
+    zone_memory_read: str | None = None
+    repeat_trade_case: str | None = None
+    planned_rr_estimate: float | None = None
+    low_rr_edge: str | None = None
+    timeframe_alignment: str | None = None
+    countertrend_edge: str | None = None
+    trigger_fit: str | None = None
+    why_trade_despite_weakness: str | None = None
+    custom_exit_plan: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("order_type", mode="before")
     @classmethod
@@ -98,6 +107,28 @@ class AutonomousSuggestion(FillmoreSuggestionBase):
     def _normalize_exit_plan(cls, value: Any) -> str:
         text = str(value or "default").strip()
         return text or "default"
+
+    @field_validator(
+        "zone_memory_read",
+        "repeat_trade_case",
+        "low_rr_edge",
+        "timeframe_alignment",
+        "countertrend_edge",
+        "trigger_fit",
+        "why_trade_despite_weakness",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_optional_text(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @field_validator("custom_exit_plan", mode="before")
+    @classmethod
+    def _normalize_custom_exit_plan(cls, value: Any) -> dict[str, Any]:
+        return value if isinstance(value, dict) else {}
 
     @model_validator(mode="after")
     def _validate_placed_trade_pricing(self) -> "AutonomousSuggestion":

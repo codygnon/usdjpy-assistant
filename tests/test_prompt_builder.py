@@ -64,5 +64,8 @@ def test_prompt_builder_autonomous_memory_builds_system(tmp_path: Path) -> None:
     )
 
     assert assembly.mode == "suggest_autonomous"
+    assert "AUTONOMOUS CODE-GATE FAMILY SCORECARD" in assembly.system
+    assert "critical_level_reaction: idea=reaction at nearby structure/order-book/round/session levels" in assembly.system
+    assert "FILLMORE SELF-REFLECTION MEMORY" in assembly.system
     assert "No prior autonomous suggestions today" in assembly.system
     assert assembly.learning_block_hash

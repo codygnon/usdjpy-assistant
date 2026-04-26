@@ -14,6 +14,7 @@ from typing import Any
 # "m5"     -> tp1_be_m5_trail  (M5 EMA bar-close-only trail)
 # "m1"     -> tp1_be_trail     (M1 EMA bar-close-only trail)
 # "be"     -> tp1_be_only      (TP1 + BE, no trail on runner)
+# "llm"    -> llm_custom_exit  (broker SL/TP plus budgeted LLM thesis checks)
 # "none"   -> none             (broker-side SL/TP only, no runtime management)
 
 AI_EXIT_STRATEGIES: dict[str, dict[str, Any]] = {
@@ -82,6 +83,30 @@ AI_EXIT_STRATEGIES: dict[str, dict[str, Any]] = {
             "tp1_close_pct": 50.0,
             "be_plus_pips": 0.5,
             "tp1_lock_in_fraction": 0.2,
+        },
+    },
+    "llm_custom_exit": {
+        "id": "llm_custom_exit",
+        "trail_mode": "none",
+        "label": "LLM custom exit manager",
+        "description": (
+            "Use broker SL/TP as the safety net while the budgeted thesis monitor "
+            "makes discretionary hold/tighten/scale/exit decisions at meaningful "
+            "state changes. Best when the setup needs a bespoke invalidation and "
+            "profit-capture plan instead of a fixed template."
+        ),
+        "defaults": {
+            "tp1_pips": 6.0,
+            "tp1_close_pct": 33.0,
+            "be_plus_pips": 0.5,
+            "custom_exit_min_age_sec": 120.0,
+            "custom_exit_min_interval_sec": 150.0,
+            "custom_exit_max_interval_sec": 600.0,
+            "custom_exit_price_move_pips": 2.5,
+            "custom_exit_excursion_move_pips": 2.5,
+            "custom_exit_max_checks": 3.0,
+            "custom_exit_runner_max_checks": 5.0,
+            "custom_exit_runner_trigger_pips": 6.0,
         },
     },
     "none": {

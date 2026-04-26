@@ -206,6 +206,8 @@ def evaluate_trade_thesis(
     position: Any,
     tick: Any,
     db_path: Path,
+    check_reason: str | None = None,
+    custom_exit: bool = False,
 ) -> Optional[dict[str, Any]]:
     """Ask Fillmore whether an open trade's thesis is still intact."""
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
@@ -233,6 +235,16 @@ def evaluate_trade_thesis(
     if not rationale:
         return None
     exit_plan = str(suggestion_row.get("exit_plan") or "default").strip()
+    custom_exit_plan = suggestion_row.get("custom_exit_plan")
+    if not isinstance(custom_exit_plan, dict):
+        try:
+            raw_cfg = trade_row.get("config_json")
+            cfg = _json.loads(str(raw_cfg)) if raw_cfg else {}
+            custom_exit_plan = cfg.get("custom_exit_plan") if isinstance(cfg, dict) else {}
+        except Exception:
+            custom_exit_plan = {}
+    if not isinstance(custom_exit_plan, dict):
+        custom_exit_plan = {}
 
     ctx = build_trading_context(profile, profile_name)
     model = resolve_ai_suggest_model(THESIS_MONITOR_MODEL)
@@ -265,10 +277,18 @@ def evaluate_trade_thesis(
     open_age_sec = max(0.0, (_now_utc() - opened_at).total_seconds()) if opened_at else None
     recent_checks = suggestion_tracker.list_thesis_checks(db_path, trade_id=trade_id, limit=2)
 
+    mode_note = (
+        "This trade uses llm_custom_exit. You are the active exit manager, but checks are call-budgeted. "
+        "Only request broker action when it is actually useful; otherwise hold with a precise next watch condition.\n"
+        if custom_exit else
+        "This trade uses a template or broker-side exit. Use the original exit plan as guidance and intervene only when the thesis has materially changed.\n"
+    )
+
     prompt = (
         "You are reviewing an ALREADY-OPEN Fillmore trade.\n"
         "Your job is NOT to find a new setup. Your only job is to decide whether the original thesis is still alive.\n"
         "You may only reduce risk. Never widen risk, add size, reverse the trade, or suggest a new order.\n"
+        f"{mode_note}"
         "\n"
         "Allowed actions:\n"
         "- hold\n"
@@ -281,6 +301,11 @@ def evaluate_trade_thesis(
         '  "action": "hold" | "tighten_sl" | "scale_out" | "exit_now",\n'
         '  "new_sl": number | null,\n'
         '  "scale_out_pct": 25 | 33 | 50 | null,\n'
+        '  "exit_state": "thesis_intact" | "watching_invalidation" | "profit_capture" | "thesis_broken",\n'
+        '  "invalidation_status": "none" | "threatened" | "confirmed",\n'
+        '  "management_intent": "let_work" | "protect_profit" | "reduce_risk" | "kill_trade",\n'
+        '  "updated_exit_plan": "short update or null",\n'
+        '  "next_watch_condition": "what would trigger the next action",\n'
         '  "reason": "short explanation",\n'
         '  "confidence": "low" | "medium" | "high"\n'
         "}\n"
@@ -290,6 +315,7 @@ def evaluate_trade_thesis(
         f"exit={suggestion_row.get('exit_strategy')}\n"
         f"Original rationale:\n{rationale}\n"
         f"Original exit plan: {exit_plan}\n"
+        f"Structured custom exit plan: {_json.dumps(custom_exit_plan, sort_keys=True) if custom_exit_plan else '{}'}\n"
         "(The exit plan describes the trader's intended mid-trade management logic. Use it as your "
         "primary guide for hold/tighten/scale/exit — follow the plan unless the tape has changed "
         "materially enough to override it. If the plan says 'exit if M3 flips bear' and M3 is now "
@@ -299,6 +325,7 @@ def evaluate_trade_thesis(
         f"current_mid={mid:.3f}, effective_sl={effective_stop}, target={target_price}, "
         f"remaining_lots={current_lots:.2f}, tp1_done={int(tp1_done)}, be_applied={int(be_applied)}, "
         f"open_age_sec={open_age_sec}, current_pips={current_pips:+.1f}, current_usd={float(current_pnl):+.2f}\n"
+        f"Monitor trigger: {check_reason or 'scheduled'}\n"
         "Recent thesis checks:\n"
         + _recent_checks_text(recent_checks)
         + "\n"
@@ -341,10 +368,25 @@ def evaluate_trade_thesis(
     if scale_out_pct not in {25.0, 33.0, 50.0}:
         scale_out_pct = None
 
+    exit_state = str(decision.get("exit_state") or "").strip().lower()
+    if exit_state not in {"thesis_intact", "watching_invalidation", "profit_capture", "thesis_broken"}:
+        exit_state = "thesis_intact" if action == "hold" else "watching_invalidation"
+    invalidation_status = str(decision.get("invalidation_status") or "").strip().lower()
+    if invalidation_status not in {"none", "threatened", "confirmed"}:
+        invalidation_status = "none"
+    management_intent = str(decision.get("management_intent") or "").strip().lower()
+    if management_intent not in {"let_work", "protect_profit", "reduce_risk", "kill_trade"}:
+        management_intent = "let_work" if action == "hold" else "reduce_risk"
+
     return {
         "action": action,
         "new_sl": new_sl,
         "scale_out_pct": int(scale_out_pct) if scale_out_pct is not None else None,
+        "exit_state": exit_state,
+        "invalidation_status": invalidation_status,
+        "management_intent": management_intent,
+        "updated_exit_plan": str(decision.get("updated_exit_plan") or "").strip() or None,
+        "next_watch_condition": str(decision.get("next_watch_condition") or "").strip() or None,
         "reason": str(decision.get("reason") or "").strip(),
         "confidence": confidence,
         "model_used": model,

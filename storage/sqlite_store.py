@@ -206,6 +206,19 @@ class SqliteStore:
             self._ensure_column(conn, "trades", "managed_trail_mode", "TEXT")
             # v2.10: Trail escalation level ratchet (one-way: m1 -> m5 -> m15)
             self._ensure_column(conn, "trades", "trail_escalation_level", "TEXT")
+            # v2.11: Autonomous Fillmore canonical thesis fingerprint
+            # (side:family:level_bucket:htf_bias) for repetition visibility in prompt
+            self._ensure_column(conn, "trades", "thesis_fingerprint", "TEXT")
+            # v2.12: Phase 2 LLM custom-exit state. Check counts persist so
+            # restart/reconnect cycles do not reset the per-trade LLM budget.
+            self._ensure_column(conn, "trades", "custom_exit_plan_json", "TEXT")
+            self._ensure_column(conn, "trades", "llm_exit_check_count", "INTEGER")
+            self._ensure_column(conn, "trades", "llm_exit_last_check_utc", "TEXT")
+            self._ensure_column(conn, "trades", "llm_exit_last_check_pips", "REAL")
+            self._ensure_column(conn, "trades", "llm_exit_last_check_mae_pips", "REAL")
+            self._ensure_column(conn, "trades", "llm_exit_last_check_mfe_pips", "REAL")
+            self._ensure_column(conn, "trades", "llm_exit_max_checks", "INTEGER")
+            self._ensure_column(conn, "trades", "llm_exit_runner_max_checks", "INTEGER")
             conn.commit()
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, col: str, col_type: str) -> None:

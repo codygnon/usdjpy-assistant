@@ -1253,12 +1253,37 @@ function AutonomousFillmorePanel({
                           trigger {s.trigger_reason}
                         </div>
                       )}
+                      {s.zone_memory_read && (
+                        <div style={{ fontSize: '0.7rem', color: s.zone_memory_read === 'working_zone' ? '#86efac' : s.zone_memory_read === 'failing_zone' ? '#fca5a5' : '#cbd5e1' }}>
+                          zone {s.zone_memory_read}
+                        </div>
+                      )}
+                      {s.repeat_trade_case && s.repeat_trade_case !== 'none' && (
+                        <div style={{ fontSize: '0.7rem', color: '#fbbf24' }}>
+                          repeat {s.repeat_trade_case}
+                        </div>
+                      )}
+                      {s.timeframe_alignment && (
+                        <div style={{ fontSize: '0.7rem', color: s.timeframe_alignment === 'countertrend' ? '#fca5a5' : '#cbd5e1' }}>
+                          tf {s.timeframe_alignment}
+                        </div>
+                      )}
+                      {s.trigger_fit && (
+                        <div style={{ fontSize: '0.7rem', color: s.trigger_fit === 'micro_expansion_inside_chop' ? '#fca5a5' : '#cbd5e1' }}>
+                          fit {s.trigger_fit}
+                        </div>
+                      )}
                     </div>
                     {showAuditStrip && (
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
                         {plannedRr && (
                           <div style={{ fontSize: '0.7rem', color: '#cbd5e1' }}>
                             R:R {plannedRr}
+                          </div>
+                        )}
+                        {s.planned_rr_estimate != null && !plannedRr && (
+                          <div style={{ fontSize: '0.7rem', color: '#cbd5e1' }}>
+                            R:R {s.planned_rr_estimate.toFixed(2)}
                           </div>
                         )}
                         {sessionLabel && (
@@ -1291,6 +1316,21 @@ function AutonomousFillmorePanel({
                     {s.exit_plan && s.exit_plan !== 'default' && (
                       <div style={{ color: '#a5b4fc', marginTop: 2, fontStyle: 'italic' }}>Exit plan: {s.exit_plan}</div>
                     )}
+                    {s.low_rr_edge && (
+                      <div style={{ color: '#fbbf24', marginTop: 2 }}>Low R:R edge: {s.low_rr_edge}</div>
+                    )}
+                    {s.countertrend_edge && (
+                      <div style={{ color: '#fca5a5', marginTop: 2 }}>Countertrend edge: {s.countertrend_edge}</div>
+                    )}
+                    {s.why_trade_despite_weakness && (
+                      <div style={{ color: '#fbbf24', marginTop: 2 }}>Weakness answer: {s.why_trade_despite_weakness}</div>
+                    )}
+                    {s.custom_exit_plan && Object.keys(s.custom_exit_plan).length > 0 && (
+                      <details style={{ marginTop: 4 }}>
+                        <summary style={{ color: '#a5b4fc', cursor: 'pointer', fontSize: '0.72rem' }}>Custom exit plan</summary>
+                        <pre style={{ whiteSpace: 'pre-wrap', color: '#94a3b8', fontSize: '0.72rem', margin: '4px 0 0 8px' }}>{JSON.stringify(s.custom_exit_plan, null, 2)}</pre>
+                      </details>
+                    )}
                     {analysisText && (
                       <details style={{ marginTop: 4 }}>
                         <summary style={{ color: '#93c5fd', cursor: 'pointer', fontSize: '0.72rem' }}>Full analysis</summary>
@@ -1318,6 +1358,11 @@ function AutonomousFillmorePanel({
                     {tc.requested_new_sl != null && <span style={{ color: '#facc15' }}> SL→{tc.requested_new_sl.toFixed(3)}</span>}
                     {tc.requested_scale_out_pct != null && <span style={{ color: '#facc15' }}> scale {tc.requested_scale_out_pct}%</span>}
                     {tc.confidence && <span style={{ color: 'var(--text-secondary)' }}> · {tc.confidence}</span>}
+                    {tc.custom_exit && <span style={{ color: '#a5b4fc' }}> · custom</span>}
+                    {tc.check_reason && <span style={{ color: '#94a3b8' }}> · {tc.check_reason}</span>}
+                    {tc.current_pips != null && <span style={{ color: tc.current_pips >= 0 ? '#86efac' : '#fca5a5' }}> · {tc.current_pips >= 0 ? '+' : ''}{tc.current_pips.toFixed(1)}p</span>}
+                    {tc.exit_state && <span style={{ color: '#cbd5e1' }}> · {tc.exit_state}</span>}
+                    {tc.next_watch_condition && <div style={{ color: '#94a3b8', marginLeft: 8 }}>Next: {tc.next_watch_condition}</div>}
                     {tc.execution_succeeded != null && (
                       <span style={{ color: tc.execution_succeeded ? '#4ade80' : '#f87171' }}>
                         {tc.execution_succeeded ? ' · executed' : ' · not executed'}

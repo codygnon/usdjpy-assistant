@@ -696,6 +696,21 @@ def _watch_ai_managed_pending_orders(profile, adapter, store, state_path) -> Non
                         "order_id": order_id,
                         "exit_strategy": entry.get("exit_strategy"),
                         "exit_params": exit_params,
+                        "thesis_fingerprint": entry.get("thesis_fingerprint"),
+                        "decision": entry.get("decision"),
+                        "conviction_rung": entry.get("conviction_rung"),
+                        "trade_thesis": entry.get("trade_thesis"),
+                        "whats_different": entry.get("whats_different"),
+                        "why_not_stop": entry.get("why_not_stop"),
+                        "zone_memory_read": entry.get("zone_memory_read"),
+                        "repeat_trade_case": entry.get("repeat_trade_case"),
+                        "planned_rr_estimate": entry.get("planned_rr_estimate"),
+                        "low_rr_edge": entry.get("low_rr_edge"),
+                        "timeframe_alignment": entry.get("timeframe_alignment"),
+                        "countertrend_edge": entry.get("countertrend_edge"),
+                        "trigger_fit": entry.get("trigger_fit"),
+                        "why_trade_despite_weakness": entry.get("why_trade_despite_weakness"),
+                        "custom_exit_plan": entry.get("custom_exit_plan") or {},
                     }
                 ),
                 "entry_price": fill_price,
@@ -718,7 +733,14 @@ def _watch_ai_managed_pending_orders(profile, adapter, store, state_path) -> Non
                 "breakeven_applied": 0,
                 "tp1_partial_done": 0,
                 "managed_trail_mode": trail_mode,
+                "custom_exit_plan_json": json.dumps(entry.get("custom_exit_plan") or {}),
+                "llm_exit_check_count": 0,
             }
+            if str(entry.get("exit_strategy") or "").strip().lower() == "llm_custom_exit":
+                row["llm_exit_max_checks"] = int(float(exit_params.get("custom_exit_max_checks") or 3))
+                row["llm_exit_runner_max_checks"] = int(float(exit_params.get("custom_exit_runner_max_checks") or 5))
+            if entry.get("thesis_fingerprint"):
+                row["thesis_fingerprint"] = str(entry.get("thesis_fingerprint"))
             # Map exit_params to the managed_* DB columns used by the exit handler.
             if exit_params.get("tp1_pips") is not None:
                 row["managed_tp1_pips"] = float(exit_params["tp1_pips"])
@@ -916,12 +938,135 @@ def _position_effective_stop(trade_row: dict[str, Any], position: Any) -> float 
     return candidates[0] if candidates else None
 
 
+def _trade_config_payload(trade_row: dict[str, Any]) -> dict[str, Any]:
+    raw = trade_row.get("config_json")
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(str(raw))
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _trade_current_pips(trade_row: dict[str, Any], tick: Any, pip_size: float) -> float | None:
+    try:
+        entry = float(trade_row.get("entry_price") or 0.0)
+        bid = float(getattr(tick, "bid", None) if not isinstance(tick, dict) else tick.get("bid"))
+        ask = float(getattr(tick, "ask", None) if not isinstance(tick, dict) else tick.get("ask"))
+    except (TypeError, ValueError):
+        return None
+    if entry <= 0 or bid <= 0 or ask <= 0 or pip_size <= 0:
+        return None
+    mid = (bid + ask) / 2.0
+    side = str(trade_row.get("side") or "buy").lower()
+    if side == "sell":
+        return (entry - mid) / pip_size
+    return (mid - entry) / pip_size
+
+
+def _custom_exit_eligibility(
+    trade_row: dict[str, Any],
+    *,
+    recent_checks: list[dict[str, Any]],
+    current_pips: float | None,
+    effective_stop: float | None,
+    pip_size: float,
+) -> tuple[bool, str, int, int]:
+    cfg = _trade_config_payload(trade_row)
+    exit_params = cfg.get("exit_params") if isinstance(cfg.get("exit_params"), dict) else {}
+
+    age_sec = _trade_open_age_seconds(trade_row)
+    min_age = float(exit_params.get("custom_exit_min_age_sec") or 120.0)
+    if age_sec < min_age:
+        return False, f"custom_exit_min_age:{age_sec:.0f}s", 0, 0
+
+    check_count = max(
+        int(trade_row.get("llm_exit_check_count") or 0),
+        len([c for c in recent_checks if bool(c.get("custom_exit")) or c.get("check_reason")]),
+    )
+    runner_trigger = float(exit_params.get("custom_exit_runner_trigger_pips") or exit_params.get("tp1_pips") or 6.0)
+    tp1_done = bool(trade_row.get("tp1_partial_done") or 0)
+    mfe = float(trade_row.get("max_favorable_pips") or 0.0)
+    mae = float(trade_row.get("max_adverse_pips") or 0.0)
+    runner_budget = int(float(trade_row.get("llm_exit_runner_max_checks") or exit_params.get("custom_exit_runner_max_checks") or 5))
+    normal_budget = int(float(trade_row.get("llm_exit_max_checks") or exit_params.get("custom_exit_max_checks") or 3))
+    budget = runner_budget if tp1_done or mfe >= runner_trigger or (current_pips is not None and current_pips >= runner_trigger) else normal_budget
+
+    entry = None
+    try:
+        entry = float(trade_row.get("entry_price") or 0.0)
+    except (TypeError, ValueError):
+        entry = None
+    risk_pips = None
+    if entry and effective_stop and pip_size > 0:
+        risk_pips = abs(entry - float(effective_stop)) / pip_size
+    emergency = (
+        current_pips is not None
+        and risk_pips is not None
+        and risk_pips > 0
+        and current_pips <= -0.75 * risk_pips
+    )
+    if check_count >= budget and not emergency:
+        return False, f"custom_exit_budget:{check_count}/{budget}", check_count, budget
+
+    now = pd.Timestamp.now(tz="UTC")
+    last_ts = None
+    if recent_checks:
+        try:
+            last_ts = pd.Timestamp(recent_checks[0].get("created_utc"))
+            if last_ts.tzinfo is None:
+                last_ts = last_ts.tz_localize("UTC")
+        except Exception:
+            last_ts = None
+    min_interval = float(exit_params.get("custom_exit_min_interval_sec") or 150.0)
+    max_interval = float(exit_params.get("custom_exit_max_interval_sec") or 600.0)
+    elapsed = (now - last_ts).total_seconds() if last_ts is not None else None
+    if elapsed is not None and elapsed < min_interval and not emergency:
+        return False, f"custom_exit_min_interval:{elapsed:.0f}s", check_count, budget
+
+    last_pips = trade_row.get("llm_exit_last_check_pips")
+    try:
+        last_pips_f = float(last_pips) if last_pips is not None else None
+    except (TypeError, ValueError):
+        last_pips_f = None
+    move_threshold = float(exit_params.get("custom_exit_price_move_pips") or 2.5)
+    if current_pips is not None and last_pips_f is not None and abs(current_pips - last_pips_f) >= move_threshold:
+        return True, "price_moved", check_count, budget
+
+    last_mae = trade_row.get("llm_exit_last_check_mae_pips")
+    last_mfe = trade_row.get("llm_exit_last_check_mfe_pips")
+    try:
+        last_mae_f = float(last_mae) if last_mae is not None else None
+        last_mfe_f = float(last_mfe) if last_mfe is not None else None
+    except (TypeError, ValueError):
+        last_mae_f = last_mfe_f = None
+    excursion_threshold = float(exit_params.get("custom_exit_excursion_move_pips") or 2.5)
+    if last_mae_f is not None and abs(mae - last_mae_f) >= excursion_threshold:
+        return True, "mae_changed", check_count, budget
+    if last_mfe_f is not None and abs(mfe - last_mfe_f) >= excursion_threshold:
+        return True, "mfe_changed", check_count, budget
+
+    if current_pips is not None and current_pips >= runner_trigger - 1.0:
+        return True, "profit_objective_near", check_count, budget
+    if emergency:
+        return True, "emergency_thesis_threat", check_count, budget
+    if elapsed is None:
+        return True, "first_custom_exit_check", check_count, budget
+    if elapsed >= max_interval:
+        return True, "max_time_since_check", check_count, budget
+    return False, "custom_exit_no_material_change", check_count, budget
+
+
 def _evaluate_fillmore_thesis_monitor(
     profile,
     trade_row: dict[str, Any],
     position: Any,
     tick: Any,
     db_path: Path,
+    *,
+    check_reason: str | None = None,
+    custom_exit: bool = False,
 ) -> Optional[dict[str, Any]]:
     from api.fillmore_learning import evaluate_trade_thesis
 
@@ -932,6 +1077,8 @@ def _evaluate_fillmore_thesis_monitor(
         position=position,
         tick=tick,
         db_path=db_path,
+        check_reason=check_reason,
+        custom_exit=custom_exit,
     )
 
 
@@ -968,8 +1115,31 @@ def _maybe_run_fillmore_thesis_monitor(
     if not str(suggestion_row.get("rationale") or "").strip():
         return out
 
-    recent = suggestion_tracker.list_thesis_checks(db_path, trade_id=trade_id, limit=1)
-    if recent:
+    cfg_payload = _trade_config_payload(trade_row)
+    exit_strategy = str(
+        cfg_payload.get("exit_strategy")
+        or suggestion_row.get("exit_strategy")
+        or ""
+    ).strip().lower()
+    custom_exit = exit_strategy == "llm_custom_exit"
+    recent = suggestion_tracker.list_thesis_checks(db_path, trade_id=trade_id, limit=100 if custom_exit else 1)
+    current_pips = _trade_current_pips(trade_row, tick, float(getattr(profile, "pip_size", 0.01) or 0.01))
+    effective_stop = _position_effective_stop(trade_row, position)
+    check_reason = "scheduled_thesis_check"
+    current_check_count = int(trade_row.get("llm_exit_check_count") or 0)
+    current_check_budget = 0
+
+    if custom_exit:
+        eligible, check_reason, current_check_count, current_check_budget = _custom_exit_eligibility(
+            trade_row,
+            recent_checks=recent,
+            current_pips=current_pips,
+            effective_stop=effective_stop,
+            pip_size=float(getattr(profile, "pip_size", 0.01) or 0.01),
+        )
+        if not eligible:
+            return out
+    elif recent:
         try:
             last_dt = pd.Timestamp(recent[0].get("created_utc"))
             if last_dt.tzinfo is None:
@@ -979,7 +1149,15 @@ def _maybe_run_fillmore_thesis_monitor(
         except Exception:
             pass
 
-    decision = _evaluate_fillmore_thesis_monitor(profile, trade_row, position, tick, db_path)
+    decision = _evaluate_fillmore_thesis_monitor(
+        profile,
+        trade_row,
+        position,
+        tick,
+        db_path,
+        check_reason=check_reason,
+        custom_exit=custom_exit,
+    )
     if not decision:
         return out
 
@@ -1179,9 +1357,31 @@ def _maybe_run_fillmore_thesis_monitor(
             requested_new_sl=float(new_sl) if new_sl is not None else None,
             requested_scale_out_pct=float(scale_out_pct) if scale_out_pct is not None else None,
             confidence=confidence,
+            check_reason=check_reason,
+            current_pips=float(current_pips) if current_pips is not None else None,
+            current_mae_pips=float(trade_row.get("max_adverse_pips") or 0.0),
+            current_mfe_pips=float(trade_row.get("max_favorable_pips") or 0.0),
+            exit_state=decision.get("exit_state"),
+            invalidation_status=decision.get("invalidation_status"),
+            management_intent=decision.get("management_intent"),
+            updated_exit_plan=decision.get("updated_exit_plan"),
+            next_watch_condition=decision.get("next_watch_condition"),
+            custom_exit=custom_exit,
             execution_succeeded=executed,
             execution_note=note or None,
         )
+        if custom_exit:
+            store.update_trade(
+                trade_id,
+                {
+                    "llm_exit_check_count": int(current_check_count) + 1,
+                    "llm_exit_last_check_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "llm_exit_last_check_pips": float(current_pips) if current_pips is not None else None,
+                    "llm_exit_last_check_mae_pips": float(trade_row.get("max_adverse_pips") or 0.0),
+                    "llm_exit_last_check_mfe_pips": float(trade_row.get("max_favorable_pips") or 0.0),
+                    "llm_exit_max_checks": int(current_check_budget or trade_row.get("llm_exit_max_checks") or 3),
+                },
+            )
     except Exception as e:
         print(f"[{profile.profile_name}] fillmore thesis log error for {trade_id}: {e}")
 
@@ -4899,6 +5099,7 @@ def main() -> None:
                     tick=tick,
                     data_by_tf=data_by_tf,
                     ntz_active=False,
+                    adapter=adapter,
                 )
             except Exception as _auto_e:
                 print(f"[{profile.profile_name}] autonomous Fillmore tick error: {_auto_e}")

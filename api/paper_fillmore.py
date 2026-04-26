@@ -221,6 +221,21 @@ def place_paper_market_fill(
         "order_type": "market",
         "exit_strategy": managed_strategy,
         "exit_params": managed_params,
+        "thesis_fingerprint": suggestion.get("thesis_fingerprint"),
+        "decision": suggestion.get("decision"),
+        "conviction_rung": suggestion.get("conviction_rung"),
+        "trade_thesis": suggestion.get("trade_thesis"),
+        "whats_different": suggestion.get("whats_different"),
+        "why_not_stop": suggestion.get("why_not_stop"),
+        "zone_memory_read": suggestion.get("zone_memory_read"),
+        "repeat_trade_case": suggestion.get("repeat_trade_case"),
+        "planned_rr_estimate": suggestion.get("planned_rr_estimate"),
+        "low_rr_edge": suggestion.get("low_rr_edge"),
+        "timeframe_alignment": suggestion.get("timeframe_alignment"),
+        "countertrend_edge": suggestion.get("countertrend_edge"),
+        "trigger_fit": suggestion.get("trigger_fit"),
+        "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
+        "custom_exit_plan": suggestion.get("custom_exit_plan") or {},
     }
     row: dict[str, Any] = {
         "trade_id": trade_id,
@@ -247,7 +262,14 @@ def place_paper_market_fill(
         "tp1_partial_done": 0,
         "tp1_triggered": 0,
         "managed_trail_mode": trail_mode or "none",
+        "custom_exit_plan_json": json.dumps(suggestion.get("custom_exit_plan") or {}),
+        "llm_exit_check_count": 0,
     }
+    if managed_strategy == "llm_custom_exit":
+        row["llm_exit_max_checks"] = int(float(managed_params.get("custom_exit_max_checks") or 3))
+        row["llm_exit_runner_max_checks"] = int(float(managed_params.get("custom_exit_runner_max_checks") or 5))
+    if suggestion.get("thesis_fingerprint"):
+        row["thesis_fingerprint"] = str(suggestion.get("thesis_fingerprint"))
     if managed_params.get("tp1_pips") is not None:
         row["managed_tp1_pips"] = float(managed_params["tp1_pips"])
     if managed_params.get("tp1_close_pct") is not None:
@@ -277,6 +299,21 @@ def place_paper_market_fill(
                     "autonomous": True,
                     "paper": True,
                     "order_type": "market",
+                    "thesis_fingerprint": suggestion.get("thesis_fingerprint"),
+                    "decision": suggestion.get("decision"),
+                    "conviction_rung": suggestion.get("conviction_rung"),
+                    "trade_thesis": suggestion.get("trade_thesis"),
+                    "whats_different": suggestion.get("whats_different"),
+                    "why_not_stop": suggestion.get("why_not_stop"),
+                    "zone_memory_read": suggestion.get("zone_memory_read"),
+                    "repeat_trade_case": suggestion.get("repeat_trade_case"),
+                    "planned_rr_estimate": suggestion.get("planned_rr_estimate"),
+                    "low_rr_edge": suggestion.get("low_rr_edge"),
+                    "timeframe_alignment": suggestion.get("timeframe_alignment"),
+                    "countertrend_edge": suggestion.get("countertrend_edge"),
+                    "trigger_fit": suggestion.get("trigger_fit"),
+                    "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
+                    "custom_exit_plan": suggestion.get("custom_exit_plan") or {},
                 },
                 oanda_order_id=paper_oid,
             )
@@ -289,7 +326,13 @@ def place_paper_market_fill(
             )
         except Exception:
             pass
-    return {"order_id": position_id, "status": "filled", "fill_price": fill_price, "paper_order_id": paper_oid}
+    return {
+        "order_id": position_id,
+        "status": "filled",
+        "fill_price": fill_price,
+        "paper_order_id": paper_oid,
+        "trade_id": trade_id,
+    }
 
 
 def log_paper_limit_placed(
@@ -324,6 +367,21 @@ def log_paper_limit_placed(
                 "autonomous": True,
                 "paper": True,
                 "order_type": "limit",
+                "thesis_fingerprint": suggestion.get("thesis_fingerprint"),
+                "decision": suggestion.get("decision"),
+                "conviction_rung": suggestion.get("conviction_rung"),
+                "trade_thesis": suggestion.get("trade_thesis"),
+                "whats_different": suggestion.get("whats_different"),
+                "why_not_stop": suggestion.get("why_not_stop"),
+                "zone_memory_read": suggestion.get("zone_memory_read"),
+                "repeat_trade_case": suggestion.get("repeat_trade_case"),
+                "planned_rr_estimate": suggestion.get("planned_rr_estimate"),
+                "low_rr_edge": suggestion.get("low_rr_edge"),
+                "timeframe_alignment": suggestion.get("timeframe_alignment"),
+                "countertrend_edge": suggestion.get("countertrend_edge"),
+                "trigger_fit": suggestion.get("trigger_fit"),
+                "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
+                "custom_exit_plan": suggestion.get("custom_exit_plan") or {},
             },
             oanda_order_id=paper_oid,
         )
@@ -356,6 +414,22 @@ def register_paper_limit_pending(
         "gtd_time_utc": suggestion.get("gtd_time_utc"),
         "exit_strategy": suggestion.get("exit_strategy"),
         "exit_params": suggestion.get("exit_params") or {},
+        "thesis_fingerprint": suggestion.get("thesis_fingerprint"),
+        "decision": suggestion.get("decision"),
+        "conviction_rung": suggestion.get("conviction_rung"),
+        "skip_reason": suggestion.get("skip_reason"),
+        "trade_thesis": suggestion.get("trade_thesis"),
+        "whats_different": suggestion.get("whats_different"),
+        "why_not_stop": suggestion.get("why_not_stop"),
+        "zone_memory_read": suggestion.get("zone_memory_read"),
+        "repeat_trade_case": suggestion.get("repeat_trade_case"),
+        "planned_rr_estimate": suggestion.get("planned_rr_estimate"),
+        "low_rr_edge": suggestion.get("low_rr_edge"),
+        "timeframe_alignment": suggestion.get("timeframe_alignment"),
+        "countertrend_edge": suggestion.get("countertrend_edge"),
+        "trigger_fit": suggestion.get("trigger_fit"),
+        "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
+        "custom_exit_plan": suggestion.get("custom_exit_plan") or {},
         "created_utc": datetime.now(timezone.utc).isoformat(),
     })
     auto["paper_pending_limits"] = pending
@@ -432,13 +506,29 @@ def process_paper_pending_limits(
             "tp": p.get("tp"),
             "exit_strategy": p.get("exit_strategy"),
             "exit_params": p.get("exit_params") or {},
+            "thesis_fingerprint": p.get("thesis_fingerprint"),
+            "decision": p.get("decision"),
+            "conviction_rung": p.get("conviction_rung"),
+            "skip_reason": p.get("skip_reason"),
+            "trade_thesis": p.get("trade_thesis"),
+            "whats_different": p.get("whats_different"),
+            "why_not_stop": p.get("why_not_stop"),
+            "zone_memory_read": p.get("zone_memory_read"),
+            "repeat_trade_case": p.get("repeat_trade_case"),
+            "planned_rr_estimate": p.get("planned_rr_estimate"),
+            "low_rr_edge": p.get("low_rr_edge"),
+            "timeframe_alignment": p.get("timeframe_alignment"),
+            "countertrend_edge": p.get("countertrend_edge"),
+            "trigger_fit": p.get("trigger_fit"),
+            "why_trade_despite_weakness": p.get("why_trade_despite_weakness"),
+            "custom_exit_plan": p.get("custom_exit_plan") or {},
         }
 
         class _T:
             bid = float(lim - pip * 0.02) if side == "buy" else float(lim + pip * 0.02)
             ask = float(lim + pip * 0.02) if side == "buy" else float(lim - pip * 0.02)
 
-        place_paper_market_fill(
+        placed = place_paper_market_fill(
             profile=profile,
             profile_name=profile_name,
             state_path=state_path,
@@ -454,7 +544,7 @@ def process_paper_pending_limits(
                 oanda_order_id=paper_oid,
                 fill_price=float(lim),
                 filled_at=now.isoformat(),
-                trade_id=None,
+                trade_id=placed.get("trade_id"),
             )
         except Exception:
             pass

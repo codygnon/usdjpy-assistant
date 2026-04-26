@@ -1271,6 +1271,13 @@ export interface AutonomousStats {
       avg_time_to_fill_sec: Record<string, number | null>;
     }>;
   };
+  selection_metrics?: {
+    generated: number;
+    placed: number;
+    skips: number;
+    skip_rate_pct: number;
+    llm_custom_exit_suggestions: number;
+  };
   performance: Record<string, {
     trade_count: number;
     closed_count: number;
@@ -1332,6 +1339,22 @@ export interface ReasoningSuggestion {
   side: string;
   trigger_family: string | null;
   trigger_reason: string | null;
+  thesis_fingerprint: string | null;
+  decision: string | null;
+  conviction_rung: string | null;
+  skip_reason: string | null;
+  trade_thesis: string | null;
+  whats_different: string | null;
+  why_not_stop: string | null;
+  zone_memory_read: string | null;
+  repeat_trade_case: string | null;
+  planned_rr_estimate: number | null;
+  low_rr_edge: string | null;
+  timeframe_alignment: string | null;
+  countertrend_edge: string | null;
+  trigger_fit: string | null;
+  why_trade_despite_weakness: string | null;
+  custom_exit_plan: Record<string, unknown> | null;
   requested_price: number | null;
   price: number;
   lots: number;
@@ -1361,6 +1384,16 @@ export interface ReasoningThesisCheck {
   confidence: string;
   requested_new_sl: number | null;
   requested_scale_out_pct: number | null;
+  check_reason: string | null;
+  current_pips: number | null;
+  current_mae_pips: number | null;
+  current_mfe_pips: number | null;
+  exit_state: string | null;
+  invalidation_status: string | null;
+  management_intent: string | null;
+  updated_exit_plan: string | null;
+  next_watch_condition: string | null;
+  custom_exit: boolean | null;
   execution_succeeded: boolean | null;
 }
 

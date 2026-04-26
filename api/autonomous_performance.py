@@ -10,6 +10,31 @@ from typing import Any
 
 from api import suggestion_tracker
 
+_FAMILY_INTENT: dict[str, str] = {
+    "critical_level_reaction": (
+        "reaction at nearby structure/order-book/round/session levels; best when price touches/reclaims/rejects "
+        "a meaningful level with clean micro confirmation"
+    ),
+    "tight_range_mean_reversion": (
+        "Tokyo/compressed-range edge; fade session extremes back toward range/mid only when the range is tight and "
+        "reward-to-mid is still worth it"
+    ),
+    "compression_breakout": (
+        "compressed tape pressing a boundary; wants real pressure through a nearby level, not a random entry inside chop"
+    ),
+    "trend_expansion": (
+        "ADX/ATR-backed directional continuation; should look like clean M1/M5 aligned expansion, not a mixed hedge"
+    ),
+    "failed_breakout_reversal_overlap_v1": (
+        "disabled experiment; intended to fade failed breakouts only after clear trap/reclaim evidence"
+    ),
+    "post_spike_retracement_ny_overlap_v1": (
+        "disabled experiment; intended to fade a sharp NY spike only after stall and first opposite confirmation"
+    ),
+}
+
+_FAMILY_ORDER = tuple(_FAMILY_INTENT.keys())
+
 
 def _connect(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
@@ -45,6 +70,15 @@ def _safe_avg(values: list[float | None]) -> float | None:
     if not vals:
         return None
     return sum(vals) / len(vals)
+
+
+def _family_label(row: dict[str, Any]) -> str:
+    family = str(row.get("trigger_family") or "").strip().lower()
+    if family:
+        return family
+    placed = row.get("placed_order") if isinstance(row.get("placed_order"), dict) else {}
+    family = str((placed or {}).get("trigger_family") or "").strip().lower()
+    return family or "unknown"
 
 
 def _count_win_rate(rows: list[dict[str, Any]], key: str) -> dict[str, float]:
@@ -479,3 +513,90 @@ def build_performance_memory_block(
                 else:
                     priority.pop()
     return "\n".join(priority)
+
+
+def build_family_scorecard_memory_block(
+    db_path: Path,
+    *,
+    max_rows: int = 80,
+) -> str:
+    """Compact code-gate family scorecard for autonomous prompts.
+
+    This is intentionally small and plain-English: the model gets both the
+    reason each code-gate family exists and recent outcome hints, without a raw
+    trade dump that would crowd out live context.
+    """
+    rows = load_autonomous_suggestions(db_path)
+    if rows:
+        rows = rows[: max(10, int(max_rows))]
+
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[_family_label(row)].append(row)
+
+    family_names = list(_FAMILY_ORDER)
+    extra_names = sorted(name for name in grouped.keys() if name not in _FAMILY_INTENT and name != "unknown")
+    family_names.extend(extra_names)
+    if grouped.get("unknown"):
+        family_names.append("unknown")
+
+    lines = ["=== AUTONOMOUS CODE-GATE FAMILY SCORECARD ==="]
+    lines.append(
+        "Use this as compact memory of what each gate family is meant to find. "
+        "A weak scorecard is not an automatic veto, but it should raise the burden of proof."
+    )
+
+    for family in family_names:
+        fam_rows = grouped.get(family, [])
+        idea = _FAMILY_INTENT.get(family, "uncategorized autonomous gate family; inspect trigger/rationale carefully")
+        if not fam_rows:
+            lines.append(f"- {family}: idea={idea}; recent=none yet.")
+            continue
+
+        generated = len(fam_rows)
+        placed = [row for row in fam_rows if str(row.get("action") or "") == "placed"]
+        skips = [
+            row for row in fam_rows
+            if str(row.get("decision") or "").lower() == "skip"
+            or (_safe_float(row.get("lots")) is not None and (_safe_float(row.get("lots")) or 0.0) <= 0.0)
+        ]
+        closed = [row for row in fam_rows if row.get("closed_at") and _safe_float(row.get("pips")) is not None]
+        wins = [row for row in closed if str(row.get("win_loss") or "") == "win"]
+        net_pips = sum(_safe_float(row.get("pips")) or 0.0 for row in closed)
+        avg_pips = (net_pips / len(closed)) if closed else None
+        planned_rr = [_safe_float(row.get("planned_rr_estimate")) for row in fam_rows]
+        low_rr = sum(1 for rr in planned_rr if rr is not None and rr < 1.0)
+        mixed_or_counter = sum(
+            1
+            for row in fam_rows
+            if str(row.get("timeframe_alignment") or "").lower() in {"mixed", "countertrend"}
+        )
+        working = sum(1 for row in fam_rows if str(row.get("zone_memory_read") or "").lower() == "working_zone")
+        failing = sum(1 for row in fam_rows if str(row.get("zone_memory_read") or "").lower() == "failing_zone")
+        unresolved = sum(1 for row in fam_rows if str(row.get("zone_memory_read") or "").lower() == "unresolved_chop")
+
+        outcome = "closed=0"
+        if closed:
+            outcome = (
+                f"closed={len(closed)}, WR={(len(wins) / len(closed)) * 100:.0f}%, "
+                f"avg={avg_pips:+.1f}p, net={net_pips:+.1f}p"
+            )
+        caution_bits = []
+        if low_rr:
+            caution_bits.append(f"lowRR={low_rr}")
+        if mixed_or_counter:
+            caution_bits.append(f"mixed/counter={mixed_or_counter}")
+        if working or failing or unresolved:
+            caution_bits.append(f"zone W/F/chop={working}/{failing}/{unresolved}")
+        caution = "; " + ", ".join(caution_bits) if caution_bits else ""
+        skip_rate = (len(skips) / generated) * 100.0 if generated else 0.0
+        lines.append(
+            f"- {family}: idea={idea}; recent={generated} gen, {len(placed)} placed, "
+            f"{len(skips)} skip ({skip_rate:.0f}%), {outcome}{caution}."
+        )
+
+    lines.append(
+        "Family rule: respect the family intent first. Repeating a working zone is allowed; "
+        "retrying a failing/unresolved family-zone needs material change."
+    )
+    return "\n".join(lines)

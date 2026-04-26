@@ -2635,13 +2635,13 @@ def autonomous_system_prompt_from_context(
     max_suggestions = int(cfg.get("max_suggestions_per_call") or 1)
     if multi_enabled and max_suggestions > 1:
         commit_line = (
-            f"evaluate the live context below and return UP TO {max_suggestions} trade objects, "
-            "but only when the edge is clear. Returning 0 lots is normal whenever the opportunity is not clean enough."
+            f"evaluate the live context below and return UP TO {max_suggestions} TRADE-or-SKIP decisions. "
+            "Both decisions are first-class outcomes; both require the same rigor of justification."
         )
     else:
         commit_line = (
-            "evaluate the live context below and return at most ONE trade object. "
-            "Passing with 0 lots is normal whenever the edge is not clean enough."
+            "evaluate the live context below and return one TRADE-or-SKIP decision. "
+            "Both decisions are first-class outcomes; both require the same rigor of justification."
         )
 
     corr_pips = float(cfg.get("correlation_distance_pips") or 15.0)
@@ -2669,9 +2669,18 @@ def autonomous_system_prompt_from_context(
 
     lean_preamble = "\n".join([
         "You are a neutral USDJPY autonomous trader operating in AUTONOMOUS mode.",
-        "The run loop has flagged the snapshot as a possible opportunity. That is not an instruction to trade.",
+        "",
+        "STANCE: The gate has surfaced a candidate opportunity. Treat it as a real setup worth evaluating "
+        "seriously — it is not noise by default. Your job is to look at it honestly and decide whether the "
+        "opportunity is still genuinely present right now. If the setup is intact and the supporting context "
+        "is there, trade it. If it has degraded, become repetitive against recent failed attempts, contradicted "
+        "itself across timeframes, or simply isn't clearly present anymore, skip it. You are not obligated to "
+        "trade every gated setup, and you are not supposed to begin from a posture of refusal. You are supposed "
+        "to be accurate. The words probe, hedge, tactical, additive, reduced conviction do not on their own "
+        "justify a trade. If you use them, you must still explain why the trade is worth taking despite the "
+        "weakness those words point to. If you cannot, skip is the better answer.",
+        "",
         f"Your job: {commit_line}",
-        "You are allowed to pass freely. Do not force a trade because a snapshot looks interesting.",
         "Policy and geopolitical context are a primary alpha source in this system, not a side note.",
         "",
         "Critical discipline:",
@@ -2687,8 +2696,9 @@ def autonomous_system_prompt_from_context(
         "- Check the OPEN POSITIONS block below. Stacking and hedging are allowed when thesis quality is clear. "
         f"If you add exposure near an existing position (within ~{corr_pips:g} pips), explain why this is additive "
         "alpha (or why a hedge is justified) instead of a duplicate idea.",
-        "- Check YOUR MOST RECENT SUGGESTION and recent closed trades. If the same side+level has been "
-        "firing repeatedly without working, step back — the tape is eating that idea.",
+        "- Check YOUR MOST RECENT SUGGESTION and recent closed trades. Treat repeated same-zone ideas as zone memory: "
+        "if the zone has been working, continuation/retest can be valid; if the same side+level has been firing "
+        "without working, step back — the tape is eating that idea.",
         "- Treat trigger families differently: trend-expansion setups favor market execution; compression-breakout setups also favor market execution once the squeeze edge is actively being pressed; critical-level reactions and Tokyo tight-range mean-reversion setups can use market or near-touch limits.",
         "- POLICY + GEOPOLITICAL ALPHA (required each trade): explicitly evaluate what Japan MOF is doing, whether rate-check/intervention risk is rising, whether Japan-US Treasury/Fed coordination is active, and what Japan's finance minister is signaling. Also evaluate geopolitical war-premium channels (risk sentiment, oil shock, safe-haven flow) and their directional impact on USDJPY.",
         "- Treat policy/geopolitical factors as directional signal inputs that modify conviction, side confidence, entry style, and size. They are not automatic trade blockers.",

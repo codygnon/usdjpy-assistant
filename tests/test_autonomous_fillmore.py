@@ -8,6 +8,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pandas as pd
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -28,6 +29,18 @@ def _ctx() -> dict:
 
 def _suggestion(*, exit_strategy: str = "none") -> dict:
     return {
+        "decision": "trade",
+        "conviction_rung": "B",
+        "trade_thesis": "Fresh autonomous test setup with enough structure to trade.",
+        "zone_memory_read": "fresh_setup",
+        "repeat_trade_case": "none",
+        "planned_rr_estimate": 1.33,
+        "low_rr_edge": None,
+        "timeframe_alignment": "aligned",
+        "countertrend_edge": None,
+        "trigger_fit": "level_reaction",
+        "why_trade_despite_weakness": None,
+        "custom_exit_plan": {},
         "side": "buy",
         "price": 159.250,
         "sl": 159.100,
@@ -129,6 +142,16 @@ def _trend_trigger(**overrides) -> dict:
     }
     base.update(overrides)
     return base
+
+
+def _trend_expansion_m5_df() -> pd.DataFrame:
+    close = pd.Series([159.000 + (i * 0.001) for i in range(30)], dtype=float)
+    return pd.DataFrame({
+        "open": close - 0.001,
+        "high": close + 0.002,
+        "low": close - 0.002,
+        "close": close,
+    })
 
 
 def _compression_trigger(**overrides) -> dict:
@@ -237,6 +260,53 @@ def test_critical_level_reaction_trigger_keeps_support_reclaim(monkeypatch) -> N
     assert trig is not None
     assert trig["reason"] == "support_reclaim:WHOLE_YEN:159.00"
     assert trig["bias"] == "buy"
+
+
+def test_critical_level_reaction_trigger_uses_oanda_buy_cluster_as_support() -> None:
+    m1 = pd.DataFrame(
+        {
+            "open": [159.04, 159.03, 159.02, 159.01, 159.02, 159.01, 159.00, 159.01, 159.00, 159.00],
+            "high": [159.05, 159.04, 159.03, 159.02, 159.03, 159.02, 159.01, 159.02, 159.03, 159.04],
+            "low": [159.02, 159.01, 159.00, 158.99, 159.00, 158.99, 158.98, 158.99, 158.98, 158.98],
+            "close": [159.03, 159.02, 159.01, 159.00, 159.01, 159.00, 159.00, 159.01, 159.01, 159.03],
+        }
+    )
+    order_book = {
+        "current_price": 159.03,
+        "buy_clusters": [{"price": 159.000, "pct": 0.084}],
+        "sell_clusters": [{"price": 159.250, "pct": 0.052}],
+    }
+
+    trig = autonomous_fillmore._critical_level_reaction_trigger(
+        159.03,
+        {"M1": m1},
+        "london/ny",
+        max_level_pips=6.0,
+        micro_window_bars=3,
+        touch_tolerance_pips=0.8,
+        order_book=order_book,
+    )
+
+    assert trig is not None
+    assert trig["bias"] == "buy"
+    assert trig["reason"].startswith("support_reclaim:OANDA_BUY_CLUSTER:159.000")
+    assert trig["level_price"] == 159.0
+
+
+def test_nearest_structure_prefers_order_book_cluster_label_on_same_price() -> None:
+    prox = autonomous_fillmore._nearest_structure_pips(
+        159.03,
+        {},
+        "london/ny",
+        order_book={
+            "current_price": 159.03,
+            "buy_clusters": [{"price": 159.000, "pct": 0.084}],
+            "sell_clusters": [],
+        },
+    )
+
+    assert prox["underfoot_pips"] == pytest.approx(3.0)
+    assert str(prox["underfoot_label"]).startswith("OANDA_BUY_CLUSTER:159.000")
 
 
 def test_critical_level_reaction_trigger_disables_resistance_reject(monkeypatch) -> None:
@@ -574,10 +644,25 @@ def test_invoke_suggest_persists_autonomous_suggestion_history(tmp_path: Path, m
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
     profile = SimpleNamespace(symbol="USDJPY")
+    gate_decision = autonomous_fillmore.GateDecision(
+        timestamp_utc=datetime.now(timezone.utc).isoformat(),
+        result="pass",
+        layer="pass",
+        reason="ok",
+        mode="paper",
+        aggressiveness="balanced",
+        extras={
+            "trigger_family": "critical_level_reaction",
+            "trigger_reason": "support_reclaim",
+            "trigger_bias": "buy",
+            "thesis_fingerprint": "buy:critical_level_reaction:WHOLE_YEN:159.00@159.00:na",
+        },
+    )
     out = autonomous_fillmore._invoke_suggest(
         profile,
         "kumatora2",
         {"model": "gpt-5.4-mini", "aggressiveness": "balanced", "mode": "paper"},
+        gate_decision=gate_decision,
     )
     out0 = out[0]
 
@@ -589,6 +674,15 @@ def test_invoke_suggest_persists_autonomous_suggestion_history(tmp_path: Path, m
     assert row["suggestion_id"] == out0["suggestion_id"]
     assert row["profile"] == "kumatora2"
     assert row["market_snapshot"]["macro_bias"]["combined_bias"] == "bearish"
+    assert row["decision"] == "trade"
+    assert row["conviction_rung"] == "B"
+    assert row["trade_thesis"] == "Fresh autonomous test setup with enough structure to trade."
+    assert row["zone_memory_read"] == "fresh_setup"
+    assert row["repeat_trade_case"] == "none"
+    assert row["planned_rr_estimate"] == 1.33
+    assert row["timeframe_alignment"] == "aligned"
+    assert row["trigger_fit"] == "level_reaction"
+    assert row["thesis_fingerprint"] == "buy:critical_level_reaction:WHOLE_YEN:159.00@159.00:na"
 
 
 def test_min_confidence_removed_from_default_config() -> None:
@@ -685,7 +779,12 @@ def test_invoke_suggest_stage4_sharpens_confidence_prompt_and_exit_calibration(t
     user_prompt = str((captured.get("messages") or [{}, {}])[1]["content"])
     assert "LOT SIZING" in user_prompt
     assert "CONVICTION SHOULD REFLECT SELECTIVITY" in user_prompt
-    assert "0 lots: use this freely" in user_prompt
+    assert "0 lots: use freely" in user_prompt
+    assert '"decision": "trade" | "skip"' in user_prompt
+    assert '"conviction_rung": "A" | "B" | "C" | "D"' in user_prompt
+    assert '"zone_memory_read": "fresh_setup" | "working_zone" | "failing_zone" | "unresolved_chop"' in user_prompt
+    assert '"exit_strategy": one of [' in user_prompt and '"llm_custom_exit"' in user_prompt
+    assert '"custom_exit_plan"' in user_prompt
     assert '"quality": "A" | "B" | "C"' in user_prompt
     assert "London/NY trend profile" in user_prompt
     system_prompt = str((captured.get("messages") or [{}, {}])[0]["content"])
@@ -707,13 +806,13 @@ def test_autonomous_system_prompt_aligns_with_near_touch_execution() -> None:
         risk_regime={"label": "defensive_soft"},
     )
 
-    assert "return UP TO 2 trade objects" in prompt
-    assert "within ~10 pips of your proposed entry" in prompt
+    assert "return UP TO 2 TRADE-or-SKIP decisions" in prompt
+    assert "within ~10 pips" in prompt
     assert "~$6.66/pip/lot at 150.123" in prompt
     assert "RISK REGIME: DEFENSIVE_SOFT" in prompt
     assert "clamp autonomous limits into a near-market band" in prompt
     assert "compression-breakout setups also favor market execution" in prompt
-    assert "You are allowed to pass freely" in prompt
+    assert "Both decisions are first-class outcomes" in prompt
 
 
 def test_fit_aux_memory_blocks_keeps_required_and_drops_low_priority_when_budget_tight() -> None:
@@ -938,6 +1037,70 @@ def test_market_order_with_no_exit_strategy_still_links_trade_and_fill(tmp_path:
     assert tracked["placed_order"]["exit_strategy"] == "none"
 
 
+def test_llm_custom_exit_market_trade_preserves_plan_and_budget(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+    _install_fake_main(monkeypatch, db_path)
+
+    fake_broker = ModuleType("adapters.broker")
+    fake_broker.get_adapter = lambda profile: _FakeMarketAdapter()
+    monkeypatch.setitem(sys.modules, "adapters.broker", fake_broker)
+
+    profile = SimpleNamespace(
+        profile_name="kumatora2",
+        symbol="USDJPY",
+        broker_type="oanda",
+        active_preset_name=None,
+    )
+    store = _DummyStore()
+    state_path = tmp_path / "kumatora2" / "runtime_state.json"
+
+    suggestion = _suggestion(exit_strategy="llm_custom_exit")
+    suggestion["exit_params"] = {"custom_exit_max_checks": 3, "custom_exit_runner_max_checks": 5}
+    suggestion["custom_exit_plan"] = {
+        "first_profit_objective_pips": 6,
+        "partial_close_pct": 33,
+        "breakeven_trigger_pips": 5,
+        "invalidation_conditions": "M5 closes back below the reclaim zone.",
+        "trail_preference": "price_action",
+        "time_stop_minutes": 18,
+        "early_exit_if": "The reclaim fails twice.",
+    }
+    sid = suggestion_tracker.log_generated(
+        db_path,
+        profile="kumatora2",
+        model="gpt-5.4",
+        suggestion=suggestion,
+        ctx=_ctx(),
+    )
+    suggestion["suggestion_id"] = sid
+
+    out = autonomous_fillmore._place_from_suggestion(
+        profile,
+        "kumatora2",
+        state_path,
+        suggestion,
+        "market",
+        store,
+    )
+
+    assert out["status"] == "filled"
+    row = store.inserted[0]
+    assert row["managed_trail_mode"] == "none"
+    assert row["llm_exit_check_count"] == 0
+    assert row["llm_exit_max_checks"] == 3
+    assert row["llm_exit_runner_max_checks"] == 5
+    assert json.loads(row["custom_exit_plan_json"])["time_stop_minutes"] == 18
+    cfg = json.loads(row["config_json"])
+    assert cfg["exit_strategy"] == "llm_custom_exit"
+    assert cfg["custom_exit_plan"]["early_exit_if"] == "The reclaim fails twice."
+
+    tracked = suggestion_tracker.get_by_order_id(db_path, "555001")
+    assert tracked is not None
+    assert tracked["exit_strategy"] == "llm_custom_exit"
+    assert tracked["custom_exit_plan"]["partial_close_pct"] == 33
+    assert tracked["placed_order"]["custom_exit_plan"]["trail_preference"] == "price_action"
+
+
 def test_limit_order_with_no_exit_strategy_still_registers_pending_watch(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "ai_suggestions.sqlite"
     _install_fake_main(monkeypatch, db_path)
@@ -1007,7 +1170,7 @@ def test_aggressive_gate_blocks_when_m3_and_m1_disagree(monkeypatch) -> None:
 
     assert decision.result == "block"
     assert decision.layer == "signal"
-    assert decision.reason == "no_hybrid_trigger:no_trend_signal"
+    assert decision.reason == "no_hybrid_trigger"
     assert decision.extras.get("m3") == "bull"
     assert decision.extras.get("m1") == "bear"
 
@@ -1033,7 +1196,7 @@ def test_aggressive_gate_blocks_without_hybrid_trigger(monkeypatch) -> None:
 
     assert decision.result == "block"
     assert decision.layer == "signal"
-    assert decision.reason == "no_hybrid_trigger:no_trend_signal"
+    assert decision.reason == "no_hybrid_trigger"
 
 
 def test_very_aggressive_gate_still_requires_some_trend_signal(monkeypatch) -> None:
@@ -1268,7 +1431,7 @@ def test_proximity_gate_blocks_when_price_far_from_structure(monkeypatch) -> Non
 
     assert decision.result == "block"
     assert decision.layer == "signal"
-    assert decision.reason == "no_hybrid_trigger:no_trend_signal"
+    assert decision.reason == "no_hybrid_trigger"
     assert decision.extras.get("nearest_level_pips") == 23.0
 
 
@@ -1413,7 +1576,7 @@ def test_trend_expansion_is_restricted_to_london_ny_overlap(monkeypatch) -> None
     )
 
     assert decision.result == "block"
-    assert decision.reason == "no_hybrid_trigger:no_trend_signal"
+    assert decision.reason == "no_hybrid_trigger"
     assert decision.extras.get("trend_session_veto") == "ny"
 
 
@@ -1619,7 +1782,7 @@ def test_dedupe_gate_blocks_when_recent_placement_in_same_bucket(tmp_path: Path,
     monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
 
     decision = autonomous_fillmore.evaluate_gate(
-        _gate_cfg("balanced"),
+        {**_gate_cfg("balanced"), "repeat_setup_dedupe_enabled": True},
         {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0},
         autonomous_fillmore.GateInputs(
             spread_pips=0.8,
@@ -1912,6 +2075,54 @@ def test_reasoning_feed_returns_structured_data(tmp_path: Path) -> None:
     assert feed["suggestions"][0]["trigger_reason"] == "tokyo_range_reclaim:session_low"
 
 
+def test_reasoning_feed_returns_phase2_and_custom_exit_fields(tmp_path: Path) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+    suggestion_tracker.init_db(db_path)
+
+    sugg = _suggestion(exit_strategy="llm_custom_exit")
+    sugg["zone_memory_read"] = "working_zone"
+    sugg["repeat_trade_case"] = "same_zone_continuation"
+    sugg["low_rr_edge"] = "Zone has held three times and invalidation is tight."
+    sugg["custom_exit_plan"] = {"early_exit_if": "M5 closes back under the zone."}
+    sid = suggestion_tracker.log_generated(
+        db_path,
+        profile="kumatora2",
+        model="gpt-5.4-mini",
+        suggestion=sugg,
+        ctx=_ctx(),
+    )
+    suggestion_tracker.log_thesis_check(
+        db_path,
+        profile="kumatora2",
+        suggestion_id=sid,
+        trade_id="ai_autonomous:701:1",
+        position_id="701",
+        model="gpt-5.4-mini",
+        action="hold",
+        reason="Thesis intact.",
+        check_reason="price_moved",
+        current_pips=3.2,
+        exit_state="thesis_intact",
+        invalidation_status="none",
+        management_intent="let_work",
+        next_watch_condition="Exit if reclaim fails.",
+        custom_exit=True,
+        execution_succeeded=True,
+    )
+
+    feed = suggestion_tracker.get_reasoning_feed(db_path)
+    s0 = feed["suggestions"][0]
+    assert s0["zone_memory_read"] == "working_zone"
+    assert s0["repeat_trade_case"] == "same_zone_continuation"
+    assert s0["low_rr_edge"] == "Zone has held three times and invalidation is tight."
+    assert s0["custom_exit_plan"]["early_exit_if"] == "M5 closes back under the zone."
+    tc0 = feed["thesis_checks"][0]
+    assert tc0["custom_exit"] is True
+    assert tc0["check_reason"] == "price_moved"
+    assert tc0["current_pips"] == 3.2
+    assert tc0["next_watch_condition"] == "Exit if reclaim fails."
+
+
 def test_compute_risk_regime_hysteresis_and_no_drawdown_trigger() -> None:
     cfg = dict(autonomous_fillmore.DEFAULT_CONFIG)
     cfg["max_daily_loss_usd"] = 50.0
@@ -1982,6 +2193,74 @@ def test_m1_pullback_or_zone_accepts_recent_pullback_touch() -> None:
     })
 
     assert autonomous_fillmore._m1_pullback_or_zone({"M1": df}, "bull") is True
+
+
+def test_trend_expansion_rejects_m1_stack_against_selected_bias(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bear")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m5_stack", lambda data_by_tf: "bear")
+    monkeypatch.setattr(autonomous_fillmore, "_adx_value", lambda *args, **kwargs: 30.0)
+    monkeypatch.setattr(autonomous_fillmore, "_atr_pips", lambda *args, **kwargs: 4.5)
+
+    trigger = autonomous_fillmore._trend_expansion_trigger(
+        159.03,
+        {"M5": _trend_expansion_m5_df()},
+        adx_min=25.0,
+        min_m5_atr_pips=3.0,
+        extension_atr_mult=1.0,
+        require_m3_trend=False,
+        require_m1_stack=False,
+        require_any_trend_signal=False,
+        reject_mismatch=False,
+    )
+
+    assert trigger is None
+
+
+def test_trend_expansion_rejects_m5_stack_against_selected_bias(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m5_stack", lambda data_by_tf: "bear")
+    monkeypatch.setattr(autonomous_fillmore, "_adx_value", lambda *args, **kwargs: 30.0)
+    monkeypatch.setattr(autonomous_fillmore, "_atr_pips", lambda *args, **kwargs: 4.5)
+
+    trigger = autonomous_fillmore._trend_expansion_trigger(
+        159.03,
+        {"M5": _trend_expansion_m5_df()},
+        adx_min=25.0,
+        min_m5_atr_pips=3.0,
+        extension_atr_mult=1.0,
+        require_m3_trend=False,
+        require_m1_stack=False,
+        require_any_trend_signal=False,
+        reject_mismatch=False,
+    )
+
+    assert trigger is None
+
+
+def test_trend_expansion_allows_clean_m1_m5_alignment(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m5_stack", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_adx_value", lambda *args, **kwargs: 30.0)
+    monkeypatch.setattr(autonomous_fillmore, "_atr_pips", lambda *args, **kwargs: 4.5)
+
+    trigger = autonomous_fillmore._trend_expansion_trigger(
+        159.03,
+        {"M5": _trend_expansion_m5_df()},
+        adx_min=25.0,
+        min_m5_atr_pips=3.0,
+        extension_atr_mult=1.0,
+        require_m3_trend=False,
+        require_m1_stack=False,
+        require_any_trend_signal=False,
+        reject_mismatch=False,
+    )
+
+    assert trigger is not None
+    assert trigger["bias"] == "buy"
+    assert trigger["trend_alignment"] == {"m3": "bull", "m1": "bull", "m5": "bull"}
 
 
 def test_evaluate_gate_passes_trend_expansion_trigger_metadata(monkeypatch) -> None:
@@ -2644,6 +2923,87 @@ def test_build_stats_rebuilds_today_call_and_placement_counters_from_history(tmp
     assert stats["today"]["spend_usd"] > 0
 
 
+def test_custom_exit_budget_blocks_extra_non_emergency_checks() -> None:
+    import run_loop
+
+    trade_row = {
+        "trade_id": "ai_autonomous:701:1",
+        "timestamp_utc": (datetime.now(timezone.utc) - timedelta(minutes=12)).isoformat(),
+        "side": "buy",
+        "entry_price": 159.25,
+        "stop_price": 159.15,
+        "llm_exit_check_count": 3,
+        "max_adverse_pips": 1.0,
+        "max_favorable_pips": 4.0,
+        "config_json": json.dumps({
+            "exit_strategy": "llm_custom_exit",
+            "exit_params": {
+                "custom_exit_max_checks": 3,
+                "custom_exit_runner_max_checks": 5,
+                "custom_exit_min_age_sec": 120,
+                "custom_exit_min_interval_sec": 150,
+            },
+        }),
+    }
+    recent = [
+        {"custom_exit": True, "created_utc": (datetime.now(timezone.utc) - timedelta(minutes=4)).isoformat()},
+        {"custom_exit": True, "created_utc": (datetime.now(timezone.utc) - timedelta(minutes=7)).isoformat()},
+        {"custom_exit": True, "created_utc": (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()},
+    ]
+
+    eligible, reason, count, budget = run_loop._custom_exit_eligibility(
+        trade_row,
+        recent_checks=recent,
+        current_pips=1.0,
+        effective_stop=159.15,
+        pip_size=0.01,
+    )
+
+    assert eligible is False
+    assert reason == "custom_exit_budget:3/3"
+    assert count == 3
+    assert budget == 3
+
+
+def test_custom_exit_budget_allows_emergency_check_after_budget() -> None:
+    import run_loop
+
+    trade_row = {
+        "trade_id": "ai_autonomous:701:1",
+        "timestamp_utc": (datetime.now(timezone.utc) - timedelta(minutes=12)).isoformat(),
+        "side": "buy",
+        "entry_price": 159.25,
+        "stop_price": 159.15,
+        "llm_exit_check_count": 3,
+        "max_adverse_pips": 8.0,
+        "max_favorable_pips": 1.0,
+        "config_json": json.dumps({
+            "exit_strategy": "llm_custom_exit",
+            "exit_params": {
+                "custom_exit_max_checks": 3,
+                "custom_exit_runner_max_checks": 5,
+                "custom_exit_min_age_sec": 120,
+                "custom_exit_min_interval_sec": 150,
+            },
+        }),
+    }
+
+    eligible, reason, count, budget = run_loop._custom_exit_eligibility(
+        trade_row,
+        recent_checks=[
+            {"custom_exit": True, "created_utc": (datetime.now(timezone.utc) - timedelta(minutes=4)).isoformat()},
+        ],
+        current_pips=-8.0,
+        effective_stop=159.15,
+        pip_size=0.01,
+    )
+
+    assert eligible is True
+    assert reason == "emergency_thesis_threat"
+    assert count == 3
+    assert budget == 3
+
+
 def test_tick_autonomous_fillmore_blocks_below_floor_risk_scaled_lot(tmp_path: Path, monkeypatch) -> None:
     state_path = tmp_path / "kumatora2" / "runtime_state.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2679,7 +3039,7 @@ def test_tick_autonomous_fillmore_blocks_below_floor_risk_scaled_lot(tmp_path: P
     monkeypatch.setattr(
         autonomous_fillmore,
         "_invoke_suggest",
-        lambda profile, profile_name, cfg, risk_regime=None, gate_decision=None: [{
+        lambda profile, profile_name, cfg, risk_regime=None, gate_decision=None, runtime_snapshot=None: [{
             **_suggestion(),
             "lots": 0.01,
         }],
