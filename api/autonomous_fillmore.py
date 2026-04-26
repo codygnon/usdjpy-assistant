@@ -295,7 +295,7 @@ _GATE_SETUP_COOLDOWN_MINUTES = {
     "post_spike_retracement_ny_overlap_v1": 20,
 }
 _CRITICAL_LEVEL_SETUP_BUCKET_PIPS = 25.0
-_ENABLE_CRITICAL_RESISTANCE_REJECT = False
+_ENABLE_CRITICAL_RESISTANCE_REJECT = True
 _ENABLE_COMPRESSION_BREAKOUT = False
 _ENABLE_FAILED_BREAKOUT_REVERSAL = False
 _ENABLE_POST_SPIKE_RETRACEMENT = False
@@ -1348,10 +1348,9 @@ def _critical_level_reaction_trigger(
                 "micro_confirmation": "reclaimed_support",
             }
 
-    # USDJPY support reclaims show a persistent edge in calibration, while
-    # resistance fades are consistently negative across sessions. Keep the
-    # implementation switchable, but default autonomous gating to the stronger
-    # support-side reaction family only.
+    # Resistance rejects are forward-tested with LLM discretion enabled. The
+    # mechanical backtest is only a raw wakeup-quality check, not a substitute
+    # for the model's trade/skip reasoning.
     if not _ENABLE_CRITICAL_RESISTANCE_REJECT:
         return None
 

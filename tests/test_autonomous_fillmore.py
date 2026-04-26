@@ -309,7 +309,7 @@ def test_nearest_structure_prefers_order_book_cluster_label_on_same_price() -> N
     assert str(prox["underfoot_label"]).startswith("OANDA_BUY_CLUSTER:159.000")
 
 
-def test_critical_level_reaction_trigger_disables_resistance_reject(monkeypatch) -> None:
+def test_critical_level_reaction_trigger_keeps_resistance_reject(monkeypatch) -> None:
     m1 = pd.DataFrame(
         {
             "open": [159.03, 159.04, 159.05, 159.06, 159.07, 159.08, 159.07, 159.08, 159.07, 159.06],
@@ -340,7 +340,9 @@ def test_critical_level_reaction_trigger_disables_resistance_reject(monkeypatch)
         touch_tolerance_pips=0.8,
     )
 
-    assert trig is None
+    assert trig is not None
+    assert trig["reason"] == "resistance_reject:WHOLE_YEN:159.10"
+    assert trig["bias"] == "sell"
 
 
 def test_critical_level_reaction_trigger_prunes_disabled_support_labels(monkeypatch) -> None:
