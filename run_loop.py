@@ -6000,6 +6000,7 @@ def main() -> None:
                         RuntimeState(
                             mode=state.mode,
                             kill_switch=state.kill_switch,
+                            exit_system_only=state.exit_system_only,
                             last_processed_bar_time_utc=m1_last_time,
                         ),
                     )
