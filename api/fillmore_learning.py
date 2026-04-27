@@ -276,6 +276,20 @@ def evaluate_trade_thesis(
     opened_at = _parse_iso(trade_row.get("timestamp_utc"))
     open_age_sec = max(0.0, (_now_utc() - opened_at).total_seconds()) if opened_at else None
     recent_checks = suggestion_tracker.list_thesis_checks(db_path, trade_id=trade_id, limit=2)
+    spot = ctx.get("spot_price") if isinstance(ctx, dict) else {}
+    spread_pips = _safe_float((spot or {}).get("spread_pips")) if isinstance(spot, dict) else None
+    if spread_pips is not None and spread_pips > 0:
+        spread_noise_note = (
+            f"Execution-friction note: live spread is about {spread_pips:.1f}p. "
+            "A trade being red by roughly the spread, or a few pips in noisy conditions, is not by itself thesis failure. "
+            "Treat small negative P&L as normal entry friction unless price has structurally accepted beyond the original "
+            "invalidation level or the setup's key reclaim/rejection has clearly failed.\n"
+        )
+    else:
+        spread_noise_note = (
+            "Execution-friction note: do not treat small negative P&L by itself as thesis failure. "
+            "Exit because the level/thesis is structurally invalidated, not merely because the trade is red.\n"
+        )
 
     mode_note = (
         "This trade uses llm_custom_exit. You are the active exit manager, but checks are call-budgeted. "
@@ -329,7 +343,8 @@ def evaluate_trade_thesis(
         "Recent thesis checks:\n"
         + _recent_checks_text(recent_checks)
         + "\n"
-        "Decision rule: use hold unless the thesis is materially weaker than the original rationale implied. "
+        + spread_noise_note
+        + "Decision rule: use hold unless the thesis is materially weaker than the original rationale implied. "
         "If you choose tighten_sl, the stop must be closer to price in a risk-reducing direction only. "
         "If you choose scale_out, only use 25, 33, or 50. If the trade is clearly broken, use exit_now."
     )
