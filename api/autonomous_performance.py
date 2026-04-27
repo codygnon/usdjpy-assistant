@@ -319,6 +319,7 @@ def _compute_window_stats(
     losses = [row for row in closed_rows if str(row.get("win_loss") or "") == "loss"]
     gross_win = sum(max(_safe_float(row.get("pnl")) or 0.0, 0.0) for row in closed_rows)
     gross_loss = abs(sum(min(_safe_float(row.get("pnl")) or 0.0, 0.0) for row in closed_rows))
+    net_pnl = sum(_safe_float(row.get("pnl")) or 0.0 for row in closed_rows)
     intervention_checks = 0
     total_checks = 0
     for row in rows:
@@ -331,6 +332,7 @@ def _compute_window_stats(
         "win_rate": (len(wins) / len(closed_rows)) if closed_rows else None,
         "avg_win_pips": _safe_avg([_safe_float(row.get("pips")) for row in wins]),
         "avg_loss_pips": _safe_avg([_safe_float(row.get("pips")) for row in losses]),
+        "net_pnl": net_pnl,
         "profit_factor": (gross_win / gross_loss) if gross_loss > 0 else (None if gross_win <= 0 else 999.0),
         "avg_hold_minutes": _safe_avg([_safe_float(row.get("hold_minutes")) for row in closed_rows]),
         "fill_rate_limits": (
@@ -447,6 +449,7 @@ def build_performance_memory_block(
     lines = ["=== STRUCTURED PERFORMANCE MEMORY ==="]
     win_rate = stats.get("win_rate")
     pf = stats.get("profit_factor")
+    net_pnl = stats.get("net_pnl")
     avg_win = stats.get("avg_win_pips")
     avg_loss = stats.get("avg_loss_pips")
     avg_hold = stats.get("avg_hold_minutes")
@@ -455,6 +458,8 @@ def build_performance_memory_block(
         f"Last {closed_count} autonomous closes: "
         f"{(win_rate or 0.0) * 100:.0f}% WR | PF {pf_text}"
     )
+    if isinstance(net_pnl, (int, float)):
+        lines[-1] = lines[-1] + f" | P&L ${net_pnl:+,.2f}"
     core_tail = []
     if isinstance(avg_win, (int, float)):
         core_tail.append(f"avg win {avg_win:+.1f}p")

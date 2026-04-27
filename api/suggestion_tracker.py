@@ -180,6 +180,7 @@ CREATE TABLE IF NOT EXISTS ai_performance_stats (
     win_rate REAL,
     avg_win_pips REAL,
     avg_loss_pips REAL,
+    net_pnl REAL,
     profit_factor REAL,
     avg_hold_minutes REAL,
     fill_rate_limits REAL,
@@ -255,6 +256,7 @@ def init_db(db_path: Path) -> None:
         _ensure_column(conn, "ai_thesis_checks", "updated_exit_plan", "TEXT")
         _ensure_column(conn, "ai_thesis_checks", "next_watch_condition", "TEXT")
         _ensure_column(conn, "ai_thesis_checks", "custom_exit", "INTEGER")
+        _ensure_column(conn, "ai_performance_stats", "net_pnl", "REAL")
         _ensure_column(conn, "ai_reflections", "primary_error_category", "TEXT")
         _ensure_column(conn, "ai_reflections", "primary_strength_category", "TEXT")
         _ensure_column(conn, "ai_reflections", "regime_at_entry", "TEXT")
@@ -1526,6 +1528,7 @@ def upsert_performance_stats(
         "win_rate": values.get("win_rate"),
         "avg_win_pips": values.get("avg_win_pips"),
         "avg_loss_pips": values.get("avg_loss_pips"),
+        "net_pnl": values.get("net_pnl"),
         "profit_factor": values.get("profit_factor"),
         "avg_hold_minutes": values.get("avg_hold_minutes"),
         "fill_rate_limits": values.get("fill_rate_limits"),
@@ -1545,14 +1548,14 @@ def upsert_performance_stats(
             """
             INSERT INTO ai_performance_stats (
                 profile, stats_key, trade_count, closed_count, win_rate,
-                avg_win_pips, avg_loss_pips, profit_factor, avg_hold_minutes,
+                avg_win_pips, avg_loss_pips, net_pnl, profit_factor, avg_hold_minutes,
                 fill_rate_limits, avg_time_to_fill_sec, avg_fill_vs_requested_pips,
                 thesis_intervention_rate, avg_mae_pips, avg_mfe_pips,
                 win_rate_by_confidence_json, win_rate_by_side_json, win_rate_by_session_json,
                 prompt_version_breakdown_json, updated_utc
             ) VALUES (
                 :profile, :stats_key, :trade_count, :closed_count, :win_rate,
-                :avg_win_pips, :avg_loss_pips, :profit_factor, :avg_hold_minutes,
+                :avg_win_pips, :avg_loss_pips, :net_pnl, :profit_factor, :avg_hold_minutes,
                 :fill_rate_limits, :avg_time_to_fill_sec, :avg_fill_vs_requested_pips,
                 :thesis_intervention_rate, :avg_mae_pips, :avg_mfe_pips,
                 :win_rate_by_confidence_json, :win_rate_by_side_json, :win_rate_by_session_json,
@@ -1564,6 +1567,7 @@ def upsert_performance_stats(
                 win_rate=excluded.win_rate,
                 avg_win_pips=excluded.avg_win_pips,
                 avg_loss_pips=excluded.avg_loss_pips,
+                net_pnl=excluded.net_pnl,
                 profit_factor=excluded.profit_factor,
                 avg_hold_minutes=excluded.avg_hold_minutes,
                 fill_rate_limits=excluded.fill_rate_limits,
