@@ -1285,10 +1285,19 @@ export interface AutonomousStats {
       by_reason: Record<string, number>;
       by_session: Record<string, number>;
     }>;
+    autonomous_pnl_by_day?: Array<{
+      date: string;
+      closed_count: number;
+      wins: number;
+      losses: number;
+      net_pnl: number;
+      net_pips: number;
+    }>;
   };
   performance: Record<string, {
     trade_count: number;
     closed_count: number;
+    net_pnl: number | null;
     win_rate: number | null;
     avg_win_pips: number | null;
     avg_loss_pips: number | null;

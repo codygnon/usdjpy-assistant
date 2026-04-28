@@ -522,6 +522,7 @@ function AutonomousFillmorePanel({
   const perf20View = perf20 ?? {
     trade_count: 0,
     closed_count: 0,
+    net_pnl: null,
     win_rate: null,
     avg_win_pips: null,
     avg_loss_pips: null,
@@ -566,6 +567,7 @@ function AutonomousFillmorePanel({
   const serverVetoTotal = stats?.selection_metrics?.server_veto_total ?? 0;
   const serverVetoByReason = Object.entries(stats?.selection_metrics?.server_veto_by_reason || {}).slice(0, 6);
   const serverVetoByDay = stats?.selection_metrics?.server_veto_by_day || [];
+  const pnlByDay = stats?.selection_metrics?.autonomous_pnl_by_day || [];
 
   return (
     <div className="card autonomous-panel">
@@ -774,6 +776,12 @@ function AutonomousFillmorePanel({
             </div>
           )}
           <div className="autonomous-panel__stats-grid">
+            <div className="autonomous-panel__stat">
+              <div className="autonomous-panel__stat-label">Net P&L</div>
+              <strong style={{ color: (perf20View.net_pnl ?? 0) >= 0 ? '#4ade80' : '#f87171' }}>
+                {perf20View.net_pnl != null ? `${perf20View.net_pnl >= 0 ? '+' : ''}$${perf20View.net_pnl.toFixed(2)}` : '–'}
+              </strong>
+            </div>
             <div className="autonomous-panel__stat">
               <div className="autonomous-panel__stat-label">Win rate</div>
               <strong>{perf20View.win_rate != null ? `${(perf20View.win_rate * 100).toFixed(0)}%` : '–'}</strong>
@@ -1170,6 +1178,54 @@ function AutonomousFillmorePanel({
               })}
             </div>
           </>
+        )}
+      </div>
+
+      <div className="autonomous-panel__section">
+        <div className="autonomous-panel__section-head">
+          <span className="autonomous-panel__section-title">Autonomous P&L By Day</span>
+          <span className="autonomous-panel__muted">calendar view (closed trades)</span>
+        </div>
+        {pnlByDay.length === 0 ? (
+          <div className="autonomous-panel__hint">No closed autonomous trades yet.</div>
+        ) : (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+              gap: 8,
+            }}
+          >
+            {pnlByDay.map((row) => (
+              <div
+                key={row.date}
+                style={{
+                  borderRadius: 10,
+                  border: '1px solid rgba(255,255,255,0.10)',
+                  background: 'rgba(255,255,255,0.03)',
+                  padding: '8px 9px',
+                }}
+              >
+                <div style={{ fontSize: '0.72rem', color: '#cbd5e1', fontWeight: 700 }}>{row.date}</div>
+                <div
+                  style={{
+                    fontSize: '0.92rem',
+                    color: row.net_pnl >= 0 ? '#4ade80' : '#f87171',
+                    fontWeight: 700,
+                    marginTop: 2,
+                  }}
+                >
+                  {row.net_pnl >= 0 ? '+' : ''}${row.net_pnl.toFixed(2)}
+                </div>
+                <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginTop: 2, lineHeight: 1.3 }}>
+                  {row.net_pips >= 0 ? '+' : ''}{row.net_pips.toFixed(1)}p · {row.closed_count} closed
+                </div>
+                <div style={{ fontSize: '0.66rem', color: '#94a3b8', marginTop: 4 }}>
+                  W{row.wins} / L{row.losses}
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 

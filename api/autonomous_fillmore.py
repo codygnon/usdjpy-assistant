@@ -2620,6 +2620,7 @@ def _default_performance_row() -> dict[str, Any]:
     return {
         "trade_count": 0,
         "closed_count": 0,
+        "net_pnl": None,
         "win_rate": None,
         "avg_win_pips": None,
         "avg_loss_pips": None,
@@ -2726,6 +2727,7 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
         "server_veto_total": 0,
         "server_veto_by_reason": {},
         "server_veto_by_day": [],
+        "autonomous_pnl_by_day": [],
     }
     try:
         auto_rows = autonomous_performance.load_autonomous_suggestions(suggestions_db)
@@ -2781,6 +2783,50 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
             key=lambda row: str(row.get("date") or ""),
             reverse=True,
         )[:30]
+
+        daily_pnl_by_day: dict[str, dict[str, Any]] = {}
+        for row in auto_rows:
+            closed_at = str(row.get("closed_at") or "")
+            if not closed_at:
+                continue
+            pnl_raw = row.get("pnl")
+            try:
+                pnl_val = float(pnl_raw) if pnl_raw is not None else None
+            except (TypeError, ValueError):
+                pnl_val = None
+            if pnl_val is None:
+                continue
+            day_key = closed_at[:10] if len(closed_at) >= 10 else "unknown"
+            bucket = daily_pnl_by_day.setdefault(
+                day_key,
+                {
+                    "date": day_key,
+                    "closed_count": 0,
+                    "wins": 0,
+                    "losses": 0,
+                    "net_pnl": 0.0,
+                    "net_pips": 0.0,
+                },
+            )
+            bucket["closed_count"] = int(bucket.get("closed_count") or 0) + 1
+            bucket["net_pnl"] = float(bucket.get("net_pnl") or 0.0) + pnl_val
+            try:
+                bucket["net_pips"] = float(bucket.get("net_pips") or 0.0) + float(row.get("pips") or 0.0)
+            except (TypeError, ValueError):
+                pass
+            if pnl_val > 0:
+                bucket["wins"] = int(bucket.get("wins") or 0) + 1
+            elif pnl_val < 0:
+                bucket["losses"] = int(bucket.get("losses") or 0) + 1
+        daily_rows = sorted(
+            daily_pnl_by_day.values(),
+            key=lambda row: str(row.get("date") or ""),
+            reverse=True,
+        )[:30]
+        for row in daily_rows:
+            row["net_pnl"] = round(float(row.get("net_pnl") or 0.0), 2)
+            row["net_pips"] = round(float(row.get("net_pips") or 0.0), 1)
+        selection_metrics["autonomous_pnl_by_day"] = daily_rows
 
         def _inc(bucket: dict[str, int], order_type: str) -> None:
             key = "limit" if str(order_type).lower() == "limit" else "market"
