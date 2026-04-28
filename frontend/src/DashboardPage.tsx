@@ -1447,7 +1447,13 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
     try {
       const rt = await getRuntimeState(profileName);
       setRuntime(rt);
-      await updateRuntimeState(profileName, mode, rt.kill_switch, rt.exit_system_only);
+      const wantsDisarmed = mode === 'DISARMED';
+      const nextKillSwitch = wantsDisarmed ? true : false;
+      // If user arms the system, clear exit-only so dashboard mode can actually change.
+      const nextExitOnly = wantsDisarmed ? rt.exit_system_only : false;
+      await updateRuntimeState(profileName, mode, nextKillSwitch, nextExitOnly);
+      const updated = await getRuntimeState(profileName);
+      setRuntime(updated);
       const s = await getDashboard(profileName, profilePath);
       if (s && !s.error) setDashState(s);
     } catch (e) {
