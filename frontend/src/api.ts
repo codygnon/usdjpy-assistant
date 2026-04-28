@@ -1277,6 +1277,14 @@ export interface AutonomousStats {
     skips: number;
     skip_rate_pct: number;
     llm_custom_exit_suggestions: number;
+    server_veto_total?: number;
+    server_veto_by_reason?: Record<string, number>;
+    server_veto_by_day?: Array<{
+      date: string;
+      total: number;
+      by_reason: Record<string, number>;
+      by_session: Record<string, number>;
+    }>;
   };
   performance: Record<string, {
     trade_count: number;

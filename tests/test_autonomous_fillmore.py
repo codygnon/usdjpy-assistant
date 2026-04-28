@@ -345,6 +345,76 @@ def test_critical_level_reaction_trigger_keeps_resistance_reject(monkeypatch) ->
     assert trig["bias"] == "sell"
 
 
+def test_critical_level_reaction_blocks_noisy_range_low_underside_reject(monkeypatch) -> None:
+    m1 = pd.DataFrame(
+        {
+            "open": [159.14, 159.13, 159.12, 159.11, 159.10, 159.11, 159.10, 159.10, 159.10, 159.10],
+            "high": [159.15, 159.14, 159.13, 159.12, 159.11, 159.12, 159.11, 159.11, 159.11, 159.105],
+            "low": [159.13, 159.12, 159.11, 159.10, 159.09, 159.10, 159.095, 159.098, 159.097, 159.090],
+            "close": [159.14, 159.13, 159.12, 159.11, 159.10, 159.108, 159.104, 159.102, 159.101, 159.095],
+        }
+    )
+    monkeypatch.setattr(
+        autonomous_fillmore,
+        "_nearest_structure_pips",
+        lambda *args, **kwargs: {
+            "underfoot_pips": None,
+            "underfoot_price": None,
+            "underfoot_label": None,
+            "overhead_pips": 1.0,
+            "overhead_price": 159.100,
+            "overhead_label": "LOCAL_RANGE_LOW",
+        },
+    )
+
+    trig = autonomous_fillmore._critical_level_reaction_trigger(
+        159.09,
+        {"M1": m1},
+        "london",
+        max_level_pips=6.0,
+        micro_window_bars=5,
+        touch_tolerance_pips=0.8,
+    )
+
+    assert trig is None
+
+
+def test_critical_level_reaction_allows_clean_range_low_underside_reject(monkeypatch) -> None:
+    m1 = pd.DataFrame(
+        {
+            "open": [159.14, 159.13, 159.12, 159.10, 159.08, 159.075, 159.072, 159.086, 159.101, 159.096],
+            "high": [159.15, 159.14, 159.13, 159.11, 159.09, 159.080, 159.078, 159.092, 159.104, 159.102],
+            "low": [159.13, 159.12, 159.10, 159.08, 159.07, 159.068, 159.067, 159.080, 159.090, 159.091],
+            "close": [159.14, 159.13, 159.11, 159.09, 159.075, 159.072, 159.074, 159.086, 159.101, 159.094],
+        }
+    )
+    monkeypatch.setattr(
+        autonomous_fillmore,
+        "_nearest_structure_pips",
+        lambda *args, **kwargs: {
+            "underfoot_pips": None,
+            "underfoot_price": None,
+            "underfoot_label": None,
+            "overhead_pips": 1.0,
+            "overhead_price": 159.100,
+            "overhead_label": "LOCAL_RANGE_LOW",
+        },
+    )
+
+    trig = autonomous_fillmore._critical_level_reaction_trigger(
+        159.09,
+        {"M1": m1},
+        "london",
+        max_level_pips=6.0,
+        micro_window_bars=5,
+        touch_tolerance_pips=0.8,
+    )
+
+    assert trig is not None
+    assert trig["reason"] == "resistance_reject:LOCAL_RANGE_LOW"
+    assert trig["bias"] == "sell"
+
+
 def test_critical_level_reaction_trigger_prunes_disabled_support_labels(monkeypatch) -> None:
     m1 = pd.DataFrame(
         {
@@ -898,6 +968,7 @@ def test_invoke_suggest_sets_quality_and_strips_confidence(tmp_path: Path, monke
     fake_chat.build_trading_context = lambda profile, profile_name: _ctx()
     fake_chat.build_trade_suggestion_news_block = lambda **kwargs: ""
     fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
+    fake_chat.system_prompt_from_context = lambda ctx, model: "SYSTEM PROMPT"
     fake_chat.autonomous_system_prompt_from_context = lambda ctx, model, **kwargs: "SYS"
     monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
     _install_fake_main(monkeypatch, db_path)
@@ -930,6 +1001,7 @@ def test_invoke_suggest_zero_lots_maps_to_quality_c(tmp_path: Path, monkeypatch)
     fake_chat.build_trading_context = lambda profile, profile_name: _ctx()
     fake_chat.build_trade_suggestion_news_block = lambda **kwargs: ""
     fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
+    fake_chat.system_prompt_from_context = lambda ctx, model: "SYSTEM PROMPT"
     fake_chat.autonomous_system_prompt_from_context = lambda ctx, model, **kwargs: "SYS"
     monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
     _install_fake_main(monkeypatch, db_path)
@@ -954,6 +1026,193 @@ def test_invoke_suggest_zero_lots_maps_to_quality_c(tmp_path: Path, monkeypatch)
     assert out[0]["lots"] == 0
     assert out[0]["quality"] == "C"
     assert "confidence" not in out[0]
+
+
+def test_invoke_suggest_forces_skip_on_failing_zone_blind_retry(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+
+    fake_chat = ModuleType("api.ai_trading_chat")
+    fake_chat.build_trading_context = lambda profile, profile_name: _ctx()
+    fake_chat.build_trade_suggestion_news_block = lambda **kwargs: ""
+    fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
+    fake_chat.system_prompt_from_context = lambda ctx, model: "SYSTEM PROMPT"
+    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model, **kwargs: "SYS"
+    monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
+    _install_fake_main(monkeypatch, db_path)
+
+    class _Client:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+        def _create(self, **kwargs):
+            payload = {
+                **_suggestion(),
+                "decision": "trade",
+                "zone_memory_read": "failing_zone",
+                "repeat_trade_case": "blind_retry",
+                "lots": 3.0,
+                "skip_reason": None,
+            }
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+
+    fake_openai = ModuleType("openai")
+    fake_openai.OpenAI = _Client
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+
+    out = autonomous_fillmore._invoke_suggest(
+        SimpleNamespace(symbol="USDJPY"), "p1",
+        {"model": "gpt-5.4-mini", "aggressiveness": "balanced", "mode": "paper"},
+    )
+    assert out[0]["decision"] == "skip"
+    assert out[0]["lots"] == 0.0
+    assert out[0]["skip_reason"] == "server_veto:failing_zone_blind_retry"
+
+    history = suggestion_tracker.get_history(db_path, limit=10, offset=0)
+    row = history["items"][0]
+    assert row["decision"] == "skip"
+    assert row["lots"] == 0.0
+    assert row["skip_reason"] == "server_veto:failing_zone_blind_retry"
+
+
+def test_invoke_suggest_forces_skip_on_rung_d_with_sub_1_rr(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+
+    fake_chat = ModuleType("api.ai_trading_chat")
+    fake_chat.build_trading_context = lambda profile, profile_name: _ctx()
+    fake_chat.build_trade_suggestion_news_block = lambda **kwargs: ""
+    fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
+    fake_chat.system_prompt_from_context = lambda ctx, model: "SYSTEM PROMPT"
+    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model, **kwargs: "SYS"
+    monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
+    _install_fake_main(monkeypatch, db_path)
+
+    class _Client:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+        def _create(self, **kwargs):
+            payload = {
+                **_suggestion(),
+                "decision": "trade",
+                "conviction_rung": "D",
+                "planned_rr_estimate": 0.82,
+                "lots": 2.0,
+                "skip_reason": None,
+            }
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+
+    fake_openai = ModuleType("openai")
+    fake_openai.OpenAI = _Client
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+
+    out = autonomous_fillmore._invoke_suggest(
+        SimpleNamespace(symbol="USDJPY"), "p1",
+        {"model": "gpt-5.4-mini", "aggressiveness": "balanced", "mode": "paper"},
+    )
+    assert out[0]["decision"] == "skip"
+    assert out[0]["lots"] == 0.0
+    assert out[0]["skip_reason"] == "server_veto:rung_d_sub_1_rr"
+
+    history = suggestion_tracker.get_history(db_path, limit=10, offset=0)
+    row = history["items"][0]
+    assert row["decision"] == "skip"
+    assert row["lots"] == 0.0
+    assert row["skip_reason"] == "server_veto:rung_d_sub_1_rr"
+
+
+def test_invoke_suggest_forces_skip_on_unresolved_chop_low_rr(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+
+    fake_chat = ModuleType("api.ai_trading_chat")
+    fake_chat.build_trading_context = lambda profile, profile_name: _ctx()
+    fake_chat.build_trade_suggestion_news_block = lambda **kwargs: ""
+    fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
+    fake_chat.system_prompt_from_context = lambda ctx, model: "SYSTEM PROMPT"
+    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model, **kwargs: "SYS"
+    monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
+    _install_fake_main(monkeypatch, db_path)
+
+    class _Client:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+        def _create(self, **kwargs):
+            payload = {
+                **_suggestion(),
+                "decision": "trade",
+                "zone_memory_read": "unresolved_chop",
+                "planned_rr_estimate": 0.95,
+                "lots": 2.0,
+                "skip_reason": None,
+            }
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+
+    fake_openai = ModuleType("openai")
+    fake_openai.OpenAI = _Client
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+
+    out = autonomous_fillmore._invoke_suggest(
+        SimpleNamespace(symbol="USDJPY"), "p1",
+        {"model": "gpt-5.4-mini", "aggressiveness": "balanced", "mode": "paper"},
+    )
+    assert out[0]["decision"] == "skip"
+    assert out[0]["lots"] == 0.0
+    assert out[0]["skip_reason"] == "server_veto:unresolved_chop_low_rr"
+
+
+def test_invoke_suggest_forces_skip_on_repeat_fire_without_fresh_edge(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+
+    fake_chat = ModuleType("api.ai_trading_chat")
+    fake_chat.build_trading_context = lambda profile, profile_name: _ctx()
+    fake_chat.build_trade_suggestion_news_block = lambda **kwargs: ""
+    fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
+    fake_chat.system_prompt_from_context = lambda ctx, model: "SYSTEM PROMPT"
+    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model, **kwargs: "SYS"
+    monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
+    _install_fake_main(monkeypatch, db_path)
+
+    class _Client:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+        def _create(self, **kwargs):
+            payload = {
+                **_suggestion(),
+                "decision": "trade",
+                "zone_memory_read": "working_zone",
+                "repeat_trade_case": "blind_retry",
+                "planned_rr_estimate": 1.2,
+                "lots": 2.0,
+                "skip_reason": None,
+            }
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+
+    fake_openai = ModuleType("openai")
+    fake_openai.OpenAI = _Client
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+
+    gate_decision = autonomous_fillmore.GateDecision(
+        timestamp_utc=datetime.now(timezone.utc).isoformat(),
+        result="pass",
+        layer="pass",
+        reason="ok",
+        mode="paper",
+        aggressiveness="balanced",
+        extras={"recent_fires_2h_count": 2},
+    )
+    out = autonomous_fillmore._invoke_suggest(
+        SimpleNamespace(symbol="USDJPY"), "p1",
+        {"model": "gpt-5.4-mini", "aggressiveness": "balanced", "mode": "paper"},
+        gate_decision=gate_decision,
+    )
+    assert out[0]["decision"] == "skip"
+    assert out[0]["lots"] == 0.0
+    assert out[0]["skip_reason"] == "server_veto:repeat_fire_without_fresh_edge"
 
 
 def test_invoke_suggest_defaults_market_order_type_when_omitted(tmp_path: Path, monkeypatch) -> None:

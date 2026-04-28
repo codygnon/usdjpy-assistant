@@ -563,6 +563,9 @@ function AutonomousFillmorePanel({
       }
     : null;
   const tradeLogCount = tradeLog.length;
+  const serverVetoTotal = stats?.selection_metrics?.server_veto_total ?? 0;
+  const serverVetoByReason = Object.entries(stats?.selection_metrics?.server_veto_by_reason || {}).slice(0, 6);
+  const serverVetoByDay = stats?.selection_metrics?.server_veto_by_day || [];
 
   return (
     <div className="card autonomous-panel">
@@ -1108,6 +1111,67 @@ function AutonomousFillmorePanel({
         {showTradeLog ? 'Hide' : 'Show'} Fillmore trade log
         {tradeLogCount ? ` (${tradeLogCount})` : ''}
       </button>
+
+      <div className="autonomous-panel__section">
+        <div className="autonomous-panel__section-head">
+          <span className="autonomous-panel__section-title">Skip Quality Audit</span>
+          <span className="autonomous-panel__muted">server veto by day</span>
+        </div>
+        {serverVetoTotal <= 0 ? (
+          <div className="autonomous-panel__hint">No server_veto skips logged yet.</div>
+        ) : (
+          <>
+            <div className="autonomous-panel__chip-row">
+              <div className="autonomous-panel__chip">total server veto skips {serverVetoTotal}</div>
+              {serverVetoByReason.map(([reason, count]) => (
+                <div key={reason} className="autonomous-panel__chip">
+                  {reason.replace("server_veto:", "")} · {count}
+                </div>
+              ))}
+            </div>
+            <div
+              style={{
+                marginTop: 10,
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+                gap: 8,
+              }}
+            >
+              {serverVetoByDay.map((row) => {
+                const dayReasonRows = Object.entries(row.by_reason || {}).slice(0, 2);
+                const daySessionRows = Object.entries(row.by_session || {}).slice(0, 2);
+                return (
+                  <div
+                    key={row.date}
+                    style={{
+                      borderRadius: 10,
+                      border: '1px solid rgba(255,255,255,0.10)',
+                      background: 'rgba(255,255,255,0.03)',
+                      padding: '8px 9px',
+                    }}
+                    title={row.date}
+                  >
+                    <div style={{ fontSize: '0.72rem', color: '#cbd5e1', fontWeight: 700 }}>{row.date}</div>
+                    <div style={{ fontSize: '0.92rem', color: '#facc15', fontWeight: 700, marginTop: 2 }}>
+                      vetoes {row.total}
+                    </div>
+                    {dayReasonRows.map(([reason, count]) => (
+                      <div key={reason} style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginTop: 2, lineHeight: 1.3 }}>
+                        {reason.replace('server_veto:', '')}: {count}
+                      </div>
+                    ))}
+                    {daySessionRows.length > 0 && (
+                      <div style={{ fontSize: '0.66rem', color: '#94a3b8', marginTop: 4 }}>
+                        {daySessionRows.map(([session, count]) => `${session} ${count}`).join(' · ')}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
 
       {showTradeLog && (
         <div className="autonomous-panel__reasoning">

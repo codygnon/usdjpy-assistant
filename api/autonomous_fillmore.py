@@ -1331,6 +1331,17 @@ def _critical_level_reaction_trigger(
     last_close = float(closes.iloc[-1])
     prev_close = float(closes.iloc[-2])
 
+    def _former_low_has_acceptance_below(label: Any, price: float) -> bool:
+        label_s = str(label or "").upper()
+        if "LOW" not in label_s:
+            return True
+        prior_closes = closes.iloc[:-1]
+        if len(prior_closes) < 3:
+            return False
+        acceptance_buffer = max(0.2 * pip, tol * 0.25)
+        below = prior_closes < (float(price) - acceptance_buffer)
+        return bool((below & below.shift(1, fill_value=False)).any())
+
     underfoot_pips = prox.get("underfoot_pips")
     underfoot_price = prox.get("underfoot_price")
     underfoot_label = prox.get("underfoot_label")
@@ -1360,7 +1371,8 @@ def _critical_level_reaction_trigger(
     if isinstance(overhead_pips, (int, float)) and overhead_pips <= float(max_level_pips) and isinstance(overhead_price, (int, float)):
         touched_resistance = float(highs.max()) >= float(overhead_price) - tol
         rejected = last_close < float(overhead_price) and last_close <= prev_close
-        if touched_resistance and rejected:
+        accepted_below_former_low = _former_low_has_acceptance_below(overhead_label, float(overhead_price))
+        if touched_resistance and rejected and accepted_below_former_low:
             return {
                 "family": "critical_level_reaction",
                 "reason": f"resistance_reject:{overhead_label}",
@@ -2711,6 +2723,9 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
         "skips": 0,
         "skip_rate_pct": 0.0,
         "llm_custom_exit_suggestions": 0,
+        "server_veto_total": 0,
+        "server_veto_by_reason": {},
+        "server_veto_by_day": [],
     }
     try:
         auto_rows = autonomous_performance.load_autonomous_suggestions(suggestions_db)
@@ -2728,6 +2743,44 @@ def build_stats(state_path: Path, cfg: Optional[dict[str, Any]] = None) -> dict[
         selection_metrics["llm_custom_exit_suggestions"] = sum(
             1 for row in auto_rows if str(row.get("exit_strategy") or "").lower() == "llm_custom_exit"
         )
+        server_veto_by_reason: dict[str, int] = {}
+        server_veto_by_day: dict[str, dict[str, Any]] = {}
+        for row in auto_rows:
+            skip_reason = str(row.get("skip_reason") or "").strip()
+            if not skip_reason.startswith("server_veto:"):
+                continue
+            server_veto_by_reason[skip_reason] = server_veto_by_reason.get(skip_reason, 0) + 1
+            created_utc = str(row.get("created_utc") or "")
+            day_key = created_utc[:10] if len(created_utc) >= 10 else "unknown"
+            day_bucket = server_veto_by_day.setdefault(
+                day_key,
+                {
+                    "date": day_key,
+                    "total": 0,
+                    "by_reason": {},
+                    "by_session": {},
+                },
+            )
+            day_bucket["total"] = int(day_bucket.get("total") or 0) + 1
+            by_reason = day_bucket.get("by_reason") if isinstance(day_bucket.get("by_reason"), dict) else {}
+            by_reason[skip_reason] = int(by_reason.get(skip_reason) or 0) + 1
+            day_bucket["by_reason"] = by_reason
+
+            features = row.get("features") if isinstance(row.get("features"), dict) else {}
+            session_label = str(features.get("session") or "unknown")
+            by_session = day_bucket.get("by_session") if isinstance(day_bucket.get("by_session"), dict) else {}
+            by_session[session_label] = int(by_session.get(session_label) or 0) + 1
+            day_bucket["by_session"] = by_session
+
+        selection_metrics["server_veto_total"] = int(sum(server_veto_by_reason.values()))
+        selection_metrics["server_veto_by_reason"] = dict(
+            sorted(server_veto_by_reason.items(), key=lambda kv: -kv[1])
+        )
+        selection_metrics["server_veto_by_day"] = sorted(
+            server_veto_by_day.values(),
+            key=lambda row: str(row.get("date") or ""),
+            reverse=True,
+        )[:30]
 
         def _inc(bucket: dict[str, int], order_type: str) -> None:
             key = "limit" if str(order_type).lower() == "limit" else "market"
@@ -4128,9 +4181,8 @@ def _invoke_suggest(
         # Phase 1 guided-reasoning fields. Decision is first-class trade/skip;
         # conviction_rung is self-assessment; whats_different / why_not_stop are
         # forcing-function fields conditionally required by prompt context.
-        # All are normalized + persisted; we never override the model's choice
-        # from these — only honor decision="skip" by routing to the existing
-        # 0-lot skip path downstream.
+        # We generally preserve the model's choice, but apply targeted server
+        # vetoes for known weak-pattern regressions.
         decision_field = str(suggestion.get("decision") or "").strip().lower()
         if decision_field not in ("trade", "skip"):
             decision_field = "trade" if float(suggestion.get("lots") or 0) > 0 else "skip"
@@ -4187,14 +4239,58 @@ def _invoke_suggest(
             reward = abs(float(suggestion.get("tp") or 0.0) - float(suggestion.get("price") or 0.0))
             suggestion["planned_rr_estimate"] = round(reward / risk, 3) if risk > 0 else None
 
+        # Binding skip discipline: when the model self-identifies a known weak
+        # setup pattern, convert trade -> skip server-side so it cannot execute.
+        veto_reason: Optional[str] = None
+        planned_rr = suggestion.get("planned_rr_estimate")
+        recent_fires_2h = 0
+        if gate_decision and isinstance(gate_decision.extras, dict):
+            try:
+                recent_fires_2h = int(gate_decision.extras.get("recent_fires_2h_count") or 0)
+            except (TypeError, ValueError):
+                recent_fires_2h = 0
+        if decision_field == "trade":
+            if (
+                suggestion.get("zone_memory_read") == "failing_zone"
+                and suggestion.get("repeat_trade_case") == "blind_retry"
+            ):
+                veto_reason = "server_veto:failing_zone_blind_retry"
+            elif (
+                suggestion.get("conviction_rung") == "D"
+                and planned_rr is not None
+                and float(planned_rr) < 1.0
+            ):
+                veto_reason = "server_veto:rung_d_sub_1_rr"
+            elif (
+                suggestion.get("zone_memory_read") == "unresolved_chop"
+                and planned_rr is not None
+                and float(planned_rr) < 1.1
+            ):
+                veto_reason = "server_veto:unresolved_chop_low_rr"
+            elif (
+                suggestion.get("trigger_fit") in {"unclear", "micro_expansion_inside_chop"}
+                and planned_rr is not None
+                and float(planned_rr) < 1.0
+            ):
+                veto_reason = "server_veto:unclear_trigger_low_rr"
+            elif (
+                suggestion.get("repeat_trade_case") == "blind_retry"
+                and recent_fires_2h >= 1
+                and (suggestion.get("zone_memory_read") in {"working_zone", "failing_zone", "unresolved_chop"})
+            ):
+                veto_reason = "server_veto:repeat_fire_without_fresh_edge"
+        if veto_reason:
+            decision_field = "skip"
+            suggestion["decision"] = "skip"
+            suggestion["skip_reason"] = veto_reason
+
         custom_plan = suggestion.get("custom_exit_plan")
         if not isinstance(custom_plan, dict):
             custom_plan = {}
         suggestion["custom_exit_plan"] = custom_plan
 
         # If the model chose skip, force lots to 0 so the existing skip path
-        # at the placement loop catches it cleanly. We do not override a
-        # decision="trade" with lots>0 — the model's lots choice is preserved.
+        # at the placement loop catches it cleanly.
         if decision_field == "skip":
             suggestion["lots"] = 0.0
         if sug_order_type == "limit":
