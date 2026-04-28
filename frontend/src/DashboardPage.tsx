@@ -1454,12 +1454,12 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
       await updateRuntimeState(profileName, mode, nextKillSwitch, nextExitOnly);
       const updated = await getRuntimeState(profileName);
       setRuntime(updated);
-      const s = await getDashboard(profileName, profilePath);
-      if (s && !s.error) setDashState(s);
+      // Avoid a synchronous heavy dashboard fetch here; the 10s poll refreshes this.
     } catch (e) {
       console.error('Mode change error:', e);
+      setLoopError(e instanceof Error ? e.message : String(e));
     }
-  }, [profileName, profilePath]);
+  }, [profileName]);
 
   const handleExitSystemOnlyChange = useCallback(async (enabled: boolean) => {
     try {
@@ -1468,12 +1468,12 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
       await updateRuntimeState(profileName, rt.mode, rt.kill_switch, enabled);
       const updated = await getRuntimeState(profileName);
       setRuntime(updated);
-      const s = await getDashboard(profileName, profilePath);
-      if (s && !s.error) setDashState(s);
+      // Avoid a synchronous heavy dashboard fetch here; the 10s poll refreshes this.
     } catch (e) {
       console.error('Exit system only toggle error:', e);
+      setLoopError(e instanceof Error ? e.message : String(e));
     }
-  }, [profileName, profilePath]);
+  }, [profileName]);
 
   const context: ContextItem[] = dashState?.context || [];
   const filters: FilterReport[] = dashState?.filters || [];
@@ -1672,7 +1672,7 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
       <HeaderBar
         loopRunning={loopRunning}
         profileName={profileName}
-        mode={dashState?.mode || runtime?.mode || 'DISARMED'}
+        mode={runtime?.mode || dashState?.mode || 'DISARMED'}
         tick={tick}
         onToggleLoop={handleToggleLoop}
         presetName={presetName}
