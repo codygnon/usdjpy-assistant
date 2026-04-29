@@ -37,3 +37,26 @@ def test_execution_state_roundtrip_uses_json_state_storage(tmp_path):
     assert loaded.mode == "ARMED_MANUAL_CONFIRM"
     assert loaded.kill_switch is True
     assert path.with_suffix(".json.bak").exists()
+
+
+def test_execution_state_save_preserves_autonomous_fillmore_block(tmp_path):
+    path = tmp_path / "runtime_state.json"
+    save_json_state(
+        path,
+        {
+            "mode": "DISARMED",
+            "autonomous_fillmore": {
+                "config": {"enabled": True, "mode": "paper"},
+                "runtime": {"decisions": [{"r": "block"}]},
+            },
+        },
+        indent=2,
+        trailing_newline=True,
+    )
+
+    save_state(path, RuntimeState(mode="ARMED_MANUAL_CONFIRM", kill_switch=False))
+    data = json.loads(path.read_text(encoding="utf-8"))
+
+    assert data["mode"] == "ARMED_MANUAL_CONFIRM"
+    assert data["autonomous_fillmore"]["config"] == {"enabled": True, "mode": "paper"}
+    assert data["autonomous_fillmore"]["runtime"]["decisions"] == [{"r": "block"}]

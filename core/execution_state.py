@@ -260,8 +260,9 @@ def load_state(path: str | Path) -> RuntimeState:
 
 def save_state(path: str | Path, state: RuntimeState) -> None:
     p = Path(path)
-    save_json_state(
-        p,
+    existing = load_json_state(p, default={})
+    payload = dict(existing) if isinstance(existing, dict) else {}
+    payload.update(
         {
             "mode": state.mode,
             "kill_switch": state.kill_switch,
@@ -354,7 +355,11 @@ def save_state(path: str | Path, state: RuntimeState) -> None:
             "chop_pause_buy_reason": state.chop_pause_buy_reason,
             "chop_pause_sell_start_utc": state.chop_pause_sell_start_utc,
             "chop_pause_sell_reason": state.chop_pause_sell_reason,
-        },
+        }
+    )
+    save_json_state(
+        p,
+        payload,
         indent=2,
         trailing_newline=True,
     )
