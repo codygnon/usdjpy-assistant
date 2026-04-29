@@ -6247,13 +6247,15 @@ def ai_suggestion_history(
     profile_name: str,
     limit: int = 100,
     offset: int = 0,
+    profile_path: Optional[str] = None,
 ) -> dict[str, Any]:
     """Row-level Fillmore suggestion history for a profile."""
     from api import suggestion_tracker
 
     try:
+        runtime_profile_name = _resolve_runtime_profile_name(profile_name, profile_path)
         return suggestion_tracker.get_history(
-            _suggestions_db_path(profile_name),
+            _suggestions_db_path(runtime_profile_name),
             limit=limit,
             offset=offset,
         )
@@ -6285,11 +6287,12 @@ class AutonomousConfigPatch(BaseModel):
 
 
 @app.get("/api/data/{profile_name}/autonomous/config")
-def get_autonomous_config(profile_name: str) -> dict[str, Any]:
+def get_autonomous_config(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
     """Return the saved autonomous-Fillmore config merged with defaults."""
     from api import autonomous_fillmore
 
-    state_path = _runtime_state_path(profile_name)
+    runtime_profile_name = _resolve_runtime_profile_name(profile_name, profile_path)
+    state_path = _runtime_state_path(runtime_profile_name)
     return {
         "config": autonomous_fillmore.get_config(state_path),
         "gate_modes": autonomous_fillmore.GATE_THRESHOLDS,
@@ -6297,42 +6300,48 @@ def get_autonomous_config(profile_name: str) -> dict[str, Any]:
 
 
 @app.put("/api/data/{profile_name}/autonomous/config")
-def update_autonomous_config(profile_name: str, patch: AutonomousConfigPatch) -> dict[str, Any]:
+def update_autonomous_config(
+    profile_name: str, patch: AutonomousConfigPatch, profile_path: Optional[str] = None
+) -> dict[str, Any]:
     """Merge-update the autonomous-Fillmore config. Partial updates allowed."""
     from api import autonomous_fillmore
 
-    state_path = _runtime_state_path(profile_name)
+    runtime_profile_name = _resolve_runtime_profile_name(profile_name, profile_path)
+    state_path = _runtime_state_path(runtime_profile_name)
     clean = {k: v for k, v in patch.dict().items() if v is not None}
     new_cfg = autonomous_fillmore.set_config(state_path, clean)
     return {"config": new_cfg}
 
 
 @app.get("/api/data/{profile_name}/autonomous/stats")
-def get_autonomous_stats(profile_name: str) -> dict[str, Any]:
+def get_autonomous_stats(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
     """Live stats + recent gate decisions for the autonomous panel."""
     from api import autonomous_fillmore
 
-    state_path = _runtime_state_path(profile_name)
+    runtime_profile_name = _resolve_runtime_profile_name(profile_name, profile_path)
+    state_path = _runtime_state_path(runtime_profile_name)
     return autonomous_fillmore.build_stats(state_path)
 
 
 @app.post("/api/data/{profile_name}/autonomous/reset-throttle")
-def reset_autonomous_throttle(profile_name: str) -> dict[str, Any]:
+def reset_autonomous_throttle(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
     """Clear active autonomous throttle/cooldown state for this profile."""
     from api import autonomous_fillmore
 
-    state_path = _runtime_state_path(profile_name)
+    runtime_profile_name = _resolve_runtime_profile_name(profile_name, profile_path)
+    state_path = _runtime_state_path(runtime_profile_name)
     return autonomous_fillmore.clear_throttle(state_path)
 
 
 @app.get("/api/data/{profile_name}/autonomous/reasoning")
-def get_autonomous_reasoning(profile_name: str) -> dict[str, Any]:
+def get_autonomous_reasoning(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
     """Combined reasoning feed: recent suggestion rationales, thesis-monitor
     actions, and self-reflections. Zero extra LLM calls — reads stored data only.
     """
     from api import suggestion_tracker
 
-    db_path = _suggestions_db_path(profile_name)
+    runtime_profile_name = _resolve_runtime_profile_name(profile_name, profile_path)
+    db_path = _suggestions_db_path(runtime_profile_name)
     return suggestion_tracker.get_reasoning_feed(db_path)
 
 

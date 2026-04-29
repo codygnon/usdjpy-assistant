@@ -1137,11 +1137,15 @@ export async function getAiSuggestionHistory(
   profileName: string,
   limit = 100,
   offset = 0,
+  profilePath?: string,
 ): Promise<AiSuggestionHistoryResponse> {
   const params = new URLSearchParams({
     limit: String(limit),
     offset: String(offset),
   });
+  if (profilePath) {
+    params.set('profile_path', profilePath);
+  }
   return fetchJson<AiSuggestionHistoryResponse>(
     `${API_BASE}/data/${encodeURIComponent(profileName)}/ai-suggestions/history?${params.toString()}`
   );
@@ -1327,16 +1331,26 @@ export interface AutonomousStats {
   recent_decisions: AutonomousDecision[];
 }
 
-export async function getAutonomousConfig(profileName: string): Promise<{ config: AutonomousConfig; gate_modes: Record<string, AutonomousGateMode> }> {
-  return fetchJson(`${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/config`);
+function _autonomousProfileQuery(profilePath?: string): string {
+  return profilePath ? `?profile_path=${encodeURIComponent(profilePath)}` : '';
+}
+
+export async function getAutonomousConfig(
+  profileName: string,
+  profilePath?: string,
+): Promise<{ config: AutonomousConfig; gate_modes: Record<string, AutonomousGateMode> }> {
+  return fetchJson(
+    `${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/config${_autonomousProfileQuery(profilePath)}`,
+  );
 }
 
 export async function updateAutonomousConfig(
   profileName: string,
   patch: Partial<AutonomousConfig>,
+  profilePath?: string,
 ): Promise<{ config: AutonomousConfig }> {
   return fetchJson(
-    `${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/config`,
+    `${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/config${_autonomousProfileQuery(profilePath)}`,
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -1345,14 +1359,25 @@ export async function updateAutonomousConfig(
   );
 }
 
-export async function getAutonomousStats(profileName: string): Promise<AutonomousStats> {
-  return fetchJson(`${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/stats`);
+export async function getAutonomousStats(
+  profileName: string,
+  profilePath?: string,
+): Promise<AutonomousStats> {
+  return fetchJson(
+    `${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/stats${_autonomousProfileQuery(profilePath)}`,
+  );
 }
 
-export async function resetAutonomousThrottle(profileName: string): Promise<AutonomousStats> {
-  return fetchJson(`${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/reset-throttle`, {
-    method: 'POST',
-  });
+export async function resetAutonomousThrottle(
+  profileName: string,
+  profilePath?: string,
+): Promise<AutonomousStats> {
+  return fetchJson(
+    `${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/reset-throttle${_autonomousProfileQuery(profilePath)}`,
+    {
+      method: 'POST',
+    },
+  );
 }
 
 export interface ReasoningSuggestion {
@@ -1437,8 +1462,13 @@ export interface ReasoningFeed {
   reflections: ReasoningReflection[];
 }
 
-export async function getAutonomousReasoning(profileName: string): Promise<ReasoningFeed> {
-  return fetchJson(`${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/reasoning`);
+export async function getAutonomousReasoning(
+  profileName: string,
+  profilePath?: string,
+): Promise<ReasoningFeed> {
+  return fetchJson(
+    `${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/reasoning${_autonomousProfileQuery(profilePath)}`,
+  );
 }
 
 async function readApiErrorDetail(res: Response): Promise<string> {

@@ -403,9 +403,11 @@ const MODE_LABELS: { value: api.AutonomousConfig['mode']; label: string; color: 
 
 function AutonomousFillmorePanel({
   profileName,
+  profilePath,
   modelOptions,
 }: {
   profileName: string;
+  profilePath: string;
   modelOptions: string[];
 }) {
   const [cfg, setCfg] = useState<api.AutonomousConfig | null>(null);
@@ -422,32 +424,32 @@ function AutonomousFillmorePanel({
   // Initial load.
   useEffect(() => {
     let cancelled = false;
-    api.getAutonomousConfig(profileName).then((r) => {
+    api.getAutonomousConfig(profileName, profilePath).then((r) => {
       if (cancelled) return;
       setCfg(r.config);
       setGateModes(r.gate_modes);
     }).catch((e) => setErr(String(e?.message || e)));
     return () => { cancelled = true; };
-  }, [profileName]);
+  }, [profileName, profilePath]);
 
   // Poll stats every 5s (cheap — reads runtime_state.json).
   useEffect(() => {
     let cancelled = false;
     const tick = () => {
-      api.getAutonomousStats(profileName).then((s) => {
+      api.getAutonomousStats(profileName, profilePath).then((s) => {
         if (!cancelled) setStats(s);
       }).catch(() => { /* silent */ });
     };
     tick();
     const id = window.setInterval(tick, 5000);
     return () => { cancelled = true; window.clearInterval(id); };
-  }, [profileName]);
+  }, [profileName, profilePath]);
 
   useEffect(() => {
     if (!showReasoning) return undefined;
     let cancelled = false;
     const tick = () => {
-      api.getAutonomousReasoning(profileName).then((r) => {
+      api.getAutonomousReasoning(profileName, profilePath).then((r) => {
         if (!cancelled) setReasoning(r);
       }).catch(() => { /* silent */ });
     };
@@ -457,12 +459,12 @@ function AutonomousFillmorePanel({
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [profileName, showReasoning]);
+  }, [profileName, profilePath, showReasoning]);
 
   useEffect(() => {
     let cancelled = false;
     const tick = () => {
-      api.getAiSuggestionHistory(profileName, 100, 0).then((r) => {
+      api.getAiSuggestionHistory(profileName, 100, 0, profilePath).then((r) => {
         if (cancelled) return;
         setTradeLog((r.items || []).filter(isFillmoreTradeLogRow));
       }).catch(() => { /* silent */ });
@@ -473,31 +475,31 @@ function AutonomousFillmorePanel({
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [profileName]);
+  }, [profileName, profilePath]);
 
   const save = useCallback(async (patch: Partial<api.AutonomousConfig>) => {
     setBusy(true); setErr(null);
     try {
-      const r = await api.updateAutonomousConfig(profileName, patch);
+      const r = await api.updateAutonomousConfig(profileName, patch, profilePath);
       setCfg(r.config);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
-  }, [profileName]);
+  }, [profileName, profilePath]);
 
   const resetThrottle = useCallback(async () => {
     setBusy(true); setErr(null);
     try {
-      const nextStats = await api.resetAutonomousThrottle(profileName);
+      const nextStats = await api.resetAutonomousThrottle(profileName, profilePath);
       setStats(nextStats);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
-  }, [profileName]);
+  }, [profileName, profilePath]);
 
   if (!cfg) {
     return (
@@ -1284,7 +1286,7 @@ function AutonomousFillmorePanel({
             type="button"
             className="btn btn-secondary"
             style={{ width: '100%', fontSize: '0.72rem', padding: '4px 8px', marginTop: 6 }}
-            onClick={() => api.getAiSuggestionHistory(profileName, 100, 0).then((r) => setTradeLog((r.items || []).filter(isFillmoreTradeLogRow))).catch(() => {})}
+            onClick={() => api.getAiSuggestionHistory(profileName, 100, 0, profilePath).then((r) => setTradeLog((r.items || []).filter(isFillmoreTradeLogRow))).catch(() => {})}
           >
             Refresh
           </button>
@@ -1299,7 +1301,7 @@ function AutonomousFillmorePanel({
           const next = !showReasoning;
           setShowReasoning(next);
           if (next && !reasoning) {
-            api.getAutonomousReasoning(profileName).then(setReasoning).catch(() => {});
+            api.getAutonomousReasoning(profileName, profilePath).then(setReasoning).catch(() => {});
           }
         }}
       >
@@ -1523,7 +1525,7 @@ function AutonomousFillmorePanel({
             type="button"
             className="btn btn-secondary"
             style={{ width: '100%', fontSize: '0.72rem', padding: '4px 8px', marginTop: 6 }}
-            onClick={() => api.getAutonomousReasoning(profileName).then(setReasoning).catch(() => {})}
+            onClick={() => api.getAutonomousReasoning(profileName, profilePath).then(setReasoning).catch(() => {})}
           >
             Refresh
           </button>
@@ -2273,7 +2275,7 @@ export default function AiTradingAssistantPage({ profile }: { profile: AiAssista
       {/* ===== RIGHT: Context sidebar ===== */}
       <div className="fillmore-sidebar">
         {/* Autonomous Fillmore — when enabled, trades happen without manual review */}
-        <AutonomousFillmorePanel profileName={profile.name} modelOptions={suggestModelList} />
+        <AutonomousFillmorePanel profileName={profile.name} profilePath={profile.path} modelOptions={suggestModelList} />
 
         {/* Generate Suggestion — always visible at top of sidebar */}
         <div className="card">
