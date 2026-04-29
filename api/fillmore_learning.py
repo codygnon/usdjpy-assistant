@@ -306,8 +306,9 @@ def evaluate_trade_thesis(
     runner_note = (
         "Runner-mode instruction: this trade is trying to capture a directional run. Prefer scale_out at the first profit objective, "
         "tighten/advance the stop to breakeven or fresh structure when justified, and hold the remainder while M1/M5 alignment, "
-        "EMA9/21 acceptance, and higher-high/higher-low or lower-low/lower-high structure remain intact. Do not exit a healthy "
-        "runner just because it is green; exit or protect it when the run structure actually degrades.\n"
+        "EMA9/21 acceptance, and higher-high/higher-low or lower-low/lower-high structure remain intact. If the path remains open, "
+        "actively try to preserve exposure for a 20+ pip move by trailing the stop instead of taking the whole trade off early. "
+        "Do not exit a healthy runner just because it is green; exit or protect it when the run structure actually degrades.\n"
         if runner_mode else ""
     )
 

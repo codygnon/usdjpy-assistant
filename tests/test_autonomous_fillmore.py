@@ -847,8 +847,9 @@ def test_invoke_suggest_forces_momentum_runner_custom_exit(tmp_path: Path, monke
     assert out0["exit_strategy"] == "llm_custom_exit"
     assert out0["custom_exit_plan"]["runner_mode"] is True
     assert out0["custom_exit_plan"]["partial_close_pct"] == 33.0
-    assert "M1/M5" in out0["custom_exit_plan"]["runner_hold_rule"]
-    assert out0["prompt_version"] == "autonomous_phase2_runner_custom_exit_v2"
+    assert "20+ pip runner" in out0["custom_exit_plan"]["runner_hold_rule"]
+    assert "20+ pip move" in out0["custom_exit_plan"]["trail_preference"]
+    assert out0["prompt_version"] == "autonomous_phase2_runner_custom_exit_v3"
 
 
 def test_min_confidence_removed_from_default_config() -> None:

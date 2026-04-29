@@ -62,7 +62,7 @@ _MODEL_COST_PER_1M: dict[str, tuple[float, float]] = {
 # pessimistic-ish so the budget stats trend slightly conservative.
 _ASSUMED_INPUT_TOKENS = 4000
 _ASSUMED_OUTPUT_TOKENS = 350
-AUTONOMOUS_PROMPT_VERSION = "autonomous_phase2_runner_custom_exit_v2"
+AUTONOMOUS_PROMPT_VERSION = "autonomous_phase2_runner_custom_exit_v3"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": False,
@@ -4339,7 +4339,9 @@ def _invoke_suggest(
         "RUNNER MANAGEMENT: If trigger_fit is momentum_continuation or the gate family is momentum_continuation, strongly prefer "
         "exit_strategy='llm_custom_exit' with runner_mode=true. The intent is partial profit at the first objective, then protect "
         "the remainder with a stop and let it run while M1/M5 structure, EMA9/21 hold, and clear-path conditions remain intact. "
-        "Do not cap a clean runner with a tiny fixed take-profit unless the path is blocked.\n"
+        "When the path is open and momentum remains healthy, explicitly consider whether this can become a 20+ pip move. "
+        "Do not cap a clean runner with a tiny fixed take-profit unless the path is blocked; use partial profit plus a trailing "
+        "stop plan to give the remainder room to capture the larger move.\n"
         "LOT SIZING — CONVICTION SHOULD REFLECT SELECTIVITY:\n"
         f"- {lot_hi} lots: cleanest trigger-qualified setup, strong confirmation, clean invalidation.\n"
         f"- {lot_mid} lots: solid setup with one soft element.\n"
@@ -4599,11 +4601,11 @@ def _invoke_suggest(
                     plan.setdefault("breakeven_trigger_pips", suggestion["exit_params"].get("tp1_pips"))
                     plan.setdefault(
                         "trail_preference",
-                        "scale partial at the first objective, then trail the runner behind M1/M5 swing structure or EMA21 hold",
+                        "scale partial at the first objective, then trail the runner behind M1/M5 swing structure or EMA21 hold while trying to capture a 20+ pip move when the path stays open",
                     )
                     plan.setdefault(
                         "runner_hold_rule",
-                        "hold the remainder while M1/M5 remain aligned, price respects EMA9/21, and no major level blocks the path",
+                        "hold the remainder for a possible 20+ pip runner while M1/M5 remain aligned, price respects EMA9/21, and no major level blocks the path",
                     )
                     plan.setdefault(
                         "invalidation_conditions",
