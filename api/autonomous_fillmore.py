@@ -3484,6 +3484,12 @@ def tick_autonomous_fillmore(
     if not cfg.get("enabled"):
         return  # fast path — don't even log when fully off.
 
+    # Global runtime disarm must always override autonomous entry placement.
+    # This keeps "Mode = DISARMED" and "Exit Only = ON" authoritative.
+    runtime_state = load_state(state_path)
+    if runtime_state.kill_switch or runtime_state.exit_system_only or str(runtime_state.mode or "").upper() == "DISARMED":
+        return
+
     # Gather inputs.
     pip = float(getattr(profile, "pip_size", 0.01) or 0.01)
     mid = (float(tick.bid) + float(tick.ask)) / 2.0
@@ -3615,6 +3621,12 @@ def tick_autonomous_fillmore(
     agg_label = str(cfg.get("aggressiveness") or "balanced")
 
     for suggestion in suggestions:
+        # Re-check runtime disarm before each potential placement in case the
+        # operator toggled mode/exit-only while an LLM call was in-flight.
+        runtime_state = load_state(state_path)
+        if runtime_state.kill_switch or runtime_state.exit_system_only or str(runtime_state.mode or "").upper() == "DISARMED":
+            print(f"[{profile_name}] autonomous Fillmore: runtime disarmed/exit-only; skipping new placement")
+            return
         print(
             f"[{profile_name}] autonomous Fillmore: processing suggestion — "
             f"side={suggestion.get('side')} lots={suggestion.get('lots')} "

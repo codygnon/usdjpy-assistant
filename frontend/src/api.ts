@@ -21,6 +21,8 @@ export interface RuntimeState {
   exit_system_only: boolean;
   last_processed_bar_time_utc: string | null;
   loop_running: boolean;
+  runtime_profile_name?: string;
+  runtime_state_path?: string;
 }
 
 export interface QuickStats {
@@ -154,17 +156,20 @@ export async function applyPreset(
 }
 
 // Runtime state
-export async function getRuntimeState(profileName: string): Promise<RuntimeState> {
-  return fetchJson<RuntimeState>(`${API_BASE}/runtime/${profileName}`);
+export async function getRuntimeState(profileName: string, profilePath?: string): Promise<RuntimeState> {
+  const q = profilePath ? `?profile_path=${encodeURIComponent(profilePath)}` : '';
+  return fetchJson<RuntimeState>(`${API_BASE}/runtime/${profileName}${q}`);
 }
 
 export async function updateRuntimeState(
   profileName: string,
   mode: string,
   killSwitch: boolean,
-  exitSystemOnly: boolean = false
+  exitSystemOnly: boolean = false,
+  profilePath?: string
 ): Promise<void> {
-  await fetchJson<unknown>(`${API_BASE}/runtime/${profileName}`, {
+  const q = profilePath ? `?profile_path=${encodeURIComponent(profilePath)}` : '';
+  await fetchJson<unknown>(`${API_BASE}/runtime/${profileName}${q}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ mode, kill_switch: killSwitch, exit_system_only: exitSystemOnly }),

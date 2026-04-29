@@ -1333,8 +1333,8 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
 
   // Load runtime state on mount (for exit_system_only toggle)
   useEffect(() => {
-    getRuntimeState(profileName).then(setRuntime).catch(() => {});
-  }, [profileName]);
+    getRuntimeState(profileName, profilePath).then(setRuntime).catch(() => {});
+  }, [profileName, profilePath]);
 
   // Poll trade events — 10s
   useEffect(() => {
@@ -1445,35 +1445,35 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
 
   const handleModeChange = useCallback(async (mode: string) => {
     try {
-      const rt = await getRuntimeState(profileName);
-      setRuntime(rt);
+      const rtWithPath = await getRuntimeState(profileName, profilePath);
+      setRuntime(rtWithPath);
       const wantsDisarmed = mode === 'DISARMED';
       const nextKillSwitch = wantsDisarmed ? true : false;
       // If user arms the system, clear exit-only so dashboard mode can actually change.
-      const nextExitOnly = wantsDisarmed ? rt.exit_system_only : false;
-      await updateRuntimeState(profileName, mode, nextKillSwitch, nextExitOnly);
-      const updated = await getRuntimeState(profileName);
+      const nextExitOnly = wantsDisarmed ? rtWithPath.exit_system_only : false;
+      await updateRuntimeState(profileName, mode, nextKillSwitch, nextExitOnly, profilePath);
+      const updated = await getRuntimeState(profileName, profilePath);
       setRuntime(updated);
       // Avoid a synchronous heavy dashboard fetch here; the 10s poll refreshes this.
     } catch (e) {
       console.error('Mode change error:', e);
       setLoopError(e instanceof Error ? e.message : String(e));
     }
-  }, [profileName]);
+  }, [profileName, profilePath]);
 
   const handleExitSystemOnlyChange = useCallback(async (enabled: boolean) => {
     try {
-      const rt = await getRuntimeState(profileName);
+      const rt = await getRuntimeState(profileName, profilePath);
       setRuntime(rt);
-      await updateRuntimeState(profileName, rt.mode, rt.kill_switch, enabled);
-      const updated = await getRuntimeState(profileName);
+      await updateRuntimeState(profileName, rt.mode, rt.kill_switch, enabled, profilePath);
+      const updated = await getRuntimeState(profileName, profilePath);
       setRuntime(updated);
       // Avoid a synchronous heavy dashboard fetch here; the 10s poll refreshes this.
     } catch (e) {
       console.error('Exit system only toggle error:', e);
       setLoopError(e instanceof Error ? e.message : String(e));
     }
-  }, [profileName]);
+  }, [profileName, profilePath]);
 
   const context: ContextItem[] = dashState?.context || [];
   const filters: FilterReport[] = dashState?.filters || [];
@@ -1695,6 +1695,18 @@ export default function DashboardPage({ profileName, profilePath }: DashboardPag
             whiteSpace: 'pre-wrap',
           }}>
             {loopError}
+          </div>
+        )}
+        {runtime?.runtime_profile_name && (
+          <div style={{
+            backgroundColor: colors.panel,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 6,
+            padding: '6px 10px',
+            color: colors.textSecondary,
+            fontSize: 12,
+          }}>
+            Runtime target: <code>{runtime.runtime_profile_name}</code>
           </div>
         )}
         {dashState?.data_source === 'none' && (

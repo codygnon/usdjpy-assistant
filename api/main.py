@@ -13,7 +13,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -454,6 +454,33 @@ def _pick_best_trade_events_log_dir(profile_name: str, profile_path: Optional[st
     return best_dir
 
 
+def _resolve_runtime_profile_name(profile_name: str, profile_path: Optional[str] = None) -> str:
+    """Resolve canonical runtime/log identity for a profile.
+
+    Priority:
+    1) profile.profile_name from resolved profile_path (when available)
+    2) freshest candidate log dir selected for this request
+    3) route profile_name fallback
+    """
+    if profile_path:
+        try:
+            rp = _resolve_profile_path(profile_path)
+            if rp.exists():
+                prof = load_profile_v1(rp)
+                pn = str(getattr(prof, "profile_name", "") or "").strip()
+                if pn:
+                    return pn
+        except Exception:
+            pass
+    try:
+        best_dir = _pick_best_dashboard_log_dir(profile_name, profile_path)
+        if best_dir and best_dir.name:
+            return str(best_dir.name)
+    except Exception:
+        pass
+    return profile_name
+
+
 def _strip_wrapped_quotes(value: str | None) -> str:
     text = str(value or "").strip()
     if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
@@ -755,7 +782,7 @@ class ProfileInfo(BaseModel):
 
 
 class RuntimeStateUpdate(BaseModel):
-    mode: str
+    mode: Literal["DISARMED", "ARMED_MANUAL_CONFIRM", "ARMED_AUTO_DEMO"]
     kill_switch: bool
     exit_system_only: bool = False
 
@@ -1091,16 +1118,19 @@ def apply_preset_to_profile(preset_id: str, req: ApplyPresetRequest, profile_pat
 
 
 @app.get("/api/runtime/{profile_name}")
-def get_runtime_state(profile_name: str) -> dict[str, Any]:
+def get_runtime_state(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
     """Get runtime state (mode, kill_switch) for a profile."""
-    state_path = _runtime_state_path(profile_name)
+    runtime_profile_name = _resolve_runtime_profile_name(profile_name, profile_path)
+    state_path = _runtime_state_path(runtime_profile_name)
     state = load_state(state_path)
     return {
         "mode": state.mode,
         "kill_switch": state.kill_switch,
         "exit_system_only": state.exit_system_only,
         "last_processed_bar_time_utc": state.last_processed_bar_time_utc,
-        "loop_running": _is_loop_running(profile_name),
+        "loop_running": _is_loop_running(runtime_profile_name),
+        "runtime_profile_name": runtime_profile_name,
+        "runtime_state_path": str(state_path),
         "daily_reset_date": state.daily_reset_date,
         "daily_reset_high": state.daily_reset_high,
         "daily_reset_low": state.daily_reset_low,
@@ -1112,9 +1142,10 @@ def get_runtime_state(profile_name: str) -> dict[str, Any]:
 
 
 @app.put("/api/runtime/{profile_name}")
-def update_runtime_state(profile_name: str, req: RuntimeStateUpdate) -> dict[str, str]:
+def update_runtime_state(profile_name: str, req: RuntimeStateUpdate, profile_path: Optional[str] = None) -> dict[str, str]:
     """Update runtime state for a profile."""
-    state_path = _runtime_state_path(profile_name)
+    runtime_profile_name = _resolve_runtime_profile_name(profile_name, profile_path)
+    state_path = _runtime_state_path(runtime_profile_name)
     old = load_state(state_path)
     new_data = dict(old.__dict__)
     new_data["mode"] = req.mode
@@ -1122,13 +1153,14 @@ def update_runtime_state(profile_name: str, req: RuntimeStateUpdate) -> dict[str
     new_data["exit_system_only"] = req.exit_system_only
     new_state = RuntimeState(**new_data)  # type: ignore[arg-type]
     save_state(state_path, new_state)
-    return {"status": "saved"}
+    return {"status": "saved", "runtime_profile_name": runtime_profile_name}
 
 
 @app.get("/api/runtime/{profile_name}/temp-settings")
-def get_temp_settings(profile_name: str) -> dict[str, Any]:
+def get_temp_settings(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
     """Get temporary EMA settings for Apply Temporary Settings menu."""
-    state_path = _runtime_state_path(profile_name)
+    runtime_profile_name = _resolve_runtime_profile_name(profile_name, profile_path)
+    state_path = _runtime_state_path(runtime_profile_name)
     state = load_state(state_path)
     return {
         "m5_trend_ema_fast": state.temp_m5_trend_ema_fast,
@@ -1207,9 +1239,10 @@ def get_temp_settings(profile_name: str) -> dict[str, Any]:
 
 
 @app.put("/api/runtime/{profile_name}/temp-settings")
-def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[str, str]:
+def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate, profile_path: Optional[str] = None) -> dict[str, str]:
     """Update temporary EMA settings for Apply Temporary Settings menu."""
-    state_path = _runtime_state_path(profile_name)
+    runtime_profile_name = _resolve_runtime_profile_name(profile_name, profile_path)
+    state_path = _runtime_state_path(runtime_profile_name)
     old = load_state(state_path)
     new_data = dict(old.__dict__)
     new_data.update(
@@ -1300,14 +1333,18 @@ def update_temp_settings(profile_name: str, req: TempEmaSettingsUpdate) -> dict[
 @app.post("/api/loop/{profile_name}/start")
 def start_loop(profile_name: str, profile_path: str) -> dict[str, Any]:
     """Start the trading loop for a profile."""
-    if _is_loop_running(profile_name):
-        return {"status": "already_running"}
-    
     path = _resolve_profile_path(profile_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Profile not found")
+    try:
+        prof = load_profile_v1(path)
+        loop_profile_name = str(getattr(prof, "profile_name", "") or "").strip() or profile_name
+    except Exception:
+        loop_profile_name = profile_name
+    if _is_loop_running(loop_profile_name) or _is_loop_running(profile_name):
+        return {"status": "already_running"}
     
-    log_dir = LOGS_DIR / profile_name
+    log_dir = LOGS_DIR / loop_profile_name
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "loop.log"
     
@@ -1322,14 +1359,21 @@ def start_loop(profile_name: str, profile_path: str) -> dict[str, Any]:
         )
         log_file.close()
         log_file = None
+        _loop_processes[loop_profile_name] = proc
         _loop_processes[profile_name] = proc
-        pid_path = _loop_pid_path(profile_name)
+        pid_path = _loop_pid_path(loop_profile_name)
         pid_path.parent.mkdir(parents=True, exist_ok=True)
         pid_path.write_text(str(proc.pid), encoding="utf-8")
+        if loop_profile_name != profile_name:
+            _loop_pid_path(profile_name).write_text(str(proc.pid), encoding="utf-8")
         _time.sleep(0.75)
         if proc.poll() is not None:
-            _loop_processes.pop(profile_name, None)
+            for k, p in list(_loop_processes.items()):
+                if p is proc:
+                    _loop_processes.pop(k, None)
             pid_path.unlink(missing_ok=True)
+            if loop_profile_name != profile_name:
+                _loop_pid_path(profile_name).unlink(missing_ok=True)
             detail = f"Loop exited immediately with code {proc.returncode}."
             try:
                 if log_path.exists():
@@ -1340,7 +1384,7 @@ def start_loop(profile_name: str, profile_path: str) -> dict[str, Any]:
             except Exception:
                 pass
             raise HTTPException(status_code=500, detail=detail)
-        return {"status": "started", "pid": proc.pid}
+        return {"status": "started", "pid": proc.pid, "runtime_profile_name": loop_profile_name}
     except Exception as e:
         if log_file is not None:
             try:
@@ -1353,7 +1397,8 @@ def start_loop(profile_name: str, profile_path: str) -> dict[str, Any]:
 @app.post("/api/loop/{profile_name}/stop")
 def stop_loop(profile_name: str) -> dict[str, str]:
     """Stop the trading loop for a profile."""
-    proc = _loop_processes.get(profile_name)
+    runtime_profile_name = _resolve_runtime_profile_name(profile_name, None)
+    proc = _loop_processes.get(profile_name) or _loop_processes.get(runtime_profile_name)
     if proc is not None and proc.poll() is None:
         proc.terminate()
         try:
@@ -1361,15 +1406,21 @@ def stop_loop(profile_name: str) -> dict[str, str]:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait()
-        _loop_processes.pop(profile_name, None)
+        for k, p in list(_loop_processes.items()):
+            if p is proc:
+                _loop_processes.pop(k, None)
         try:
             _loop_pid_path(profile_name).unlink(missing_ok=True)
+            if runtime_profile_name != profile_name:
+                _loop_pid_path(runtime_profile_name).unlink(missing_ok=True)
         except Exception:
             pass
         return {"status": "stopped"}
 
     # Fallback: stop by persisted pid (covers API restarts)
     pid_path = _loop_pid_path(profile_name)
+    if not pid_path.exists() and runtime_profile_name != profile_name:
+        pid_path = _loop_pid_path(runtime_profile_name)
     if not pid_path.exists():
         return {"status": "not_running"}
     try:
@@ -1402,7 +1453,12 @@ def stop_loop(profile_name: str) -> dict[str, str]:
             _time.sleep(0.1)
         except ProcessLookupError:
             pid_path.unlink(missing_ok=True)
-            _loop_processes.pop(profile_name, None)
+            for k, p in list(_loop_processes.items()):
+                try:
+                    if int(getattr(p, "pid", -1)) == int(pid):
+                        _loop_processes.pop(k, None)
+                except Exception:
+                    continue
             return {"status": "stopped"}
         except Exception:
             break
@@ -1415,7 +1471,12 @@ def stop_loop(profile_name: str) -> dict[str, str]:
         raise HTTPException(status_code=500, detail=f"Failed to force-stop loop pid {pid}: {e}")
 
     pid_path.unlink(missing_ok=True)
-    _loop_processes.pop(profile_name, None)
+    for k, p in list(_loop_processes.items()):
+        try:
+            if int(getattr(p, "pid", -1)) == int(pid):
+                _loop_processes.pop(k, None)
+        except Exception:
+            continue
     return {"status": "stopped"}
 
 
@@ -3931,7 +3992,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
 
     active_profile_name = log_dir.name if log_dir is not None else str(getattr(profile, "profile_name", profile_name) or profile_name)
 
-    runtime = load_state(_runtime_state_path(profile_name))
+    runtime = load_state(_runtime_state_path(active_profile_name))
     now_utc = datetime.now(timezone.utc)
     pip_size = float(profile.pip_size)
 
@@ -4054,7 +4115,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                 except Exception:
                     pass
                 try:
-                    _state = load_state(_runtime_state_path(profile_name))
+                    _state = load_state(_runtime_state_path(active_profile_name))
                     daily_reset_state = {
                         "daily_reset_date": _state.daily_reset_date,
                         "daily_reset_high": _state.daily_reset_high,
@@ -4173,7 +4234,7 @@ def _build_live_dashboard_state(profile_name: str, profile_path: Optional[str] =
                         temp_overrides_api = None
                     if _policy_type == "phase3_integrated":
                         try:
-                            _raw_state_path = _runtime_state_path(profile_name)
+                            _raw_state_path = _runtime_state_path(active_profile_name)
                             _raw_state = json.loads(_raw_state_path.read_text(encoding="utf-8")) if _raw_state_path.exists() else {}
                             _raw_phase3 = _raw_state.get("phase3_state")
                             if isinstance(_raw_phase3, dict):
@@ -5186,10 +5247,13 @@ def get_dashboard(profile_name: str, profile_path: Optional[str] = None) -> dict
     except Exception as e:
         import traceback
         print(f"[api] DASHBOARD CRASH for '{profile_name}': {e}\n{traceback.format_exc()}")
+        runtime_profile_name = _resolve_runtime_profile_name(profile_name, profile_path)
+        runtime_state = load_state(_runtime_state_path(runtime_profile_name))
+        mode = "DISARMED" if (runtime_state.kill_switch or runtime_state.exit_system_only) else runtime_state.mode
         return {
             "timestamp_utc": None,
             "preset_name": "",
-            "mode": "DISARMED",
+            "mode": mode,
             "loop_running": False,
             "entry_candidate_side": None,
             "entry_candidate_trigger": None,
@@ -5335,11 +5399,14 @@ def _get_dashboard_impl(profile_name: str, profile_path: Optional[str] = None) -
             _lean_dashboard_cache[lk] = (_time.monotonic(), dict(out))
             return out
 
+        runtime_profile_name = _resolve_runtime_profile_name(profile_name, profile_path)
+        runtime_state = load_state(_runtime_state_path(runtime_profile_name))
+        mode = "DISARMED" if (runtime_state.kill_switch or runtime_state.exit_system_only) else runtime_state.mode
         out = _strip_trial10_directional_cap_filter({
             "timestamp_utc": None,
             "preset_name": "",
-            "mode": "DISARMED",
-            "loop_running": _is_loop_running(profile_name),
+            "mode": mode,
+            "loop_running": _is_loop_running(profile_name) or _is_loop_running(runtime_profile_name),
             "entry_candidate_side": None,
             "entry_candidate_trigger": None,
             "filters": [],
