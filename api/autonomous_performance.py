@@ -22,6 +22,10 @@ _FAMILY_INTENT: dict[str, str] = {
     "compression_breakout": (
         "compressed tape pressing a boundary; wants real pressure through a nearby level, not a random entry inside chop"
     ),
+    "momentum_continuation": (
+        "large directional run continuation; wants M1/M5 alignment, higher-high/higher-low or lower-low/lower-high "
+        "structure, EMA hold, clear path, and pullback/retest entry instead of chasing extension"
+    ),
     "trend_expansion": (
         "ADX/ATR-backed directional continuation; should look like clean M1/M5 aligned expansion, not a mixed hedge"
     ),

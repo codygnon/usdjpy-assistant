@@ -172,6 +172,44 @@ def _compression_trigger(**overrides) -> dict:
     return base
 
 
+def _momentum_trigger(**overrides) -> dict:
+    base = {
+        "family": "momentum_continuation",
+        "reason": "clean_impulse_continuation:buy",
+        "bias": "buy",
+        "level_label": "M1_EMA_RETEST",
+        "level_price": 159.500,
+        "nearest_level_pips": 12.0,
+        "micro_confirmation": "m1_m5_aligned_hh_hl_pullback",
+        "m1_structure": "higher_highs_higher_lows",
+        "m5_atr_pips": 4.2,
+        "adx": 24.0,
+        "clear_path_pips": 12.0,
+        "entry_pattern": "pullback_to_ema",
+        "trigger_score": 74.0,
+    }
+    base.update(overrides)
+    return base
+
+
+def _momentum_dataframes() -> dict[str, pd.DataFrame]:
+    m1_close = pd.Series([159.000 + i * 0.005 for i in range(40)], dtype=float)
+    m1 = pd.DataFrame({
+        "open": m1_close - 0.002,
+        "high": m1_close + 0.006,
+        "low": m1_close - 0.018,
+        "close": m1_close,
+    })
+    m5_close = pd.Series([159.000 + i * 0.005 for i in range(35)], dtype=float)
+    m5 = pd.DataFrame({
+        "open": m5_close - 0.002,
+        "high": m5_close + 0.006,
+        "low": m5_close - 0.006,
+        "close": m5_close,
+    })
+    return {"M1": m1, "M5": m5, "M15": m5.copy()}
+
+
 def _tokyo_meanrev_trigger(**overrides) -> dict:
     base = {
         "family": "tight_range_mean_reversion",
@@ -755,6 +793,62 @@ def test_invoke_suggest_persists_autonomous_suggestion_history(tmp_path: Path, m
     assert row["timeframe_alignment"] == "aligned"
     assert row["trigger_fit"] == "level_reaction"
     assert row["thesis_fingerprint"] == "buy:critical_level_reaction:WHOLE_YEN:159.00@159.00:na"
+
+
+def test_invoke_suggest_forces_momentum_runner_custom_exit(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+    fake_chat = ModuleType("api.ai_trading_chat")
+    fake_chat.build_trading_context = lambda profile, profile_name: _ctx()
+    fake_chat.build_trade_suggestion_news_block = lambda **kwargs: "NEWS BLOCK"
+    fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
+    fake_chat.system_prompt_from_context = lambda ctx, model: "SYSTEM PROMPT"
+    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model, **kwargs: "AUTONOMOUS SYSTEM PROMPT"
+    monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
+    _install_fake_main(monkeypatch, db_path)
+
+    class _FakeOpenAIClient:
+        def __init__(self) -> None:
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+        def _create(self, **kwargs):
+            suggestion = _suggestion(exit_strategy="tp1_be_hwm_trail")
+            suggestion["trigger_fit"] = "momentum_continuation"
+            suggestion["custom_exit_plan"] = {}
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(suggestion)))])
+
+    fake_openai = ModuleType("openai")
+    fake_openai.OpenAI = _FakeOpenAIClient
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    gate_decision = autonomous_fillmore.GateDecision(
+        timestamp_utc=datetime.now(timezone.utc).isoformat(),
+        result="pass",
+        layer="pass",
+        reason="ok",
+        mode="paper",
+        aggressiveness="balanced",
+        extras={
+            "trigger_family": "momentum_continuation",
+            "trigger_reason": "clean_impulse_continuation:buy",
+            "trigger_bias": "buy",
+            "thesis_fingerprint": "buy:momentum_continuation:M1_EMA_RETEST@159.50:na",
+        },
+    )
+
+    out = autonomous_fillmore._invoke_suggest(
+        SimpleNamespace(symbol="USDJPY"),
+        "kumatora2",
+        {"model": "gpt-5.4-mini", "aggressiveness": "balanced", "mode": "paper"},
+        gate_decision=gate_decision,
+    )
+
+    out0 = out[0]
+    assert out0["exit_strategy"] == "llm_custom_exit"
+    assert out0["custom_exit_plan"]["runner_mode"] is True
+    assert out0["custom_exit_plan"]["partial_close_pct"] == 33.0
+    assert "M1/M5" in out0["custom_exit_plan"]["runner_hold_rule"]
+    assert out0["prompt_version"] == "autonomous_phase2_runner_custom_exit_v2"
 
 
 def test_min_confidence_removed_from_default_config() -> None:
@@ -2522,6 +2616,107 @@ def test_trend_expansion_allows_clean_m1_m5_alignment(monkeypatch) -> None:
     assert trigger is not None
     assert trigger["bias"] == "buy"
     assert trigger["trend_alignment"] == {"m3": "bull", "m1": "bull", "m5": "bull"}
+
+
+def test_momentum_continuation_detects_aligned_pullback_with_clear_path(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_adx_value", lambda *args, **kwargs: 26.0)
+    monkeypatch.setattr(autonomous_fillmore, "_atr_pips", lambda data_by_tf, timeframe, **kwargs: 4.2 if timeframe == "M5" else 2.2)
+    monkeypatch.setattr(
+        autonomous_fillmore,
+        "_nearest_structure_pips",
+        lambda *args, **kwargs: {
+            "overhead_pips": 14.0,
+            "overhead_label": "PDH",
+            "overhead_price": 159.90,
+            "underfoot_pips": 18.0,
+            "underfoot_label": "HALF_YEN:159.50",
+            "underfoot_price": 159.50,
+            "nearest_pips": 14.0,
+        },
+    )
+
+    trigger = autonomous_fillmore._momentum_continuation_trigger(
+        159.70,
+        _momentum_dataframes(),
+        "london",
+        min_m5_atr_pips=3.0,
+        adx_min=18.0,
+        clear_path_pips=8.0,
+        lookback_bars=10,
+        pullback_zone_pips=3.0,
+        extension_atr_mult=1.5,
+    )
+
+    assert trigger is not None
+    assert trigger["family"] == "momentum_continuation"
+    assert trigger["bias"] == "buy"
+    assert trigger["m1_structure"] == "higher_highs_higher_lows"
+    assert trigger["entry_pattern"] == "pullback_to_ema"
+    assert trigger["clear_path_pips"] == 14.0
+
+
+def test_momentum_continuation_blocks_when_major_level_is_too_close(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_adx_value", lambda *args, **kwargs: 26.0)
+    monkeypatch.setattr(autonomous_fillmore, "_atr_pips", lambda data_by_tf, timeframe, **kwargs: 4.2 if timeframe == "M5" else 2.2)
+    monkeypatch.setattr(
+        autonomous_fillmore,
+        "_nearest_structure_pips",
+        lambda *args, **kwargs: {
+            "overhead_pips": 3.0,
+            "overhead_label": "PDH",
+            "overhead_price": 159.73,
+            "underfoot_pips": 18.0,
+            "underfoot_label": "HALF_YEN:159.50",
+            "underfoot_price": 159.50,
+            "nearest_pips": 3.0,
+        },
+    )
+
+    trigger = autonomous_fillmore._momentum_continuation_trigger(
+        159.70,
+        _momentum_dataframes(),
+        "london",
+        min_m5_atr_pips=3.0,
+        adx_min=18.0,
+        clear_path_pips=8.0,
+        lookback_bars=10,
+        pullback_zone_pips=3.0,
+        extension_atr_mult=1.5,
+    )
+
+    assert trigger is None
+
+
+def test_evaluate_gate_equal_priority_selects_higher_scored_momentum(monkeypatch) -> None:
+    monkeypatch.setattr(autonomous_fillmore, "_session_flag_now", lambda trading_hours: (True, "london"))
+    monkeypatch.setattr(autonomous_fillmore, "_sufficient_volatility", lambda *args, **kwargs: True)
+    monkeypatch.setattr(autonomous_fillmore, "_m3_trend", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_m1_stack", lambda data_by_tf: "bull")
+    monkeypatch.setattr(autonomous_fillmore, "_critical_level_reaction_trigger", lambda *args, **kwargs: _critical_trigger(trigger_score=63.0))
+    monkeypatch.setattr(autonomous_fillmore, "_momentum_continuation_trigger", lambda *args, **kwargs: _momentum_trigger(trigger_score=76.0))
+    monkeypatch.setattr(autonomous_fillmore, "_tokyo_tight_range_mean_reversion_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_compression_breakout_trigger", lambda *args, **kwargs: None)
+    monkeypatch.setattr(autonomous_fillmore, "_trend_expansion_trigger", lambda *args, **kwargs: None)
+
+    decision = autonomous_fillmore.evaluate_gate(
+        _gate_cfg("balanced"),
+        {"daily_pnl_usd": 0.0, "llm_spend_today_usd": 0.0, "last_llm_call_utc": None},
+        autonomous_fillmore.GateInputs(
+            spread_pips=0.8,
+            tick_mid=159.70,
+            open_ai_trade_count=0,
+            data_by_tf={"M1": pd.DataFrame({"close": [159.7] * 30, "high": [159.71] * 30, "low": [159.69] * 30})},
+            ntz_active=False,
+        ),
+    )
+
+    assert decision.result == "pass"
+    assert decision.extras.get("trigger_family") == "momentum_continuation"
+    assert decision.extras.get("chosen_trigger_family") == "momentum_continuation"
+    assert decision.extras.get("candidate_trigger_scores") == {
+        "critical_level_reaction": 63.0,
+        "momentum_continuation": 76.0,
+    }
 
 
 def test_evaluate_gate_passes_trend_expansion_trigger_metadata(monkeypatch) -> None:

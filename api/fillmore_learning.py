@@ -235,14 +235,17 @@ def evaluate_trade_thesis(
     if not rationale:
         return None
     exit_plan = str(suggestion_row.get("exit_plan") or "default").strip()
+    cfg_payload: dict[str, Any] = {}
+    try:
+        raw_cfg = trade_row.get("config_json")
+        cfg_payload = _json.loads(str(raw_cfg)) if raw_cfg else {}
+        if not isinstance(cfg_payload, dict):
+            cfg_payload = {}
+    except Exception:
+        cfg_payload = {}
     custom_exit_plan = suggestion_row.get("custom_exit_plan")
     if not isinstance(custom_exit_plan, dict):
-        try:
-            raw_cfg = trade_row.get("config_json")
-            cfg = _json.loads(str(raw_cfg)) if raw_cfg else {}
-            custom_exit_plan = cfg.get("custom_exit_plan") if isinstance(cfg, dict) else {}
-        except Exception:
-            custom_exit_plan = {}
+        custom_exit_plan = cfg_payload.get("custom_exit_plan") if isinstance(cfg_payload, dict) else {}
     if not isinstance(custom_exit_plan, dict):
         custom_exit_plan = {}
 
@@ -291,11 +294,21 @@ def evaluate_trade_thesis(
             "Exit because the level/thesis is structurally invalidated, not merely because the trade is red.\n"
         )
 
+    runner_mode = bool(custom_exit_plan.get("runner_mode")) or str(
+        cfg_payload.get("trigger_fit") or suggestion_row.get("trigger_fit") or ""
+    ).strip().lower() == "momentum_continuation"
     mode_note = (
         "This trade uses llm_custom_exit. You are the active exit manager, but checks are call-budgeted. "
         "Only request broker action when it is actually useful; otherwise hold with a precise next watch condition.\n"
         if custom_exit else
         "This trade uses a template or broker-side exit. Use the original exit plan as guidance and intervene only when the thesis has materially changed.\n"
+    )
+    runner_note = (
+        "Runner-mode instruction: this trade is trying to capture a directional run. Prefer scale_out at the first profit objective, "
+        "tighten/advance the stop to breakeven or fresh structure when justified, and hold the remainder while M1/M5 alignment, "
+        "EMA9/21 acceptance, and higher-high/higher-low or lower-low/lower-high structure remain intact. Do not exit a healthy "
+        "runner just because it is green; exit or protect it when the run structure actually degrades.\n"
+        if runner_mode else ""
     )
 
     prompt = (
@@ -303,6 +316,7 @@ def evaluate_trade_thesis(
         "Your job is NOT to find a new setup. Your only job is to decide whether the original thesis is still alive.\n"
         "You may only reduce risk. Never widen risk, add size, reverse the trade, or suggest a new order.\n"
         f"{mode_note}"
+        f"{runner_note}"
         "\n"
         "Allowed actions:\n"
         "- hold\n"

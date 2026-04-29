@@ -1233,6 +1233,45 @@ def _maybe_run_fillmore_thesis_monitor(
                 executed = True
                 out["skip_rest"] = True
                 note = f"scaled_out_{close_lots:.2f}_lots"
+                updates: dict[str, Any] = {
+                    "tp1_partial_done": 1,
+                    "tp1_triggered": 1,
+                }
+                stop_note = ""
+                try:
+                    proposed = float(new_sl) if new_sl is not None else None
+                except (TypeError, ValueError):
+                    proposed = None
+                if proposed is not None and effective_stop is not None:
+                    is_tighter = proposed > effective_stop if side == "buy" else proposed < effective_stop
+                    if is_tighter:
+                        stop_ok = _safe_update_trail_sl(
+                            adapter,
+                            store,
+                            position_id_int,
+                            trade_id,
+                            profile.symbol,
+                            proposed,
+                            effective_stop,
+                            side,
+                            tick,
+                            float(profile.pip_size),
+                            profile.profile_name,
+                            label="fillmore scale-out protect",
+                        )
+                        if stop_ok:
+                            updates["breakeven_applied"] = 1
+                            updates["breakeven_sl_price"] = round(proposed, 3)
+                            stop_note = "_and_sl_tightened"
+                        else:
+                            stop_note = "_sl_tighten_rejected"
+                    else:
+                        stop_note = "_sl_not_tighter"
+                try:
+                    store.update_trade(trade_id, updates)
+                except Exception:
+                    pass
+                note += stop_note
             except Exception as e:
                 note = f"scale_out_error:{e}"
     elif action == "exit_now":

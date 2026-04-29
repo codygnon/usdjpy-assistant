@@ -62,7 +62,7 @@ _MODEL_COST_PER_1M: dict[str, tuple[float, float]] = {
 # pessimistic-ish so the budget stats trend slightly conservative.
 _ASSUMED_INPUT_TOKENS = 4000
 _ASSUMED_OUTPUT_TOKENS = 350
-AUTONOMOUS_PROMPT_VERSION = "autonomous_phase2_zone_memory_custom_exit_v1"
+AUTONOMOUS_PROMPT_VERSION = "autonomous_phase2_runner_custom_exit_v2"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": False,
@@ -147,6 +147,11 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
         "compression_edge_fraction": 0.2,
         "compression_adx_floor": 14.0,
         "compression_adx_ceiling": 24.0,
+        "momentum_adx_min": 18.0,
+        "momentum_clear_path_pips": 8.0,
+        "momentum_lookback_bars": 10,
+        "momentum_pullback_zone_pips": 3.0,
+        "momentum_extension_atr_mult": 1.25,
         "trend_adx_min": 23.0,
         "trend_extension_atr_mult": 1.0,
         "require_min_m5_atr_pips": 3.0,
@@ -174,6 +179,11 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
         "compression_edge_fraction": 0.25,
         "compression_adx_floor": 12.0,
         "compression_adx_ceiling": 22.0,
+        "momentum_adx_min": 16.0,
+        "momentum_clear_path_pips": 7.0,
+        "momentum_lookback_bars": 8,
+        "momentum_pullback_zone_pips": 3.5,
+        "momentum_extension_atr_mult": 1.4,
         "trend_adx_min": 20.0,
         "trend_extension_atr_mult": 1.25,
         "require_m3_trend": False,
@@ -203,6 +213,11 @@ GATE_THRESHOLDS: dict[str, dict[str, Any]] = {
         "compression_edge_fraction": 0.2,
         "compression_adx_floor": 14.0,
         "compression_adx_ceiling": 24.0,
+        "momentum_adx_min": 18.0,
+        "momentum_clear_path_pips": 8.0,
+        "momentum_lookback_bars": 10,
+        "momentum_pullback_zone_pips": 3.0,
+        "momentum_extension_atr_mult": 1.25,
         "trend_adx_min": 23.0,
         "trend_extension_atr_mult": 1.0,
         "require_m3_trend": False,
@@ -290,6 +305,7 @@ _GATE_SETUP_COOLDOWN_MINUTES = {
     "critical_level_reaction": 30,
     "tight_range_mean_reversion": 20,
     "compression_breakout": 20,
+    "momentum_continuation": 20,
     "trend_expansion": 30,
     "failed_breakout_reversal_overlap_v1": 20,
     "post_spike_retracement_ny_overlap_v1": 20,
@@ -308,6 +324,7 @@ _DISABLED_SUPPORT_RECLAIM_LEVEL_LABELS = {
 }
 _TREND_EXPANSION_SETUP_BUCKET_PIPS = 20.0
 _TREND_EXPANSION_ALLOWED_SESSIONS = {"london/ny"}
+_EQUAL_PRIORITY_GATE_FAMILIES = {"critical_level_reaction", "momentum_continuation"}
 _TOKYO_CONTROLLED_EXPERIMENT_FAMILIES = {"tight_range_mean_reversion"}
 _FAILED_BREAKOUT_ALLOWED_SESSIONS = {"london/ny"}
 _FAILED_BREAKOUT_MIN_BREAK_PIPS = 2.0
@@ -1357,6 +1374,7 @@ def _critical_level_reaction_trigger(
                 "level_price": float(underfoot_price),
                 "nearest_level_pips": round(float(underfoot_pips), 2),
                 "micro_confirmation": "reclaimed_support",
+                "trigger_score": round(62.0 + max(0.0, float(max_level_pips) - float(underfoot_pips)), 2),
             }
 
     # Resistance rejects are forward-tested with LLM discretion enabled. The
@@ -1381,6 +1399,7 @@ def _critical_level_reaction_trigger(
                 "level_price": float(overhead_price),
                 "nearest_level_pips": round(float(overhead_pips), 2),
                 "micro_confirmation": "rejected_resistance",
+                "trigger_score": round(62.0 + max(0.0, float(max_level_pips) - float(overhead_pips)), 2),
             }
 
     return None
@@ -1927,6 +1946,147 @@ def _trend_expansion_trigger(
         "extension_limit_pips": round(float(extension_limit), 2),
         "trend_alignment": {"m3": m3, "m1": m1, "m5": m5},
     }
+
+
+def _momentum_continuation_trigger(
+    tick_mid: float,
+    data_by_tf: dict[str, pd.DataFrame],
+    session_label: str,
+    *,
+    min_m5_atr_pips: float,
+    adx_min: float,
+    clear_path_pips: float,
+    lookback_bars: int,
+    pullback_zone_pips: float,
+    extension_atr_mult: float,
+    pip_size: float = 0.01,
+) -> Optional[dict[str, Any]]:
+    """Detect a clean directional run that is offering a pullback/retest entry."""
+    try:
+        m1_df = data_by_tf.get("M1") if data_by_tf else None
+        m5_df = data_by_tf.get("M5") if data_by_tf else None
+        if m1_df is None or m5_df is None or len(m1_df) < 30 or len(m5_df) < 25:
+            return None
+
+        m1 = _m1_stack(data_by_tf)
+        m5 = _m5_stack(data_by_tf)
+        if m1 is None or m5 is None or m1 != m5:
+            return None
+        bias = "buy" if m1 == "bull" else "sell"
+
+        m5_atr_pips = _atr_pips(data_by_tf, "M5", period=14, pip_size=pip_size)
+        if m5_atr_pips is None or m5_atr_pips < float(min_m5_atr_pips):
+            return None
+        adx_m5 = _adx_value(data_by_tf, "M5", period=14)
+        adx_m15 = _adx_value(data_by_tf, "M15", period=14)
+        adx_candidates = [v for v in (adx_m5, adx_m15) if isinstance(v, (int, float)) and math.isfinite(v)]
+        adx = max(adx_candidates) if adx_candidates else None
+        if adx is None or adx < float(adx_min):
+            return None
+
+        pip = pip_size or 0.01
+        m1_close = m1_df["close"].astype(float)
+        m1_high = m1_df["high"].astype(float)
+        m1_low = m1_df["low"].astype(float)
+        m5_close = m5_df["close"].astype(float)
+        m5_e9 = _ema(m5_close, 9)
+        m5_e21 = _ema(m5_close, 21)
+        m1_e9 = _ema(m1_close, 9)
+        m1_e21 = _ema(m1_close, 21)
+        last = float(m1_close.iloc[-1])
+        last_m5 = float(m5_close.iloc[-1])
+        last_m1_e9 = float(m1_e9.iloc[-1])
+        last_m1_e21 = float(m1_e21.iloc[-1])
+        last_m5_e9 = float(m5_e9.iloc[-1])
+        last_m5_e21 = float(m5_e21.iloc[-1])
+        if not all(math.isfinite(v) for v in (last, last_m5, last_m1_e9, last_m1_e21, last_m5_e9, last_m5_e21)):
+            return None
+
+        if bias == "buy":
+            if not (last > last_m1_e9 > last_m1_e21 and last_m5 > last_m5_e9 > last_m5_e21):
+                return None
+        else:
+            if not (last < last_m1_e9 < last_m1_e21 and last_m5 < last_m5_e9 < last_m5_e21):
+                return None
+
+        lookback = max(6, min(int(lookback_bars or 10), len(m1_df) - 1))
+        recent = m1_df.tail(lookback)
+        half = max(3, lookback // 2)
+        prior = recent.iloc[: lookback - half]
+        current = recent.iloc[lookback - half :]
+        if len(prior) < 3 or len(current) < 3:
+            return None
+        prior_high = float(prior["high"].astype(float).max())
+        prior_low = float(prior["low"].astype(float).min())
+        current_high = float(current["high"].astype(float).max())
+        current_low = float(current["low"].astype(float).min())
+        if bias == "buy":
+            structure_ok = current_high > prior_high and current_low > prior_low
+        else:
+            structure_ok = current_low < prior_low and current_high < prior_high
+        if not structure_ok:
+            return None
+
+        prox = _nearest_structure_pips(tick_mid, data_by_tf, session_label, pip_size=pip_size)
+        if bias == "buy":
+            path_pips = prox.get("overhead_pips")
+            path_label = prox.get("overhead_label")
+            path_price = prox.get("overhead_price")
+        else:
+            path_pips = prox.get("underfoot_pips")
+            path_label = prox.get("underfoot_label")
+            path_price = prox.get("underfoot_price")
+        if isinstance(path_pips, (int, float)) and path_pips < float(clear_path_pips):
+            return None
+
+        m1_atr_pips = _atr_pips(data_by_tf, "M1", period=14, pip_size=pip_size)
+        zone_pips = max(float(pullback_zone_pips), min(5.0, (float(m1_atr_pips) * 0.8) if m1_atr_pips else float(pullback_zone_pips)))
+        zone = zone_pips * pip
+        tail_lows = m1_low.tail(4)
+        tail_highs = m1_high.tail(4)
+        if bias == "buy":
+            touched_ema = bool((tail_lows <= last_m1_e9 + zone).any() or (tail_lows <= last_m1_e21 + zone).any())
+            retested_break = prior_high > 0 and abs(last - prior_high) <= max(zone, 2.0 * pip) and last >= prior_high - zone
+            recovered = last >= last_m1_e9
+        else:
+            touched_ema = bool((tail_highs >= last_m1_e9 - zone).any() or (tail_highs >= last_m1_e21 - zone).any())
+            retested_break = prior_low > 0 and abs(last - prior_low) <= max(zone, 2.0 * pip) and last <= prior_low + zone
+            recovered = last <= last_m1_e9
+        if not recovered or not (touched_ema or retested_break):
+            return None
+
+        m5_extension_pips = abs(last_m5 - last_m5_e9) / pip
+        extension_limit = max(float(min_m5_atr_pips), float(m5_atr_pips) * float(extension_atr_mult))
+        if m5_extension_pips > extension_limit:
+            return None
+
+        score = 70.0
+        score += min(12.0, max(0.0, float(adx) - float(adx_min)) * 0.6)
+        score += min(8.0, max(0.0, (float(path_pips) if isinstance(path_pips, (int, float)) else float(clear_path_pips)) - float(clear_path_pips)) * 0.25)
+        score += 5.0 if retested_break else 0.0
+        score -= min(10.0, m5_extension_pips)
+
+        return {
+            "family": "momentum_continuation",
+            "reason": f"clean_impulse_continuation:{bias}",
+            "bias": bias,
+            "level_label": "M1_EMA_RETEST" if touched_ema else "POST_BREAK_RETEST",
+            "level_price": round(float(last_m1_e9 if touched_ema else (prior_high if bias == "buy" else prior_low)), 3),
+            "nearest_level_pips": round(float(path_pips), 2) if isinstance(path_pips, (int, float)) else None,
+            "micro_confirmation": "m1_m5_aligned_hh_hl_pullback" if bias == "buy" else "m1_m5_aligned_ll_lh_pullback",
+            "m1_structure": "higher_highs_higher_lows" if bias == "buy" else "lower_lows_lower_highs",
+            "m5_atr_pips": round(float(m5_atr_pips), 2),
+            "adx": round(float(adx), 2),
+            "clear_path_pips": round(float(path_pips), 2) if isinstance(path_pips, (int, float)) else None,
+            "clear_path_label": path_label,
+            "clear_path_price": path_price,
+            "entry_pattern": "pullback_to_ema" if touched_ema else "post_break_retest",
+            "m5_extension_pips": round(float(m5_extension_pips), 2),
+            "extension_limit_pips": round(float(extension_limit), 2),
+            "trigger_score": round(float(score), 2),
+        }
+    except Exception:
+        return None
 
 
 def _correlated_open_position(
@@ -2488,6 +2648,18 @@ def evaluate_gate(
         reject_mismatch=bool(thresholds.get("reject_m3_m1_mismatch_if_both_present")),
         pip_size=0.01,
     )
+    momentum = _momentum_continuation_trigger(
+        inputs.tick_mid,
+        inputs.data_by_tf,
+        session_label,
+        min_m5_atr_pips=min_m5_atr_pips,
+        adx_min=float(thresholds.get("momentum_adx_min") or thresholds.get("trend_adx_min") or 18.0),
+        clear_path_pips=float(thresholds.get("momentum_clear_path_pips") or 8.0),
+        lookback_bars=int(thresholds.get("momentum_lookback_bars") or 10),
+        pullback_zone_pips=float(thresholds.get("momentum_pullback_zone_pips") or 3.0),
+        extension_atr_mult=float(thresholds.get("momentum_extension_atr_mult") or 1.25),
+        pip_size=0.01,
+    )
     if trend is not None and session_label not in _TREND_EXPANSION_ALLOWED_SESSIONS:
         extras["trend_session_veto"] = session_label
         trend = None
@@ -2501,6 +2673,7 @@ def evaluate_gate(
 
     family_candidates = [
         ("critical_level_reaction", critical),
+        ("momentum_continuation", momentum),
         ("tight_range_mean_reversion", tokyo_meanrev),
         ("compression_breakout", compression),
         ("failed_breakout_reversal_overlap_v1", failed_breakout),
@@ -2532,7 +2705,24 @@ def evaluate_gate(
         trig["setup_key"] = setup_key
         armed_candidates.append((family_name, trig, setup_key))
 
-    chosen_trigger = armed_candidates[0][1] if armed_candidates else None
+    if armed_candidates:
+        equal_priority = [
+            item for item in armed_candidates
+            if item[0] in _EQUAL_PRIORITY_GATE_FAMILIES
+        ]
+        pool = equal_priority or armed_candidates
+        chosen_family, chosen_trigger, _chosen_setup_key = max(
+            pool,
+            key=lambda item: float(item[1].get("trigger_score") or 50.0),
+        )
+        extras["chosen_trigger_family"] = chosen_family
+        extras["candidate_trigger_scores"] = {
+            family: trig.get("trigger_score")
+            for family, trig, _setup_key in armed_candidates
+            if trig.get("trigger_score") is not None
+        }
+    else:
+        chosen_trigger = None
     extras["active_trigger_families"] = list(active_families)
     extras["suppressed_trigger_families"] = list(suppressed_families)
     if chosen_trigger is None:
@@ -3777,12 +3967,16 @@ def _apply_autonomous_order_policy(
     except (TypeError, ValueError):
         mid = bid = ask = 0.0
 
-    if family in {"trend_expansion", "compression_breakout"}:
+    if family in {"trend_expansion", "compression_breakout", "momentum_continuation"}:
         if order_type != "market":
             out["requested_order_type"] = order_type
             out["order_type"] = "market"
             out["order_policy_reason"] = (
-                "compression_breakout_market_only" if family == "compression_breakout" else "trend_expansion_market_only"
+                "compression_breakout_market_only"
+                if family == "compression_breakout"
+                else "momentum_continuation_market_only"
+                if family == "momentum_continuation"
+                else "trend_expansion_market_only"
             )
         if mid > 0:
             out["price"] = mid
@@ -4055,7 +4249,7 @@ def _invoke_suggest(
         "\n"
         "1. ANALYSIS (plain text, 6-12 lines). Think through the setup. Cover each of:\n"
         "   - State whether the gate-qualified opportunity is actually tradeable right now or should be passed.\n"
-        "   - Respect the trigger family: trend-expansion usually means market execution; critical-level reaction and Tokyo tight-range mean reversion can be market or near-touch limit.\n"
+        "   - Respect the trigger family: momentum-continuation and trend-expansion usually mean market execution; critical-level reaction and Tokyo tight-range mean reversion can be market or near-touch limit.\n"
         "   - H1/M15/M5/M1 trend consensus (note any divergence) and whether this is aligned, mixed, or countertrend.\n"
         "   - POLICY + GEOPOLITICAL ALPHA (required): what is Japan MOF doing now (including rate-check/intervention signaling), what is Japan's finance minister signaling, is there active Japan-US policy coordination, and what war-premium dynamics are doing to USDJPY.\n"
         "   - Explicitly call whether that macro/policy layer CONFIRMS, CONTRADICTS, or is MIXED versus your technical setup.\n"
@@ -4092,7 +4286,7 @@ def _invoke_suggest(
         '  "low_rr_edge": "<required if planned_rr_estimate is below 1.0, else null>",\n'
         '  "timeframe_alignment": "aligned" | "mixed" | "countertrend",\n'
         '  "countertrend_edge": "<required if timeframe_alignment is countertrend or mixed, else null>",\n'
-        '  "trigger_fit": "true_escape" | "micro_expansion_inside_chop" | "level_reaction" | "mean_reversion" | "unclear",\n'
+        '  "trigger_fit": "true_escape" | "momentum_continuation" | "micro_expansion_inside_chop" | "level_reaction" | "mean_reversion" | "unclear",\n'
         '  "why_trade_despite_weakness": "<required if using hedge/probe/tactical/additive/reduced-conviction logic, else null>",\n'
         '  "order_type": "market" | "limit",\n'
         '  "side": "buy" | "sell",\n'
@@ -4112,7 +4306,9 @@ def _invoke_suggest(
         '    "invalidation_conditions": "<specific conditions that kill the thesis>",\n'
         '    "trail_preference": "<hwm | m1_ema | m5_ema | price_action | none plus details>",\n'
         '    "time_stop_minutes": <number or null>,\n'
-        '    "early_exit_if": "<what would make you exit early>"\n'
+        '    "early_exit_if": "<what would make you exit early>",\n'
+        '    "runner_mode": <true if this is a momentum/trend runner, else false>,\n'
+        '    "runner_hold_rule": "<what must stay true to keep trailing the runner>"\n'
         '  },\n'
         '  "rationale": "<1-2 sentence concise summary of the decision>",\n'
         '  "quality": "A" | "B" | "C"\n'
@@ -4140,6 +4336,10 @@ def _invoke_suggest(
         "It can only hold, tighten SL, scale out, or exit. Give it clear conditions: 'exit if M3 flips bear', "
         "'tighten SL to BE after +5p', 'scale 50% at TP1 then trail on M1 21 EMA'. If you have no custom plan, "
         'write "default" and the template strategy handles it.\n'
+        "RUNNER MANAGEMENT: If trigger_fit is momentum_continuation or the gate family is momentum_continuation, strongly prefer "
+        "exit_strategy='llm_custom_exit' with runner_mode=true. The intent is partial profit at the first objective, then protect "
+        "the remainder with a stop and let it run while M1/M5 structure, EMA9/21 hold, and clear-path conditions remain intact. "
+        "Do not cap a clean runner with a tiny fixed take-profit unless the path is blocked.\n"
         "LOT SIZING — CONVICTION SHOULD REFLECT SELECTIVITY:\n"
         f"- {lot_hi} lots: cleanest trigger-qualified setup, strong confirmation, clean invalidation.\n"
         f"- {lot_mid} lots: solid setup with one soft element.\n"
@@ -4271,6 +4471,7 @@ def _invoke_suggest(
             suggestion["timeframe_alignment"] = "mixed"
         if suggestion["trigger_fit"] not in {
             "true_escape",
+            "momentum_continuation",
             "micro_expansion_inside_chop",
             "level_reaction",
             "mean_reversion",
@@ -4371,6 +4572,10 @@ def _invoke_suggest(
         suggestion["prompt_version"] = assembly.prompt_version
         suggestion["prompt_hash"] = assembly.prompt_hash
 
+        is_runner_trigger = (
+            suggestion.get("trigger_family") == "momentum_continuation"
+            or suggestion.get("trigger_fit") == "momentum_continuation"
+        )
         raw_exit = suggestion.get("exit_strategy")
         raw_exit_s = str(raw_exit).strip().lower() if raw_exit is not None else ""
         if raw_exit_s == "none":
@@ -4378,12 +4583,37 @@ def _invoke_suggest(
             suggestion["exit_params"] = {}
         else:
             chosen = normalize_exit_strategy(raw_exit_s) if raw_exit_s in AI_EXIT_STRATEGIES else DEFAULT_AI_EXIT_STRATEGY
+            if is_runner_trigger:
+                chosen = "llm_custom_exit"
             suggestion["exit_strategy"] = chosen
             raw_params = suggestion.get("exit_params") if isinstance(suggestion.get("exit_params"), dict) else None
             merged_params = merge_exit_params(chosen, raw_params)
             suggestion["exit_params"] = _apply_autonomous_exit_calibration(chosen, merged_params, ctx)
             if chosen == "llm_custom_exit":
                 plan = suggestion.get("custom_exit_plan") if isinstance(suggestion.get("custom_exit_plan"), dict) else {}
+                if is_runner_trigger:
+                    plan = dict(plan)
+                    plan["runner_mode"] = True
+                    plan.setdefault("first_profit_objective_pips", suggestion["exit_params"].get("tp1_pips"))
+                    plan.setdefault("partial_close_pct", suggestion["exit_params"].get("tp1_close_pct"))
+                    plan.setdefault("breakeven_trigger_pips", suggestion["exit_params"].get("tp1_pips"))
+                    plan.setdefault(
+                        "trail_preference",
+                        "scale partial at the first objective, then trail the runner behind M1/M5 swing structure or EMA21 hold",
+                    )
+                    plan.setdefault(
+                        "runner_hold_rule",
+                        "hold the remainder while M1/M5 remain aligned, price respects EMA9/21, and no major level blocks the path",
+                    )
+                    plan.setdefault(
+                        "invalidation_conditions",
+                        "exit or tighten aggressively if the run loses M1/M5 alignment, breaks EMA21 acceptance, or prints a lower high/lower low against the trade",
+                    )
+                    plan.setdefault(
+                        "early_exit_if",
+                        "momentum acceptance fails after entry or the pullback becomes a full structure break instead of a retest",
+                    )
+                    plan.setdefault("time_stop_minutes", 20)
                 if not plan:
                     plan = {
                         "first_profit_objective_pips": suggestion["exit_params"].get("tp1_pips"),
@@ -4393,6 +4623,8 @@ def _invoke_suggest(
                         "trail_preference": "discretionary price action",
                         "time_stop_minutes": None,
                         "early_exit_if": suggestion.get("exit_plan") or "momentum or zone behavior flips against the thesis",
+                        "runner_mode": False,
+                        "runner_hold_rule": None,
                     }
                 suggestion["custom_exit_plan"] = plan
         suggestion["model_used"] = model

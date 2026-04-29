@@ -466,6 +466,7 @@ def test_manage_ai_manual_trades_executes_scale_out_and_exit_now_from_thesis_mon
         {
             "action": "scale_out",
             "scale_out_pct": 50,
+            "new_sl": 160.05,
             "reason": "Take some off.",
             "confidence": "medium",
             "model_used": "gpt-5.4-mini",
@@ -531,3 +532,10 @@ def test_manage_ai_manual_trades_executes_scale_out_and_exit_now_from_thesis_mon
         (42, "USDJPY", 0.05, 0),
         (43, "USDJPY", 0.1, 0),
     ]
+    assert adapter.stop_updates == [(42, "USDJPY", 160.05)]
+    assert any(
+        trade_id == trade_id_scale
+        and updates.get("tp1_partial_done") == 1
+        and updates.get("breakeven_applied") == 1
+        for trade_id, updates in store.updated
+    )
