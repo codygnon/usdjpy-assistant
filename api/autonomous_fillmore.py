@@ -36,6 +36,7 @@ import pandas as pd
 
 from api import autonomous_performance
 from api.fillmore_llm_guard import FillmoreLLMCircuitOpenError, get_fillmore_llm_health, run_guarded_fillmore_llm_call
+from core.execution_state import load_state as load_execution_state
 from core.json_state import load_json_state, save_json_state
 from core.indicators import bollinger_bands
 
@@ -3484,10 +3485,12 @@ def tick_autonomous_fillmore(
     if not cfg.get("enabled"):
         return  # fast path — don't even log when fully off.
 
-    # Global runtime disarm must always override autonomous entry placement.
-    # This keeps "Mode = DISARMED" and "Exit Only = ON" authoritative.
-    runtime_state = load_state(state_path)
-    if runtime_state.kill_switch or runtime_state.exit_system_only or str(runtime_state.mode or "").upper() == "DISARMED":
+    # Global kill/exit-only must override autonomous placement. The top-level
+    # preset mode can be DISARMED while autonomous Fillmore is intentionally
+    # running in its own paper/shadow mode, so do not treat DISARMED as an
+    # autonomous hard stop.
+    runtime_state = load_execution_state(state_path)
+    if runtime_state.kill_switch or runtime_state.exit_system_only:
         return
 
     # Gather inputs.
@@ -3623,8 +3626,8 @@ def tick_autonomous_fillmore(
     for suggestion in suggestions:
         # Re-check runtime disarm before each potential placement in case the
         # operator toggled mode/exit-only while an LLM call was in-flight.
-        runtime_state = load_state(state_path)
-        if runtime_state.kill_switch or runtime_state.exit_system_only or str(runtime_state.mode or "").upper() == "DISARMED":
+        runtime_state = load_execution_state(state_path)
+        if runtime_state.kill_switch or runtime_state.exit_system_only:
             print(f"[{profile_name}] autonomous Fillmore: runtime disarmed/exit-only; skipping new placement")
             return
         print(
