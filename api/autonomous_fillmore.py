@@ -63,7 +63,7 @@ _MODEL_COST_PER_1M: dict[str, tuple[float, float]] = {
 # pessimistic-ish so the budget stats trend slightly conservative.
 _ASSUMED_INPUT_TOKENS = 4000
 _ASSUMED_OUTPUT_TOKENS = 350
-AUTONOMOUS_PROMPT_VERSION = "autonomous_phase2_runner_custom_exit_v3"
+AUTONOMOUS_PROMPT_VERSION = "autonomous_phase3_house_edge_v1"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": False,
@@ -4241,64 +4241,53 @@ def _invoke_suggest(
     suggest_prompt = (
         f"=== AUTONOMOUS DECISION REQUEST ===\n"
         f"Gate mode: {agg}. Execution mode: {mode}.{paper_note}\n"
-        f"{exec_note}\n"
-        f"LOT RANGE: {lot_lo}-{lot_hi} lots (base {lot_mid}). Hard ceiling: {int(max_lots)}.\n"
         + (f"\n{multi_note}\n" if multi_note else "") +
-        (f"\n{gate_block}\n" if gate_block else "\n") +
+        "\nGATE OPPORTUNITY\n"
+        + (f"{gate_block}\n" if gate_block else "(no gate metadata)\n") +
         f"\n{context_note}\n"
-        f"{spread_note}"
+        f"{spread_note}\n"
+        f"\nEXECUTION\n{exec_note}\n"
+        f"LOT RANGE: {lot_lo}-{lot_hi} (base {lot_mid}). Hard ceiling: {int(max_lots)}.\n"
+        f"{exit_calibration_text}\n"
         f"{forcing_function_block}\n"
         "\n"
-        "STANCE: The gate has surfaced a candidate opportunity. Treat it as a real setup worth evaluating "
-        "seriously — it is not noise by default. Look at it honestly and decide whether the opportunity is "
-        "still genuinely present right now. If the setup is intact and the supporting context is there, "
-        "trade it. Repeating a successful idea inside a working zone is allowed when price is still respecting "
-        "the zone. If it has degraded, become a blind retry after failed/unresolved attempts, contradicted itself "
-        "across timeframes, or simply isn't clearly present anymore, skip it. You are not obligated to trade "
-        "every gated setup, and you are not supposed to begin from a posture of refusal. You are supposed to "
-        "be accurate. The words probe, hedge, tactical, additive, reduced conviction do not on their own "
-        "justify a trade. If you use them, you must still explain why the trade is worth taking despite the "
-        "weakness those words point to. If you cannot, skip is the better answer.\n"
-        "\n"
-        "RESPONSE FORMAT (two parts, in this exact order):\n"
-        "\n"
-        "1. ANALYSIS (plain text, 6-12 lines). Think through the setup. Cover each of:\n"
-        "   - State whether the gate-qualified opportunity is actually tradeable right now or should be passed.\n"
-        "   - Respect the trigger family: momentum-continuation and trend-expansion usually mean market execution; critical-level reaction and Tokyo tight-range mean reversion can be market or near-touch limit.\n"
-        "   - H1/M15/M5/M1 trend consensus (note any divergence) and whether this is aligned, mixed, or countertrend.\n"
-        "   - POLICY + GEOPOLITICAL ALPHA (required): what is Japan MOF doing now (including rate-check/intervention signaling), what is Japan's finance minister signaling, is there active Japan-US policy coordination, and what war-premium dynamics are doing to USDJPY.\n"
-        "   - Explicitly call whether that macro/policy layer CONFIRMS, CONTRADICTS, or is MIXED versus your technical setup.\n"
-        "   - JPY CROSS BIAS — does it confirm or contradict direction?\n"
-        "   - Nearest PRICE STRUCTURE level(s) + order-book clusters. Name the level you'd anchor the entry on.\n"
-        "   - Relevant bar patterns / recent candle streak.\n"
-        "   - M5/M15 ATR — does it justify a wider or tighter SL?\n"
-        "   - SPREAD: explicitly judge whether current spread is fine, favorable, or too expensive for this setup.\n"
-        "   - OPEN POSITIONS + YOUR MOST RECENT SUGGESTION — stacking/hedging is allowed, but justify it. "
-        "If adding near same-side exposure, explain why this is not just a duplicate level.\n"
-        "   - ZONE MEMORY + SESSION STATE: classify recent same-fingerprint behavior as fresh_setup, working_zone, "
-        "failing_zone, or unresolved_chop. Repeating a working zone can be good; retrying a failing/unresolved zone needs material change. "
-        "If the session is in drawdown, weigh that too.\n"
-        "   - PLANNED GEOMETRY: estimate R:R from entry/SL/TP. Low R:R is not banned, but it needs a clear reason "
-        "why context, zone behavior, or win probability still makes it worth trading.\n"
-        "   - WEAKNESS TERMS: if you rely on words like probe, hedge, tactical, additive, or reduced conviction, "
-        "explain why the trade still stands without those words doing the work.\n"
-        "   - Imminent events / session risk — include MOF/BOJ/US event timing and fold it into conviction, execution style, and size.\n"
-        "   - EXIT STRATEGY + EXIT PLAN: Choose a strategy. If using llm_custom_exit, write a structured custom plan "
-        "with first objective, partial, BE trigger, invalidation, trail preference, time stop, and early-exit condition.\n"
-        "   - Final call: trade or skip? If trade, what direction and size? Be direct.\n"
+        "=== ANALYSIS CHECKLIST ===\n"
+        "Write 6-12 lines. Cover each in order. If a check does not apply, say so.\n"
+        "  1. GATE FIT — Is the gated opportunity actually present right now or has it degraded? "
+        "Name the level you would anchor on.\n"
+        "  2. TREND CONSENSUS — H1/M15/M5/M1. Classify as aligned, mixed, or countertrend. "
+        "If mixed: name the specific catalyst that makes this still tradeable, or skip.\n"
+        "  3. SIDE BIAS CHECK — If side=sell: state explicitly why this beats the buy-side base "
+        "rate (29% of wins, 53% of losses). 'Resistance reject' alone is not enough. If side=sell "
+        "AND any weakness signal is present, the named_catalyst must be specific or skip.\n"
+        "  4. POLICY + GEOPOLITICAL — MOF/FM signaling, intervention risk, coordination, "
+        "war-premium. CONFIRMS / CONTRADICTS / MIXED.\n"
+        "  5. JPY CROSS BIAS — confirm or contradict.\n"
+        "  6. PRICE STRUCTURE — nearest level(s), order-book clusters.\n"
+        "  7. ATR + SPREAD — does ATR justify your SL? Is spread fine, favorable, or expensive?\n"
+        "  8. ZONE MEMORY + REPEAT — fresh_setup / working_zone / failing_zone / unresolved_chop. "
+        "Compare against your last same-fingerprint fires.\n"
+        "  9. OPEN BOOK — stacking/hedging — additive alpha or duplicate?\n"
+        " 10. PLANNED GEOMETRY — entry/SL/TP, R:R. If R:R lands in [1.3, 2.0] because you widened "
+        "TP after a marginal entry, the entry is wrong; either re-anchor or skip.\n"
+        " 11. WEAKNESS WORDS — if you used probe/hedge/tactical/additive/reduced-conviction "
+        "anywhere in your reasoning, state why this trade is worth taking despite that. If you cannot, skip.\n"
+        " 12. CALL — trade or skip. If trade: side, size, exit strategy.\n"
         "\n"
         + decision_format +
         "```json\n"
         "{\n"
         '  "decision": "trade" | "skip",\n'
         '  "skip_reason": "<one specific sentence — required if decision is skip>",\n'
-        '  "trade_thesis": "<one specific sentence — required if decision is trade>",\n'
+        '  "trade_thesis": "<one specific sentence naming the catalyst, not the level — required if decision is trade>",\n'
+        '  "named_catalyst": "<the specific event/structure/flow that makes this trade beat the base rate; not \'level reject\' alone — required if decision is trade>",\n'
+        '  "side_bias_check": "<required if side=\'sell\': one sentence on why this beats the buy-side base rate, else null>",\n'
         '  "conviction_rung": "A" | "B" | "C" | "D",'
         + conditional_block + "\n"
         '  "zone_memory_read": "fresh_setup" | "working_zone" | "failing_zone" | "unresolved_chop",\n'
         '  "repeat_trade_case": "none" | "same_zone_continuation" | "retest_after_success" | "material_change_after_failure" | "blind_retry",\n'
         '  "planned_rr_estimate": <number or null>,\n'
-        '  "low_rr_edge": "<required if planned_rr_estimate is below 1.0, else null>",\n'
+        '  "low_rr_edge": "<required if planned_rr_estimate < 1.0, else null>",\n'
         '  "timeframe_alignment": "aligned" | "mixed" | "countertrend",\n'
         '  "countertrend_edge": "<required if timeframe_alignment is countertrend or mixed, else null>",\n'
         '  "trigger_fit": "true_escape" | "momentum_continuation" | "micro_expansion_inside_chop" | "level_reaction" | "mean_reversion" | "unclear",\n'
@@ -4308,9 +4297,9 @@ def _invoke_suggest(
         '  "price": <entry price as number>,\n'
         '  "sl": <stop loss price as number>,\n'
         '  "tp": <take profit price as number>,\n'
-        f'  "lots": <0 to skip, or {lot_lo}-{lot_hi} based on your conviction>,\n'
+        f'  "lots": <0 to skip, or {lot_lo}-{lot_hi} based on conviction>,\n'
         '  "time_in_force": "GTC" | "GTD",\n'
-        '  "gtd_time_utc": <ISO datetime string if GTD, else null>,\n'
+        '  "gtd_time_utc": <ISO datetime if GTD, else null>,\n'
         '  "exit_strategy": one of [' + _strategy_ids + '],\n'
         '  "exit_params": {<optional numeric overrides>} or null,\n'
         '  "exit_plan": "<1-2 sentence custom exit logic for the thesis monitor>",\n'
@@ -4322,53 +4311,45 @@ def _invoke_suggest(
         '    "trail_preference": "<hwm | m1_ema | m5_ema | price_action | none plus details>",\n'
         '    "time_stop_minutes": <number or null>,\n'
         '    "early_exit_if": "<what would make you exit early>",\n'
-        '    "runner_mode": <true if this is a momentum/trend runner, else false>,\n'
+        '    "runner_mode": <true if momentum/trend runner, else false>,\n'
         '    "runner_hold_rule": "<what must stay true to keep trailing the runner>"\n'
         '  },\n'
-        '  "rationale": "<1-2 sentence concise summary of the decision>",\n'
+        '  "rationale": "<1-2 sentence concise summary>",\n'
         '  "quality": "A" | "B" | "C"\n'
         "}\n"
         "```\n"
         "\n"
-        "DECISION FIELD: trade or skip — both are first-class outcomes. Both require the same rigor of "
-        "justification. If decision is skip, lots is irrelevant (use 0). If decision is trade, lots must be "
-        f"in {lot_lo}-{lot_hi} and reflect your honest read of the setup quality.\n"
-        "\n"
-        "CONVICTION RUNG (self-assessment, logged for analytics — your lots choice is independent):\n"
-        "- A: fresh structural event or clearly working zone, multi-TF alignment, clean invalidation, R:R ≥ 1.2, no recent same-fingerprint failure.\n"
-        "- B: two-TF alignment, R:R ≥ 1.0, no recent same-fingerprint failure, or working-zone continuation with one soft element.\n"
-        "- C: marginal but defensible — you can articulate the edge despite weaknesses.\n"
-        "- D: probe / hedge / tactical / additive / reduced conviction. If you can't write a specific 'what's "
-        "different' answer, or session drawdown should have stopped you, this is the rung. Pair with a 'skip' "
-        "decision unless you can defend taking it.\n"
+        "=== CONVICTION RUNG (self-assessment, logged) ===\n"
+        "  A — fresh structural event or clearly working zone, multi-TF alignment, clean invalidation, "
+        "R:R 1.0-1.3, no recent same-fingerprint failure, matches a green pattern.\n"
+        "  B — two-TF alignment, R:R 1.0-1.3, no recent same-fingerprint failure, OR working-zone "
+        "continuation with one soft element.\n"
+        "  C — marginal but defensible. Smallest size, often skip.\n"
+        "  D — probe/hedge/tactical/additive/reduced conviction. Pairs with skip unless the "
+        "named_catalyst is unusually strong.\n"
+        f"Lots and rung are independent: a B setup can size to {lot_lo} or {lot_hi} based on green/red "
+        "pattern fit. A rung A setup with a red-pattern match (e.g., sell + weakness signal without a "
+        f"named catalyst) downgrades to C and either sizes to {lot_lo} or skips.\n"
         "\n"
         "ENTRY PRICE RULE: " + price_instr + "\n"
-        "SL/TP: Baseline SL 10-15p, TP 4-10p; flex with ATR. Never glue SL 1-2p past a known level.\n"
         f'EXIT STRATEGY: default "{DEFAULT_AI_EXIT_STRATEGY}" unless analysis favors another, "llm_custom_exit", or "none".\n'
-        + exit_calibration_text + "\n"
-        "EXIT PLAN: Describe how you want to manage the trade mid-flight. The standard thesis monitor runs every ~3 min. "
-        "For llm_custom_exit, checks are event-driven and budgeted, so give the monitor crisp decision points instead of vague intent. "
-        "It can only hold, tighten SL, scale out, or exit. Give it clear conditions: 'exit if M3 flips bear', "
-        "'tighten SL to BE after +5p', 'scale 50% at TP1 then trail on M1 21 EMA'. If you have no custom plan, "
-        'write "default" and the template strategy handles it.\n'
-        "RUNNER MANAGEMENT: If trigger_fit is momentum_continuation or the gate family is momentum_continuation, strongly prefer "
-        "exit_strategy='llm_custom_exit' with runner_mode=true. The intent is partial profit at the first objective, then protect "
-        "the remainder with a stop and let it run while M1/M5 structure, EMA9/21 hold, and clear-path conditions remain intact. "
-        "When the path is open and momentum remains healthy, explicitly consider whether this can become a 20+ pip move. "
-        "Do not cap a clean runner with a tiny fixed take-profit unless the path is blocked; use partial profit plus a trailing "
-        "stop plan to give the remainder room to capture the larger move.\n"
-        "LOT SIZING — CONVICTION SHOULD REFLECT SELECTIVITY:\n"
-        f"- {lot_hi} lots: cleanest trigger-qualified setup, strong confirmation, clean invalidation.\n"
-        f"- {lot_mid} lots: solid setup with one soft element.\n"
-        f"- {lot_lo} lots: thin but still defensible edge.\n"
-        "- 0 lots: use freely whenever the gated opportunity is not clean enough after full analysis. "
-        "Pair with decision='skip'.\n"
-        "Do not force a trade because the gate woke you. The gate says 'look here', not 'trade now'.\n"
+        "EXIT PLAN: 1-2 sentences for the thesis monitor (runs every ~3 min for default strategies; "
+        "event-driven and budgeted for llm_custom_exit). It can only hold, tighten SL, scale out, or exit. "
+        "Give crisp conditions: 'exit if M3 flips bear', 'tighten SL to BE after +5p', "
+        "'scale 50% at TP1 then trail on M1 21 EMA'. Otherwise write \"default\".\n"
+        "RUNNER MANAGEMENT: If trigger_fit or gate family is momentum_continuation, prefer "
+        "exit_strategy='llm_custom_exit' with runner_mode=true: partial at first objective, then trail "
+        "while M1/M5 structure and EMA9/21 hold. Do not cap a clean runner with a tiny fixed TP.\n"
         "\n"
-        "QUALITY TAG (logged for analytics, does NOT affect placement):\n"
-        '- "A" = textbook. You sized it up.\n'
-        '- "B" = solid. One soft element, you sized it down.\n'
-        '- "C" = thin or skip.\n'
+        "LOT SIZING — selectivity, not size, is the lever:\n"
+        f"  {lot_hi}: cleanest aligned setup matching a green pattern.\n"
+        f"  {lot_mid}: solid setup with one soft element.\n"
+        f"  {lot_lo}: thin but defensible.\n"
+        "  0:    marginal — pair with decision='skip' and a specific skip_reason.\n"
+        "Do not size up to compensate for low conviction. The gate says 'look here', not 'trade now'.\n"
+        "\n"
+        "QUALITY TAG (logged, does NOT affect placement):\n"
+        '  A = textbook. B = solid with one soft element. C = thin or skip.\n'
         "\n"
         + _exit_catalog_text
     )
@@ -4482,6 +4463,8 @@ def _invoke_suggest(
             "countertrend_edge",
             "trigger_fit",
             "why_trade_despite_weakness",
+            "named_catalyst",
+            "side_bias_check",
         ):
             _optional_text(_k)
         if suggestion["timeframe_alignment"] not in {"aligned", "mixed", "countertrend", None}:
@@ -4543,6 +4526,41 @@ def _invoke_suggest(
                 and (suggestion.get("zone_memory_read") in {"working_zone", "failing_zone", "unresolved_chop"})
             ):
                 veto_reason = "server_veto:repeat_fire_without_fresh_edge"
+            else:
+                # House-edge rules from autonomous_phase3 prompt rewrite. A
+                # named_catalyst is "generic" when missing, blank, shorter than
+                # 12 chars, or made entirely of common filler words. The bar is
+                # deliberately low — the model only needs one specific phrase.
+                named_catalyst = (suggestion.get("named_catalyst") or "").strip()
+                _GENERIC_CATALYSTS = {
+                    "level reject", "level reaction", "support reclaim",
+                    "resistance reject", "pullback", "pullback fade",
+                    "fade", "fade in chop", "trend continuation", "continuation",
+                    "n/a", "none", "default", "see thesis", "see analysis",
+                }
+                catalyst_is_generic = (
+                    not named_catalyst
+                    or len(named_catalyst) < 12
+                    or named_catalyst.lower() in _GENERIC_CATALYSTS
+                )
+                if (
+                    suggestion.get("timeframe_alignment") == "mixed"
+                    and catalyst_is_generic
+                ):
+                    veto_reason = "server_veto:mixed_alignment_no_catalyst"
+                else:
+                    side = str(suggestion.get("side") or "").lower()
+                    rr = suggestion.get("planned_rr_estimate")
+                    rr_low = isinstance(rr, (int, float)) and float(rr) < 1.0
+                    has_weakness = (
+                        suggestion.get("timeframe_alignment") in {"mixed", "countertrend"}
+                        or suggestion.get("repeat_trade_case") == "blind_retry"
+                        or suggestion.get("zone_memory_read") in {"failing_zone", "unresolved_chop"}
+                        or rr_low
+                        or bool(suggestion.get("why_trade_despite_weakness"))
+                    )
+                    if side == "sell" and has_weakness and catalyst_is_generic:
+                        veto_reason = "server_veto:sell_with_weakness_no_catalyst"
         if veto_reason:
             decision_field = "skip"
             suggestion["decision"] = "skip"

@@ -239,6 +239,8 @@ def init_db(db_path: Path) -> None:
         _ensure_column(conn, "ai_suggestions", "countertrend_edge", "TEXT")
         _ensure_column(conn, "ai_suggestions", "trigger_fit", "TEXT")
         _ensure_column(conn, "ai_suggestions", "why_trade_despite_weakness", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "named_catalyst", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "side_bias_check", "TEXT")
         _ensure_column(conn, "ai_suggestions", "custom_exit_plan_json", "TEXT")
         _ensure_column(conn, "ai_suggestions", "features_json", "TEXT")
         _ensure_column(conn, "ai_suggestions", "max_adverse_pips", "REAL")
@@ -426,6 +428,8 @@ def log_generated(
         "countertrend_edge": suggestion.get("countertrend_edge"),
         "trigger_fit": suggestion.get("trigger_fit"),
         "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
+        "named_catalyst": suggestion.get("named_catalyst"),
+        "side_bias_check": suggestion.get("side_bias_check"),
         "custom_exit_plan_json": json.dumps(suggestion.get("custom_exit_plan") or {}),
         "features_json": json.dumps(features),
         "market_snapshot_json": json.dumps(snapshot),
@@ -444,7 +448,7 @@ def log_generated(
                 trade_thesis, whats_different, why_not_stop,
                 zone_memory_read, repeat_trade_case, planned_rr_estimate,
                 low_rr_edge, timeframe_alignment, countertrend_edge, trigger_fit,
-                why_trade_despite_weakness, custom_exit_plan_json,
+                why_trade_despite_weakness, named_catalyst, side_bias_check, custom_exit_plan_json,
                 features_json, market_snapshot_json
             ) VALUES (
                 :suggestion_id, :created_utc, :profile, :model,
@@ -456,7 +460,7 @@ def log_generated(
                 :trade_thesis, :whats_different, :why_not_stop,
                 :zone_memory_read, :repeat_trade_case, :planned_rr_estimate,
                 :low_rr_edge, :timeframe_alignment, :countertrend_edge, :trigger_fit,
-                :why_trade_despite_weakness, :custom_exit_plan_json,
+                :why_trade_despite_weakness, :named_catalyst, :side_bias_check, :custom_exit_plan_json,
                 :features_json, :market_snapshot_json
             )
             """,

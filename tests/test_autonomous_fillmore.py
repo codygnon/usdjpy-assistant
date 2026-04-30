@@ -849,7 +849,7 @@ def test_invoke_suggest_forces_momentum_runner_custom_exit(tmp_path: Path, monke
     assert out0["custom_exit_plan"]["partial_close_pct"] == 33.0
     assert "20+ pip runner" in out0["custom_exit_plan"]["runner_hold_rule"]
     assert "20+ pip move" in out0["custom_exit_plan"]["trail_preference"]
-    assert out0["prompt_version"] == "autonomous_phase2_runner_custom_exit_v3"
+    assert out0["prompt_version"] == "autonomous_phase3_house_edge_v1"
 
 
 def test_min_confidence_removed_from_default_config() -> None:
@@ -945,8 +945,8 @@ def test_invoke_suggest_stage4_sharpens_confidence_prompt_and_exit_calibration(t
 
     user_prompt = str((captured.get("messages") or [{}, {}])[1]["content"])
     assert "LOT SIZING" in user_prompt
-    assert "CONVICTION SHOULD REFLECT SELECTIVITY" in user_prompt
-    assert "0 lots: use freely" in user_prompt
+    assert "selectivity, not size, is the lever" in user_prompt
+    assert "pair with decision='skip'" in user_prompt
     assert '"decision": "trade" | "skip"' in user_prompt
     assert '"conviction_rung": "A" | "B" | "C" | "D"' in user_prompt
     assert '"zone_memory_read": "fresh_setup" | "working_zone" | "failing_zone" | "unresolved_chop"' in user_prompt
@@ -977,9 +977,9 @@ def test_autonomous_system_prompt_aligns_with_near_touch_execution() -> None:
     assert "within ~10 pips" in prompt
     assert "~$6.66/pip/lot at 150.123" in prompt
     assert "RISK REGIME: DEFENSIVE_SOFT" in prompt
-    assert "clamp autonomous limits into a near-market band" in prompt
-    assert "compression-breakout setups also favor market execution" in prompt
-    assert "Both decisions are first-class outcomes" in prompt
+    assert "clamps autonomous limits into a near-market band" in prompt
+    assert "compression_breakout" in prompt
+    assert "Both outcomes are first-class" in prompt
 
 
 def test_fit_aux_memory_blocks_keeps_required_and_drops_low_priority_when_budget_tight() -> None:

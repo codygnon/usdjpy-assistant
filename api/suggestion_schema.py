@@ -84,6 +84,8 @@ class AutonomousSuggestion(FillmoreSuggestionBase):
     countertrend_edge: str | None = None
     trigger_fit: str | None = None
     why_trade_despite_weakness: str | None = None
+    named_catalyst: str | None = None
+    side_bias_check: str | None = None
     custom_exit_plan: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("order_type", mode="before")
@@ -116,6 +118,8 @@ class AutonomousSuggestion(FillmoreSuggestionBase):
         "countertrend_edge",
         "trigger_fit",
         "why_trade_despite_weakness",
+        "named_catalyst",
+        "side_bias_check",
         mode="before",
     )
     @classmethod
