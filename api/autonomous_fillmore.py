@@ -4538,6 +4538,12 @@ def _invoke_suggest(
                     "fade", "fade in chop", "trend continuation", "continuation",
                     "n/a", "none", "default", "see thesis", "see analysis",
                 }
+                _GENERIC_TEXT = {"n/a", "na", "none", "null", "default", "-", "see thesis", "see analysis"}
+
+                def _has_meaningful_text(value: Any) -> bool:
+                    text = str(value or "").strip().lower()
+                    return bool(text and text not in _GENERIC_TEXT)
+
                 catalyst_is_generic = (
                     not named_catalyst
                     or len(named_catalyst) < 12
@@ -4557,7 +4563,7 @@ def _invoke_suggest(
                         or suggestion.get("repeat_trade_case") == "blind_retry"
                         or suggestion.get("zone_memory_read") in {"failing_zone", "unresolved_chop"}
                         or rr_low
-                        or bool(suggestion.get("why_trade_despite_weakness"))
+                        or _has_meaningful_text(suggestion.get("why_trade_despite_weakness"))
                     )
                     if side == "sell" and has_weakness and catalyst_is_generic:
                         veto_reason = "server_veto:sell_with_weakness_no_catalyst"

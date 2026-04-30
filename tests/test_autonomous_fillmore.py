@@ -1310,6 +1310,46 @@ def test_invoke_suggest_forces_skip_on_repeat_fire_without_fresh_edge(tmp_path: 
     assert out[0]["skip_reason"] == "server_veto:repeat_fire_without_fresh_edge"
 
 
+def test_invoke_suggest_ignores_generic_weakness_text_for_sell_veto(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+
+    fake_chat = ModuleType("api.ai_trading_chat")
+    fake_chat.build_trading_context = lambda profile, profile_name: _ctx()
+    fake_chat.build_trade_suggestion_news_block = lambda **kwargs: ""
+    fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
+    fake_chat.system_prompt_from_context = lambda ctx, model: "SYSTEM PROMPT"
+    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model, **kwargs: "SYS"
+    monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
+    _install_fake_main(monkeypatch, db_path)
+
+    class _Client:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+        def _create(self, **kwargs):
+            payload = {
+                **_suggestion(),
+                "side": "sell",
+                "why_trade_despite_weakness": "none",
+                "named_catalyst": "level reject",
+                "lots": 1.5,
+                "skip_reason": None,
+            }
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+
+    fake_openai = ModuleType("openai")
+    fake_openai.OpenAI = _Client
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+
+    out = autonomous_fillmore._invoke_suggest(
+        SimpleNamespace(symbol="USDJPY"), "p1",
+        {"model": "gpt-5.4-mini", "aggressiveness": "balanced", "mode": "paper"},
+    )
+    assert out[0]["decision"] == "trade"
+    assert out[0]["lots"] == 1.5
+
+
 def test_invoke_suggest_defaults_market_order_type_when_omitted(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "ai_suggestions.sqlite"
 
