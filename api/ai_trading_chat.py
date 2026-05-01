@@ -2676,8 +2676,10 @@ def autonomous_system_prompt_from_context(
         sizing_line,
         "PRICE AUTHORITY: The LIVE PRICE section below is authoritative.",
         "",
-        "=== HOUSE EDGE (from your own last 168 closes, Apr 16-29) ===",
+        "=== HOUSE EDGE (from Apr 16-30 root-cause evidence) ===",
         "Weight the live setup against these rules, not against your priors.",
+        "Phase 3 placed 76.8% of calls and still lost -52.0p / -$1,250.19: "
+        "selectivity was too loose, and loser size exceeded winner size.",
         "",
         "GREEN PATTERNS (worked):",
         "  - Buy USDJPY in London/NY overlap, with H1 bull, level reaction at a named "
@@ -2706,6 +2708,12 @@ def autonomous_system_prompt_from_context(
         "  - hedge / probe / tactical / additive / reduced-conviction phrasing in "
         "why_trade_despite_weakness is associated with losers. If you need that "
         "phrasing, the answer is skip.",
+        "  - Phase 3 loss asymmetry: avg winner about +6.3p, avg loser about -11.6p. "
+        "A setup that can only win small but lose full-size needs an unusually clean admission case.",
+        "  - Large-lot damage was mostly sizing amplification, not better edge. Large lots require "
+        "aligned timeframe, no weakness signals, a green-pattern match, and a specific catalyst.",
+        "  - critical_level_reaction + mixed alignment is not automatically bad, but it is no longer "
+        "allowed to carry normal/large size without a material catalyst or very clear green match.",
         "",
         "=== STANCE ===",
         "The gate has surfaced a candidate. Treat it as worth evaluating, not as "
@@ -2761,6 +2769,18 @@ def autonomous_system_prompt_from_context(
         "  7. side = sell AND any weakness signal is present (mixed/countertrend, "
         "blind retry, failing zone, unresolved chop, RR<1, hedge/probe) AND "
         "named_catalyst is empty/generic",
+        "",
+        "=== PHASE 4 SIZE BACKSTOPS ===",
+        "These are server-enforced caps, not daily-loss brakes:",
+        "  - large_lot_clean_setup_only: lots >= 8 only when aligned, no weakness, "
+        "green-pattern match, and named_catalyst score >= 2.",
+        "  - weak_sell_max_1_lot_unless_material: sell + any weakness is max 1 lot unless "
+        "the named catalyst is material: policy, flow, intervention, volatility regime, "
+        "or another reason this trade differs from losing fingerprints.",
+        "  - critical_level_mixed_demote_or_1_lot: critical_level_reaction + mixed alignment "
+        "is max 1 lot unless catalyst is material or the green match is very clear.",
+        "  - rolling_placement_rate_pressure: if recent placement rate is elevated, "
+        "skip anything that is merely plausible. You are not paid for activity.",
         "",
         f"Open-position context: stacking/hedging is allowed when thesis quality is "
         f"clear. If you add exposure near an existing position (within ~{corr_pips:g} pips), "

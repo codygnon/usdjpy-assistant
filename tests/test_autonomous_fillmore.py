@@ -98,6 +98,57 @@ def _install_fake_main(monkeypatch, db_path: Path) -> None:
     monkeypatch.setitem(sys.modules, "api.main", fake_main)
 
 
+def _invoke_suggest_with_payload(
+    tmp_path: Path,
+    monkeypatch,
+    payload: dict,
+    *,
+    gate_extras: dict | None = None,
+    ctx: dict | None = None,
+) -> tuple[list[dict], Path]:
+    db_path = tmp_path / "ai_suggestions.sqlite"
+    fake_chat = ModuleType("api.ai_trading_chat")
+    fake_chat.build_trading_context = lambda profile, profile_name: ctx or _ctx()
+    fake_chat.build_trade_suggestion_news_block = lambda **kwargs: ""
+    fake_chat.resolve_ai_suggest_model = lambda configured: "gpt-5.4-mini"
+    fake_chat.system_prompt_from_context = lambda ctx, model: "SYSTEM PROMPT"
+    fake_chat.autonomous_system_prompt_from_context = lambda ctx, model, **kwargs: "SYS"
+    monkeypatch.setitem(sys.modules, "api.ai_trading_chat", fake_chat)
+    _install_fake_main(monkeypatch, db_path)
+
+    class _Client:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+        def _create(self, **kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+
+    fake_openai = ModuleType("openai")
+    fake_openai.OpenAI = _Client
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+
+    gate_decision = None
+    if gate_extras is not None:
+        gate_decision = autonomous_fillmore.GateDecision(
+            timestamp_utc=datetime.now(timezone.utc).isoformat(),
+            result="pass",
+            layer="pass",
+            reason="ok",
+            mode="paper",
+            aggressiveness="balanced",
+            extras=gate_extras,
+        )
+
+    out = autonomous_fillmore._invoke_suggest(
+        SimpleNamespace(symbol="USDJPY"),
+        "p1",
+        {"model": "gpt-5.4-mini", "aggressiveness": "balanced", "mode": "paper"},
+        gate_decision=gate_decision,
+    )
+    return out, db_path
+
+
 def _gate_cfg(aggressiveness: str) -> dict:
     cfg = dict(autonomous_fillmore.DEFAULT_CONFIG)
     cfg.update({
@@ -849,7 +900,7 @@ def test_invoke_suggest_forces_momentum_runner_custom_exit(tmp_path: Path, monke
     assert out0["custom_exit_plan"]["partial_close_pct"] == 33.0
     assert "20+ pip runner" in out0["custom_exit_plan"]["runner_hold_rule"]
     assert "20+ pip move" in out0["custom_exit_plan"]["trail_preference"]
-    assert out0["prompt_version"] == "autonomous_phase3_house_edge_v1"
+    assert out0["prompt_version"] == "autonomous_phase4_selectivity_sizing_v1"
 
 
 def test_min_confidence_removed_from_default_config() -> None:
@@ -1348,6 +1399,133 @@ def test_invoke_suggest_ignores_generic_weakness_text_for_sell_veto(tmp_path: Pa
     )
     assert out[0]["decision"] == "trade"
     assert out[0]["lots"] == 1.5
+
+
+def test_invoke_suggest_caps_dirty_phase4_large_lot(tmp_path: Path, monkeypatch) -> None:
+    payload = {
+        **_suggestion(),
+        "lots": 8.0,
+        "timeframe_alignment": "mixed",
+        "named_catalyst": "HALF_YEN 160.50 reclaimed_support with M1 confirmation",
+    }
+    out, db_path = _invoke_suggest_with_payload(
+        tmp_path,
+        monkeypatch,
+        payload,
+        gate_extras={
+            "trigger_family": "critical_level_reaction",
+            "trigger_reason": "support_reclaim:HALF_YEN:160.50",
+            "trigger_bias": "buy",
+            "thesis_fingerprint": "buy:critical_level_reaction:HALF_YEN:160.50",
+        },
+    )
+
+    assert out[0]["decision"] == "trade"
+    assert out[0]["lots"] == 1.0
+    assert out[0]["max_allowed_lots"] == 1.0
+    assert "phase4_large_lot_clean_setup_only" in out[0]["selectivity_adjustments"]
+    row = suggestion_tracker.get_history(db_path, limit=10, offset=0)["items"][0]
+    assert row["features"]["original_model_lots"] == 8.0
+    assert "phase4_large_lot_clean_setup_only" in row["features"]["selectivity_adjustments"]
+
+
+def test_invoke_suggest_allows_clean_phase4_large_lot(tmp_path: Path, monkeypatch) -> None:
+    payload = {
+        **_suggestion(),
+        "lots": 8.0,
+        "timeframe_alignment": "aligned",
+        "named_catalyst": "HALF_YEN 160.50 reclaimed_support with M1 confirmation",
+    }
+    out, _ = _invoke_suggest_with_payload(
+        tmp_path,
+        monkeypatch,
+        payload,
+        gate_extras={
+            "trigger_family": "critical_level_reaction",
+            "trigger_reason": "support_reclaim:HALF_YEN:160.50",
+            "trigger_bias": "buy",
+            "thesis_fingerprint": "buy:critical_level_reaction:HALF_YEN:160.50",
+        },
+    )
+
+    assert out[0]["decision"] == "trade"
+    assert out[0]["lots"] == 8.0
+    assert "selectivity_adjustments" not in out[0]
+
+
+def test_invoke_suggest_caps_weak_sell_without_material_catalyst(tmp_path: Path, monkeypatch) -> None:
+    payload = {
+        **_suggestion(),
+        "side": "sell",
+        "lots": 4.0,
+        "timeframe_alignment": "mixed",
+        "named_catalyst": "M5 rejection at HALF_YEN 160.50 with micro confirmation",
+        "side_bias_check": "Sell has a named structure, but no material catalyst.",
+        "trigger_fit": "momentum_continuation",
+    }
+    out, _ = _invoke_suggest_with_payload(
+        tmp_path,
+        monkeypatch,
+        payload,
+        gate_extras={
+            "trigger_family": "momentum_continuation",
+            "trigger_reason": "pullback_retest:sell",
+            "trigger_bias": "sell",
+        },
+    )
+
+    assert out[0]["decision"] == "trade"
+    assert out[0]["lots"] == 1.0
+    assert "phase4_weak_sell_max_1_lot_unless_material" in out[0]["selectivity_adjustments"]
+
+
+def test_invoke_suggest_allows_material_weak_sell_without_cap(tmp_path: Path, monkeypatch) -> None:
+    payload = {
+        **_suggestion(),
+        "side": "sell",
+        "lots": 4.0,
+        "timeframe_alignment": "mixed",
+        "named_catalyst": "MOF intervention rate check flow shift after failed prior breakout",
+        "side_bias_check": "Material MOF flow risk makes this sell differ from the weak-sell base rate.",
+        "trigger_fit": "momentum_continuation",
+    }
+    out, _ = _invoke_suggest_with_payload(
+        tmp_path,
+        monkeypatch,
+        payload,
+        gate_extras={
+            "trigger_family": "momentum_continuation",
+            "trigger_reason": "pullback_retest:sell",
+            "trigger_bias": "sell",
+        },
+    )
+
+    assert out[0]["decision"] == "trade"
+    assert out[0]["lots"] == 4.0
+    assert "selectivity_adjustments" not in out[0]
+
+
+def test_invoke_suggest_caps_critical_level_mixed_without_material_catalyst(tmp_path: Path, monkeypatch) -> None:
+    payload = {
+        **_suggestion(),
+        "lots": 3.0,
+        "timeframe_alignment": "mixed",
+        "named_catalyst": "HALF_YEN 160.50 reclaimed_support with M1 confirmation",
+    }
+    out, _ = _invoke_suggest_with_payload(
+        tmp_path,
+        monkeypatch,
+        payload,
+        gate_extras={
+            "trigger_family": "critical_level_reaction",
+            "trigger_reason": "support_reclaim:HALF_YEN:160.50",
+            "trigger_bias": "buy",
+        },
+    )
+
+    assert out[0]["decision"] == "trade"
+    assert out[0]["lots"] == 1.0
+    assert "phase4_critical_level_mixed_max_1_lot" in out[0]["selectivity_adjustments"]
 
 
 def test_invoke_suggest_defaults_market_order_type_when_omitted(tmp_path: Path, monkeypatch) -> None:
@@ -3185,11 +3363,40 @@ def test_recompute_performance_stats_materializes_prompt_and_mae_metrics(tmp_pat
     )
     stats = autonomous_performance.get_materialized_stats(suggestions_db)
     rolling = stats["rolling_20"]
+    assert rolling["trade_count"] == 1
+    assert rolling["placed_count"] == 1
+    assert rolling["placement_rate"] == 1.0
     assert rolling["closed_count"] == 1
     assert rolling["avg_mae_pips"] == 1.4
     assert rolling["avg_mfe_pips"] == 7.2
     breakdown = json.loads(rolling["prompt_version_breakdown_json"])
     assert breakdown["autonomous_phase_a_v1"]["count"] == 1
+
+
+def test_performance_memory_warns_on_high_placement_rate(tmp_path: Path) -> None:
+    suggestions_db = tmp_path / "ai_suggestions.sqlite"
+    suggestion_tracker.upsert_performance_stats(
+        suggestions_db,
+        profile="kumatora2",
+        stats_key="rolling_20",
+        values={
+            "trade_count": 8,
+            "placed_count": 6,
+            "placement_rate": 0.75,
+            "closed_count": 6,
+            "win_rate": 0.50,
+            "avg_win_pips": 5.0,
+            "avg_loss_pips": -10.0,
+            "net_pnl": -100.0,
+            "profit_factor": 0.75,
+            "updated_utc": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+    block = autonomous_performance.build_performance_memory_block(suggestions_db)
+
+    assert "Recent placement rate: 75% (6/8 calls)." in block
+    assert "Raise selectivity" in block
 
 
 def test_build_stats_refreshes_runtime_and_materialized_performance_from_history(tmp_path: Path) -> None:

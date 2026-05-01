@@ -332,6 +332,8 @@ def _compute_window_stats(
         intervention_checks += sum(1 for chk in checks if str(chk.get("action") or "") != "hold")
     return {
         "trade_count": len(rows),
+        "placed_count": len(placed_rows),
+        "placement_rate": (len(placed_rows) / len(rows)) if rows else None,
         "closed_count": len(closed_rows),
         "win_rate": (len(wins) / len(closed_rows)) if closed_rows else None,
         "avg_win_pips": _safe_avg([_safe_float(row.get("pips")) for row in wins]),
@@ -457,6 +459,9 @@ def build_performance_memory_block(
     avg_win = stats.get("avg_win_pips")
     avg_loss = stats.get("avg_loss_pips")
     avg_hold = stats.get("avg_hold_minutes")
+    trade_count = int(stats.get("trade_count") or 0)
+    placed_count = int(stats.get("placed_count") or 0)
+    placement_rate = stats.get("placement_rate")
     pf_text = f"{pf:.2f}" if isinstance(pf, (int, float)) else "n/a"
     lines.append(
         f"Last {closed_count} autonomous closes: "
@@ -473,6 +478,11 @@ def build_performance_memory_block(
         core_tail.append(f"avg hold {avg_hold:.0f}m")
     if core_tail:
         lines[-1] = lines[-1] + " | " + " | ".join(core_tail)
+    if isinstance(placement_rate, (int, float)) and trade_count > 0:
+        placement_line = f"Recent placement rate: {placement_rate * 100:.0f}% ({placed_count}/{trade_count} calls)."
+        if placement_rate >= 0.50:
+            placement_line += " Raise selectivity: skip anything not clearly above base rate."
+        lines.append(placement_line)
     fill_rate_limits = stats.get("fill_rate_limits")
     if isinstance(fill_rate_limits, (int, float)):
         lines.append(f"Limit fill rate: {fill_rate_limits * 100:.0f}%")

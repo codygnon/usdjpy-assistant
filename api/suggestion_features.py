@@ -55,6 +55,14 @@ def compute_suggestion_features(
         "confidence": str(suggestion.get("quality") or suggestion.get("confidence") or ""),
         "trigger_family": str(suggestion.get("trigger_family") or ""),
         "trigger_reason": str(suggestion.get("trigger_reason") or ""),
+        "named_catalyst": str(suggestion.get("named_catalyst") or ""),
+        "side_bias_check": str(suggestion.get("side_bias_check") or ""),
+        "selectivity_adjustments": suggestion.get("selectivity_adjustments") or [],
+        "max_allowed_lots": _safe_float(suggestion.get("max_allowed_lots")),
+        "original_model_lots": _safe_float(suggestion.get("original_model_lots")),
+        "phase4_catalyst_score": _safe_float(suggestion.get("phase4_catalyst_score")),
+        "phase4_green_matches": suggestion.get("phase4_green_matches") or [],
+        "phase4_weakness_signals": suggestion.get("phase4_weakness_signals") or [],
     }
 
 

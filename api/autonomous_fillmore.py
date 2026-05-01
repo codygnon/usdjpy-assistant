@@ -63,7 +63,7 @@ _MODEL_COST_PER_1M: dict[str, tuple[float, float]] = {
 # pessimistic-ish so the budget stats trend slightly conservative.
 _ASSUMED_INPUT_TOKENS = 4000
 _ASSUMED_OUTPUT_TOKENS = 350
-AUTONOMOUS_PROMPT_VERSION = "autonomous_phase3_house_edge_v1"
+AUTONOMOUS_PROMPT_VERSION = "autonomous_phase4_selectivity_sizing_v1"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": False,
@@ -103,6 +103,185 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "streak_scratch_threshold_pips": 1.0,
     "min_lot_size": 0.01,
 }
+
+_PHASE4_GENERIC_TEXT = {
+    "n/a", "na", "none", "null", "default", "-", "see thesis", "see analysis",
+}
+_PHASE4_GENERIC_CATALYSTS = {
+    "level reject", "level reaction", "support reclaim", "reclaimed support",
+    "resistance reject", "rejected resistance", "pullback", "pullback fade",
+    "fade", "fade in chop", "trend continuation", "continuation", "support",
+    "resistance", "structure", "technical setup", "price action",
+    *_PHASE4_GENERIC_TEXT,
+}
+_PHASE4_STRUCTURE_TOKENS = (
+    "support", "resistance", "reclaim", "reject", "half_yen", "half yen",
+    "whole_yen", "whole yen", "session high", "session low", "oanda cluster",
+    "liquidity cluster", "range high", "range low", "trendline", "ema", "vwap",
+)
+_PHASE4_MICRO_TOKENS = (
+    "micro", "m1", "m3", "m5", "confirmation", "acceptance", "break",
+    "retest", "impulse", "sweep", "hold", "close above", "close below",
+    "higher low", "lower high", "failed break", "failed breakdown",
+)
+_PHASE4_MATERIAL_TOKENS = (
+    "boj", "mof", "finance minister", "intervention", "rate check", "hawkish",
+    "dovish", "policy", "macro", "flow", "safe-haven", "safe haven",
+    "geopolitical", "war", "us-japan", "treasury", "yield", "cpi", "nfp",
+    "fomc", "volatility regime", "liquidity shift", "fixing", "option",
+    "real money", "material change", "prior failure", "failed prior",
+    "break of structure", "regime shift",
+)
+
+
+def _phase4_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+
+def _phase4_contains_any(text: str, tokens: tuple[str, ...]) -> bool:
+    return any(token in text for token in tokens)
+
+
+def _phase4_has_meaningful_text(value: Any) -> bool:
+    text = _phase4_text(value)
+    return bool(text and text not in _PHASE4_GENERIC_TEXT)
+
+
+def _phase4_catalyst_score(value: Any) -> int:
+    """0 generic, 1 structure-only, 2 micro-confirmed, 3 material catalyst."""
+    text = _phase4_text(value)
+    stripped = text.strip(" .:-")
+    if not stripped or stripped in _PHASE4_GENERIC_CATALYSTS or len(stripped) < 12:
+        return 0
+    if _phase4_contains_any(stripped, _PHASE4_MATERIAL_TOKENS):
+        return 3
+    has_structure = _phase4_contains_any(stripped, _PHASE4_STRUCTURE_TOKENS)
+    has_micro = _phase4_contains_any(stripped, _PHASE4_MICRO_TOKENS)
+    has_level = bool(re.search(r"\d", stripped))
+    if has_structure and has_micro:
+        return 2
+    if has_micro and has_level:
+        return 2
+    if has_structure or has_level:
+        return 1
+    return 1 if len(stripped.split()) >= 4 else 0
+
+
+def _phase4_session_is_london_ny(ctx: dict[str, Any]) -> bool:
+    session = (ctx.get("session") or {}) if isinstance(ctx, dict) else {}
+    labels = [
+        _phase4_text(session.get("overlap")),
+        *[_phase4_text(item) for item in (session.get("active_sessions") or [])],
+    ]
+    joined = " ".join(labels)
+    return "london" in joined or "new york" in joined or any(label == "ny" for label in labels)
+
+
+def _phase4_h1_is_bull(ctx: dict[str, Any]) -> bool:
+    ta = (ctx.get("ta_snapshot") or {}) if isinstance(ctx, dict) else {}
+    h1 = ta.get("H1") or {}
+    text = _phase4_text(" ".join(str(v) for v in h1.values())) if isinstance(h1, dict) else _phase4_text(h1)
+    return any(token in text for token in ("bull", "uptrend", "higher high", "higher low"))
+
+
+def _phase4_weakness_signals(suggestion: dict[str, Any]) -> list[str]:
+    signals: list[str] = []
+    tf = _phase4_text(suggestion.get("timeframe_alignment"))
+    if tf in {"mixed", "countertrend"}:
+        signals.append(f"timeframe_alignment:{tf}")
+    repeat_case = _phase4_text(suggestion.get("repeat_trade_case"))
+    if repeat_case == "blind_retry":
+        signals.append("blind_retry")
+    zone = _phase4_text(suggestion.get("zone_memory_read"))
+    if zone in {"failing_zone", "unresolved_chop"}:
+        signals.append(f"zone_memory:{zone}")
+    try:
+        rr = float(suggestion.get("planned_rr_estimate"))
+    except (TypeError, ValueError):
+        rr = None
+    if rr is not None and rr < 1.0:
+        signals.append("planned_rr_below_1")
+    if _phase4_has_meaningful_text(suggestion.get("why_trade_despite_weakness")):
+        signals.append("weakness_admitted")
+    return signals
+
+
+def _phase4_green_pattern_matches(suggestion: dict[str, Any], ctx: dict[str, Any]) -> list[str]:
+    side = _phase4_text(suggestion.get("side"))
+    family = _phase4_text(suggestion.get("trigger_family"))
+    fit = _phase4_text(suggestion.get("trigger_fit"))
+    tf = _phase4_text(suggestion.get("timeframe_alignment"))
+    catalyst_text = _phase4_text(suggestion.get("named_catalyst"))
+    thesis_text = _phase4_text(suggestion.get("trade_thesis"))
+    trigger_reason = _phase4_text(suggestion.get("trigger_reason"))
+    combined = " ".join([catalyst_text, thesis_text, trigger_reason])
+    matches: list[str] = []
+    if side == "buy" and _phase4_session_is_london_ny(ctx) and (tf == "aligned" or _phase4_h1_is_bull(ctx)):
+        matches.append("buy_london_ny_aligned_or_h1_bull")
+    if (
+        side == "buy"
+        and family == "critical_level_reaction"
+        and fit == "level_reaction"
+        and tf in {"aligned", "mixed"}
+        and _phase4_contains_any(combined, _PHASE4_STRUCTURE_TOKENS)
+    ):
+        matches.append("buy_critical_level_reaction_named_structure")
+    if family == "momentum_continuation" and fit == "momentum_continuation" and tf == "aligned":
+        matches.append("aligned_momentum_continuation")
+    return matches
+
+
+def _phase4_apply_selectivity_sizing(suggestion: dict[str, Any], ctx: dict[str, Any]) -> None:
+    if _phase4_text(suggestion.get("decision")) != "trade" or float(suggestion.get("lots") or 0.0) <= 0:
+        return
+    original_lots = float(suggestion.get("lots") or 0.0)
+    catalyst_score = _phase4_catalyst_score(suggestion.get("named_catalyst"))
+    green_matches = _phase4_green_pattern_matches(suggestion, ctx)
+    weakness_signals = _phase4_weakness_signals(suggestion)
+    side = _phase4_text(suggestion.get("side"))
+    family = _phase4_text(suggestion.get("trigger_family"))
+    tf = _phase4_text(suggestion.get("timeframe_alignment"))
+    adjustments: list[str] = []
+
+    def _cap_lots(max_lots: float, reason: str) -> None:
+        current = float(suggestion.get("lots") or 0.0)
+        if current <= max_lots and original_lots <= max_lots:
+            return
+        if reason not in adjustments:
+            adjustments.append(reason)
+        if current <= max_lots:
+            return
+        suggestion["lots"] = max_lots
+        existing_cap = suggestion.get("max_allowed_lots")
+        try:
+            existing_cap_f = float(existing_cap) if existing_cap is not None else max_lots
+        except (TypeError, ValueError):
+            existing_cap_f = max_lots
+        suggestion["max_allowed_lots"] = min(existing_cap_f, max_lots)
+
+    clean_large_lot = (
+        tf == "aligned"
+        and not weakness_signals
+        and bool(green_matches)
+        and catalyst_score >= 2
+    )
+    if original_lots >= 8.0 and not clean_large_lot:
+        _cap_lots(1.0, "phase4_large_lot_clean_setup_only")
+    if side == "sell" and weakness_signals and catalyst_score < 3:
+        _cap_lots(1.0, "phase4_weak_sell_max_1_lot_unless_material")
+    critical_mixed_ok = catalyst_score >= 3 or (len(green_matches) >= 2 and catalyst_score >= 2)
+    if family == "critical_level_reaction" and tf == "mixed" and not critical_mixed_ok:
+        _cap_lots(1.0, "phase4_critical_level_mixed_max_1_lot")
+
+    if adjustments:
+        existing = suggestion.get("selectivity_adjustments")
+        if not isinstance(existing, list):
+            existing = []
+        suggestion["selectivity_adjustments"] = [*existing, *adjustments]
+        suggestion["original_model_lots"] = original_lots
+        suggestion["phase4_catalyst_score"] = catalyst_score
+        suggestion["phase4_green_matches"] = green_matches
+        suggestion["phase4_weakness_signals"] = weakness_signals
 
 # Per-mode gate thresholds. Lower = easier to pass = more LLM calls.
 # These are the *signal* filters applied after hard filters pass.
@@ -3714,6 +3893,12 @@ def tick_autonomous_fillmore(
         requested_lots = float(suggestion.get("lots") or 0.0)
         scaled_lots = requested_lots * float(risk_regime.get("risk_multiplier") or 1.0)
         scaled_lots = min(max_lots, scaled_lots)
+        max_allowed_lots = suggestion.get("max_allowed_lots")
+        if max_allowed_lots is not None:
+            try:
+                scaled_lots = min(scaled_lots, float(max_allowed_lots))
+            except (TypeError, ValueError):
+                pass
         if scaled_lots < min_lot_size:
             print(
                 f"[{profile_name}] autonomous Fillmore: risk regime veto — scaled lots "
@@ -4185,7 +4370,9 @@ def _invoke_suggest(
         f"  consecutive losses: {consecutive_losses}\n"
         "There is no server-side daily-loss veto. The bar to trade naturally rises with session pain — "
         "as realized P&L falls and drawdown from peak grows, the evidence required to justify a new trade "
-        "should grow with it. Use your judgment about how much the day's path should raise your selectivity."
+        "should grow with it. Use your judgment about how much the day's path should raise your selectivity.\n"
+        "PHASE 4 SELECTIVITY: the last Phase 3 sample placed 76.8% of calls and still lost because losers "
+        "were too large relative to winners. If the setup is not clearly above the base rate, skip."
     )
     spread_note = (
         f"SPREAD CONTEXT: live OANDA spread is {live_spread_pips:.1f} pips. "
@@ -4272,7 +4459,10 @@ def _invoke_suggest(
         "TP after a marginal entry, the entry is wrong; either re-anchor or skip.\n"
         " 11. WEAKNESS WORDS — if you used probe/hedge/tactical/additive/reduced-conviction "
         "anywhere in your reasoning, state why this trade is worth taking despite that. If you cannot, skip.\n"
-        " 12. CALL — trade or skip. If trade: side, size, exit strategy.\n"
+        " 12. PHASE 4 SIZE CHECK — large lots require aligned, no weakness, a green-pattern match, and "
+        "catalyst_score >= 2. Sell+weakness is max 1 lot unless catalyst is material. "
+        "critical_level_reaction+mixed is max 1 lot unless the catalyst is material or the green match is very clear.\n"
+        " 13. CALL — trade or skip. If trade: side, size, exit strategy.\n"
         "\n"
         + decision_format +
         "```json\n"
@@ -4347,6 +4537,13 @@ def _invoke_suggest(
         f"  {lot_lo}: thin but defensible.\n"
         "  0:    marginal — pair with decision='skip' and a specific skip_reason.\n"
         "Do not size up to compensate for low conviction. The gate says 'look here', not 'trade now'.\n"
+        "SERVER SIZE BACKSTOPS:\n"
+        "  - lots >= 8 are allowed only for aligned, no-weakness setups with a green-pattern match "
+        "and catalyst_score >= 2.\n"
+        f"  - sell + any weakness without a material catalyst is capped to {lot_lo} lot.\n"
+        f"  - critical_level_reaction + mixed alignment is capped to {lot_lo} lot unless the catalyst is "
+        "material or the green-pattern match is very clear.\n"
+        "  - if recent placement rate is high, prefer skip over lot_hi unless the edge is obvious.\n"
         "\n"
         "QUALITY TAG (logged, does NOT affect placement):\n"
         '  A = textbook. B = solid with one soft element. C = thin or skip.\n'
@@ -4486,6 +4683,11 @@ def _invoke_suggest(
             reward = abs(float(suggestion.get("tp") or 0.0) - float(suggestion.get("price") or 0.0))
             suggestion["planned_rr_estimate"] = round(reward / risk, 3) if risk > 0 else None
 
+        suggestion["trigger_family"] = fp_extras.get("trigger_family") or suggestion.get("trigger_family")
+        suggestion["trigger_reason"] = fp_extras.get("trigger_reason") or suggestion.get("trigger_reason")
+        suggestion["trigger_bias"] = fp_extras.get("trigger_bias") or suggestion.get("trigger_bias")
+        suggestion["thesis_fingerprint"] = fp_extras.get("thesis_fingerprint") or suggestion.get("thesis_fingerprint")
+
         # Binding skip discipline: when the model self-identifies a known weak
         # setup pattern, convert trade -> skip server-side so it cannot execute.
         veto_reason: Optional[str] = None
@@ -4527,27 +4729,15 @@ def _invoke_suggest(
             ):
                 veto_reason = "server_veto:repeat_fire_without_fresh_edge"
             else:
-                # House-edge rules from autonomous_phase3 prompt rewrite. A
-                # named_catalyst is "generic" when missing, blank, shorter than
-                # 12 chars, or made entirely of common filler words. The bar is
-                # deliberately low — the model only needs one specific phrase.
+                # House-edge rules from the prompt rewrite. A named_catalyst is
+                # "generic" when missing, blank, shorter than 12 chars, or made
+                # entirely of common filler words. The bar is deliberately low:
+                # the model only needs one specific phrase.
                 named_catalyst = (suggestion.get("named_catalyst") or "").strip()
-                _GENERIC_CATALYSTS = {
-                    "level reject", "level reaction", "support reclaim",
-                    "resistance reject", "pullback", "pullback fade",
-                    "fade", "fade in chop", "trend continuation", "continuation",
-                    "n/a", "none", "default", "see thesis", "see analysis",
-                }
-                _GENERIC_TEXT = {"n/a", "na", "none", "null", "default", "-", "see thesis", "see analysis"}
-
-                def _has_meaningful_text(value: Any) -> bool:
-                    text = str(value or "").strip().lower()
-                    return bool(text and text not in _GENERIC_TEXT)
-
                 catalyst_is_generic = (
                     not named_catalyst
                     or len(named_catalyst) < 12
-                    or named_catalyst.lower() in _GENERIC_CATALYSTS
+                    or named_catalyst.lower() in _PHASE4_GENERIC_CATALYSTS
                 )
                 if (
                     suggestion.get("timeframe_alignment") == "mixed"
@@ -4563,7 +4753,7 @@ def _invoke_suggest(
                         or suggestion.get("repeat_trade_case") == "blind_retry"
                         or suggestion.get("zone_memory_read") in {"failing_zone", "unresolved_chop"}
                         or rr_low
-                        or _has_meaningful_text(suggestion.get("why_trade_despite_weakness"))
+                        or _phase4_has_meaningful_text(suggestion.get("why_trade_despite_weakness"))
                     )
                     if side == "sell" and has_weakness and catalyst_is_generic:
                         veto_reason = "server_veto:sell_with_weakness_no_catalyst"
@@ -4571,6 +4761,8 @@ def _invoke_suggest(
             decision_field = "skip"
             suggestion["decision"] = "skip"
             suggestion["skip_reason"] = veto_reason
+
+        _phase4_apply_selectivity_sizing(suggestion, ctx)
 
         custom_plan = suggestion.get("custom_exit_plan")
         if not isinstance(custom_plan, dict):
@@ -4604,10 +4796,10 @@ def _invoke_suggest(
                 (datetime.now(timezone.utc) + timedelta(minutes=limit_gtd_min))
                 .replace(microsecond=0).isoformat().replace("+00:00", "Z")
             )
-        suggestion["trigger_family"] = (gate_decision.extras or {}).get("trigger_family") if gate_decision else None
-        suggestion["trigger_reason"] = (gate_decision.extras or {}).get("trigger_reason") if gate_decision else None
-        suggestion["trigger_bias"] = (gate_decision.extras or {}).get("trigger_bias") if gate_decision else None
-        suggestion["thesis_fingerprint"] = (gate_decision.extras or {}).get("thesis_fingerprint") if gate_decision else None
+        suggestion["trigger_family"] = fp_extras.get("trigger_family") or suggestion.get("trigger_family")
+        suggestion["trigger_reason"] = fp_extras.get("trigger_reason") or suggestion.get("trigger_reason")
+        suggestion["trigger_bias"] = fp_extras.get("trigger_bias") or suggestion.get("trigger_bias")
+        suggestion["thesis_fingerprint"] = fp_extras.get("thesis_fingerprint") or suggestion.get("thesis_fingerprint")
         # exit_plan: free-text field for the thesis monitor to reason about mid-trade.
         suggestion["exit_plan"] = str(suggestion.get("exit_plan") or "default").strip()
         suggestion["prompt_version"] = assembly.prompt_version
@@ -4809,6 +5001,14 @@ def _place_from_suggestion(
                             "countertrend_edge": suggestion.get("countertrend_edge"),
                             "trigger_fit": suggestion.get("trigger_fit"),
                             "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
+                            "named_catalyst": suggestion.get("named_catalyst"),
+                            "side_bias_check": suggestion.get("side_bias_check"),
+                            "selectivity_adjustments": suggestion.get("selectivity_adjustments") or [],
+                            "max_allowed_lots": suggestion.get("max_allowed_lots"),
+                            "original_model_lots": suggestion.get("original_model_lots"),
+                            "phase4_catalyst_score": suggestion.get("phase4_catalyst_score"),
+                            "phase4_green_matches": suggestion.get("phase4_green_matches") or [],
+                            "phase4_weakness_signals": suggestion.get("phase4_weakness_signals") or [],
                             "custom_exit_plan": suggestion.get("custom_exit_plan") or {},
                         }),
                         "entry_price": fill_price,
@@ -4886,6 +5086,14 @@ def _place_from_suggestion(
                             "countertrend_edge": suggestion.get("countertrend_edge"),
                             "trigger_fit": suggestion.get("trigger_fit"),
                             "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
+                            "named_catalyst": suggestion.get("named_catalyst"),
+                            "side_bias_check": suggestion.get("side_bias_check"),
+                            "selectivity_adjustments": suggestion.get("selectivity_adjustments") or [],
+                            "max_allowed_lots": suggestion.get("max_allowed_lots"),
+                            "original_model_lots": suggestion.get("original_model_lots"),
+                            "phase4_catalyst_score": suggestion.get("phase4_catalyst_score"),
+                            "phase4_green_matches": suggestion.get("phase4_green_matches") or [],
+                            "phase4_weakness_signals": suggestion.get("phase4_weakness_signals") or [],
                             "custom_exit_plan": suggestion.get("custom_exit_plan") or {},
                         },
                         oanda_order_id=str(order_id) if order_id is not None else None,
@@ -4947,6 +5155,14 @@ def _place_from_suggestion(
                 "countertrend_edge": suggestion.get("countertrend_edge"),
                 "trigger_fit": suggestion.get("trigger_fit"),
                 "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
+                "named_catalyst": suggestion.get("named_catalyst"),
+                "side_bias_check": suggestion.get("side_bias_check"),
+                "selectivity_adjustments": suggestion.get("selectivity_adjustments") or [],
+                "max_allowed_lots": suggestion.get("max_allowed_lots"),
+                "original_model_lots": suggestion.get("original_model_lots"),
+                "phase4_catalyst_score": suggestion.get("phase4_catalyst_score"),
+                "phase4_green_matches": suggestion.get("phase4_green_matches") or [],
+                "phase4_weakness_signals": suggestion.get("phase4_weakness_signals") or [],
                 "custom_exit_plan": suggestion.get("custom_exit_plan") or {},
                 "created_utc": datetime.now(timezone.utc).isoformat(),
                 "autonomous": True,
@@ -4989,6 +5205,14 @@ def _place_from_suggestion(
                         "countertrend_edge": suggestion.get("countertrend_edge"),
                         "trigger_fit": suggestion.get("trigger_fit"),
                         "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
+                        "named_catalyst": suggestion.get("named_catalyst"),
+                        "side_bias_check": suggestion.get("side_bias_check"),
+                        "selectivity_adjustments": suggestion.get("selectivity_adjustments") or [],
+                        "max_allowed_lots": suggestion.get("max_allowed_lots"),
+                        "original_model_lots": suggestion.get("original_model_lots"),
+                        "phase4_catalyst_score": suggestion.get("phase4_catalyst_score"),
+                        "phase4_green_matches": suggestion.get("phase4_green_matches") or [],
+                        "phase4_weakness_signals": suggestion.get("phase4_weakness_signals") or [],
                         "custom_exit_plan": suggestion.get("custom_exit_plan") or {},
                     },
                     oanda_order_id=str(result.order) if result.order is not None else None,
