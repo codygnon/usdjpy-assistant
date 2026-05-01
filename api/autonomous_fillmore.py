@@ -63,7 +63,7 @@ _MODEL_COST_PER_1M: dict[str, tuple[float, float]] = {
 # pessimistic-ish so the budget stats trend slightly conservative.
 _ASSUMED_INPUT_TOKENS = 4000
 _ASSUMED_OUTPUT_TOKENS = 350
-AUTONOMOUS_PROMPT_VERSION = "autonomous_phase4_selectivity_sizing_v1"
+AUTONOMOUS_PROMPT_VERSION = "autonomous_phase5_reasoning_quality_v1"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": False,
@@ -140,6 +140,58 @@ _PHASE4_MATERIAL_NEGATIONS = (
     "contradicted", "mixed", "unclear", "generic", "does not confirm",
     "doesn't confirm", "fails to confirm", "not confirmed", "not material",
 )
+_PHASE4_ADVERSE_CONTEXT_PATTERNS = (
+    r"\bdespite\b",
+    r"\beven though\b",
+    r"\balthough\b",
+    r"\bhowever\b",
+    r"\bbut\b.{0,80}\b(h1|m15|m5|m1|policy|macro|cross|jpy|yen|tape|trend|structure|session|intraday|broader)\b",
+    r"\bmixed (alignment|tape|structure|backdrop|context|trend|signal|signals)\b",
+    r"\b(tape|macro|policy|backdrop|context|trend|structure).{0,30}\bmixed\b",
+    r"\b(contradict|contradicts|contradicted|contradiction|conflict|conflicts|conflicting)\b",
+    r"\bdoes not confirm\b",
+    r"\bdoesn't confirm\b",
+    r"\bfails to confirm\b",
+    r"\b(jpy|yen)[ -]?weak\b",
+    r"\b(jpy|yen).{0,20}\bweak\b",
+    r"\bweak (jpy|yen)\b",
+    r"\bbroader .{0,40}(pressure|weakness|headwind)\b",
+    r"\bnot enough to cancel\b",
+    r"\bstructurally weaker\b",
+)
+_PHASE4_WEAK_PERMISSION_PATTERNS = (
+    r"\bprobe\b",
+    r"\btactical\b",
+    r"\bthin\b",
+    r"\bmarginal\b",
+    r"\breduced[- ]conviction\b",
+    r"\blow[- ]conviction\b",
+    r"\bsmall(?:est)? size\b",
+    r"\bsize (?:stays|is|kept) (?:small|minimal|reduced)\b",
+    r"\bmust be quick\b",
+    r"\bquick .*?(?:because|given|despite|while)\b",
+)
+_PHASE4_MICRO_CONFIRMATION_PATTERNS = (
+    r"\bmicro[- ]?confirm",
+    r"\bm[135] confirm",
+    r"\bm[135] confirmation",
+    r"\breclaimed_support\b",
+    r"\brejected_resistance\b",
+)
+_PHASE4_SPECIFIC_MICRO_EVENT_TOKENS = (
+    "m1 close", "m3 close", "m5 close", "closed above", "closed below",
+    "close above", "close below", "acceptance above", "acceptance below",
+    "hold above", "hold below", "held above", "held below", "retest",
+    "sweep", "wick", "higher low", "lower high", "higher high", "lower low",
+    "failed break", "failed breakdown", "breakout retest", "breakdown retest",
+    "ema reclaim", "ema rejection", "vwap reclaim", "vwap rejection",
+)
+_PHASE4_REASONING_TEXT_KEYS = (
+    "trade_thesis", "named_catalyst", "side_bias_check", "edge_reason",
+    "adverse_context", "caveat_resolution", "micro_confirmation_event",
+    "countertrend_edge", "why_trade_despite_weakness", "why_not_stop",
+    "low_rr_edge", "rationale",
+)
 
 
 def _phase4_text(value: Any) -> str:
@@ -154,6 +206,10 @@ def _phase4_phrase_regex(phrase: str) -> re.Pattern[str]:
     parts = [re.escape(part) for part in re.split(r"[\s_-]+", phrase.strip()) if part]
     body = r"[\s_-]+".join(parts)
     return re.compile(rf"(?<![a-z0-9]){body}(?![a-z0-9])")
+
+
+def _phase4_regex_any(text: str, patterns: tuple[str, ...]) -> bool:
+    return any(re.search(pattern, text) for pattern in patterns)
 
 
 def _phase4_has_clean_material_phrase(text: str) -> bool:
@@ -189,6 +245,48 @@ def _phase4_catalyst_score(value: Any) -> int:
     if has_structure or has_level:
         return 1
     return 1 if len(stripped.split()) >= 4 else 0
+
+
+def _phase4_reasoning_text(suggestion: dict[str, Any]) -> str:
+    pieces: list[str] = []
+    for key in _PHASE4_REASONING_TEXT_KEYS:
+        value = suggestion.get(key)
+        if value not in (None, ""):
+            pieces.append(str(value))
+    return _phase4_text(" ".join(pieces))
+
+
+def _phase4_material_resolution_score(suggestion: dict[str, Any]) -> int:
+    return max(
+        _phase4_catalyst_score(suggestion.get("caveat_resolution")),
+        _phase4_catalyst_score(suggestion.get("edge_reason")),
+        _phase4_catalyst_score(suggestion.get("named_catalyst")),
+        _phase4_catalyst_score(suggestion.get("trade_thesis")),
+    )
+
+
+def _phase4_has_adverse_context(suggestion: dict[str, Any]) -> bool:
+    text = _phase4_reasoning_text(suggestion)
+    if not text:
+        return False
+    return (
+        _phase4_regex_any(text, _PHASE4_ADVERSE_CONTEXT_PATTERNS)
+        or _phase4_regex_any(text, _PHASE4_WEAK_PERMISSION_PATTERNS)
+    )
+
+
+def _phase4_has_specific_micro_event(suggestion: dict[str, Any]) -> bool:
+    explicit_event = _phase4_text(suggestion.get("micro_confirmation_event"))
+    if explicit_event and _phase4_contains_any(explicit_event, _PHASE4_SPECIFIC_MICRO_EVENT_TOKENS):
+        return True
+    return _phase4_contains_any(_phase4_reasoning_text(suggestion), _PHASE4_SPECIFIC_MICRO_EVENT_TOKENS)
+
+
+def _phase4_has_vague_micro_confirmation(suggestion: dict[str, Any]) -> bool:
+    text = _phase4_reasoning_text(suggestion)
+    if not text or not _phase4_regex_any(text, _PHASE4_MICRO_CONFIRMATION_PATTERNS):
+        return False
+    return not _phase4_has_specific_micro_event(suggestion)
 
 
 def _phase4_session_is_london_ny(ctx: dict[str, Any]) -> bool:
@@ -252,6 +350,31 @@ def _phase4_green_pattern_matches(suggestion: dict[str, Any], ctx: dict[str, Any
     return matches
 
 
+def _phase4_reasoning_flags(suggestion: dict[str, Any]) -> list[str]:
+    flags: list[str] = []
+    family = _phase4_text(suggestion.get("trigger_family"))
+    tf = _phase4_text(suggestion.get("timeframe_alignment"))
+    if _phase4_has_adverse_context(suggestion):
+        flags.append("contradiction_admitted")
+    if family == "critical_level_reaction" and tf == "mixed":
+        flags.append("critical_level_mixed")
+    if _phase4_has_vague_micro_confirmation(suggestion):
+        flags.append("vague_micro_confirmation")
+    return flags
+
+
+def _phase4_reasoning_veto_reason(suggestion: dict[str, Any]) -> str | None:
+    flags = set(_phase4_reasoning_flags(suggestion))
+    material_resolution = _phase4_material_resolution_score(suggestion) >= 3
+    if "critical_level_mixed" in flags and not material_resolution:
+        return "server_veto:critical_level_mixed_reasoning_risk"
+    if "vague_micro_confirmation" in flags and not material_resolution:
+        return "server_veto:vague_micro_confirmation"
+    if "contradiction_admitted" in flags and not material_resolution:
+        return "server_veto:contradiction_admitted_no_material_resolution"
+    return None
+
+
 def _phase4_apply_selectivity_sizing(suggestion: dict[str, Any], ctx: dict[str, Any]) -> None:
     if _phase4_text(suggestion.get("decision")) != "trade" or float(suggestion.get("lots") or 0.0) <= 0:
         return
@@ -259,10 +382,18 @@ def _phase4_apply_selectivity_sizing(suggestion: dict[str, Any], ctx: dict[str, 
     catalyst_score = _phase4_catalyst_score(suggestion.get("named_catalyst"))
     green_matches = _phase4_green_pattern_matches(suggestion, ctx)
     weakness_signals = _phase4_weakness_signals(suggestion)
+    reasoning_flags = _phase4_reasoning_flags(suggestion)
+    material_resolution_score = _phase4_material_resolution_score(suggestion)
     side = _phase4_text(suggestion.get("side"))
     family = _phase4_text(suggestion.get("trigger_family"))
     tf = _phase4_text(suggestion.get("timeframe_alignment"))
     adjustments: list[str] = []
+
+    suggestion["phase4_catalyst_score"] = catalyst_score
+    suggestion["phase4_green_matches"] = green_matches
+    suggestion["phase4_weakness_signals"] = weakness_signals
+    suggestion["phase5_reasoning_flags"] = reasoning_flags
+    suggestion["phase5_material_resolution_score"] = material_resolution_score
 
     def _cap_lots(max_lots: float, reason: str) -> None:
         current = float(suggestion.get("lots") or 0.0)
@@ -290,9 +421,12 @@ def _phase4_apply_selectivity_sizing(suggestion: dict[str, Any], ctx: dict[str, 
         _cap_lots(1.0, "phase4_large_lot_clean_setup_only")
     if side == "sell" and weakness_signals and catalyst_score < 3:
         _cap_lots(1.0, "phase4_weak_sell_max_1_lot_unless_material")
-    critical_mixed_ok = catalyst_score >= 3 or (len(green_matches) >= 2 and catalyst_score >= 2)
-    if family == "critical_level_reaction" and tf == "mixed" and not critical_mixed_ok:
+    if family == "critical_level_reaction" and tf == "mixed":
         _cap_lots(1.0, "phase4_critical_level_mixed_max_1_lot")
+    if "contradiction_admitted" in reasoning_flags:
+        _cap_lots(1.0, "phase5_contradiction_admitted_max_1_lot")
+    if "vague_micro_confirmation" in reasoning_flags:
+        _cap_lots(1.0, "phase5_vague_micro_confirmation_max_1_lot")
 
     if adjustments:
         existing = suggestion.get("selectivity_adjustments")
@@ -300,9 +434,6 @@ def _phase4_apply_selectivity_sizing(suggestion: dict[str, Any], ctx: dict[str, 
             existing = []
         suggestion["selectivity_adjustments"] = [*existing, *adjustments]
         suggestion["original_model_lots"] = original_lots
-        suggestion["phase4_catalyst_score"] = catalyst_score
-        suggestion["phase4_green_matches"] = green_matches
-        suggestion["phase4_weakness_signals"] = weakness_signals
 
 # Per-mode gate thresholds. Lower = easier to pass = more LLM calls.
 # These are the *signal* filters applied after hard filters pass.
@@ -4480,10 +4611,14 @@ def _invoke_suggest(
         "TP after a marginal entry, the entry is wrong; either re-anchor or skip.\n"
         " 11. WEAKNESS WORDS — if you used probe/hedge/tactical/additive/reduced-conviction "
         "anywhere in your reasoning, state why this trade is worth taking despite that. If you cannot, skip.\n"
-        " 12. PHASE 4 SIZE CHECK — large lots require aligned, no weakness, a green-pattern match, and "
+        " 12. REASONING QUALITY GATE — name the setup_location, edge_reason, adverse_context, "
+        "caveat_resolution, and micro_confirmation_event. A level is location, not edge. "
+        "If you admit contradiction/mixed tape/weak JPY/probe/thin/tactical logic, the caveat_resolution "
+        "must be material or you skip. Micro confirmation must name the actual M1/M3/M5 event.\n"
+        " 13. PHASE 5 SIZE CHECK — large lots require aligned, no weakness, a green-pattern match, and "
         "catalyst_score >= 2. Sell+weakness is max 1 lot unless catalyst is material. "
-        "critical_level_reaction+mixed is max 1 lot unless the catalyst is material or the green match is very clear.\n"
-        " 13. CALL — trade or skip. If trade: side, size, exit strategy.\n"
+        "critical_level_reaction+mixed is skip by default; only a material caveat can allow max 1 lot.\n"
+        " 14. CALL — trade or skip. If trade: side, size, exit strategy.\n"
         "\n"
         + decision_format +
         "```json\n"
@@ -4493,6 +4628,12 @@ def _invoke_suggest(
         '  "trade_thesis": "<one specific sentence naming the catalyst, not the level — required if decision is trade>",\n'
         '  "named_catalyst": "<the specific event/structure/flow that makes this trade beat the base rate; not \'level reject\' alone — required if decision is trade>",\n'
         '  "side_bias_check": "<required if side=\'sell\': one sentence on why this beats the buy-side base rate, else null>",\n'
+        '  "setup_location": "<the level/zone being traded; location only, not the edge>",\n'
+        '  "edge_reason": "<the specific reason this setup should beat the base rate; required if decision is trade>",\n'
+        '  "adverse_context": "<contradicting evidence you noticed, or null if none>",\n'
+        '  "caveat_resolution": "<material reason adverse_context is overcome, else null; generic structure is not enough>",\n'
+        '  "micro_confirmation_event": "<specific M1/M3/M5 event such as close/retest/sweep/HL/LH, else null>",\n'
+        '  "reasoning_quality_gate": "pass" | "cap_to_1_lot" | "skip",\n'
         '  "conviction_rung": "A" | "B" | "C" | "D",'
         + conditional_block + "\n"
         '  "zone_memory_read": "fresh_setup" | "working_zone" | "failing_zone" | "unresolved_chop",\n'
@@ -4558,12 +4699,16 @@ def _invoke_suggest(
         f"  {lot_lo}: thin but defensible.\n"
         "  0:    marginal — pair with decision='skip' and a specific skip_reason.\n"
         "Do not size up to compensate for low conviction. The gate says 'look here', not 'trade now'.\n"
-        "SERVER SIZE BACKSTOPS:\n"
+        "SERVER SIZE / REASONING BACKSTOPS:\n"
         "  - lots >= 8 are allowed only for aligned, no-weakness setups with a green-pattern match "
         "and catalyst_score >= 2.\n"
         f"  - sell + any weakness without a material catalyst is capped to {lot_lo} lot.\n"
-        f"  - critical_level_reaction + mixed alignment is capped to {lot_lo} lot unless the catalyst is "
-        "material or the green-pattern match is very clear.\n"
+        "  - contradiction admitted without a material caveat_resolution is skipped; with a material "
+        f"resolution, it is capped to {lot_lo} lot.\n"
+        "  - critical_level_reaction + mixed alignment is skipped unless caveat_resolution is material; "
+        f"material exceptions are capped to {lot_lo} lot.\n"
+        "  - vague micro confirmation without a specific M1/M3/M5 event is skipped unless a material "
+        f"edge exists; material exceptions are capped to {lot_lo} lot.\n"
         "  - if recent placement rate is high, prefer skip over lot_hi unless the edge is obvious.\n"
         "\n"
         "QUALITY TAG (logged, does NOT affect placement):\n"
@@ -4683,6 +4828,12 @@ def _invoke_suggest(
             "why_trade_despite_weakness",
             "named_catalyst",
             "side_bias_check",
+            "setup_location",
+            "edge_reason",
+            "adverse_context",
+            "caveat_resolution",
+            "micro_confirmation_event",
+            "reasoning_quality_gate",
         ):
             _optional_text(_k)
         if suggestion["timeframe_alignment"] not in {"aligned", "mixed", "countertrend", None}:
@@ -4708,6 +4859,11 @@ def _invoke_suggest(
         suggestion["trigger_reason"] = fp_extras.get("trigger_reason") or suggestion.get("trigger_reason")
         suggestion["trigger_bias"] = fp_extras.get("trigger_bias") or suggestion.get("trigger_bias")
         suggestion["thesis_fingerprint"] = fp_extras.get("thesis_fingerprint") or suggestion.get("thesis_fingerprint")
+        suggestion["phase4_catalyst_score"] = _phase4_catalyst_score(suggestion.get("named_catalyst"))
+        suggestion["phase4_green_matches"] = _phase4_green_pattern_matches(suggestion, ctx)
+        suggestion["phase4_weakness_signals"] = _phase4_weakness_signals(suggestion)
+        suggestion["phase5_reasoning_flags"] = _phase4_reasoning_flags(suggestion)
+        suggestion["phase5_material_resolution_score"] = _phase4_material_resolution_score(suggestion)
 
         # Binding skip discipline: when the model self-identifies a known weak
         # setup pattern, convert trade -> skip server-side so it cannot execute.
@@ -4778,6 +4934,8 @@ def _invoke_suggest(
                     )
                     if side == "sell" and has_weakness and catalyst_is_generic:
                         veto_reason = "server_veto:sell_with_weakness_no_catalyst"
+                    else:
+                        veto_reason = _phase4_reasoning_veto_reason(suggestion)
         if veto_reason:
             decision_field = "skip"
             suggestion["decision"] = "skip"
@@ -5024,12 +5182,20 @@ def _place_from_suggestion(
                             "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
                             "named_catalyst": suggestion.get("named_catalyst"),
                             "side_bias_check": suggestion.get("side_bias_check"),
+                            "setup_location": suggestion.get("setup_location"),
+                            "edge_reason": suggestion.get("edge_reason"),
+                            "adverse_context": suggestion.get("adverse_context"),
+                            "caveat_resolution": suggestion.get("caveat_resolution"),
+                            "micro_confirmation_event": suggestion.get("micro_confirmation_event"),
+                            "reasoning_quality_gate": suggestion.get("reasoning_quality_gate"),
                             "selectivity_adjustments": suggestion.get("selectivity_adjustments") or [],
                             "max_allowed_lots": suggestion.get("max_allowed_lots"),
                             "original_model_lots": suggestion.get("original_model_lots"),
                             "phase4_catalyst_score": suggestion.get("phase4_catalyst_score"),
                             "phase4_green_matches": suggestion.get("phase4_green_matches") or [],
                             "phase4_weakness_signals": suggestion.get("phase4_weakness_signals") or [],
+                            "phase5_reasoning_flags": suggestion.get("phase5_reasoning_flags") or [],
+                            "phase5_material_resolution_score": suggestion.get("phase5_material_resolution_score"),
                             "custom_exit_plan": suggestion.get("custom_exit_plan") or {},
                         }),
                         "entry_price": fill_price,
@@ -5109,12 +5275,20 @@ def _place_from_suggestion(
                             "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
                             "named_catalyst": suggestion.get("named_catalyst"),
                             "side_bias_check": suggestion.get("side_bias_check"),
+                            "setup_location": suggestion.get("setup_location"),
+                            "edge_reason": suggestion.get("edge_reason"),
+                            "adverse_context": suggestion.get("adverse_context"),
+                            "caveat_resolution": suggestion.get("caveat_resolution"),
+                            "micro_confirmation_event": suggestion.get("micro_confirmation_event"),
+                            "reasoning_quality_gate": suggestion.get("reasoning_quality_gate"),
                             "selectivity_adjustments": suggestion.get("selectivity_adjustments") or [],
                             "max_allowed_lots": suggestion.get("max_allowed_lots"),
                             "original_model_lots": suggestion.get("original_model_lots"),
                             "phase4_catalyst_score": suggestion.get("phase4_catalyst_score"),
                             "phase4_green_matches": suggestion.get("phase4_green_matches") or [],
                             "phase4_weakness_signals": suggestion.get("phase4_weakness_signals") or [],
+                            "phase5_reasoning_flags": suggestion.get("phase5_reasoning_flags") or [],
+                            "phase5_material_resolution_score": suggestion.get("phase5_material_resolution_score"),
                             "custom_exit_plan": suggestion.get("custom_exit_plan") or {},
                         },
                         oanda_order_id=str(order_id) if order_id is not None else None,
@@ -5178,12 +5352,20 @@ def _place_from_suggestion(
                 "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
                 "named_catalyst": suggestion.get("named_catalyst"),
                 "side_bias_check": suggestion.get("side_bias_check"),
+                "setup_location": suggestion.get("setup_location"),
+                "edge_reason": suggestion.get("edge_reason"),
+                "adverse_context": suggestion.get("adverse_context"),
+                "caveat_resolution": suggestion.get("caveat_resolution"),
+                "micro_confirmation_event": suggestion.get("micro_confirmation_event"),
+                "reasoning_quality_gate": suggestion.get("reasoning_quality_gate"),
                 "selectivity_adjustments": suggestion.get("selectivity_adjustments") or [],
                 "max_allowed_lots": suggestion.get("max_allowed_lots"),
                 "original_model_lots": suggestion.get("original_model_lots"),
                 "phase4_catalyst_score": suggestion.get("phase4_catalyst_score"),
                 "phase4_green_matches": suggestion.get("phase4_green_matches") or [],
                 "phase4_weakness_signals": suggestion.get("phase4_weakness_signals") or [],
+                "phase5_reasoning_flags": suggestion.get("phase5_reasoning_flags") or [],
+                "phase5_material_resolution_score": suggestion.get("phase5_material_resolution_score"),
                 "custom_exit_plan": suggestion.get("custom_exit_plan") or {},
                 "created_utc": datetime.now(timezone.utc).isoformat(),
                 "autonomous": True,
@@ -5228,12 +5410,20 @@ def _place_from_suggestion(
                         "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
                         "named_catalyst": suggestion.get("named_catalyst"),
                         "side_bias_check": suggestion.get("side_bias_check"),
+                        "setup_location": suggestion.get("setup_location"),
+                        "edge_reason": suggestion.get("edge_reason"),
+                        "adverse_context": suggestion.get("adverse_context"),
+                        "caveat_resolution": suggestion.get("caveat_resolution"),
+                        "micro_confirmation_event": suggestion.get("micro_confirmation_event"),
+                        "reasoning_quality_gate": suggestion.get("reasoning_quality_gate"),
                         "selectivity_adjustments": suggestion.get("selectivity_adjustments") or [],
                         "max_allowed_lots": suggestion.get("max_allowed_lots"),
                         "original_model_lots": suggestion.get("original_model_lots"),
                         "phase4_catalyst_score": suggestion.get("phase4_catalyst_score"),
                         "phase4_green_matches": suggestion.get("phase4_green_matches") or [],
                         "phase4_weakness_signals": suggestion.get("phase4_weakness_signals") or [],
+                        "phase5_reasoning_flags": suggestion.get("phase5_reasoning_flags") or [],
+                        "phase5_material_resolution_score": suggestion.get("phase5_material_resolution_score"),
                         "custom_exit_plan": suggestion.get("custom_exit_plan") or {},
                     },
                     oanda_order_id=str(result.order) if result.order is not None else None,

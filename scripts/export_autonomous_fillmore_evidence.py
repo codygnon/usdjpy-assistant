@@ -191,6 +191,22 @@ def flatten_suggestion(s: dict[str, Any]) -> dict[str, Any]:
         "why_trade_despite_weakness": s.get("why_trade_despite_weakness") or placed.get("why_trade_despite_weakness"),
         "named_catalyst": s.get("named_catalyst") or placed.get("named_catalyst"),
         "side_bias_check": s.get("side_bias_check") or placed.get("side_bias_check"),
+        "setup_location": s.get("setup_location") or placed.get("setup_location") or features.get("setup_location"),
+        "edge_reason": s.get("edge_reason") or placed.get("edge_reason") or features.get("edge_reason"),
+        "adverse_context": s.get("adverse_context") or placed.get("adverse_context") or features.get("adverse_context"),
+        "caveat_resolution": s.get("caveat_resolution") or placed.get("caveat_resolution") or features.get("caveat_resolution"),
+        "micro_confirmation_event": (
+            s.get("micro_confirmation_event")
+            or placed.get("micro_confirmation_event")
+            or features.get("micro_confirmation_event")
+        ),
+        "reasoning_quality_gate": (
+            s.get("reasoning_quality_gate")
+            or placed.get("reasoning_quality_gate")
+            or features.get("reasoning_quality_gate")
+        ),
+        "phase5_reasoning_flags": json.dumps(features.get("phase5_reasoning_flags") or [], sort_keys=True, default=str),
+        "phase5_material_resolution_score": features.get("phase5_material_resolution_score"),
         "exit_plan": s.get("exit_plan") or placed.get("exit_plan"),
         "rationale": s.get("rationale"),
         "session": get_nested(market, "session", "active_sessions"),

@@ -57,12 +57,20 @@ def compute_suggestion_features(
         "trigger_reason": str(suggestion.get("trigger_reason") or ""),
         "named_catalyst": str(suggestion.get("named_catalyst") or ""),
         "side_bias_check": str(suggestion.get("side_bias_check") or ""),
+        "setup_location": str(suggestion.get("setup_location") or ""),
+        "edge_reason": str(suggestion.get("edge_reason") or ""),
+        "adverse_context": str(suggestion.get("adverse_context") or ""),
+        "caveat_resolution": str(suggestion.get("caveat_resolution") or ""),
+        "micro_confirmation_event": str(suggestion.get("micro_confirmation_event") or ""),
+        "reasoning_quality_gate": str(suggestion.get("reasoning_quality_gate") or ""),
         "selectivity_adjustments": suggestion.get("selectivity_adjustments") or [],
         "max_allowed_lots": _safe_float(suggestion.get("max_allowed_lots")),
         "original_model_lots": _safe_float(suggestion.get("original_model_lots")),
         "phase4_catalyst_score": _safe_float(suggestion.get("phase4_catalyst_score")),
         "phase4_green_matches": suggestion.get("phase4_green_matches") or [],
         "phase4_weakness_signals": suggestion.get("phase4_weakness_signals") or [],
+        "phase5_reasoning_flags": suggestion.get("phase5_reasoning_flags") or [],
+        "phase5_material_resolution_score": _safe_float(suggestion.get("phase5_material_resolution_score")),
     }
 
 

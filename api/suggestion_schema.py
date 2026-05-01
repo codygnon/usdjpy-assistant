@@ -86,6 +86,12 @@ class AutonomousSuggestion(FillmoreSuggestionBase):
     why_trade_despite_weakness: str | None = None
     named_catalyst: str | None = None
     side_bias_check: str | None = None
+    setup_location: str | None = None
+    edge_reason: str | None = None
+    adverse_context: str | None = None
+    caveat_resolution: str | None = None
+    micro_confirmation_event: str | None = None
+    reasoning_quality_gate: str | None = None
     custom_exit_plan: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("order_type", mode="before")
@@ -120,6 +126,12 @@ class AutonomousSuggestion(FillmoreSuggestionBase):
         "why_trade_despite_weakness",
         "named_catalyst",
         "side_bias_check",
+        "setup_location",
+        "edge_reason",
+        "adverse_context",
+        "caveat_resolution",
+        "micro_confirmation_event",
+        "reasoning_quality_gate",
         mode="before",
     )
     @classmethod

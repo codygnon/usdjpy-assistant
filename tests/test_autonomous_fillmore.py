@@ -900,7 +900,7 @@ def test_invoke_suggest_forces_momentum_runner_custom_exit(tmp_path: Path, monke
     assert out0["custom_exit_plan"]["partial_close_pct"] == 33.0
     assert "20+ pip runner" in out0["custom_exit_plan"]["runner_hold_rule"]
     assert "20+ pip move" in out0["custom_exit_plan"]["trail_preference"]
-    assert out0["prompt_version"] == "autonomous_phase4_selectivity_sizing_v1"
+    assert out0["prompt_version"] == "autonomous_phase5_reasoning_quality_v1"
 
 
 def test_min_confidence_removed_from_default_config() -> None:
@@ -1417,8 +1417,9 @@ def test_invoke_suggest_caps_dirty_phase4_large_lot(tmp_path: Path, monkeypatch)
     payload = {
         **_suggestion(),
         "lots": 8.0,
-        "timeframe_alignment": "mixed",
-        "named_catalyst": "HALF_YEN 160.50 reclaimed_support with M1 confirmation",
+        "timeframe_alignment": "aligned",
+        "named_catalyst": "HALF_YEN 160.50 reclaimed_support after M1 close above and retest",
+        "micro_confirmation_event": "M1 close above 160.50 followed by retest hold",
     }
     out, db_path = _invoke_suggest_with_payload(
         tmp_path,
@@ -1448,7 +1449,8 @@ def test_invoke_suggest_allows_clean_phase4_large_lot(tmp_path: Path, monkeypatc
         **_suggestion(),
         "lots": 8.0,
         "timeframe_alignment": "aligned",
-        "named_catalyst": "HALF_YEN 160.50 reclaimed_support with M1 confirmation",
+        "named_catalyst": "HALF_YEN 160.50 reclaimed_support after M1 close above and retest",
+        "micro_confirmation_event": "M1 close above 160.50 followed by retest hold",
     }
     out, _ = _invoke_suggest_with_payload(
         tmp_path,
@@ -1475,7 +1477,8 @@ def test_invoke_suggest_caps_large_lot_without_proven_green_pattern(tmp_path: Pa
         **_suggestion(),
         "lots": 8.0,
         "timeframe_alignment": "aligned",
-        "named_catalyst": "M5 breakout at HALF_YEN 160.50 with micro confirmation",
+        "named_catalyst": "M5 breakout at HALF_YEN 160.50 after M1 close above and retest",
+        "micro_confirmation_event": "M1 close above 160.50 followed by retest hold",
         "trigger_fit": "momentum_continuation",
     }
     out, _ = _invoke_suggest_with_payload(
@@ -1495,7 +1498,7 @@ def test_invoke_suggest_caps_large_lot_without_proven_green_pattern(tmp_path: Pa
     assert "phase4_large_lot_clean_setup_only" in out[0]["selectivity_adjustments"]
 
 
-def test_invoke_suggest_caps_weak_sell_when_material_terms_are_negated(tmp_path: Path, monkeypatch) -> None:
+def test_invoke_suggest_skips_weak_sell_when_material_terms_are_negated(tmp_path: Path, monkeypatch) -> None:
     payload = {
         **_suggestion(),
         "side": "sell",
@@ -1516,9 +1519,9 @@ def test_invoke_suggest_caps_weak_sell_when_material_terms_are_negated(tmp_path:
         },
     )
 
-    assert out[0]["decision"] == "trade"
-    assert out[0]["lots"] == 1.0
-    assert "phase4_weak_sell_max_1_lot_unless_material" in out[0]["selectivity_adjustments"]
+    assert out[0]["decision"] == "skip"
+    assert out[0]["lots"] == 0.0
+    assert out[0]["skip_reason"] == "server_veto:contradiction_admitted_no_material_resolution"
 
 
 def test_invoke_suggest_caps_weak_sell_without_material_catalyst(tmp_path: Path, monkeypatch) -> None:
@@ -1527,8 +1530,9 @@ def test_invoke_suggest_caps_weak_sell_without_material_catalyst(tmp_path: Path,
         "side": "sell",
         "lots": 4.0,
         "timeframe_alignment": "mixed",
-        "named_catalyst": "M5 rejection at HALF_YEN 160.50 with micro confirmation",
-        "side_bias_check": "Sell has a named structure, but no material catalyst.",
+        "named_catalyst": "M5 rejection at HALF_YEN 160.50 after M1 close below and retest",
+        "micro_confirmation_event": "M1 close below 160.50 followed by retest rejection",
+        "side_bias_check": "Sell-side burden: exact M1 rejection at the named level; structure-only edge.",
         "trigger_fit": "momentum_continuation",
     }
     out, _ = _invoke_suggest_with_payload(
@@ -1573,12 +1577,38 @@ def test_invoke_suggest_allows_material_weak_sell_without_cap(tmp_path: Path, mo
     assert "selectivity_adjustments" not in out[0]
 
 
-def test_invoke_suggest_caps_critical_level_mixed_without_material_catalyst(tmp_path: Path, monkeypatch) -> None:
+def test_invoke_suggest_skips_critical_level_mixed_without_material_catalyst(tmp_path: Path, monkeypatch) -> None:
     payload = {
         **_suggestion(),
         "lots": 3.0,
         "timeframe_alignment": "mixed",
-        "named_catalyst": "HALF_YEN 160.50 reclaimed_support with M1 confirmation",
+        "named_catalyst": "HALF_YEN 160.50 reclaimed_support after M1 close above and retest",
+        "micro_confirmation_event": "M1 close above 160.50 followed by retest hold",
+    }
+    out, _ = _invoke_suggest_with_payload(
+        tmp_path,
+        monkeypatch,
+        payload,
+        gate_extras={
+            "trigger_family": "critical_level_reaction",
+            "trigger_reason": "support_reclaim:HALF_YEN:160.50",
+            "trigger_bias": "buy",
+        },
+    )
+
+    assert out[0]["decision"] == "skip"
+    assert out[0]["lots"] == 0.0
+    assert out[0]["skip_reason"] == "server_veto:critical_level_mixed_reasoning_risk"
+
+
+def test_invoke_suggest_caps_material_critical_level_mixed(tmp_path: Path, monkeypatch) -> None:
+    payload = {
+        **_suggestion(),
+        "lots": 3.0,
+        "timeframe_alignment": "mixed",
+        "named_catalyst": "HALF_YEN 160.50 reclaimed_support after M1 close above and retest",
+        "micro_confirmation_event": "M1 close above 160.50 followed by retest hold",
+        "caveat_resolution": "MOF intervention rate check flow shift after failed prior breakout",
     }
     out, _ = _invoke_suggest_with_payload(
         tmp_path,
@@ -1594,6 +1624,55 @@ def test_invoke_suggest_caps_critical_level_mixed_without_material_catalyst(tmp_
     assert out[0]["decision"] == "trade"
     assert out[0]["lots"] == 1.0
     assert "phase4_critical_level_mixed_max_1_lot" in out[0]["selectivity_adjustments"]
+
+
+def test_invoke_suggest_skips_vague_micro_confirmation(tmp_path: Path, monkeypatch) -> None:
+    payload = {
+        **_suggestion(),
+        "lots": 1.0,
+        "timeframe_alignment": "aligned",
+        "named_catalyst": "HALF_YEN 160.50 reclaimed_support with micro confirmation",
+        "micro_confirmation_event": "M1 confirmation",
+    }
+    out, _ = _invoke_suggest_with_payload(
+        tmp_path,
+        monkeypatch,
+        payload,
+        gate_extras={
+            "trigger_family": "momentum_continuation",
+            "trigger_reason": "pullback_retest:buy",
+            "trigger_bias": "buy",
+        },
+    )
+
+    assert out[0]["decision"] == "skip"
+    assert out[0]["lots"] == 0.0
+    assert out[0]["skip_reason"] == "server_veto:vague_micro_confirmation"
+
+
+def test_invoke_suggest_caps_resolved_contradiction(tmp_path: Path, monkeypatch) -> None:
+    payload = {
+        **_suggestion(),
+        "lots": 4.0,
+        "timeframe_alignment": "aligned",
+        "named_catalyst": "MOF intervention rate check flow shift after failed prior breakout",
+        "adverse_context": "Macro tape is mixed and JPY was weak earlier.",
+        "caveat_resolution": "MOF intervention rate check flow shift after failed prior breakout",
+    }
+    out, _ = _invoke_suggest_with_payload(
+        tmp_path,
+        monkeypatch,
+        payload,
+        gate_extras={
+            "trigger_family": "momentum_continuation",
+            "trigger_reason": "pullback_retest:buy",
+            "trigger_bias": "buy",
+        },
+    )
+
+    assert out[0]["decision"] == "trade"
+    assert out[0]["lots"] == 1.0
+    assert "phase5_contradiction_admitted_max_1_lot" in out[0]["selectivity_adjustments"]
 
 
 def test_invoke_suggest_defaults_market_order_type_when_omitted(tmp_path: Path, monkeypatch) -> None:

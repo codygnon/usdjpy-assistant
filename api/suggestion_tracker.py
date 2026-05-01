@@ -77,6 +77,14 @@ CREATE TABLE IF NOT EXISTS ai_suggestions (
     countertrend_edge TEXT,
     trigger_fit TEXT,
     why_trade_despite_weakness TEXT,
+    named_catalyst TEXT,
+    side_bias_check TEXT,
+    setup_location TEXT,
+    edge_reason TEXT,
+    adverse_context TEXT,
+    caveat_resolution TEXT,
+    micro_confirmation_event TEXT,
+    reasoning_quality_gate TEXT,
     custom_exit_plan_json TEXT,
     features_json TEXT,
     max_adverse_pips REAL,
@@ -243,6 +251,12 @@ def init_db(db_path: Path) -> None:
         _ensure_column(conn, "ai_suggestions", "why_trade_despite_weakness", "TEXT")
         _ensure_column(conn, "ai_suggestions", "named_catalyst", "TEXT")
         _ensure_column(conn, "ai_suggestions", "side_bias_check", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "setup_location", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "edge_reason", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "adverse_context", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "caveat_resolution", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "micro_confirmation_event", "TEXT")
+        _ensure_column(conn, "ai_suggestions", "reasoning_quality_gate", "TEXT")
         _ensure_column(conn, "ai_suggestions", "custom_exit_plan_json", "TEXT")
         _ensure_column(conn, "ai_suggestions", "features_json", "TEXT")
         _ensure_column(conn, "ai_suggestions", "max_adverse_pips", "REAL")
@@ -434,6 +448,12 @@ def log_generated(
         "why_trade_despite_weakness": suggestion.get("why_trade_despite_weakness"),
         "named_catalyst": suggestion.get("named_catalyst"),
         "side_bias_check": suggestion.get("side_bias_check"),
+        "setup_location": suggestion.get("setup_location"),
+        "edge_reason": suggestion.get("edge_reason"),
+        "adverse_context": suggestion.get("adverse_context"),
+        "caveat_resolution": suggestion.get("caveat_resolution"),
+        "micro_confirmation_event": suggestion.get("micro_confirmation_event"),
+        "reasoning_quality_gate": suggestion.get("reasoning_quality_gate"),
         "custom_exit_plan_json": json.dumps(suggestion.get("custom_exit_plan") or {}),
         "features_json": json.dumps(features),
         "market_snapshot_json": json.dumps(snapshot),
@@ -452,7 +472,9 @@ def log_generated(
                 trade_thesis, whats_different, why_not_stop,
                 zone_memory_read, repeat_trade_case, planned_rr_estimate,
                 low_rr_edge, timeframe_alignment, countertrend_edge, trigger_fit,
-                why_trade_despite_weakness, named_catalyst, side_bias_check, custom_exit_plan_json,
+                why_trade_despite_weakness, named_catalyst, side_bias_check,
+                setup_location, edge_reason, adverse_context, caveat_resolution,
+                micro_confirmation_event, reasoning_quality_gate, custom_exit_plan_json,
                 features_json, market_snapshot_json
             ) VALUES (
                 :suggestion_id, :created_utc, :profile, :model,
@@ -464,7 +486,9 @@ def log_generated(
                 :trade_thesis, :whats_different, :why_not_stop,
                 :zone_memory_read, :repeat_trade_case, :planned_rr_estimate,
                 :low_rr_edge, :timeframe_alignment, :countertrend_edge, :trigger_fit,
-                :why_trade_despite_weakness, :named_catalyst, :side_bias_check, :custom_exit_plan_json,
+                :why_trade_despite_weakness, :named_catalyst, :side_bias_check,
+                :setup_location, :edge_reason, :adverse_context, :caveat_resolution,
+                :micro_confirmation_event, :reasoning_quality_gate, :custom_exit_plan_json,
                 :features_json, :market_snapshot_json
             )
             """,

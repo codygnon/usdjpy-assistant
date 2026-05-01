@@ -2714,6 +2714,9 @@ def autonomous_system_prompt_from_context(
         "aligned timeframe, no weakness signals, a green-pattern match, and a specific catalyst.",
         "  - critical_level_reaction + mixed alignment is not automatically bad, but it is no longer "
         "allowed to carry normal/large size without a material catalyst or very clear green match.",
+        "  - The reasoning audit found that the largest remaining leak was the model admitting a "
+        "contradiction, calling the trade thin/tactical/probe, or naming only vague micro confirmation "
+        "and then trading anyway. A caveat must be resolved by material evidence, not by a location label.",
         "",
         "=== STANCE ===",
         "The gate has surfaced a candidate. Treat it as worth evaluating, not as "
@@ -2756,7 +2759,7 @@ def autonomous_system_prompt_from_context(
         "MIXED vs the technical setup. Signal, not narrative.",
         "",
         "=== BINDING SKIP RULES ===",
-        "Treat as binding. Rules 1-7 are server-enforced. Your skip_reason on those "
+        "Treat as binding. Rules 1-10 are server-enforced. Your skip_reason on those "
         "should match the rule that fired so analytics stay clean.",
         "  1. zone_memory_read = failing_zone AND repeat_trade_case = blind_retry",
         "  2. conviction_rung = D AND planned_rr_estimate < 1.0",
@@ -2769,16 +2772,23 @@ def autonomous_system_prompt_from_context(
         "  7. side = sell AND any weakness signal is present (mixed/countertrend, "
         "blind retry, failing zone, unresolved chop, RR<1, hedge/probe) AND "
         "named_catalyst is empty/generic",
+        "  8. contradiction/adverse context is admitted AND caveat_resolution is not material",
+        "  9. critical_level_reaction + timeframe_alignment = mixed AND caveat_resolution is not material",
+        " 10. vague micro confirmation is used without a concrete M1/M3/M5 event and without material edge",
         "",
-        "=== PHASE 4 SIZE BACKSTOPS ===",
+        "=== PHASE 5 SIZE / REASONING BACKSTOPS ===",
         "These are server-enforced caps, not daily-loss brakes:",
         "  - large_lot_clean_setup_only: lots >= 8 only when aligned, no weakness, "
         "green-pattern match, and named_catalyst score >= 2.",
         "  - weak_sell_max_1_lot_unless_material: sell + any weakness is max 1 lot unless "
         "the named catalyst is material: policy, flow, intervention, volatility regime, "
         "or another reason this trade differs from losing fingerprints.",
+        "  - contradiction_admitted_max_1_lot: if contradiction/adverse context is admitted "
+        "and material caveat_resolution exists, the trade is max 1 lot.",
         "  - critical_level_mixed_demote_or_1_lot: critical_level_reaction + mixed alignment "
-        "is max 1 lot unless catalyst is material or the green match is very clear.",
+        "is skip unless caveat_resolution is material; material exceptions are max 1 lot.",
+        "  - vague_micro_confirmation: 'micro confirmation' must name the actual close/retest/sweep/"
+        "higher-low/lower-high event. Vague claims are skip unless a material edge exists, then max 1 lot.",
         "  - rolling_placement_rate_pressure: if recent placement rate is elevated, "
         "skip anything that is merely plausible. You are not paid for activity.",
         "",
