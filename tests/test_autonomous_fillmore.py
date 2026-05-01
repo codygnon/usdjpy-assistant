@@ -1401,6 +1401,18 @@ def test_invoke_suggest_ignores_generic_weakness_text_for_sell_veto(tmp_path: Pa
     assert out[0]["lots"] == 1.5
 
 
+def test_phase4_catalyst_score_rejects_negated_or_substring_material_words() -> None:
+    assert autonomous_fillmore._phase4_catalyst_score("policy does not confirm this setup") < 3
+    assert autonomous_fillmore._phase4_catalyst_score("macro is mixed near resistance") < 3
+    assert autonomous_fillmore._phase4_catalyst_score("reward improves after support reclaim") < 3
+    assert (
+        autonomous_fillmore._phase4_catalyst_score(
+            "MOF intervention rate check flow shift after failed prior breakout"
+        )
+        == 3
+    )
+
+
 def test_invoke_suggest_caps_dirty_phase4_large_lot(tmp_path: Path, monkeypatch) -> None:
     payload = {
         **_suggestion(),
@@ -1430,6 +1442,8 @@ def test_invoke_suggest_caps_dirty_phase4_large_lot(tmp_path: Path, monkeypatch)
 
 
 def test_invoke_suggest_allows_clean_phase4_large_lot(tmp_path: Path, monkeypatch) -> None:
+    ctx = _ctx()
+    ctx["ta_snapshot"] = {**ctx.get("ta_snapshot", {}), "H1": {"regime": "bull_trend"}}
     payload = {
         **_suggestion(),
         "lots": 8.0,
@@ -1446,11 +1460,65 @@ def test_invoke_suggest_allows_clean_phase4_large_lot(tmp_path: Path, monkeypatc
             "trigger_bias": "buy",
             "thesis_fingerprint": "buy:critical_level_reaction:HALF_YEN:160.50",
         },
+        ctx=ctx,
     )
 
     assert out[0]["decision"] == "trade"
     assert out[0]["lots"] == 8.0
     assert "selectivity_adjustments" not in out[0]
+
+
+def test_invoke_suggest_caps_large_lot_without_proven_green_pattern(tmp_path: Path, monkeypatch) -> None:
+    ctx = _ctx()
+    ctx["ta_snapshot"] = {**ctx.get("ta_snapshot", {}), "H1": {"regime": "bull_trend"}}
+    payload = {
+        **_suggestion(),
+        "lots": 8.0,
+        "timeframe_alignment": "aligned",
+        "named_catalyst": "M5 breakout at HALF_YEN 160.50 with micro confirmation",
+        "trigger_fit": "momentum_continuation",
+    }
+    out, _ = _invoke_suggest_with_payload(
+        tmp_path,
+        monkeypatch,
+        payload,
+        gate_extras={
+            "trigger_family": "momentum_continuation",
+            "trigger_reason": "clean_impulse_continuation:buy",
+            "trigger_bias": "buy",
+        },
+        ctx=ctx,
+    )
+
+    assert out[0]["decision"] == "trade"
+    assert out[0]["lots"] == 1.0
+    assert "phase4_large_lot_clean_setup_only" in out[0]["selectivity_adjustments"]
+
+
+def test_invoke_suggest_caps_weak_sell_when_material_terms_are_negated(tmp_path: Path, monkeypatch) -> None:
+    payload = {
+        **_suggestion(),
+        "side": "sell",
+        "lots": 4.0,
+        "timeframe_alignment": "mixed",
+        "named_catalyst": "policy does not confirm this sell; macro is mixed near resistance",
+        "side_bias_check": "Policy does not confirm the sell.",
+        "trigger_fit": "momentum_continuation",
+    }
+    out, _ = _invoke_suggest_with_payload(
+        tmp_path,
+        monkeypatch,
+        payload,
+        gate_extras={
+            "trigger_family": "momentum_continuation",
+            "trigger_reason": "pullback_retest:sell",
+            "trigger_bias": "sell",
+        },
+    )
+
+    assert out[0]["decision"] == "trade"
+    assert out[0]["lots"] == 1.0
+    assert "phase4_weak_sell_max_1_lot_unless_material" in out[0]["selectivity_adjustments"]
 
 
 def test_invoke_suggest_caps_weak_sell_without_material_catalyst(tmp_path: Path, monkeypatch) -> None:

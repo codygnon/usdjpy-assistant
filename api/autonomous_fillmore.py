@@ -124,13 +124,21 @@ _PHASE4_MICRO_TOKENS = (
     "retest", "impulse", "sweep", "hold", "close above", "close below",
     "higher low", "lower high", "failed break", "failed breakdown",
 )
-_PHASE4_MATERIAL_TOKENS = (
-    "boj", "mof", "finance minister", "intervention", "rate check", "hawkish",
-    "dovish", "policy", "macro", "flow", "safe-haven", "safe haven",
-    "geopolitical", "war", "us-japan", "treasury", "yield", "cpi", "nfp",
-    "fomc", "volatility regime", "liquidity shift", "fixing", "option",
-    "real money", "material change", "prior failure", "failed prior",
-    "break of structure", "regime shift",
+_PHASE4_MATERIAL_PHRASES = (
+    "boj", "mof", "finance minister", "intervention", "rate check",
+    "hawkish surprise", "dovish surprise", "policy shift", "policy divergence",
+    "macro catalyst", "macro release", "macro surprise", "flow shift",
+    "safe-haven", "safe haven", "safe-haven flow", "safe haven flow",
+    "geopolitical risk", "war premium", "war-premium", "us-japan",
+    "treasury yield", "yield spike", "yield compression", "cpi", "nfp",
+    "fomc", "volatility regime", "liquidity shift", "fixing flow",
+    "option expiry", "real money", "material change", "prior failure",
+    "failed prior", "break of structure", "regime shift",
+)
+_PHASE4_MATERIAL_NEGATIONS = (
+    "no", "not", "without", "absent", "contradict", "contradicts",
+    "contradicted", "mixed", "unclear", "generic", "does not confirm",
+    "doesn't confirm", "fails to confirm", "not confirmed", "not material",
 )
 
 
@@ -140,6 +148,22 @@ def _phase4_text(value: Any) -> str:
 
 def _phase4_contains_any(text: str, tokens: tuple[str, ...]) -> bool:
     return any(token in text for token in tokens)
+
+
+def _phase4_phrase_regex(phrase: str) -> re.Pattern[str]:
+    parts = [re.escape(part) for part in re.split(r"[\s_-]+", phrase.strip()) if part]
+    body = r"[\s_-]+".join(parts)
+    return re.compile(rf"(?<![a-z0-9]){body}(?![a-z0-9])")
+
+
+def _phase4_has_clean_material_phrase(text: str) -> bool:
+    for phrase in _PHASE4_MATERIAL_PHRASES:
+        for match in _phase4_phrase_regex(phrase).finditer(text):
+            window = text[max(0, match.start() - 40): min(len(text), match.end() + 40)]
+            if any(_phase4_phrase_regex(neg).search(window) for neg in _PHASE4_MATERIAL_NEGATIONS):
+                continue
+            return True
+    return False
 
 
 def _phase4_has_meaningful_text(value: Any) -> bool:
@@ -153,7 +177,7 @@ def _phase4_catalyst_score(value: Any) -> int:
     stripped = text.strip(" .:-")
     if not stripped or stripped in _PHASE4_GENERIC_CATALYSTS or len(stripped) < 12:
         return 0
-    if _phase4_contains_any(stripped, _PHASE4_MATERIAL_TOKENS):
+    if _phase4_has_clean_material_phrase(stripped):
         return 3
     has_structure = _phase4_contains_any(stripped, _PHASE4_STRUCTURE_TOKENS)
     has_micro = _phase4_contains_any(stripped, _PHASE4_MICRO_TOKENS)
@@ -216,18 +240,15 @@ def _phase4_green_pattern_matches(suggestion: dict[str, Any], ctx: dict[str, Any
     trigger_reason = _phase4_text(suggestion.get("trigger_reason"))
     combined = " ".join([catalyst_text, thesis_text, trigger_reason])
     matches: list[str] = []
-    if side == "buy" and _phase4_session_is_london_ny(ctx) and (tf == "aligned" or _phase4_h1_is_bull(ctx)):
-        matches.append("buy_london_ny_aligned_or_h1_bull")
-    if (
+    is_buy_critical_level = (
         side == "buy"
         and family == "critical_level_reaction"
         and fit == "level_reaction"
         and tf in {"aligned", "mixed"}
         and _phase4_contains_any(combined, _PHASE4_STRUCTURE_TOKENS)
-    ):
-        matches.append("buy_critical_level_reaction_named_structure")
-    if family == "momentum_continuation" and fit == "momentum_continuation" and tf == "aligned":
-        matches.append("aligned_momentum_continuation")
+    )
+    if is_buy_critical_level and _phase4_session_is_london_ny(ctx) and _phase4_h1_is_bull(ctx):
+        matches.append("buy_london_ny_h1_bull_critical_level")
     return matches
 
 
