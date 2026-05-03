@@ -1017,6 +1017,12 @@ tr:hover td {
   border: 1px solid rgba(255,255,255,0.06);
 }
 
+.autonomous-panel__notice--v2 {
+  color: rgba(204, 251, 241, 0.92);
+  background: linear-gradient(180deg, rgba(20,184,166,0.12), rgba(20,184,166,0.06));
+  border-color: rgba(45,212,191,0.22);
+}
+
 .autonomous-panel__grid {
   display: grid;
   gap: 10px;
@@ -1092,6 +1098,10 @@ tr:hover td {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+
+.autonomous-panel__segmented--engine {
+  margin-bottom: 8px;
 }
 
 .autonomous-panel__segment {
@@ -1213,6 +1223,47 @@ tr:hover td {
   background: rgba(255,255,255,0.03);
   font-size: 0.68rem;
   color: rgba(255,255,255,0.56);
+}
+
+.autonomous-panel__chip--blocker {
+  color: #fde68a;
+  background: rgba(250,204,21,0.08);
+  border-color: rgba(250,204,21,0.16);
+}
+
+.autonomous-panel__success,
+.autonomous-panel__danger {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.autonomous-panel__success {
+  color: #bbf7d0;
+  background: rgba(34,197,94,0.09);
+  border: 1px solid rgba(74,222,128,0.18);
+}
+
+.autonomous-panel__danger {
+  color: #fecaca;
+  background: rgba(248,113,113,0.09);
+  border: 1px solid rgba(248,113,113,0.22);
+}
+
+.autonomous-panel__code-line {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.07);
+  background: rgba(2,6,23,0.48);
+  color: rgba(226,232,240,0.78);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.68rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .autonomous-panel__legend-chip--suggestions {

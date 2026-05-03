@@ -413,6 +413,7 @@ function AutonomousFillmorePanel({
   const [cfg, setCfg] = useState<api.AutonomousConfig | null>(null);
   const [gateModes, setGateModes] = useState<Record<string, api.AutonomousGateMode>>({});
   const [stats, setStats] = useState<api.AutonomousStats | null>(null);
+  const [v2Status, setV2Status] = useState<api.AutonomousV2Status | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [showDecisions, setShowDecisions] = useState(false);
@@ -428,6 +429,7 @@ function AutonomousFillmorePanel({
       if (cancelled) return;
       setCfg(r.config);
       setGateModes(r.gate_modes);
+      setV2Status(r.v2_status || null);
     }).catch((e) => setErr(String(e?.message || e)));
     return () => { cancelled = true; };
   }, [profileName, profilePath]);
@@ -437,7 +439,10 @@ function AutonomousFillmorePanel({
     let cancelled = false;
     const tick = () => {
       api.getAutonomousStats(profileName, profilePath).then((s) => {
-        if (!cancelled) setStats(s);
+        if (!cancelled) {
+          setStats(s);
+          setV2Status(s.v2_status || null);
+        }
       }).catch(() => { /* silent */ });
     };
     tick();
@@ -482,6 +487,19 @@ function AutonomousFillmorePanel({
     try {
       const r = await api.updateAutonomousConfig(profileName, patch, profilePath);
       setCfg(r.config);
+      if (r.v2_status) setV2Status(r.v2_status);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [profileName, profilePath]);
+
+  const setEngine = useCallback(async (engine: 'v1' | 'v2') => {
+    setBusy(true); setErr(null);
+    try {
+      const r = await api.updateAutonomousEngine(profileName, engine, profilePath);
+      setV2Status(r.v2_status);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -512,6 +530,9 @@ function AutonomousFillmorePanel({
   }
 
   const modeMeta = MODE_LABELS.find((m) => m.value === cfg.mode) || MODE_LABELS[0];
+  const engine = v2Status?.engine || 'v1';
+  const isV2 = engine === 'v2';
+  const latestV2 = v2Status?.latest_row;
   const aggDesc = gateModes[cfg.aggressiveness]?.description;
   const expectedPct = gateModes[cfg.aggressiveness]?.expected_pass_rate_pct;
 
@@ -555,7 +576,6 @@ function AutonomousFillmorePanel({
   const budgetColor = budgetPct >= 90 ? '#f87171' : budgetPct >= 60 ? '#facc15' : '#4ade80';
   const topReasons = Object.entries(window_?.top_block_reasons || {}).slice(0, 3);
   const topTriggerFamilies = Object.entries(window_?.trigger_families || {}).slice(0, 3);
-  const familyOrderRows = Object.entries(orderMetrics?.by_trigger_family || {}).slice(0, 4);
   const failedBreakoutWindowCount = window_?.trigger_families?.failed_breakout_reversal_overlap_v1 ?? 0;
   const failedBreakoutOrders = orderMetrics?.by_trigger_family?.failed_breakout_reversal_overlap_v1;
   const reasoningCounts = reasoning
@@ -578,25 +598,78 @@ function AutonomousFillmorePanel({
           <div className="autonomous-panel__eyebrow">Execution Engine</div>
           <span className="autonomous-panel__title">Autonomous Fillmore</span>
           <div className="autonomous-panel__subtitle">
-            Continuous trade engine with event gating, defensive thesis review, and self-reflection memory.
+            {isV2
+              ? 'v2 OANDA-practice engine: deterministic gates, vetoes, sizing, validators, and audit rows.'
+              : 'v1 autonomous engine with event gating, thesis review, and reflection memory.'}
           </div>
         </div>
-        <span style={{
-          fontSize: '0.72rem',
-          padding: '2px 8px',
-          borderRadius: 999,
-          background: 'rgba(255,255,255,0.05)',
-          color: modeMeta.color,
-          fontWeight: 700,
-          letterSpacing: 0.5,
-        }}>
-          {modeMeta.label}
-        </span>
+        <div style={{ display: 'grid', gap: 6, justifyItems: 'end' }}>
+          <span style={{
+            fontSize: '0.72rem',
+            padding: '2px 8px',
+            borderRadius: 999,
+            background: isV2 ? 'rgba(45,212,191,0.12)' : 'rgba(255,255,255,0.05)',
+            color: isV2 ? '#5eead4' : modeMeta.color,
+            fontWeight: 700,
+            letterSpacing: 0.5,
+          }}>
+            ENGINE {String(engine).toUpperCase()}
+          </span>
+          <span style={{
+            fontSize: '0.68rem',
+            padding: '2px 8px',
+            borderRadius: 999,
+            background: 'rgba(255,255,255,0.05)',
+            color: modeMeta.color,
+            fontWeight: 700,
+            letterSpacing: 0.5,
+          }}>
+            {isV2 ? 'STAGE 1 PAPER' : modeMeta.label}
+          </span>
+        </div>
       </div>
 
       {err && <div style={{ color: '#f87171', fontSize: '0.82rem', marginBottom: 8 }}>{err}</div>}
 
-      {cfg.mode === 'paper' && (
+      <div className="autonomous-panel__section autonomous-panel__section--soft">
+        <div className="autonomous-panel__section-head">
+          <span className="autonomous-panel__section-title">Engine Version</span>
+          <span className="autonomous-panel__muted">{isV2 ? 'paper guarded' : 'legacy path'}</span>
+        </div>
+        <div className="autonomous-panel__segmented autonomous-panel__segmented--engine">
+          <button
+            type="button"
+            className={`autonomous-panel__segment ${!isV2 ? 'is-active' : ''}`}
+            disabled={busy}
+            onClick={() => void setEngine('v1')}
+          >
+            v1 legacy
+          </button>
+          <button
+            type="button"
+            className={`autonomous-panel__segment ${isV2 ? 'is-active' : ''}`}
+            disabled={busy}
+            onClick={() => void setEngine('v2')}
+          >
+            v2 stage 1
+          </button>
+        </div>
+        <div className="autonomous-panel__hint">
+          {isV2
+            ? 'v2 places only OANDA practice orders in paper mode after the deterministic v2 stack approves the trade.'
+            : 'v1 is the original autonomous path. Switch to v2 only for Stage 1 paper-live validation.'}
+        </div>
+      </div>
+
+      {isV2 && (
+        <div className="autonomous-panel__notice autonomous-panel__notice--v2">
+          <strong>v2 Stage 1:</strong> live ticks, OANDA practice orders only, deterministic sizing, strict JSON,
+          pre-vetoes, post-decision validators, and <code>engine_version=&quot;v2&quot;</code> audit rows.
+          It is not cleared for 0.1x or real-capital sizing.
+        </div>
+      )}
+
+      {!isV2 && cfg.mode === 'paper' && (
         <div className="autonomous-panel__notice">
           Paper mode sends real orders to your OANDA <strong>practice</strong> account (profile must have{' '}
           <code style={{ fontSize: '0.72rem' }}>oanda_environment: &quot;practice&quot;</code>
@@ -655,9 +728,16 @@ function AutonomousFillmorePanel({
             className="autonomous-panel__control"
           >
             {MODE_LABELS.map((m) => (
-              <option key={m.value} value={m.value}>{m.label}</option>
+              <option key={m.value} value={m.value} disabled={isV2 && m.value === 'live'}>
+                {m.label}{isV2 && m.value === 'live' ? ' (v2 disabled)' : ''}
+              </option>
             ))}
           </select>
+          {isV2 && (
+            <div className="autonomous-panel__hint">
+              In v2, paper mode sends OANDA practice orders only. Live remains disabled.
+            </div>
+          )}
         </div>
         <div className="autonomous-panel__field">
           <label className="autonomous-panel__label">Enabled</label>
@@ -703,35 +783,48 @@ function AutonomousFillmorePanel({
       </div>
 
       <div className="autonomous-panel__feature-grid">
-        {featurePill(
-          'Event Blackout',
-          cfg.event_blackout_enabled,
-          cfg.event_blackout_enabled ? `Blocks high-impact USD/JPY events inside ${cfg.event_blackout_minutes}m.` : 'LLM may still fire near scheduled events.',
-        )}
-        {featurePill(
-          'Multi-Trade',
-          cfg.multi_trade_enabled,
-          cfg.multi_trade_enabled ? `Can return up to ${cfg.max_suggestions_per_call} ideas per call.` : 'One idea max per LLM call.',
-        )}
-        {featurePill(
-          'Correlation Veto',
-          cfg.correlation_veto_enabled,
-          cfg.correlation_veto_enabled ? `Blocks same-side stacking within ${cfg.correlation_distance_pips}p.` : 'No same-side proximity veto.',
-        )}
-        {featurePill(
-          'Repeat Dedupe',
-          cfg.repeat_setup_dedupe_enabled,
-          cfg.repeat_setup_dedupe_enabled ? `Avoids repeat setups inside ${cfg.repeat_setup_bucket_pips}p over ${cfg.repeat_setup_window_min}m.` : 'Allows repeat-firing same bucket.',
-        )}
-        {featurePill(
-          'Thesis Monitor',
-          true,
-          'Runs every ~3 minutes on open Fillmore trades and can only reduce risk.',
-        )}
-        {featurePill(
-          'Reflection Memory',
-          true,
-          'Closed Fillmore trades generate short postmortems that feed autonomous prompts.',
+        {isV2 ? (
+          <>
+            {featurePill('Paper Guard', true, 'v2 dispatch refuses non-paper stages by default.')}
+            {featurePill('Practice Orders', true, 'v2 can place OANDA practice orders only after all v2 checks pass.')}
+            {featurePill('Pre-Vetoes', true, 'Toxic setup cells can skip before the LLM is called.')}
+            {featurePill('Validators', true, 'LLM place decisions can be overridden deterministically.')}
+            {featurePill('Deterministic Sizing', true, 'Risk function owns lots; the LLM has no sizing authority.')}
+            {featurePill('Replay Telemetry', true, 'Snapshot, prompt, gates, sizing, vetoes, and validators are persisted.')}
+          </>
+        ) : (
+          <>
+            {featurePill(
+              'Event Blackout',
+              cfg.event_blackout_enabled,
+              cfg.event_blackout_enabled ? `Blocks high-impact USD/JPY events inside ${cfg.event_blackout_minutes}m.` : 'LLM may still fire near scheduled events.',
+            )}
+            {featurePill(
+              'Multi-Trade',
+              cfg.multi_trade_enabled,
+              cfg.multi_trade_enabled ? `Can return up to ${cfg.max_suggestions_per_call} ideas per call.` : 'One idea max per LLM call.',
+            )}
+            {featurePill(
+              'Correlation Veto',
+              cfg.correlation_veto_enabled,
+              cfg.correlation_veto_enabled ? `Blocks same-side stacking within ${cfg.correlation_distance_pips}p.` : 'No same-side proximity veto.',
+            )}
+            {featurePill(
+              'Repeat Dedupe',
+              cfg.repeat_setup_dedupe_enabled,
+              cfg.repeat_setup_dedupe_enabled ? `Avoids repeat setups inside ${cfg.repeat_setup_bucket_pips}p over ${cfg.repeat_setup_window_min}m.` : 'Allows repeat-firing same bucket.',
+            )}
+            {featurePill(
+              'Thesis Monitor',
+              true,
+              'Runs every ~3 minutes on open Fillmore trades and can only reduce risk.',
+            )}
+            {featurePill(
+              'Reflection Memory',
+              true,
+              'Closed Fillmore trades generate short postmortems that feed autonomous prompts.',
+            )}
+          </>
         )}
       </div>
 
@@ -765,6 +858,96 @@ function AutonomousFillmorePanel({
           </div>
         </div>
       </div>
+
+      {isV2 && (
+        <div className="autonomous-panel__section">
+          <div className="autonomous-panel__section-head">
+            <span className="autonomous-panel__section-title">v2 First-Tick Audit</span>
+            <span className="autonomous-panel__muted">
+              {latestV2 ? 'latest v2 row' : 'waiting for v2 row'}
+            </span>
+          </div>
+          {latestV2 ? (
+            <>
+              <div className="autonomous-panel__stats-grid">
+                <div className="autonomous-panel__stat">
+                  <div className="autonomous-panel__stat-label">Decision</div>
+                  <strong>{latestV2.final_decision || '–'}</strong>
+                </div>
+                <div className="autonomous-panel__stat">
+                  <div className="autonomous-panel__stat-label">Gate</div>
+                  <strong>{latestV2.selected_gate ? formatTriggerFamilyLabel(latestV2.selected_gate) : '–'}</strong>
+                </div>
+                <div className="autonomous-panel__stat">
+                  <div className="autonomous-panel__stat-label">Risk</div>
+                  <strong>{latestV2.risk_after_fill_usd != null ? `$${latestV2.risk_after_fill_usd.toFixed(2)}` : '–'}</strong>
+                </div>
+              </div>
+              <div className="autonomous-panel__chip-row">
+                <div className="autonomous-panel__chip">parse {latestV2.llm_parse_status || '–'}</div>
+                <div className="autonomous-panel__chip">gate candidates {latestV2.gate_candidates_count ?? 0}</div>
+                <div className="autonomous-panel__chip">pre-veto fires {latestV2.pre_veto_fires_count ?? 0}</div>
+                <div className="autonomous-panel__chip">validator overrides {latestV2.validator_overrides_count ?? 0}</div>
+                <div className="autonomous-panel__chip">lots {latestV2.deterministic_lots ?? '–'}</div>
+              </div>
+              {(latestV2.missing_required_values || []).length > 0 ? (
+                <div className="autonomous-panel__danger">
+                  Missing required v2 fields: {(latestV2.missing_required_values || []).join(', ')}
+                </div>
+              ) : (
+                <div className="autonomous-panel__success">
+                  Required v2 audit fields are complete on the latest row.
+                </div>
+              )}
+              {(latestV2.halt_reason || latestV2.skip_reason || latestV2.error) && (
+                <div className="autonomous-panel__hint">
+                  {latestV2.error || latestV2.halt_reason || latestV2.skip_reason}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="autonomous-panel__hint">
+              No v2 rows yet. After the first supervised tick, this card should show engine_version=v2 audit data.
+            </div>
+          )}
+          {v2Status?.first_tick_check_command && (
+            <div className="autonomous-panel__code-line" title={v2Status.first_tick_check_command}>
+              {v2Status.first_tick_check_command}
+            </div>
+          )}
+        </div>
+      )}
+
+      {isV2 && (
+        <div className="autonomous-panel__section">
+          <div className="autonomous-panel__section-head">
+            <span className="autonomous-panel__section-title">Before 0.1x</span>
+            <span className="autonomous-panel__muted">blocking checklist</span>
+          </div>
+          <div className="autonomous-panel__chip-row">
+            {(v2Status?.pre_0_1x_required || [
+              'real_side_normalized_level_quality_builder',
+              'macro_bias_and_catalyst_category_classification',
+              'skip_forward_outcome_capture_t5_98pct',
+              'stage_progression_reporting',
+              'exit_layer_live_replay_logs',
+              '50_close_stage1_paper_report',
+            ]).map((item) => (
+              <div key={item} className="autonomous-panel__chip autonomous-panel__chip--blocker">
+                {item.replace(/_/g, ' ')}
+              </div>
+            ))}
+          </div>
+          <div className="autonomous-panel__hint">
+            Rollback: set engine to v1. v2 halt/strike state is isolated in runtime_state_fillmore_v2.json.
+          </div>
+          {v2Status?.known_full_suite_debt && (
+            <div className="autonomous-panel__hint">
+              Known non-v2 test debt: {v2Status.known_full_suite_debt}
+            </div>
+          )}
+        </div>
+      )}
 
       {stats && (
         <div className="autonomous-panel__section">
@@ -865,53 +1048,74 @@ function AutonomousFillmorePanel({
         </div>
       )}
 
-      {orderMetrics && (
+      {isV2 && (
         <div className="autonomous-panel__section">
           <div className="autonomous-panel__section-head">
-            <span className="autonomous-panel__section-title">Execution Mix</span>
-            <span className="autonomous-panel__muted">trigger-aware order conversion</span>
+            <span className="autonomous-panel__section-title">v2 Practice Order Readiness</span>
+            <span className="autonomous-panel__muted">broker guard</span>
+          </div>
+          <div className="autonomous-panel__stats-grid">
+            <div className="autonomous-panel__stat">
+              <div className="autonomous-panel__stat-label">Engine</div>
+              <strong style={{ color: '#7dd3fc' }}>v2</strong>
+            </div>
+            <div className="autonomous-panel__stat">
+              <div className="autonomous-panel__stat-label">Order scope</div>
+              <strong>{v2Status?.order_send_scope?.replace(/_/g, ' ') || 'OANDA practice'}</strong>
+            </div>
+            <div className="autonomous-panel__stat">
+              <div className="autonomous-panel__stat-label">Mode</div>
+              <strong style={{ color: cfg.mode === 'paper' ? '#86efac' : '#facc15' }}>
+                {cfg.mode}
+              </strong>
+            </div>
           </div>
           <div className="autonomous-panel__chip-row">
+            <div className="autonomous-panel__chip">paper guard {v2Status?.paper_guard ? 'on' : 'unknown'}</div>
             <div className="autonomous-panel__chip">
-              suggested M/L {(orderMetrics.suggested.market ?? 0)}/{(orderMetrics.suggested.limit ?? 0)}
+              practice order-send {v2Status?.practice_order_send_enabled ? 'enabled' : 'unknown'}
             </div>
             <div className="autonomous-panel__chip">
-              placed M/L {(orderMetrics.placed.market ?? 0)}/{(orderMetrics.placed.limit ?? 0)}
+              real-capital send blocked
             </div>
-            <div className="autonomous-panel__chip">
-              filled M/L {(orderMetrics.filled.market ?? 0)}/{(orderMetrics.filled.limit ?? 0)}
-            </div>
-            <div className="autonomous-panel__chip">
-              dead limits {((orderMetrics.cancelled.limit ?? 0) + (orderMetrics.expired.limit ?? 0))}
-            </div>
+            <div className="autonomous-panel__chip">max lots 4</div>
           </div>
-          {familyOrderRows.length > 0 && (
-            <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
-              {familyOrderRows.map(([family, row]) => (
-                <div
-                  key={family}
-                  style={{
-                    borderRadius: 12,
-                    padding: '10px 12px',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    background: 'rgba(255,255,255,0.03)',
-                    fontSize: '0.78rem',
-                    color: '#cbd5e1',
-                  }}
-                >
-                  <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>
-                    {formatTriggerFamilyLabel(family)}
-                  </div>
-                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                    <div>placed M/L {(row.placed.market ?? 0)}/{(row.placed.limit ?? 0)}</div>
-                    <div>filled M/L {(row.filled.market ?? 0)}/{(row.filled.limit ?? 0)}</div>
-                    <div>limit fill {row.fill_rate.limit != null ? `${(row.fill_rate.limit * 100).toFixed(0)}%` : '–'}</div>
-                    <div>limit ttf {row.avg_time_to_fill_sec.limit != null ? `${Math.round(row.avg_time_to_fill_sec.limit)}s` : '–'}</div>
-                  </div>
-                </div>
-              ))}
+          {cfg.mode !== 'paper' ? (
+            <div className="autonomous-panel__danger">
+              v2 will not place practice trades until Auto Fillmore mode is set to paper.
+            </div>
+          ) : (
+            <div className="autonomous-panel__success">
+              Approved v2 place decisions can route to OANDA practice only. OANDA live, MT5, shadow, and live mode fail closed.
             </div>
           )}
+          <div
+            style={{
+              marginTop: 10,
+              padding: '10px 12px',
+              borderRadius: 12,
+              border: '1px solid rgba(255,255,255,0.08)',
+              background: 'rgba(255,255,255,0.03)',
+              fontSize: '0.78rem',
+              color: '#cbd5e1',
+              lineHeight: 1.5,
+            }}
+          >
+            <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>
+              Latest v2 placement candidate
+            </div>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              <div>decision {latestV2?.final_decision || 'waiting'}</div>
+              <div>gate {latestV2?.selected_gate ? formatTriggerFamilyLabel(latestV2.selected_gate) : '–'}</div>
+              <div>lots {latestV2?.deterministic_lots ?? '–'}</div>
+              <div>risk {latestV2?.risk_after_fill_usd != null ? `$${latestV2.risk_after_fill_usd.toFixed(2)}` : '–'}</div>
+              <div>validators {latestV2?.validator_overrides_count ?? 0}</div>
+              <div>pre-vetoes {latestV2?.pre_veto_fires_count ?? 0}</div>
+            </div>
+          </div>
+          <div className="autonomous-panel__hint">
+            This replaces the old market/limit execution mix because v2 Stage 1 is market-practice placement plus deterministic auditability, not order-type optimization.
+          </div>
         </div>
       )}
 
@@ -1020,43 +1224,69 @@ function AutonomousFillmorePanel({
       {/* Lot sizing — primary controls */}
       <div className="autonomous-panel__section autonomous-panel__section--soft">
         <div className="autonomous-panel__section-head">
-          <span className="autonomous-panel__section-title">Lot Sizing</span>
+          <span className="autonomous-panel__section-title">{isV2 ? 'Deterministic Sizing' : 'Lot Sizing'}</span>
           <span className="autonomous-panel__muted">
-            range {Math.max(1, Math.round((cfg.base_lot_size ?? 5) - (cfg.lot_deviation ?? 4)))}-{Math.min(Math.round(cfg.max_lots_per_trade), Math.round((cfg.base_lot_size ?? 5) + (cfg.lot_deviation ?? 4)))} lots
+            {isV2
+              ? 'LLM has no lot authority'
+              : `range ${Math.max(1, Math.round((cfg.base_lot_size ?? 5) - (cfg.lot_deviation ?? 4)))}-${Math.min(Math.round(cfg.max_lots_per_trade), Math.round((cfg.base_lot_size ?? 5) + (cfg.lot_deviation ?? 4)))} lots`}
           </span>
         </div>
-        <div className="autonomous-panel__grid autonomous-panel__grid--three">
-          <div className="autonomous-panel__field">
-            <label className="autonomous-panel__label">Base size</label>
-            <input
-              type="number" step="1" min="1" max={cfg.max_lots_per_trade}
-              defaultValue={cfg.base_lot_size ?? 5}
-              onBlur={(e) => void save({ base_lot_size: Number(e.target.value) })}
-              className="autonomous-panel__control"
-            />
-          </div>
-          <div className="autonomous-panel__field">
-            <label className="autonomous-panel__label">Deviation</label>
-            <input
-              type="number" step="1" min="0" max={cfg.max_lots_per_trade}
-              defaultValue={cfg.lot_deviation ?? 4}
-              onBlur={(e) => void save({ lot_deviation: Number(e.target.value) })}
-              className="autonomous-panel__control"
-            />
-          </div>
-          <div className="autonomous-panel__field">
-            <label className="autonomous-panel__label">Hard ceiling</label>
-            <input
-              type="number" step="1" min="1"
-              defaultValue={cfg.max_lots_per_trade}
-              onBlur={(e) => void save({ max_lots_per_trade: Number(e.target.value) })}
-              className="autonomous-panel__control"
-            />
-          </div>
-        </div>
-        <div className="autonomous-panel__hint">
-          LLM sizes each trade to match conviction: {Math.max(1, Math.round((cfg.base_lot_size ?? 5) - (cfg.lot_deviation ?? 4)))} = thin edge, {Math.round(cfg.base_lot_size ?? 5)} = normal, {Math.min(Math.round(cfg.max_lots_per_trade), Math.round((cfg.base_lot_size ?? 5) + (cfg.lot_deviation ?? 4)))} = full send, 0 = skip.
-        </div>
+        {isV2 ? (
+          <>
+            <div className="autonomous-panel__stats-grid">
+              <div className="autonomous-panel__stat">
+                <div className="autonomous-panel__stat-label">Authority</div>
+                <strong>deterministic</strong>
+              </div>
+              <div className="autonomous-panel__stat">
+                <div className="autonomous-panel__stat-label">Hard ceiling</div>
+                <strong>4 lots</strong>
+              </div>
+              <div className="autonomous-panel__stat">
+                <div className="autonomous-panel__stat-label">Stage</div>
+                <strong>paper</strong>
+              </div>
+            </div>
+            <div className="autonomous-panel__hint">
+              v2 computes lots from equity, SL pips, pip value, open exposure, rolling P&L, and volatility. The model can propose evidence only.
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="autonomous-panel__grid autonomous-panel__grid--three">
+              <div className="autonomous-panel__field">
+                <label className="autonomous-panel__label">Base size</label>
+                <input
+                  type="number" step="1" min="1" max={cfg.max_lots_per_trade}
+                  defaultValue={cfg.base_lot_size ?? 5}
+                  onBlur={(e) => void save({ base_lot_size: Number(e.target.value) })}
+                  className="autonomous-panel__control"
+                />
+              </div>
+              <div className="autonomous-panel__field">
+                <label className="autonomous-panel__label">Deviation</label>
+                <input
+                  type="number" step="1" min="0" max={cfg.max_lots_per_trade}
+                  defaultValue={cfg.lot_deviation ?? 4}
+                  onBlur={(e) => void save({ lot_deviation: Number(e.target.value) })}
+                  className="autonomous-panel__control"
+                />
+              </div>
+              <div className="autonomous-panel__field">
+                <label className="autonomous-panel__label">Hard ceiling</label>
+                <input
+                  type="number" step="1" min="1"
+                  defaultValue={cfg.max_lots_per_trade}
+                  onBlur={(e) => void save({ max_lots_per_trade: Number(e.target.value) })}
+                  className="autonomous-panel__control"
+                />
+              </div>
+            </div>
+            <div className="autonomous-panel__hint">
+              LLM sizes each trade to match conviction: {Math.max(1, Math.round((cfg.base_lot_size ?? 5) - (cfg.lot_deviation ?? 4)))} = thin edge, {Math.round(cfg.base_lot_size ?? 5)} = normal, {Math.min(Math.round(cfg.max_lots_per_trade), Math.round((cfg.base_lot_size ?? 5) + (cfg.lot_deviation ?? 4)))} = full send, 0 = skip.
+            </div>
+          </>
+        )}
       </div>
 
       {/* Model */}

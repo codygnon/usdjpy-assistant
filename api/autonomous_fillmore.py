@@ -3796,6 +3796,87 @@ def _summarize_oanda_order_book(raw_book: Optional[dict[str, Any]], *, range_pip
     }
 
 
+def _v2_oanda_practice_place_guard(profile: Any, mode: str) -> tuple[bool, str]:
+    """Hard guard for v2 broker placement.
+
+    v2 may place only in the product's paper mode, and only against an OANDA
+    practice profile. This is intentionally stricter than v1's paper check so
+    the new engine cannot route to MT5, OANDA live, or any future non-paper
+    stage by accident.
+    """
+    if str(mode or "").lower() != "paper":
+        return False, f"mode={mode!r}; v2 broker placement requires autonomous mode='paper'"
+    broker_type = str(getattr(profile, "broker_type", "") or "").lower()
+    if broker_type != "oanda":
+        return False, f"broker_type={broker_type!r}; v2 broker placement requires OANDA practice"
+    env = str(getattr(profile, "oanda_environment", "") or "").lower()
+    if env != "practice":
+        return False, f"oanda_environment={env!r}; v2 broker placement requires practice"
+    return True, "ok"
+
+
+def _v2_sl_tp_prices(result: Any, profile: Any) -> tuple[Optional[float], Optional[float]]:
+    snapshot = getattr(result, "snapshot", None)
+    if snapshot is None:
+        return None, None
+    try:
+        mid = float(getattr(snapshot, "tick_mid", None) or 0.0)
+        sl_pips = float(getattr(snapshot, "sl_pips", None) or 0.0)
+        tp_pips = float(getattr(snapshot, "tp_pips", None) or 0.0)
+        pip = float(getattr(profile, "pip_size", 0.01) or 0.01)
+    except (TypeError, ValueError):
+        return None, None
+    if mid <= 0 or sl_pips <= 0 or tp_pips <= 0 or pip <= 0:
+        return None, None
+    side = str(getattr(snapshot, "proposed_side", "") or "").lower()
+    if side == "buy":
+        return mid - sl_pips * pip, mid + tp_pips * pip
+    if side == "sell":
+        return mid + sl_pips * pip, mid - tp_pips * pip
+    return None, None
+
+
+def _v2_result_to_broker_suggestion(result: Any, profile: Any) -> dict[str, Any]:
+    """Project a v2 OrchestrationResult into v1's existing broker placer shape."""
+    snapshot = getattr(result, "snapshot", None)
+    llm_output = getattr(result, "llm_output", None)
+    sizing = getattr(result, "sizing", None)
+    sl, tp = _v2_sl_tp_prices(result, profile)
+    level_claim = getattr(llm_output, "level_quality_claim", None)
+    if hasattr(level_claim, "__dict__"):
+        level_claim = dict(level_claim.__dict__)
+    return {
+        "suggestion_id": getattr(result, "suggestion_id", None),
+        "engine_version": "v2",
+        "decision": "place",
+        "side": str(getattr(snapshot, "proposed_side", "buy") or "buy").lower(),
+        "lots": float(getattr(result, "deterministic_lots", None) or getattr(sizing, "lots", 0.0) or 0.0),
+        "price": float(getattr(snapshot, "tick_mid", 0.0) or 0.0),
+        "sl": sl,
+        "tp": tp,
+        "order_type": "market",
+        "time_in_force": "MARKET",
+        "exit_strategy": "none",
+        "exit_params": {},
+        "trigger_family": getattr(snapshot, "selected_gate_id", None),
+        "order_policy_reason": "fillmore_v2_deterministic_market_practice",
+        "trade_thesis": getattr(llm_output, "primary_thesis", None),
+        "caveat_resolution": getattr(llm_output, "caveat_resolution", None),
+        "loss_asymmetry_argument": getattr(llm_output, "loss_asymmetry_argument", None),
+        "level_quality_claim": level_claim,
+        "invalid_if": getattr(llm_output, "invalid_if", None),
+        "evidence_refs": getattr(llm_output, "evidence_refs", None),
+        "deterministic_lots": float(getattr(result, "deterministic_lots", None) or 0.0),
+        "risk_after_fill_usd": getattr(snapshot, "risk_after_fill_usd", None),
+        "sl_pips": getattr(snapshot, "sl_pips", None),
+        "tp_pips": getattr(snapshot, "tp_pips", None),
+        "timeframe_alignment": getattr(snapshot, "timeframe_alignment", None),
+        "macro_bias": getattr(snapshot, "macro_bias", None),
+        "catalyst_category": getattr(snapshot, "catalyst_category", None),
+        "v2_audit": getattr(result, "to_audit_records", lambda: {})(),
+    }
+
+
 def tick_autonomous_fillmore(
     profile,
     profile_name: str,
@@ -3815,6 +3896,52 @@ def tick_autonomous_fillmore(
     cfg = get_config(state_path)
     if not cfg.get("enabled"):
         return  # fast path — don't even log when fully off.
+
+    # Step 9 / PHASE9.10: process-level engine flag. Default 'v1' = unchanged
+    # behavior. Set runtime_state.json autonomous_fillmore.engine = 'v2' to
+    # route this tick through the v2 orchestrator instead. Reading the flag
+    # is idempotent and side-effect-free; flipping requires explicit
+    # operator action via api.fillmore_v2.engine_flag.set_engine_flag.
+    try:
+        from api.fillmore_v2.engine_flag import read_engine_flag
+        if read_engine_flag(state_path) == "v2":
+            from api.fillmore_v2.v1_bridge import dispatch_v2_tick
+            v2_result = dispatch_v2_tick(
+                profile=profile,
+                profile_name=profile_name,
+                state_path=state_path,
+                tick=tick,
+                adapter=adapter,
+                store=store,
+                data_by_tf=data_by_tf,
+                open_positions=_unused.get("open_positions_snapshot"),
+                stage="paper",
+            )
+            if v2_result.final_decision == "place":
+                mode = str(cfg.get("mode") or "off").lower()
+                ok, guard_reason = _v2_oanda_practice_place_guard(profile, mode)
+                if not ok:
+                    print(f"[{profile_name}] autonomous Fillmore v2: broker placement blocked — {guard_reason}")
+                    return
+                suggestion = _v2_result_to_broker_suggestion(v2_result, profile)
+                try:
+                    placed = _place_from_suggestion(
+                        profile, profile_name, state_path, suggestion, "market", store,
+                    )
+                    record_trade_placed(state_path, placed.get("order_id"), suggestion.get("suggestion_id"))
+                    print(
+                        f"[{profile_name}] autonomous Fillmore v2: placed OANDA practice "
+                        f"{suggestion.get('side')} {suggestion.get('lots')} @ {placed.get('fill_price')}"
+                    )
+                except Exception as e:
+                    import traceback
+                    print(f"[{profile_name}] autonomous Fillmore v2: place error: {e}")
+                    traceback.print_exc()
+                    record_broker_reject(state_path)
+                    record_error(state_path, cfg, str(e))
+            return
+    except Exception:  # noqa: BLE001 — never let v2 wiring crash v1
+        pass
 
     # Global kill/exit-only must override autonomous placement. The top-level
     # preset mode can be DISARMED while autonomous Fillmore is intentionally
@@ -5160,6 +5287,14 @@ def _place_from_suggestion(
                         "policy_type": suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS,
                         "config_json": _json.dumps({
                             "source": "autonomous_fillmore",
+                            "engine_version": suggestion.get("engine_version"),
+                            "v2_audit": suggestion.get("v2_audit") or {},
+                            "deterministic_lots": suggestion.get("deterministic_lots"),
+                            "risk_after_fill_usd": suggestion.get("risk_after_fill_usd"),
+                            "loss_asymmetry_argument": suggestion.get("loss_asymmetry_argument"),
+                            "level_quality_claim": suggestion.get("level_quality_claim"),
+                            "invalid_if": suggestion.get("invalid_if") or [],
+                            "evidence_refs": suggestion.get("evidence_refs") or [],
                             "order_id": order_id,
                             "exit_strategy": managed_strategy or "none",
                             "exit_params": managed_params,
@@ -5256,6 +5391,14 @@ def _place_from_suggestion(
                             "exit_params": managed_params if managed_strategy else {},
                             "autonomous": True,
                             "entry_type": suggestion_tracker.ENTRY_TYPE_FILLMORE_AUTONOMOUS,
+                            "engine_version": suggestion.get("engine_version"),
+                            "v2_audit": suggestion.get("v2_audit") or {},
+                            "deterministic_lots": suggestion.get("deterministic_lots"),
+                            "risk_after_fill_usd": suggestion.get("risk_after_fill_usd"),
+                            "loss_asymmetry_argument": suggestion.get("loss_asymmetry_argument"),
+                            "level_quality_claim": suggestion.get("level_quality_claim"),
+                            "invalid_if": suggestion.get("invalid_if") or [],
+                            "evidence_refs": suggestion.get("evidence_refs") or [],
                             "order_type": "market",
                             "trigger_family": suggestion.get("trigger_family"),
                             "order_policy_reason": suggestion.get("order_policy_reason"),
@@ -5334,6 +5477,14 @@ def _place_from_suggestion(
                 "trail_mode": trail_mode_for_strategy(managed_strategy) if managed_strategy else "none",
                 "exit_params": managed_params,
                 "source": "autonomous_fillmore",
+                "engine_version": suggestion.get("engine_version"),
+                "v2_audit": suggestion.get("v2_audit") or {},
+                "deterministic_lots": suggestion.get("deterministic_lots"),
+                "risk_after_fill_usd": suggestion.get("risk_after_fill_usd"),
+                "loss_asymmetry_argument": suggestion.get("loss_asymmetry_argument"),
+                "level_quality_claim": suggestion.get("level_quality_claim"),
+                "invalid_if": suggestion.get("invalid_if") or [],
+                "evidence_refs": suggestion.get("evidence_refs") or [],
                 "suggestion_id": suggestion.get("suggestion_id"),
                 "thesis_fingerprint": suggestion.get("thesis_fingerprint"),
                 "decision": suggestion.get("decision"),

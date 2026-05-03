@@ -8,6 +8,7 @@ import json
 import os
 import re
 import signal
+import sqlite3
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -6286,6 +6287,139 @@ class AutonomousConfigPatch(BaseModel):
     throttle_loss_cooldown_sec: Optional[int] = None
 
 
+class AutonomousEnginePatch(BaseModel):
+    engine: Literal["v1", "v2"]
+
+
+_V2_REQUIRED_FIRST_TICK_FIELDS = (
+    "engine_version",
+    "snapshot_version",
+    "snapshot_schema_hash",
+    "prompt_version",
+    "rendered_prompt",
+    "rendered_context_json",
+    "open_lots_buy",
+    "open_lots_sell",
+    "unrealized_pnl_buy",
+    "unrealized_pnl_sell",
+    "pip_value_per_lot",
+    "risk_after_fill_usd",
+    "rolling_20_trade_pnl",
+    "rolling_20_lot_weighted_pnl",
+    "gate_candidates_json",
+    "sizing_inputs_json",
+    "deterministic_lots",
+)
+
+
+def _json_count(raw: Any) -> int:
+    if raw in (None, ""):
+        return 0
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return 0
+    if isinstance(parsed, (list, dict)):
+        return len(parsed)
+    return 0
+
+
+def _autonomous_v2_status(runtime_profile_name: str, state_path: Path) -> dict[str, Any]:
+    from api.fillmore_v2.engine_flag import read_engine_flag
+    from api.fillmore_v2.state import state_path as v2_state_path
+
+    engine = read_engine_flag(state_path)
+    db_path = _suggestions_db_path(runtime_profile_name)
+    latest: Optional[dict[str, Any]] = None
+    missing_required: list[str] = []
+    missing_columns: list[str] = []
+    if db_path.exists():
+        try:
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.row_factory = sqlite3.Row
+                cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(ai_suggestions)").fetchall()}
+                missing_columns = [c for c in _V2_REQUIRED_FIRST_TICK_FIELDS if c not in cols]
+                if not missing_columns:
+                    row = conn.execute(
+                        """
+                        SELECT *
+                        FROM ai_suggestions
+                        WHERE engine_version = 'v2'
+                        ORDER BY created_utc DESC
+                        LIMIT 1
+                        """
+                    ).fetchone()
+                    if row:
+                        missing_required = [
+                            c for c in _V2_REQUIRED_FIRST_TICK_FIELDS
+                            if row[c] is None or (isinstance(row[c], str) and not row[c].strip())
+                        ]
+                        skip_reason = row["skip_reason"] if "skip_reason" in row.keys() else None
+                        rationale = row["rationale"] if "rationale" in row.keys() else None
+                        latest = {
+                            "suggestion_id": row["suggestion_id"],
+                            "created_utc": row["created_utc"],
+                            "final_decision": row["decision"],
+                            "selected_gate": row["trigger_family"],
+                            "halt_reason": row["halt_reason"],
+                            "skip_reason": skip_reason,
+                            "llm_parse_status": (
+                                "parse_failure"
+                                if skip_reason and str(skip_reason).startswith("parse_failure")
+                                else "parsed_or_model_skip"
+                                if rationale
+                                else "not_called"
+                            ),
+                            "gate_candidates_count": _json_count(row["gate_candidates_json"]),
+                            "pre_veto_fires_count": _json_count(row["pre_veto_fired_json"]),
+                            "validator_overrides_count": _json_count(row["validator_overrides_json"]),
+                            "deterministic_lots": row["deterministic_lots"],
+                            "risk_after_fill_usd": row["risk_after_fill_usd"],
+                            "missing_required_values": missing_required,
+                        }
+        except Exception as exc:
+            latest = {"error": f"{type(exc).__name__}: {exc}"}
+
+    v2_state = v2_state_path(state_path.parent)
+    return {
+        "engine": engine,
+        "stage": "paper",
+        "paper_guard": True,
+        "order_send_blocked": False,
+        "practice_order_send_enabled": True,
+        "order_send_scope": "oanda_practice_only",
+        "state_file": str(state_path),
+        "v2_state_file": str(v2_state),
+        "v2_state_isolated": v2_state.name != state_path.name,
+        "latest_row": latest,
+        "missing_columns": missing_columns,
+        "missing_required_values": missing_required,
+        "first_tick_check_command": (
+            f"python3 scripts/fillmore_v2_first_tick_check.py --db {db_path} "
+            f"--profile {runtime_profile_name}"
+        ),
+        "rollback_command": (
+            "python3 - <<'PY'\n"
+            "from pathlib import Path\n"
+            "from api.fillmore_v2.engine_flag import set_engine_flag\n"
+            f"set_engine_flag(Path({str(state_path)!r}), 'v1')\n"
+            "PY"
+        ),
+        "known_full_suite_debt": (
+            "tests/test_phase3_additive_runtime.py::"
+            "test_project_runtime_config_includes_spike_fade_v4_defaults"
+        ),
+        "pre_0_1x_required": [
+            "real_side_normalized_level_quality_builder",
+            "macro_bias_and_catalyst_category_classification",
+            "skip_forward_outcome_capture_t5_98pct",
+            "stage_progression_reporting",
+            "exit_layer_live_replay_logs",
+            "50_close_stage1_paper_report",
+        ],
+    }
+
+
 @app.get("/api/data/{profile_name}/autonomous/config")
 def get_autonomous_config(profile_name: str, profile_path: Optional[str] = None) -> dict[str, Any]:
     """Return the saved autonomous-Fillmore config merged with defaults."""
@@ -6296,6 +6430,7 @@ def get_autonomous_config(profile_name: str, profile_path: Optional[str] = None)
     return {
         "config": autonomous_fillmore.get_config(state_path),
         "gate_modes": autonomous_fillmore.GATE_THRESHOLDS,
+        "v2_status": _autonomous_v2_status(runtime_profile_name, state_path),
     }
 
 
@@ -6310,7 +6445,24 @@ def update_autonomous_config(
     state_path = _runtime_state_path(runtime_profile_name)
     clean = {k: v for k, v in patch.dict().items() if v is not None}
     new_cfg = autonomous_fillmore.set_config(state_path, clean)
-    return {"config": new_cfg}
+    return {"config": new_cfg, "v2_status": _autonomous_v2_status(runtime_profile_name, state_path)}
+
+
+@app.put("/api/data/{profile_name}/autonomous/engine")
+def update_autonomous_engine(
+    profile_name: str, patch: AutonomousEnginePatch, profile_path: Optional[str] = None
+) -> dict[str, Any]:
+    """Switch Auto Fillmore between v1 and v2.
+
+    v2 is Stage 1 OANDA-practice guarded in the dispatch path; this endpoint
+    only flips the engine flag, not capital mode.
+    """
+    from api.fillmore_v2.engine_flag import set_engine_flag
+
+    runtime_profile_name = _resolve_runtime_profile_name(profile_name, profile_path)
+    state_path = _runtime_state_path(runtime_profile_name)
+    set_engine_flag(state_path, patch.engine)
+    return {"v2_status": _autonomous_v2_status(runtime_profile_name, state_path)}
 
 
 @app.get("/api/data/{profile_name}/autonomous/stats")
@@ -6320,7 +6472,9 @@ def get_autonomous_stats(profile_name: str, profile_path: Optional[str] = None) 
 
     runtime_profile_name = _resolve_runtime_profile_name(profile_name, profile_path)
     state_path = _runtime_state_path(runtime_profile_name)
-    return autonomous_fillmore.build_stats(state_path)
+    stats = autonomous_fillmore.build_stats(state_path)
+    stats["v2_status"] = _autonomous_v2_status(runtime_profile_name, state_path)
+    return stats
 
 
 @app.post("/api/data/{profile_name}/autonomous/reset-throttle")

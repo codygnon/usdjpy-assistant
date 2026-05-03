@@ -1188,6 +1188,40 @@ export interface AutonomousGateMode {
   expected_pass_rate_pct: number;
 }
 
+export interface AutonomousV2Status {
+  engine: 'v1' | 'v2' | string;
+  stage: 'paper' | string;
+  paper_guard: boolean;
+  order_send_blocked: boolean;
+  practice_order_send_enabled?: boolean;
+  order_send_scope?: string;
+  state_file: string;
+  v2_state_file: string;
+  v2_state_isolated: boolean;
+  latest_row: null | {
+    suggestion_id?: string;
+    created_utc?: string;
+    final_decision?: string;
+    selected_gate?: string | null;
+    halt_reason?: string | null;
+    skip_reason?: string | null;
+    llm_parse_status?: string;
+    gate_candidates_count?: number;
+    pre_veto_fires_count?: number;
+    validator_overrides_count?: number;
+    deterministic_lots?: number | null;
+    risk_after_fill_usd?: number | null;
+    missing_required_values?: string[];
+    error?: string;
+  };
+  missing_columns: string[];
+  missing_required_values: string[];
+  first_tick_check_command: string;
+  rollback_command: string;
+  known_full_suite_debt: string;
+  pre_0_1x_required: string[];
+}
+
 export interface AutonomousDecision {
   t: string;              // timestamp_utc
   r: 'pass' | 'block';
@@ -1329,6 +1363,7 @@ export interface AutonomousStats {
   last_placed_order_id: string | null;
   last_suggestion_id: string | null;
   recent_decisions: AutonomousDecision[];
+  v2_status?: AutonomousV2Status;
 }
 
 function _autonomousProfileQuery(profilePath?: string): string {
@@ -1338,7 +1373,7 @@ function _autonomousProfileQuery(profilePath?: string): string {
 export async function getAutonomousConfig(
   profileName: string,
   profilePath?: string,
-): Promise<{ config: AutonomousConfig; gate_modes: Record<string, AutonomousGateMode> }> {
+): Promise<{ config: AutonomousConfig; gate_modes: Record<string, AutonomousGateMode>; v2_status?: AutonomousV2Status }> {
   return fetchJson(
     `${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/config${_autonomousProfileQuery(profilePath)}`,
   );
@@ -1348,13 +1383,28 @@ export async function updateAutonomousConfig(
   profileName: string,
   patch: Partial<AutonomousConfig>,
   profilePath?: string,
-): Promise<{ config: AutonomousConfig }> {
+): Promise<{ config: AutonomousConfig; v2_status?: AutonomousV2Status }> {
   return fetchJson(
     `${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/config${_autonomousProfileQuery(profilePath)}`,
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
+    },
+  );
+}
+
+export async function updateAutonomousEngine(
+  profileName: string,
+  engine: 'v1' | 'v2',
+  profilePath?: string,
+): Promise<{ v2_status: AutonomousV2Status }> {
+  return fetchJson(
+    `${API_BASE}/data/${encodeURIComponent(profileName)}/autonomous/engine${_autonomousProfileQuery(profilePath)}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ engine }),
     },
   );
 }
